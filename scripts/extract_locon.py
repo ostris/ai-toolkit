@@ -13,7 +13,7 @@ import argparse
 
 from toolkit.lycoris_utils import extract_diff
 from toolkit.config import get_config
-from toolkit.metadata import create_meta
+from toolkit.metadata import create_meta, prep_meta_for_safetensors
 from toolkit.kohya_model_util import load_models_from_stable_diffusion_checkpoint
 
 import torch
@@ -141,8 +141,7 @@ def main():
         os.makedirs(output_folder, exist_ok=True)
 
         # having issues with meta
-        save_file(state_dict, output_path)
-        # save_file(state_dict, output_path, {'meta': json.dumps(save_meta, indent=4)})
+        save_file(state_dict, output_path, prep_meta_for_safetensors(save_meta))
 
         print(f"Saved to {output_path}")
 

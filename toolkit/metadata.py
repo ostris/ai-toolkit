@@ -22,3 +22,11 @@ def create_meta(dict_list, name=None):
     if name is not None:
         meta_string = meta_string.replace("[name]", name)
     return json.loads(meta_string)
+
+
+def prep_meta_for_safetensors(meta):
+    # safetensors can only be one level deep
+    for key, value in meta.items():
+        if isinstance(value, dict):
+            meta[key] = json.dumps(value)
+    return meta
