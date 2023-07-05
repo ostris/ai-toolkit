@@ -1,0 +1,46 @@
+{
+  "config": {
+    "name": "name_of_your_model",
+    "base_model": "/path/to/base/model",
+    "extract_model": "/path/to/model/to/extract",
+    "output_folder": "/path/to/output/folder",
+    "is_v2": false,
+    "device": "cpu",
+    "use_sparse_bias": false,
+    "sparsity": 0.98,
+    "disable_cp": false,
+    "process": [
+      {
+        "mode": "fixed",
+        "linear_dim": 64,
+        "conv_dim": 32
+      },
+      {
+        "mode": "ratio",
+        "linear_ratio": 0.2,
+        "conv_ratio": 0.2
+      },
+      {
+        "mode": "quantile",
+        "linear_quantile": 0.5,
+        "conv_quantile": 0.5
+      }
+    ]
+  },
+  "meta": {
+    "name": "[name]",
+    "description": "A short description of your model",
+    "trigger_words": [
+      "put",
+      "trigger",
+      "words",
+      "here"
+    ],
+    "version": "0.1",
+    "creator": {
+      "name": "Your Name",
+      "email": "your@email.com",
+      "website": "https://yourwebsite.com"
+    }
+  }
+}
