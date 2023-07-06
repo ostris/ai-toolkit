@@ -134,7 +134,7 @@ def main():
 
         save_meta = create_meta([
             item_meta, extract_diff_meta
-        ])
+        ], name=name)
 
         output_file_name = f"lyco_{name}_{process['mode']}_{linear_mode_param}_{conv_mode_param}.safetensors"
         output_path = os.path.join(output_folder, output_file_name)

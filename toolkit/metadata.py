@@ -27,6 +27,5 @@ def create_meta(dict_list, name=None):
 def prep_meta_for_safetensors(meta):
     # safetensors can only be one level deep
     for key, value in meta.items():
-        if isinstance(value, dict):
-            meta[key] = json.dumps(value)
+        meta[key] = json.dumps(value)
     return meta
