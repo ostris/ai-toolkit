@@ -11,5 +11,8 @@ def get_job(config_path) -> BaseJob:
     if job == 'extract':
         from jobs import ExtractJob
         return ExtractJob(config)
+    elif job == 'train':
+        from jobs import TrainJob
+        return TrainJob(config)
     else:
         raise ValueError(f'Unknown job type {job}')

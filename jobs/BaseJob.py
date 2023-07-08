@@ -1,4 +1,7 @@
 from collections import OrderedDict
+from typing import List
+
+from jobs.process import BaseProcess
 
 
 class BaseJob:
@@ -6,6 +9,7 @@ class BaseJob:
     job: str
     name: str
     meta: OrderedDict
+    process: List[BaseProcess]
 
     def __init__(self, config: OrderedDict):
         if not config:
@@ -36,6 +40,25 @@ class BaseJob:
         # implement in child class
         # be sure to call super().run() first
         pass
+
+    def load_processes(self, process_dict: dict):
+        # only call if you have processes in this job type
+        if 'process' not in self.config:
+            raise ValueError('config file is invalid. Missing "config.process" key')
+        if len(self.config['process']) == 0:
+            raise ValueError('config file is invalid. "config.process" must be a list of processes')
+
+        # add the processes
+        self.process = []
+        for i, process in enumerate(self.config['process']):
+            if 'type' not in process:
+                raise ValueError(f'config file is invalid. Missing "config.process[{i}].type" key')
+
+            # check if dict key is process type
+            if process['type'] in process_dict:
+                self.process.append(process_dict[process['type']](i, self, process))
+            else:
+                raise ValueError(f'config file is invalid. Unknown process type: {process["type"]}')
 
     def cleanup(self):
         # if you implement this in child clas,

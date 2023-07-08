@@ -27,7 +27,7 @@ mode_dict = {
 }
 
 
-class LoconExtractProcess(BaseExtractProcess):
+class ExtractLoconProcess(BaseExtractProcess):
     def __init__(self, process_id: int, job: ExtractJob, config: OrderedDict):
         super().__init__(process_id, job, config)
         self.mode = self.get_conf('mode', 'fixed')
