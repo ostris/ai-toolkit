@@ -33,13 +33,13 @@ Just copy that file, into the `config` folder, and rename it to `whatever_you_wa
 Then you can edit the file to your liking. and call it like so:
 
 ```bash
-python3 scripts/extract_locon.py "whatever_you_want"
+python3 run.py "whatever_you_want"
 ```
 
 You can also put a full path to a config file, if you want to keep it somewhere else.
 
 ```bash
-python3 scripts/extract_locon.py "/home/user/whatever_you_want.json"
+python3 run.py "/home/user/whatever_you_want.json"
 ```
 
 File name is auto generated and dumped into the `output` folder. You can put whatever meta you want in the

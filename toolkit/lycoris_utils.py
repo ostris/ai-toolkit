@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import torch.linalg as linalg
 
 from tqdm import tqdm
+from collections import OrderedDict
 
 
 def make_sparse(t: torch.Tensor, sparsity=0.95):
@@ -121,7 +122,7 @@ def extract_diff(
         sparsity=0.98,
         small_conv=True
 ):
-    meta = {}
+    meta = OrderedDict()
 
     UNET_TARGET_REPLACE_MODULE = [
         "Transformer2DModel",

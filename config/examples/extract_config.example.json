@@ -1,4 +1,5 @@
 {
+  "job": "extract",
   "config": {
     "name": "name_of_your_model",
     "base_model": "/path/to/base/model",
@@ -6,24 +7,26 @@
     "output_folder": "/path/to/output/folder",
     "is_v2": false,
     "device": "cpu",
-    "use_sparse_bias": false,
-    "sparsity": 0.98,
-    "disable_cp": false,
     "process": [
       {
+        "filename":"[name]_64_32.safetensors",
+        "type": "locon",
         "mode": "fixed",
-        "linear_dim": 64,
-        "conv_dim": 32
+        "linear": 64,
+        "conv": 32
       },
       {
+        "output_path": "/absolute/path/for/this/output.safetensors",
+        "type": "locon",
         "mode": "ratio",
-        "linear_ratio": 0.2,
-        "conv_ratio": 0.2
+        "linear": 0.2,
+        "conv": 0.2
       },
       {
+        "type": "locon",
         "mode": "quantile",
-        "linear_quantile": 0.5,
-        "conv_quantile": 0.5
+        "linear": 0.5,
+        "conv": 0.5
       }
     ]
   },
@@ -41,6 +44,7 @@
       "name": "Your Name",
       "email": "your@email.com",
       "website": "https://yourwebsite.com"
-    }
+    },
+    "any": "All meta data above is arbitrary, it can be whatever you want."
   }
 }

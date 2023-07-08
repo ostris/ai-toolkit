@@ -1,5 +1,7 @@
 import os
 import json
+from collections import OrderedDict
+
 from toolkit.paths import TOOLKIT_ROOT
 
 possible_extensions = ['.json', '.jsonc']
@@ -9,6 +11,21 @@ def get_cwd_abs_path(path):
     if not os.path.isabs(path):
         path = os.path.join(os.getcwd(), path)
     return path
+
+
+def preprocess_config(config: OrderedDict):
+    if "job" not in config:
+        raise ValueError("config file must have a job key")
+    if "config" not in config:
+        raise ValueError("config file must have a config section")
+    if "name" not in config["config"]:
+        raise ValueError("config file must have a config.name key")
+    # we need to replace tags. For now just [name]
+    name = config["config"]["name"]
+    config_string = json.dumps(config)
+    config_string = config_string.replace("[name]", name)
+    config = json.loads(config_string, object_pairs_hook=OrderedDict)
+    return config
 
 
 def get_config(config_file_path):
@@ -34,6 +51,6 @@ def get_config(config_file_path):
 
     # load the config
     with open(real_config_path, 'r') as f:
-        config = json.load(f)
+        config = json.load(f, object_pairs_hook=OrderedDict)
 
-    return config
+    return preprocess_config(config)
