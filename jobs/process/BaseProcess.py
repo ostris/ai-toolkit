@@ -1,8 +1,7 @@
 import copy
 import json
 from collections import OrderedDict
-
-from jobs import BaseJob
+from typing import ForwardRef
 
 
 class BaseProcess:
@@ -11,7 +10,7 @@ class BaseProcess:
     def __init__(
             self,
             process_id: int,
-            job: BaseJob,
+            job: 'BaseJob',
             config: OrderedDict
     ):
         self.process_id = process_id
@@ -40,3 +39,5 @@ class BaseProcess:
     def add_meta(self, additional_meta: OrderedDict):
         self.meta.update(additional_meta)
 
+
+from jobs import BaseJob

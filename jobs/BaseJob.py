@@ -1,3 +1,4 @@
+import importlib
 from collections import OrderedDict
 from typing import List
 
@@ -48,6 +49,8 @@ class BaseJob:
         if len(self.config['process']) == 0:
             raise ValueError('config file is invalid. "config.process" must be a list of processes')
 
+        module = importlib.import_module('jobs.process')
+
         # add the processes
         self.process = []
         for i, process in enumerate(self.config['process']):
@@ -56,7 +59,8 @@ class BaseJob:
 
             # check if dict key is process type
             if process['type'] in process_dict:
-                self.process.append(process_dict[process['type']](i, self, process))
+                ProcessClass = getattr(module, process_dict[process['type']])
+                self.process.append(ProcessClass(i, self, process))
             else:
                 raise ValueError(f'config file is invalid. Unknown process type: {process["type"]}')
 

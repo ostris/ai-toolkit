@@ -1,9 +1,5 @@
 import os
 import sys
-from collections import OrderedDict
-
-from jobs import BaseJob
-
 sys.path.insert(0, os.getcwd())
 import argparse
 from toolkit.job import get_job
@@ -48,6 +44,8 @@ def main():
 
     jobs_completed = 0
     jobs_failed = 0
+
+    print(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
         try:

@@ -1,19 +1,16 @@
 from toolkit.kohya_model_util import load_models_from_stable_diffusion_checkpoint
-from .BaseJob import BaseJob
 from collections import OrderedDict
 from typing import List
 
 from jobs.process import BaseExtractProcess
-
-from jobs.process import ExtractLoconProcess
+from jobs import BaseJob
 
 process_dict = {
-    'locon': ExtractLoconProcess,
+    'locon': 'ExtractLoconProcess',
 }
 
 
 class ExtractJob(BaseJob):
-    process: List[BaseExtractProcess]
 
     def __init__(self, config: OrderedDict):
         super().__init__(config)

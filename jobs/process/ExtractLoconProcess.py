@@ -1,7 +1,6 @@
 from collections import OrderedDict
 from toolkit.lycoris_utils import extract_diff
 from .BaseExtractProcess import BaseExtractProcess
-from .. import ExtractJob
 
 mode_dict = {
     'fixed': {
@@ -28,7 +27,7 @@ mode_dict = {
 
 
 class ExtractLoconProcess(BaseExtractProcess):
-    def __init__(self, process_id: int, job: ExtractJob, config: OrderedDict):
+    def __init__(self, process_id: int, job, config: OrderedDict):
         super().__init__(process_id, job, config)
         self.mode = self.get_conf('mode', 'fixed')
         self.use_sparse_bias = self.get_conf('use_sparse_bias', False)

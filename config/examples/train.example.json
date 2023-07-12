@@ -5,7 +5,11 @@
     "base_model": "/path/to/base/model",
     "training_folder": "/path/to/output/folder",
     "is_v2": false,
-    "device": "cpu",
+    "device": "cuda",
+    "gradient_accumulation_steps": 1,
+    "mixed_precision": "fp16",
+    "logging_dir": "/path/to/tensorboard/log/folder",
+
     "process": [
       {
         "type": "fine_tune"

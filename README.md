@@ -10,17 +10,25 @@ a general understanding of python, pip, pytorch, and using virtual environments:
 Linux:
 
 ```bash
+git submodule update --init --recursive
 pythion3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+cd requirements/sd-scripts
+pip install --no-deps -e .
+cd ../..
 ```
 
 Windows:
 
 ```bash
+git submodule update --init --recursive
 pythion3 -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
+cd requirements/sd-scripts
+pip install --no-deps -e .
+cd ../..
 ```
 
 ## Current Tools

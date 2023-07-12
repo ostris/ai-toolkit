@@ -3,13 +3,13 @@ from collections import OrderedDict
 
 from safetensors.torch import save_file
 
-from jobs import ExtractJob
 from jobs.process.BaseProcess import BaseProcess
 from toolkit.metadata import get_meta_for_safetensors
 
+from typing import ForwardRef
+
 
 class BaseExtractProcess(BaseProcess):
-    job: ExtractJob
     process_id: int
     config: OrderedDict
     output_folder: str
@@ -19,7 +19,7 @@ class BaseExtractProcess(BaseProcess):
     def __init__(
             self,
             process_id: int,
-            job: ExtractJob,
+            job,
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)

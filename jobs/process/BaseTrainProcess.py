@@ -1,17 +1,15 @@
 from collections import OrderedDict
-from jobs import TrainJob
 from jobs.process.BaseProcess import BaseProcess
 
 
 class BaseTrainProcess(BaseProcess):
-    job: TrainJob
     process_id: int
     config: OrderedDict
 
     def __init__(
             self,
             process_id: int,
-            job: TrainJob,
+            job,
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
