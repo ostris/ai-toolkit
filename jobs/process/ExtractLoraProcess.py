@@ -2,10 +2,23 @@ from collections import OrderedDict
 from toolkit.lycoris_utils import extract_diff
 from .BaseExtractProcess import BaseExtractProcess
 
+
 mode_dict = {
     'fixed': {
-        'dim': 4,
+        'dim': 64,
         'type': int
+    },
+    'threshold': {
+        'dim': 0,
+        'type': float
+    },
+    'ratio': {
+        'dim': 0.5,
+        'type': float
+    },
+    'quantile': {
+        'dim': 0.5,
+        'type': float
     }
 }
 
@@ -20,7 +33,7 @@ class ExtractLoraProcess(BaseExtractProcess):
         self.mode = self.get_conf('mode', 'fixed')
 
         # set modes
-        if self.mode not in ['fixed']:
+        if self.mode not in list(mode_dict.keys()):
             raise ValueError(f"Unknown mode: {self.mode}")
         self.dim = self.get_conf('dim', mode_dict[self.mode]['dim'], as_type=mode_dict[self.mode]['type'])
         self.use_sparse_bias = self.get_conf('use_sparse_bias', False)
