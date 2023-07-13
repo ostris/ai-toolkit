@@ -21,13 +21,13 @@ class BaseProcess:
     def get_conf(self, key, default=None, required=False, as_type=None):
         if key in self.config:
             value = self.config[key]
-            if as_type is not None:
+            if as_type is not None and value is not None:
                 value = as_type(value)
             return value
         elif required:
             raise ValueError(f'config file error. Missing "config.process[{self.process_id}].{key}" key')
         else:
-            if as_type is not None:
+            if as_type is not None and default is not None:
                 return as_type(default)
             return default
 

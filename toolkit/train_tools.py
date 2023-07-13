@@ -27,6 +27,16 @@ SCHEDULER_TIMESTEPS = 1000
 SCHEDLER_SCHEDULE = "scaled_linear"
 
 
+def get_torch_dtype(dtype_str):
+    if dtype_str == "float" or dtype_str == "fp32" or dtype_str == "single" or dtype_str == "float32":
+        return torch.float
+    if dtype_str == "fp16" or dtype_str == "half" or dtype_str == "float16":
+        return torch.float16
+    if dtype_str == "bf16" or dtype_str == "bfloat16":
+        return torch.bfloat16
+    return None
+
+
 def replace_filewords_prompt(prompt, args: argparse.Namespace):
     # if name_replace attr in args (may not be)
     if hasattr(args, "name_replace") and args.name_replace is not None:

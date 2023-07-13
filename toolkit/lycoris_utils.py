@@ -67,6 +67,9 @@ def extract_conv(
     return (extract_weight_A, extract_weight_B, diff), 'low rank'
 
 
+extra_weights = ['lora_unet_conv_in.alpha', 'lora_unet_conv_in.lora_down.weight', 'lora_unet_conv_in.lora_mid.weight', 'lora_unet_conv_in.lora_up.weight', 'lora_unet_conv_out.alpha', 'lora_unet_conv_out.lora_down.weight', 'lora_unet_conv_out.lora_mid.weight', 'lora_unet_conv_out.lora_up.weight', 'lora_unet_down_blocks_0_resnets_0_time_emb_proj.alpha', 'lora_unet_down_blocks_0_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_0_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_0_resnets_1_time_emb_proj.alpha', 'lora_unet_down_blocks_0_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_0_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_1_resnets_0_conv_shortcut.alpha', 'lora_unet_down_blocks_1_resnets_0_conv_shortcut.lora_down.weight', 'lora_unet_down_blocks_1_resnets_0_conv_shortcut.lora_up.weight', 'lora_unet_down_blocks_1_resnets_0_time_emb_proj.alpha', 'lora_unet_down_blocks_1_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_1_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_1_resnets_1_time_emb_proj.alpha', 'lora_unet_down_blocks_1_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_1_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_2_resnets_0_conv_shortcut.alpha', 'lora_unet_down_blocks_2_resnets_0_conv_shortcut.lora_down.weight', 'lora_unet_down_blocks_2_resnets_0_conv_shortcut.lora_up.weight', 'lora_unet_down_blocks_2_resnets_0_time_emb_proj.alpha', 'lora_unet_down_blocks_2_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_2_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_2_resnets_1_time_emb_proj.alpha', 'lora_unet_down_blocks_2_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_2_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_3_resnets_0_time_emb_proj.alpha', 'lora_unet_down_blocks_3_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_3_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_down_blocks_3_resnets_1_time_emb_proj.alpha', 'lora_unet_down_blocks_3_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_down_blocks_3_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_mid_block_resnets_0_time_emb_proj.alpha', 'lora_unet_mid_block_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_mid_block_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_mid_block_resnets_1_time_emb_proj.alpha', 'lora_unet_mid_block_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_mid_block_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_time_embedding_linear_1.alpha', 'lora_unet_time_embedding_linear_1.lora_down.weight', 'lora_unet_time_embedding_linear_1.lora_up.weight', 'lora_unet_time_embedding_linear_2.alpha', 'lora_unet_time_embedding_linear_2.lora_down.weight', 'lora_unet_time_embedding_linear_2.lora_up.weight', 'lora_unet_up_blocks_0_resnets_0_conv_shortcut.alpha', 'lora_unet_up_blocks_0_resnets_0_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_0_resnets_0_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_0_resnets_0_time_emb_proj.alpha', 'lora_unet_up_blocks_0_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_0_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_0_resnets_1_conv_shortcut.alpha', 'lora_unet_up_blocks_0_resnets_1_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_0_resnets_1_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_0_resnets_1_time_emb_proj.alpha', 'lora_unet_up_blocks_0_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_0_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_0_resnets_2_conv_shortcut.alpha', 'lora_unet_up_blocks_0_resnets_2_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_0_resnets_2_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_0_resnets_2_time_emb_proj.alpha', 'lora_unet_up_blocks_0_resnets_2_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_0_resnets_2_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_1_resnets_0_conv_shortcut.alpha', 'lora_unet_up_blocks_1_resnets_0_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_1_resnets_0_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_1_resnets_0_time_emb_proj.alpha', 'lora_unet_up_blocks_1_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_1_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_1_resnets_1_conv_shortcut.alpha', 'lora_unet_up_blocks_1_resnets_1_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_1_resnets_1_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_1_resnets_1_time_emb_proj.alpha', 'lora_unet_up_blocks_1_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_1_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_1_resnets_2_conv_shortcut.alpha', 'lora_unet_up_blocks_1_resnets_2_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_1_resnets_2_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_1_resnets_2_time_emb_proj.alpha', 'lora_unet_up_blocks_1_resnets_2_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_1_resnets_2_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_2_resnets_0_conv_shortcut.alpha', 'lora_unet_up_blocks_2_resnets_0_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_2_resnets_0_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_2_resnets_0_time_emb_proj.alpha', 'lora_unet_up_blocks_2_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_2_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_2_resnets_1_conv_shortcut.alpha', 'lora_unet_up_blocks_2_resnets_1_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_2_resnets_1_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_2_resnets_1_time_emb_proj.alpha', 'lora_unet_up_blocks_2_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_2_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_2_resnets_2_conv_shortcut.alpha', 'lora_unet_up_blocks_2_resnets_2_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_2_resnets_2_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_2_resnets_2_time_emb_proj.alpha', 'lora_unet_up_blocks_2_resnets_2_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_2_resnets_2_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_3_resnets_0_conv_shortcut.alpha', 'lora_unet_up_blocks_3_resnets_0_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_3_resnets_0_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_3_resnets_0_time_emb_proj.alpha', 'lora_unet_up_blocks_3_resnets_0_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_3_resnets_0_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_3_resnets_1_conv_shortcut.alpha', 'lora_unet_up_blocks_3_resnets_1_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_3_resnets_1_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_3_resnets_1_time_emb_proj.alpha', 'lora_unet_up_blocks_3_resnets_1_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_3_resnets_1_time_emb_proj.lora_up.weight', 'lora_unet_up_blocks_3_resnets_2_conv_shortcut.alpha', 'lora_unet_up_blocks_3_resnets_2_conv_shortcut.lora_down.weight', 'lora_unet_up_blocks_3_resnets_2_conv_shortcut.lora_up.weight', 'lora_unet_up_blocks_3_resnets_2_time_emb_proj.alpha', 'lora_unet_up_blocks_3_resnets_2_time_emb_proj.lora_down.weight', 'lora_unet_up_blocks_3_resnets_2_time_emb_proj.lora_up.weight']
+
+
 def extract_linear(
         weight: Union[torch.Tensor, nn.Parameter],
         mode='fixed',
@@ -120,7 +123,8 @@ def extract_diff(
         extract_device='cpu',
         use_bias=False,
         sparsity=0.98,
-        small_conv=True
+        small_conv=True,
+        linear_only=False,
 ):
     meta = OrderedDict()
 
@@ -137,6 +141,13 @@ def extract_diff(
         "time_embedding.linear_1",
         "time_embedding.linear_2",
     ]
+    if linear_only:
+        UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel", "Attention"]
+        UNET_TARGET_REPLACE_NAME = [
+            "conv_in",
+            "conv_out",
+        ]
+
     TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
     LORA_PREFIX_UNET = 'lora_unet'
     LORA_PREFIX_TEXT_ENCODER = 'lora_te'
@@ -186,6 +197,8 @@ def extract_diff(
                     elif layer == 'Conv2d':
                         is_linear = (child_module.weight.shape[2] == 1
                                      and child_module.weight.shape[3] == 1)
+                        if not is_linear and linear_only:
+                            continue
                         weight, decompose_mode = extract_conv(
                             (child_module.weight - weights[child_name]),
                             mode,
@@ -254,6 +267,8 @@ def extract_diff(
                             root_weight.shape[2] == 1
                             and root_weight.shape[3] == 1
                     )
+                    if not is_linear and linear_only:
+                        continue
                     weight, decompose_mode = extract_conv(
                         (root_weight - weights),
                         mode,

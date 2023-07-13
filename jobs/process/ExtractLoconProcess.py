@@ -37,8 +37,8 @@ class ExtractLoconProcess(BaseExtractProcess):
         # set modes
         if self.mode not in ['fixed', 'threshold', 'ratio', 'quantile']:
             raise ValueError(f"Unknown mode: {self.mode}")
-        self.linear_param = self.get_conf('linear', mode_dict[self.mode]['linear'], mode_dict[self.mode]['type'])
-        self.conv_param = self.get_conf('conv', mode_dict[self.mode]['conv'], mode_dict[self.mode]['type'])
+        self.linear_param = self.get_conf('linear', mode_dict[self.mode]['linear'], as_type=mode_dict[self.mode]['type'])
+        self.conv_param = self.get_conf('conv', mode_dict[self.mode]['conv'], as_type=mode_dict[self.mode]['type'])
 
     def run(self):
         super().run()

@@ -6,10 +6,12 @@
     "extract_model": "/path/to/model/to/extract",
     "output_folder": "/path/to/output/folder",
     "is_v2": false,
+    "dtype": "fp16",
     "device": "cpu",
     "process": [
       {
         "filename":"[name]_64_32.safetensors",
+        "dtype": "fp16",
         "type": "locon",
         "mode": "fixed",
         "linear": 64,
