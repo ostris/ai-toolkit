@@ -29,6 +29,17 @@
         "mode": "quantile",
         "linear": 0.5,
         "conv": 0.5
+      },
+      {
+        "type": "lora",
+        "mode": "fixed",
+        "linear": 4
+      },
+      {
+        "type": "lora",
+        "mode": "fixed",
+        "linear": 64,
+        "conv": 32
       }
     ]
   },
