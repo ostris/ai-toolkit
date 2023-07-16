@@ -44,8 +44,8 @@ class ExtractLoraProcess(BaseExtractProcess):
         print(f"Running process: {self.mode}, dim: {self.dim}")
 
         state_dict, extract_diff_meta = extract_diff(
-            self.job.base_model,
-            self.job.extract_model,
+            self.job.model_base,
+            self.job.model_extract,
             self.mode,
             self.dim,
             0,
@@ -54,6 +54,8 @@ class ExtractLoraProcess(BaseExtractProcess):
             self.sparsity,
             small_conv=False,
             linear_only=True,
+            extract_unet=self.extract_unet,
+            extract_text_encoder=self.extract_text_encoder
         )
 
         self.add_meta(extract_diff_meta)

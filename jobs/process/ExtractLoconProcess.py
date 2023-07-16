@@ -45,15 +45,17 @@ class ExtractLoconProcess(BaseExtractProcess):
         print(f"Running process: {self.mode}, lin: {self.linear_param}, conv: {self.conv_param}")
 
         state_dict, extract_diff_meta = extract_diff(
-            self.job.base_model,
-            self.job.extract_model,
+            self.job.model_base,
+            self.job.model_extract,
             self.mode,
             self.linear_param,
             self.conv_param,
             self.job.device,
             self.use_sparse_bias,
             self.sparsity,
-            not self.disable_cp
+            not self.disable_cp,
+            extract_unet=self.extract_unet,
+            extract_text_encoder=self.extract_text_encoder
         )
 
         self.add_meta(extract_diff_meta)

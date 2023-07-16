@@ -125,6 +125,8 @@ def extract_diff(
         sparsity=0.98,
         small_conv=True,
         linear_only=False,
+        extract_unet=True,
+        extract_text_encoder=True,
 ):
     meta = OrderedDict()
 
@@ -148,7 +150,15 @@ def extract_diff(
             "conv_out",
         ]
 
+    if not extract_unet:
+        UNET_TARGET_REPLACE_MODULE = []
+        UNET_TARGET_REPLACE_NAME = []
+
     TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
+
+    if not extract_text_encoder:
+        TEXT_ENCODER_TARGET_REPLACE_MODULE = []
+
     LORA_PREFIX_UNET = 'lora_unet'
     LORA_PREFIX_TEXT_ENCODER = 'lora_te'
 

@@ -30,6 +30,8 @@ class BaseExtractProcess(BaseProcess):
         self.config = config
         self.dtype = self.get_conf('dtype', self.job.dtype)
         self.torch_dtype = get_torch_dtype(self.dtype)
+        self.extract_unet = self.get_conf('extract_unet', self.job.extract_unet)
+        self.extract_text_encoder = self.get_conf('extract_text_encoder', self.job.extract_text_encoder)
 
     def run(self):
         # here instead of init because child init needs to go first
