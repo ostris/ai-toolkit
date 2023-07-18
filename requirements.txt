@@ -1,4 +1,5 @@
 torch
+torchvision
 safetensors
 diffusers
 transformers

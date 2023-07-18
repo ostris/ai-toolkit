@@ -10,6 +10,10 @@ def get_job(config_path):
     if job == 'extract':
         from jobs import ExtractJob
         return ExtractJob(config)
+    if job == 'train':
+        from jobs import TrainJob
+        return TrainJob(config)
+
     # elif job == 'train':
     #     from jobs import TrainJob
     #     return TrainJob(config)

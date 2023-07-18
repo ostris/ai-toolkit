@@ -13,9 +13,6 @@ class BaseTrainProcess(BaseProcess):
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
-        self.process_id = process_id
-        self.job = job
-        self.config = config
 
     def run(self):
         # implement in child class
