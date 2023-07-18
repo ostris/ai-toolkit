@@ -51,15 +51,20 @@ class ImageDataset(Dataset):
 
         # Downscale the source image first
         img = img.resize((int(img.size[0] * self.scale), int(img.size[1] * self.scale)), Image.BICUBIC)
+        min_img_size = min(img.size)
 
         if self.random_crop:
-            if self.random_scale:
-                scale_size = random.randint(int(img.size[0] * self.scale), self.resolution)
+            if self.random_scale and min_img_size > self.resolution:
+                if min_img_size < self.resolution:
+                    print(
+                        f"Unexpected values: min_img_size={min_img_size}, self.resolution={self.resolution}, image file={file}")
+                    scale_size = self.resolution
+                else:
+                    scale_size = random.randint(self.resolution, int(min_img_size))
                 img = img.resize((scale_size, scale_size), Image.BICUBIC)
             img = transforms.RandomCrop(self.resolution)(img)
         else:
-            min_dimension = min(img.size)
-            img = transforms.CenterCrop(min_dimension)(img)
+            img = transforms.CenterCrop(min_img_size)(img)
             img = img.resize((self.resolution, self.resolution), Image.BICUBIC)
 
         img = self.transform(img)
