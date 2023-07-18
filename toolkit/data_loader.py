@@ -4,6 +4,7 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 from torchvision import transforms
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 
 class ImageDataset(Dataset):
@@ -22,10 +23,17 @@ class ImageDataset(Dataset):
 
         # this might take a while
         print(f"  -  Preprocessing image dimensions")
-        self.file_list = [file for file in self.file_list if
-                          int(min(Image.open(file).size) * self.scale) >= self.resolution]
+        new_file_list = []
+        bad_count = 0
+        for file in tqdm(self.file_list):
+            img = Image.open(file)
+            if int(min(img.size) * self.scale) >= self.resolution:
+                new_file_list.append(file)
+            else:
+                bad_count += 1
 
         print(f"  -  Found {len(self.file_list)} images")
+        print(f"  -  Found {bad_count} images that are too small")
         assert len(self.file_list) > 0, f"no images found in {self.path}"
 
         self.transform = transforms.Compose([
