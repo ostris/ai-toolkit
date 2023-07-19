@@ -1,4 +1,5 @@
 import copy
+import glob
 import os
 import time
 from collections import OrderedDict
@@ -12,8 +13,9 @@ from torch import nn
 from torchvision.transforms import transforms
 
 from jobs.process import BaseTrainProcess
-from toolkit.kohya_model_util import load_vae
+from toolkit.kohya_model_util import load_vae, convert_diffusers_back_to_ldm
 from toolkit.data_loader import ImageDataset
+from toolkit.losses import ComparativeTotalVariation
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.style import get_style_model_and_losses
 from toolkit.train_tools import get_torch_dtype
@@ -57,7 +59,7 @@ class TrainVAEProcess(BaseTrainProcess):
         self.content_weight = self.get_conf('content_weight', 0)
         self.kld_weight = self.get_conf('kld_weight', 0)
         self.mse_weight = self.get_conf('mse_weight', 1e0)
-
+        self.tv_weight = self.get_conf('tv_weight', 1e0)
 
         self.blocks_to_train = self.get_conf('blocks_to_train', ['all'])
         self.writer = self.job.writer
@@ -114,7 +116,7 @@ class TrainVAEProcess(BaseTrainProcess):
 
     def setup_vgg19(self):
         if self.vgg_19 is None:
-            self.vgg_19, self.style_losses, self.content_losses = get_style_model_and_losses(
+            self.vgg_19, self.style_losses, self.content_losses, output = get_style_model_and_losses(
                 single_target=True, device=self.device)
             self.vgg_19.requires_grad_(False)
 
@@ -149,6 +151,15 @@ class TrainVAEProcess(BaseTrainProcess):
         else:
             return torch.tensor(0.0, device=self.device)
 
+    def get_tv_loss(self, pred, target):
+        if self.tv_weight > 0:
+            get_tv_loss = ComparativeTotalVariation()
+            loss = get_tv_loss(pred, target)
+            return loss
+        else:
+            return torch.tensor(0.0, device=self.device)
+
+
     def save(self, step=None):
         if not os.path.exists(self.save_root):
             os.makedirs(self.save_root, exist_ok=True)
@@ -162,7 +173,7 @@ class TrainVAEProcess(BaseTrainProcess):
         # prepare meta
         save_meta = get_meta_for_safetensors(self.meta, self.job.name)
 
-        state_dict = self.vae.state_dict()
+        state_dict = convert_diffusers_back_to_ldm(self.vae)
 
         for key in list(state_dict.keys()):
             v = state_dict[key]
@@ -219,6 +230,30 @@ class TrainVAEProcess(BaseTrainProcess):
                 filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
                 output_img.save(os.path.join(sample_folder, filename))
 
+    def load_vae(self):
+        path_to_load = self.vae_path
+        # see if we have a checkpoint in out output to resume from
+        self.print(f"Looking for latest checkpoint in {self.save_root}")
+        files = glob.glob(os.path.join(self.save_root, f"{self.job.name}*.safetensors"))
+        if files and len(files) > 0:
+            latest_file = max(files, key=os.path.getmtime)
+            print(f" - Latest checkpoint is: {latest_file}")
+            path_to_load = latest_file
+            # todo update step and epoch count
+        else:
+            self.print(f" - No checkpoint found, starting from scratch")
+        # load vae
+        self.print(f"Loading VAE")
+        self.print(f" - Loading VAE: {path_to_load}")
+        if self.vae is None:
+            self.vae = load_vae(path_to_load, dtype=self.torch_dtype)
+
+        # set decoder to train
+        self.vae.to(self.device, dtype=self.torch_dtype)
+        self.vae.requires_grad_(False)
+        self.vae.eval()
+        self.vae.decoder.train()
+
     def run(self):
         super().run()
         self.load_datasets()
@@ -241,16 +276,7 @@ class TrainVAEProcess(BaseTrainProcess):
         self.print(f" - Max steps: {self.max_steps}")
 
         # load vae
-        self.print(f"Loading VAE")
-        self.print(f" - Loading VAE: {self.vae_path}")
-        if self.vae is None:
-            self.vae = load_vae(self.vae_path, dtype=self.torch_dtype)
-
-        # set decoder to train
-        self.vae.to(self.device, dtype=self.torch_dtype)
-        self.vae.requires_grad_(False)
-        self.vae.eval()
-        self.vae.decoder.train()
+        self.load_vae()
 
         params = []
 
@@ -260,18 +286,22 @@ class TrainVAEProcess(BaseTrainProcess):
 
         train_all = 'all' in self.blocks_to_train
 
-        # mid_block
-        if train_all or 'mid_block' in self.blocks_to_train:
-            params += list(self.vae.decoder.mid_block.parameters())
-            self.vae.decoder.mid_block.requires_grad_(True)
-        # up_blocks
-        if train_all or 'up_blocks' in self.blocks_to_train:
-            params += list(self.vae.decoder.up_blocks.parameters())
-            self.vae.decoder.up_blocks.requires_grad_(True)
-        # conv_out (single conv layer output)
-        if train_all or 'conv_out' in self.blocks_to_train:
-            params += list(self.vae.decoder.conv_out.parameters())
-            self.vae.decoder.conv_out.requires_grad_(True)
+        if train_all:
+            params = list(self.vae.decoder.parameters())
+            self.vae.decoder.requires_grad_(True)
+        else:
+            # mid_block
+            if train_all or 'mid_block' in self.blocks_to_train:
+                params += list(self.vae.decoder.mid_block.parameters())
+                self.vae.decoder.mid_block.requires_grad_(True)
+            # up_blocks
+            if train_all or 'up_blocks' in self.blocks_to_train:
+                params += list(self.vae.decoder.up_blocks.parameters())
+                self.vae.decoder.up_blocks.requires_grad_(True)
+            # conv_out (single conv layer output)
+            if train_all or 'conv_out' in self.blocks_to_train:
+                params += list(self.vae.decoder.conv_out.parameters())
+                self.vae.decoder.conv_out.requires_grad_(True)
 
         if self.style_weight > 0 or self.content_weight > 0:
             self.setup_vgg19()
@@ -305,7 +335,8 @@ class TrainVAEProcess(BaseTrainProcess):
             "style": [],
             "content": [],
             "mse": [],
-            "kl": []
+            "kl": [],
+            "tv": [],
         })
         epoch_losses = copy.deepcopy(blank_losses)
         log_losses = copy.deepcopy(blank_losses)
@@ -337,8 +368,9 @@ class TrainVAEProcess(BaseTrainProcess):
                 content_loss = self.get_content_loss() * self.content_weight
                 kld_loss = self.get_kld_loss(mu, logvar) * self.kld_weight
                 mse_loss = self.get_mse_loss(pred, batch) * self.mse_weight
+                tv_loss = self.get_tv_loss(pred, batch) * self.tv_weight
 
-                loss = style_loss + content_loss + kld_loss + mse_loss
+                loss = style_loss + content_loss + kld_loss + mse_loss + tv_loss
 
                 # Backward pass and optimization
                 optimizer.zero_grad()
@@ -358,6 +390,8 @@ class TrainVAEProcess(BaseTrainProcess):
                     loss_string += f" kld: {kld_loss.item():.2e}"
                 if self.mse_weight > 0:
                     loss_string += f" mse: {mse_loss.item():.2e}"
+                if self.tv_weight > 0:
+                    loss_string += f" tv: {tv_loss.item():.2e}"
 
                 learning_rate = optimizer.param_groups[0]['lr']
                 self.progress_bar.set_postfix_str(f"LR: {learning_rate:.2e} {loss_string}")
@@ -369,12 +403,14 @@ class TrainVAEProcess(BaseTrainProcess):
                 epoch_losses["content"].append(content_loss.item())
                 epoch_losses["mse"].append(mse_loss.item())
                 epoch_losses["kl"].append(kld_loss.item())
+                epoch_losses["tv"].append(tv_loss.item())
 
                 log_losses["total"].append(loss_value)
                 log_losses["style"].append(style_loss.item())
                 log_losses["content"].append(content_loss.item())
                 log_losses["mse"].append(mse_loss.item())
                 log_losses["kl"].append(kld_loss.item())
+                log_losses["tv"].append(tv_loss.item())
 
                 if step != 0:
                     if self.sample_every and step % self.sample_every == 0:
