@@ -17,11 +17,23 @@ class BaseProcess:
         self.job = job
         self.config = config
         self.meta = copy.deepcopy(self.job.meta)
+        print(json.dumps(self.config, indent=4))
 
     def get_conf(self, key, default=None, required=False, as_type=None):
-        if key in self.config:
-            value = self.config[key]
-            if as_type is not None and value is not None:
+        # split key by '.' and recursively get the value
+        keys = key.split('.')
+
+        # see if it exists in the config
+        value = self.config
+        for subkey in keys:
+            if subkey in value:
+                value = value[subkey]
+            else:
+                value = None
+                break
+
+        if value is not None:
+            if as_type is not None:
                 value = as_type(value)
             return value
         elif required:

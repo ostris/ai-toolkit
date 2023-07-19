@@ -13,6 +13,16 @@ def get_meta_for_safetensors(meta: OrderedDict, name=None) -> OrderedDict:
     # safetensors can only be one level deep
     for key, value in save_meta.items():
         # if not float, int, bool, or str, convert to json string
-        if not isinstance(value, (float, int, bool, str)):
+        if not isinstance(value, str):
             save_meta[key] = json.dumps(value)
     return save_meta
+
+
+def parse_metadata_from_safetensors(meta: OrderedDict) -> OrderedDict:
+    parsed_meta = OrderedDict()
+    for key, value in meta.items():
+        try:
+            parsed_meta[key] = json.loads(value)
+        except json.decoder.JSONDecodeError:
+            parsed_meta[key] = value
+    return meta

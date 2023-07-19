@@ -1,8 +1,11 @@
+import os
+
 from jobs import BaseJob
 from toolkit.kohya_model_util import load_models_from_stable_diffusion_checkpoint
 from collections import OrderedDict
 from typing import List
 from jobs.process import BaseExtractProcess, TrainFineTuneProcess
+from datetime import datetime
 
 from toolkit.paths import REPOS_ROOT
 
@@ -45,7 +48,8 @@ class TrainJob(BaseJob):
     def setup_tensorboard(self):
         if self.log_dir:
             from torch.utils.tensorboard import SummaryWriter
-            self.writer = SummaryWriter(
-                log_dir=self.log_dir,
-                filename_suffix=f"_{self.name}"
-            )
+            now = datetime.now()
+            time_str = now.strftime('%Y%m%d-%H%M%S')
+            summary_name = f"{self.name}_{time_str}"
+            summary_dir = os.path.join(self.log_dir, summary_name)
+            self.writer = SummaryWriter(summary_dir)

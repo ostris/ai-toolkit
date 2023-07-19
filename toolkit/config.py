@@ -1,6 +1,7 @@
 import os
 import json
 import oyaml as yaml
+import re
 from collections import OrderedDict
 
 from toolkit.paths import TOOLKIT_ROOT
@@ -29,6 +30,20 @@ def preprocess_config(config: OrderedDict):
     return config
 
 
+
+# Fixes issue where yaml doesnt load exponents correctly
+fixed_loader = yaml.SafeLoader
+fixed_loader.add_implicit_resolver(
+    u'tag:yaml.org,2002:float',
+    re.compile(u'''^(?:
+     [-+]?(?:[0-9][0-9_]*)\\.[0-9_]*(?:[eE][-+]?[0-9]+)?
+    |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
+    |\\.[0-9_]+(?:[eE][-+][0-9]+)?
+    |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*
+    |[-+]?\\.(?:inf|Inf|INF)
+    |\\.(?:nan|NaN|NAN))$''', re.X),
+    list(u'-+0123456789.'))
+
 def get_config(config_file_path):
     # first check if it is in the config folder
     config_path = os.path.join(TOOLKIT_ROOT, 'config', config_file_path)
@@ -56,7 +71,7 @@ def get_config(config_file_path):
             config = json.load(f, object_pairs_hook=OrderedDict)
     elif real_config_path.endswith('.yaml') or real_config_path.endswith('.yml'):
         with open(real_config_path, 'r') as f:
-            config = yaml.load(f, Loader=yaml.FullLoader)
+            config = yaml.load(f, Loader=fixed_loader)
     else:
         raise ValueError(f"Config file {config_file_path} must be a json or yaml file")
 
