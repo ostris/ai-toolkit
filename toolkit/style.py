@@ -121,8 +121,9 @@ class Normalization(nn.Module):
         # normalize to min and max of 0 - 1
         in_min = torch.min(stacked_input)
         in_max = torch.max(stacked_input)
-        norm_stacked_input = (stacked_input - in_min) / (in_max - in_min)
-        return (norm_stacked_input - self.mean) / self.std
+        # norm_stacked_input = (stacked_input - in_min) / (in_max - in_min)
+        # return (norm_stacked_input - self.mean) / self.std
+        return (stacked_input - self.mean) / self.std
 
 
 def get_style_model_and_losses(

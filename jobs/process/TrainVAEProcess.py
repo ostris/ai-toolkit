@@ -45,21 +45,22 @@ class TrainVAEProcess(BaseTrainProcess):
         self.vae_path = self.get_conf('vae_path', required=True)
         self.datasets_objects = self.get_conf('datasets', required=True)
         self.training_folder = self.get_conf('training_folder', self.job.training_folder)
-        self.batch_size = self.get_conf('batch_size', 1)
-        self.resolution = self.get_conf('resolution', 256)
-        self.learning_rate = self.get_conf('learning_rate', 1e-6)
+        self.batch_size = self.get_conf('batch_size', 1, as_type=int)
+        self.resolution = self.get_conf('resolution', 256, as_type=int)
+        self.learning_rate = self.get_conf('learning_rate', 1e-6, as_type=float)
         self.sample_every = self.get_conf('sample_every', None)
-        self.epochs = self.get_conf('epochs', None)
-        self.max_steps = self.get_conf('max_steps', None)
+        self.optimizer_type = self.get_conf('optimizer', 'adam')
+        self.epochs = self.get_conf('epochs', None, as_type=int)
+        self.max_steps = self.get_conf('max_steps', None, as_type=int)
         self.save_every = self.get_conf('save_every', None)
         self.dtype = self.get_conf('dtype', 'float32')
         self.sample_sources = self.get_conf('sample_sources', None)
-        self.log_every = self.get_conf('log_every', 100)
-        self.style_weight = self.get_conf('style_weight', 0)
-        self.content_weight = self.get_conf('content_weight', 0)
-        self.kld_weight = self.get_conf('kld_weight', 0)
-        self.mse_weight = self.get_conf('mse_weight', 1e0)
-        self.tv_weight = self.get_conf('tv_weight', 1e0)
+        self.log_every = self.get_conf('log_every', 100, as_type=int)
+        self.style_weight = self.get_conf('style_weight', 0, as_type=float)
+        self.content_weight = self.get_conf('content_weight', 0, as_type=float)
+        self.kld_weight = self.get_conf('kld_weight', 0, as_type=float)
+        self.mse_weight = self.get_conf('mse_weight', 1e0, as_type=float)
+        self.tv_weight = self.get_conf('tv_weight', 1e0, as_type=float)
 
         self.blocks_to_train = self.get_conf('blocks_to_train', ['all'])
         self.writer = self.job.writer
@@ -309,7 +310,12 @@ class TrainVAEProcess(BaseTrainProcess):
             self.vgg_19.eval()
 
         # todo allow other optimizers
-        optimizer = torch.optim.Adam(params, lr=self.learning_rate)
+        if self.optimizer_type == 'dadaptation':
+            import dadaptation
+            print("Using DAdaptAdam optimizer")
+            optimizer = dadaptation.DAdaptAdam(params, lr=1)
+        else:
+            optimizer = torch.optim.Adam(params, lr=float(self.learning_rate))
 
         # setup scheduler
         # todo allow other schedulers
@@ -393,7 +399,13 @@ class TrainVAEProcess(BaseTrainProcess):
                 if self.tv_weight > 0:
                     loss_string += f" tv: {tv_loss.item():.2e}"
 
-                learning_rate = optimizer.param_groups[0]['lr']
+                if self.optimizer_type.startswith('dadaptation'):
+                    learning_rate = (
+                            optimizer.param_groups[0]["d"] *
+                            optimizer.param_groups[0]["lr"]
+                    )
+                else:
+                    learning_rate = optimizer.param_groups[0]['lr']
                 self.progress_bar.set_postfix_str(f"LR: {learning_rate:.2e} {loss_string}")
                 self.progress_bar.set_description(f"E: {epoch}")
                 self.progress_bar.update(1)

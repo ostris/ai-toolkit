@@ -1,10 +1,11 @@
 import os
 import json
+import oyaml as yaml
 from collections import OrderedDict
 
 from toolkit.paths import TOOLKIT_ROOT
 
-possible_extensions = ['.json', '.jsonc']
+possible_extensions = ['.json', '.jsonc', '.yaml', '.yml']
 
 
 def get_cwd_abs_path(path):
@@ -49,8 +50,14 @@ def get_config(config_file_path):
     if not real_config_path:
         raise ValueError(f"Could not find config file {config_file_path}")
 
-    # load the config
-    with open(real_config_path, 'r') as f:
-        config = json.load(f, object_pairs_hook=OrderedDict)
+    # if we found it, check if it is a json or yaml file
+    if real_config_path.endswith('.json') or real_config_path.endswith('.jsonc'):
+        with open(real_config_path, 'r') as f:
+            config = json.load(f, object_pairs_hook=OrderedDict)
+    elif real_config_path.endswith('.yaml') or real_config_path.endswith('.yml'):
+        with open(real_config_path, 'r') as f:
+            config = yaml.load(f, Loader=yaml.FullLoader)
+    else:
+        raise ValueError(f"Config file {config_file_path} must be a json or yaml file")
 
     return preprocess_config(config)

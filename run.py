@@ -27,7 +27,7 @@ def main():
         'config_file_list',
         nargs='+',
         type=str,
-        help='Name of config file (eg: person_v1 for config/person_v1.json), or full path if it is not in config folder, you can pass multiple config files and run them all sequentially'
+        help='Name of config file (eg: person_v1 for config/person_v1.json/yaml), or full path if it is not in config folder, you can pass multiple config files and run them all sequentially'
     )
 
     # flag to continue if failed job

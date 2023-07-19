@@ -26,7 +26,7 @@ class TrainJob(BaseJob):
         self.device = self.get_conf('device', 'cpu')
         self.gradient_accumulation_steps = self.get_conf('gradient_accumulation_steps', 1)
         self.mixed_precision = self.get_conf('mixed_precision', False)  # fp16
-        self.logging_dir = self.get_conf('logging_dir', None)
+        self.log_dir = self.get_conf('log_dir', None)
 
         self.writer = None
         self.setup_tensorboard()
@@ -43,9 +43,9 @@ class TrainJob(BaseJob):
             process.run()
 
     def setup_tensorboard(self):
-        if self.logging_dir:
+        if self.log_dir:
             from torch.utils.tensorboard import SummaryWriter
             self.writer = SummaryWriter(
-                log_dir=self.logging_dir,
+                log_dir=self.log_dir,
                 filename_suffix=f"_{self.name}"
             )
