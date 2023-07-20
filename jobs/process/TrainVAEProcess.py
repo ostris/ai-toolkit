@@ -196,6 +196,7 @@ class TrainVAEProcess(BaseTrainProcess):
         self.mse_weight = self.get_conf('mse_weight', 1e0, as_type=float)
         self.tv_weight = self.get_conf('tv_weight', 1e0, as_type=float)
         self.critic_weight = self.get_conf('critic_weight', 1, as_type=float)
+        self.first_step = 0
 
         self.blocks_to_train = self.get_conf('blocks_to_train', ['all'])
         self.writer = self.job.writer
@@ -462,6 +463,7 @@ class TrainVAEProcess(BaseTrainProcess):
         self.max_steps = num_steps
         self.epochs = num_epochs
         start_step = self.step_num
+        self.first_step = start_step
 
         self.print(f"Training VAE")
         self.print(f" - Training folder: {self.training_folder}")
