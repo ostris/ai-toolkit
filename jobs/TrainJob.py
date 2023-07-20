@@ -15,7 +15,7 @@ sys.path.append(REPOS_ROOT)
 
 process_dict = {
     'vae': 'TrainVAEProcess',
-    'finetune': 'TrainFineTuneProcess'
+    'slider': 'TrainSliderProcess',
 }
 
 
@@ -27,8 +27,8 @@ class TrainJob(BaseJob):
         self.training_folder = self.get_conf('training_folder', required=True)
         self.is_v2 = self.get_conf('is_v2', False)
         self.device = self.get_conf('device', 'cpu')
-        self.gradient_accumulation_steps = self.get_conf('gradient_accumulation_steps', 1)
-        self.mixed_precision = self.get_conf('mixed_precision', False)  # fp16
+        # self.gradient_accumulation_steps = self.get_conf('gradient_accumulation_steps', 1)
+        # self.mixed_precision = self.get_conf('mixed_precision', False)  # fp16
         self.log_dir = self.get_conf('log_dir', None)
 
         self.writer = None
