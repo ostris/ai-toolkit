@@ -178,7 +178,6 @@ class TrainVAEProcess(BaseTrainProcess):
         self.device = self.get_conf('device', self.job.device)
         self.vae_path = self.get_conf('vae_path', required=True)
         self.datasets_objects = self.get_conf('datasets', required=True)
-        self.training_folder = self.get_conf('training_folder', self.job.training_folder)
         self.batch_size = self.get_conf('batch_size', 1, as_type=int)
         self.resolution = self.get_conf('resolution', 256, as_type=int)
         self.learning_rate = self.get_conf('learning_rate', 1e-6, as_type=float)
@@ -197,14 +196,10 @@ class TrainVAEProcess(BaseTrainProcess):
         self.tv_weight = self.get_conf('tv_weight', 1e0, as_type=float)
         self.critic_weight = self.get_conf('critic_weight', 1, as_type=float)
         self.pattern_weight = self.get_conf('pattern_weight', 1, as_type=float)
-        self.first_step = 0
 
         self.blocks_to_train = self.get_conf('blocks_to_train', ['all'])
-        self.writer = self.job.writer
         self.torch_dtype = get_torch_dtype(self.dtype)
-        self.save_root = os.path.join(self.training_folder, self.job.name)
         self.vgg_19 = None
-        self.progress_bar = None
         self.style_weight_scalers = []
         self.content_weight_scalers = []
 
@@ -253,13 +248,6 @@ class TrainVAEProcess(BaseTrainProcess):
             'epoch': self.epoch_num,
         })
         return info
-
-    def print(self, message, **kwargs):
-        if self.progress_bar is not None:
-            self.progress_bar.write(message, **kwargs)
-            self.progress_bar.update()
-        else:
-            print(message, **kwargs)
 
     def load_datasets(self):
         if self.data_loader is None:

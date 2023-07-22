@@ -83,3 +83,5 @@ class PatternLoss(torch.nn.Module):
         g_chan_loss = torch.abs(separated_chan_loss(g_chans) - separated_chan_loss(g_chans_target))
         b_chan_loss = torch.abs(separated_chan_loss(b_chans) - separated_chan_loss(b_chans_target))
         return (r_chan_loss + g_chan_loss + b_chan_loss) * 0.3333
+
+

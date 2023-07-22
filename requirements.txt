@@ -9,3 +9,4 @@ accelerator
 pyyaml
 oyaml
 tensorboard
+kornia
