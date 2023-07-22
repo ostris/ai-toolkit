@@ -369,3 +369,11 @@ def sample_images(
     if cuda_rng_state is not None:
         torch.cuda.set_rng_state(cuda_rng_state)
     vae.to(org_vae_device)
+
+
+# https://www.crosslabs.org//blog/diffusion-with-offset-noise
+def apply_noise_offset(noise, noise_offset):
+    if noise_offset is None or noise_offset < 0.0000001:
+        return noise
+    noise = noise + noise_offset * torch.randn((noise.shape[0], noise.shape[1], 1, 1), device=noise.device)
+    return noise
