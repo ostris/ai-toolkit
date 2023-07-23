@@ -158,9 +158,10 @@ config:
             # negative is the prompt for the negative side of the slider and works the same as positive
             # it does not necessarily work the same as a negative prompt when generating images
             negative: "dog"
-            # LoRA weight to train this target. I recommend 1.0. Just leave it, it won't work
-            # how you expect if you change it
-            multiplier: 1.0
+            # the loss for this target is multiplied by this number.
+            # if you are doing more than one target it may be good to set less important ones
+            # to a lower number like 0.1 so they dont outweigh the primary target
+            weight: 1.0
 
 # You can put any information you want here, and it will be saved in the model.
 # The below is an example, but you can put your grocery list in it if you want.
