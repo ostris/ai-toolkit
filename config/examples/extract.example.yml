@@ -47,7 +47,8 @@ config:
   - type: lora  # traditional lora extraction (lierla) with linear layers only
     filename: "[name]_4.safetensors"
     mode: fixed  # fixed, ratio, quantile supported for lora as well
-    linear: 4
+    linear: 4 # lora dim or rank
+    # no conv for lora
 
   # process 5
   - type: lora

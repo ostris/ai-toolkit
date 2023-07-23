@@ -33,7 +33,7 @@ config:
         # how many steps to train. More is not always better. I rarely go over 1000
         steps: 500
         # I have had good results with 4e-4 to 1e-4 at 500 steps
-        lr: 2e-4
+        lr: 1e-4
         # train the unet. I recommend leaving this true
         train_unet: true
         # train the text encoder. I don't recommend this unless you have a special use case
@@ -70,7 +70,7 @@ config:
       # saving config
       save:
         dtype: float16 # precision to save. I recommend float16
-        save_every: 100 # save every this many steps
+        save_every: 50 # save every this many steps
 
       # sampling config
       sample:
@@ -90,7 +90,7 @@ config:
         #  --n [string]  # negative prompt, will inherit sample.neg if not set
 
         # Only 75 tokens allowed currently
-        prompts:
+        prompts:  # our example is an animal slider, neg: dog, pos: cat
           - "a golden retriever --m -5"
           - "a golden retriever --m -3"
           - "a golden retriever --m 3"
@@ -99,6 +99,10 @@ config:
           - "calico cat --m -3"
           - "calico cat --m 3"
           - "calico cat --m 5"
+          - "an elephant --m -5"
+          - "an elephant --m -3"
+          - "an elephant --m 3"
+          - "an elephant --m 5"
         # negative prompt used on all prompts above as default if they don't have one
         neg: "cartoon, fake, drawing, illustration, cgi, animated, anime, monochrome"
         # seed for sampling. 42 is the answer for everything
