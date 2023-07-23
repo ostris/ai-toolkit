@@ -169,3 +169,5 @@ cython_debug/
 /config/*
 !/config/examples
 !/config/_PUT_YOUR_CONFIGS_HERE).txt
+/output/*
+!/output/.gitkeep
