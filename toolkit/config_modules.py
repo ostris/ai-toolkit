@@ -71,9 +71,19 @@ class SliderTargetConfig:
         self.weight: float = kwargs.get('weight', 1.0)
 
 
+class SliderConfigAnchors:
+    def __init__(self, **kwargs):
+        self.prompt = kwargs.get('prompt', '')
+        self.neg_prompt = kwargs.get('neg_prompt', '')
+        self.multiplier = kwargs.get('multiplier', 1.0)
+
+
 class SliderConfig:
     def __init__(self, **kwargs):
         targets = kwargs.get('targets', [])
         targets = [SliderTargetConfig(**target) for target in targets]
         self.targets: List[SliderTargetConfig] = targets
+        anchors = kwargs.get('anchors', [])
+        anchors = [SliderConfigAnchors(**anchor) for anchor in anchors]
+        self.anchors: List[SliderConfigAnchors] = anchors
         self.resolutions: List[List[int]] = kwargs.get('resolutions', [[512, 512]])

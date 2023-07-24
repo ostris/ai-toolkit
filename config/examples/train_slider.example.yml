@@ -163,6 +163,25 @@ config:
             # to a lower number like 0.1 so they dont outweigh the primary target
             weight: 1.0
 
+        # anchors are prompts that wer try to hold on to while training the slider
+        # you want these to generate an image very similar to the target_class
+        # without directly overlapping it. For example, if you are training on a person smiling,
+        # you would use "a person with a face mask" as an anchor. It is a person, the image is the same
+        # regardless if they are smiling or not
+        anchors:
+          # only positive prompt for now
+          - prompt: "a woman"
+            neg_prompt: "animal"
+            # the multiplier applied to the LoRA when this is run.
+            # higher will give it more weight but also help keep the lora from collapsing
+            multiplier: 8.0
+          - prompt: "a man"
+            neg_prompt: "animal"
+            multiplier: 8.0
+          - prompt: "a person"
+            neg_prompt: "animal"
+            multiplier: 8.0
+
 # You can put any information you want here, and it will be saved in the model.
 # The below is an example, but you can put your grocery list in it if you want.
 # It is saved in the model so be aware of that. The software will include this

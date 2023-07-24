@@ -104,8 +104,18 @@ Just went in and out. It is much worse on smaller faces than shown here.
 
 <img src="https://raw.githubusercontent.com/ostris/ai-toolkit/main/assets/VAE_test1.jpg" width="768" height="auto"> 
 
+---
+
 ## TODO
-- [ ] Add proper regs on sliders
+- [X] Add proper regs on sliders
 - [ ] Add SDXL support (base model only for now)
 - [ ] Add plain erasing
 - [ ] Make Textual inversion network trainer (network that spits out TI embeddings)
+
+---
+
+## Change Log
+#### 2021-07-30
+Added "anchors" to the slider trainer. This allows you to set a prompt that will be used as a 
+regularizer. You can set the network multiplier to force spread consistency at high weights
+
