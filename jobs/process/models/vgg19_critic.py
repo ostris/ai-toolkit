@@ -21,11 +21,11 @@ class Vgg19Critic(nn.Module):
         super(Vgg19Critic, self).__init__()
         self.main = nn.Sequential(
             # input (bs, 512, 32, 32)
-            nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(512, 1024, kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(0.2),  # (bs, 512, 16, 16)
-            nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(0.2),  # (bs, 512, 8, 8)
-            nn.Conv2d(512, 1, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
             # (bs, 1, 4, 4)
             MeanReduce(),  # (bs, 1, 1, 1)
             nn.Flatten(),  # (bs, 1)
