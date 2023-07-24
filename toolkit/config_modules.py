@@ -65,8 +65,8 @@ class ModelConfig:
 class SliderTargetConfig:
     def __init__(self, **kwargs):
         self.target_class: str = kwargs.get('target_class', '')
-        self.positive: str = kwargs.get('positive', None)
-        self.negative: str = kwargs.get('negative', None)
+        self.positive: str = kwargs.get('positive', '')
+        self.negative: str = kwargs.get('negative', '')
         self.multiplier: float = kwargs.get('multiplier', 1.0)
         self.weight: float = kwargs.get('weight', 1.0)
 
