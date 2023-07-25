@@ -2,7 +2,6 @@ import time
 from collections import OrderedDict
 import os
 
-from leco.train_util import predict_noise
 from toolkit.kohya_model_util import load_vae
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.optimizer import get_optimizer
@@ -12,7 +11,7 @@ import sys
 sys.path.append(REPOS_ROOT)
 sys.path.append(os.path.join(REPOS_ROOT, 'leco'))
 
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 
 from jobs.process import BaseTrainProcess
 from toolkit.metadata import get_meta_for_safetensors
@@ -24,6 +23,7 @@ from tqdm import tqdm
 
 from leco import train_util, model_util
 from toolkit.config_modules import SaveConfig, LogingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig
+from toolkit.stable_diffusion_model import StableDiffusion, PromptEmbeds
 
 
 def flush():
@@ -33,15 +33,6 @@ def flush():
 
 UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。
 VAE_SCALE_FACTOR = 8  # 2 ** (len(vae.config.block_out_channels) - 1) = 8
-
-
-class StableDiffusion:
-    def __init__(self, vae, tokenizer, text_encoder, unet, noise_scheduler):
-        self.vae = vae
-        self.tokenizer = tokenizer
-        self.text_encoder = text_encoder
-        self.unet = unet
-        self.noise_scheduler = noise_scheduler
 
 
 class BaseSDTrainProcess(BaseTrainProcess):
@@ -80,26 +71,44 @@ class BaseSDTrainProcess(BaseTrainProcess):
         original_device_dict = {
             'vae': self.sd.vae.device,
             'unet': self.sd.unet.device,
-            'text_encoder': self.sd.text_encoder.device,
             # 'tokenizer': self.sd.tokenizer.device,
         }
 
+        # handle sdxl text encoder
+        if isinstance(self.sd.text_encoder, list):
+            for encoder, i in zip(self.sd.text_encoder, range(len(self.sd.text_encoder))):
+                original_device_dict[f'text_encoder_{i}'] = encoder.device
+                encoder.to(self.device_torch)
+        else:
+            original_device_dict['text_encoder'] = self.sd.text_encoder.device
+            self.sd.text_encoder.to(self.device_torch)
+
         self.sd.vae.to(self.device_torch)
         self.sd.unet.to(self.device_torch)
-        self.sd.text_encoder.to(self.device_torch)
+        # self.sd.text_encoder.to(self.device_torch)
         # self.sd.tokenizer.to(self.device_torch)
         # TODO add clip skip
-
-        pipeline = StableDiffusionPipeline(
-            vae=self.sd.vae,
-            unet=self.sd.unet,
-            text_encoder=self.sd.text_encoder,
-            tokenizer=self.sd.tokenizer,
-            scheduler=self.sd.noise_scheduler,
-            safety_checker=None,
-            feature_extractor=None,
-            requires_safety_checker=False,
-        )
+        if self.sd.is_xl:
+            pipeline = StableDiffusionXLPipeline(
+                vae=self.sd.vae,
+                unet=self.sd.unet,
+                text_encoder=self.sd.text_encoder[0],
+                text_encoder_2=self.sd.text_encoder[1],
+                tokenizer=self.sd.tokenizer[0],
+                tokenizer_2=self.sd.tokenizer[1],
+                scheduler=self.sd.noise_scheduler,
+            )
+        else:
+            pipeline = StableDiffusionPipeline(
+                vae=self.sd.vae,
+                unet=self.sd.unet,
+                text_encoder=self.sd.text_encoder,
+                tokenizer=self.sd.tokenizer,
+                scheduler=self.sd.noise_scheduler,
+                safety_checker=None,
+                feature_extractor=None,
+                requires_safety_checker=False,
+            )
         # disable progress bar
         pipeline.set_progress_bar_config(disable=True)
 
@@ -118,7 +127,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             'multiplier': self.network.multiplier,
                         })
 
-                for i in tqdm(range(len(self.sample_config.prompts)), desc=f"Generating Samples - step: {step}", leave=False):
+                for i in tqdm(range(len(self.sample_config.prompts)), desc=f"Generating Samples - step: {step}",
+                              leave=False):
                     raw_prompt = self.sample_config.prompts[i]
 
                     neg = self.sample_config.neg
@@ -180,7 +190,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         self.sd.vae.to(original_device_dict['vae'])
         self.sd.unet.to(original_device_dict['unet'])
-        self.sd.text_encoder.to(original_device_dict['text_encoder'])
+        if isinstance(self.sd.text_encoder, list):
+            for encoder, i in zip(self.sd.text_encoder, range(len(self.sd.text_encoder))):
+                encoder.to(original_device_dict[f'text_encoder_{i}'])
+        else:
+            self.sd.text_encoder.to(original_device_dict['text_encoder'])
         if self.network is not None:
             self.network.train()
             self.network.multiplier = start_multiplier
@@ -267,23 +281,90 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # return loss
         return 0.0
 
-    # ref: https://github.com/huggingface/diffusers/blob/0bab447670f47c28df60fbd2f6a0f833f75a16f5/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L746
-    def diffuse_some_steps(
+    def get_time_ids_from_latents(self, latents):
+        bs, ch, h, w = list(latents.shape)
+
+        height = h * VAE_SCALE_FACTOR
+        width = w * VAE_SCALE_FACTOR
+
+        dtype = get_torch_dtype(self.train_config.dtype)
+
+        if self.sd.is_xl:
+            prompt_ids = train_util.get_add_time_ids(
+                height,
+                width,
+                dynamic_crops=False,  # look into this
+                dtype=dtype,
+            ).to(self.device_torch, dtype=dtype)
+            return train_util.concat_embeddings(
+                prompt_ids, prompt_ids, bs
+            )
+        else:
+            return None
+
+    def predict_noise(
             self,
             latents: torch.FloatTensor,
-            text_embeddings: torch.FloatTensor,
-            total_timesteps: int = 1000,
-            start_timesteps=0,
+            text_embeddings: PromptEmbeds,
+            timestep: int,
+            guidance_scale=7.5,
+            guidance_rescale=0.7,
+            add_time_ids=None,
             **kwargs,
     ):
-
-        for timestep in tqdm(self.sd.noise_scheduler.timesteps[start_timesteps:total_timesteps], leave=False):
-            noise_pred = train_util.predict_noise(
-                self.sd.unet, self.sd.noise_scheduler, timestep, latents, text_embeddings, **kwargs
+        if self.sd.is_xl:
+            if add_time_ids is None:
+                add_time_ids = self.get_time_ids_from_latents(latents)
+            # todo LECOs code looks like it is omitting noise_pred
+            noise_pred = train_util.predict_noise_xl(
+                self.sd.unet,
+                self.sd.noise_scheduler,
+                timestep,
+                latents,
+                text_embeddings.text_embeds,
+                text_embeddings.pooled_embeds,
+                add_time_ids,
+                guidance_scale=guidance_scale,
+                guidance_rescale=guidance_rescale
             )
 
             # compute the previous noisy sample x_t -> x_t-1
             latents = self.sd.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
+        else:
+            noise_pred = train_util.predict_noise(
+                self.sd.unet,
+                self.sd.noise_scheduler,
+                timestep,
+                latents,
+                text_embeddings.text_embeds,
+                guidance_scale=guidance_scale
+            )
+
+            # compute the previous noisy sample x_t -> x_t-1
+            latents = self.sd.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
+        return latents
+
+    # ref: https://github.com/huggingface/diffusers/blob/0bab447670f47c28df60fbd2f6a0f833f75a16f5/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L746
+    def diffuse_some_steps(
+            self,
+            latents: torch.FloatTensor,
+            text_embeddings: PromptEmbeds,
+            total_timesteps: int = 1000,
+            start_timesteps=0,
+            guidance_scale=1,
+            add_time_ids=None,
+            **kwargs,
+    ):
+
+        for timestep in tqdm(self.sd.noise_scheduler.timesteps[start_timesteps:total_timesteps], leave=False):
+            latents = self.predict_noise(
+                latents,
+                text_embeddings,
+                timestep,
+                guidance_scale=guidance_scale,
+                add_time_ids=add_time_ids,
+                **kwargs,
+            )
 
         # return latents_steps
         return latents
@@ -296,20 +377,35 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         dtype = get_torch_dtype(self.train_config.dtype)
 
-        tokenizer, text_encoder, unet, noise_scheduler = model_util.load_models(
-            self.model_config.name_or_path,
-            scheduler_name=self.train_config.noise_scheduler,
-            v2=self.model_config.is_v2,
-            v_pred=self.model_config.is_v_pred,
-        )
+        if self.model_config.is_xl:
+            tokenizer, text_encoders, unet, noise_scheduler = model_util.load_models_xl(
+                self.model_config.name_or_path,
+                scheduler_name=self.train_config.noise_scheduler,
+                weight_dtype=dtype,
+            )
+
+            for text_encoder in text_encoders:
+                text_encoder.to(self.device_torch, dtype=dtype)
+                text_encoder.requires_grad_(False)
+                text_encoder.eval()
+
+            text_encoder = text_encoders
+        else:
+            tokenizer, text_encoder, unet, noise_scheduler = model_util.load_models(
+                self.model_config.name_or_path,
+                scheduler_name=self.train_config.noise_scheduler,
+                v2=self.model_config.is_v2,
+                v_pred=self.model_config.is_v_pred,
+            )
+
+            text_encoder.to(self.device_torch, dtype=dtype)
+            text_encoder.eval()
+
         # just for now or of we want to load a custom one
         # put on cpu for now, we only need it when sampling
         vae = load_vae(self.model_config.name_or_path, dtype=dtype).to('cpu', dtype=dtype)
         vae.eval()
-        self.sd = StableDiffusion(vae, tokenizer, text_encoder, unet, noise_scheduler)
-
-        text_encoder.to(self.device_torch, dtype=dtype)
-        text_encoder.eval()
+        self.sd = StableDiffusion(vae, tokenizer, text_encoder, unet, noise_scheduler, is_xl=self.model_config.is_xl)
 
         unet.to(self.device_torch, dtype=dtype)
         if self.train_config.xformers:
@@ -323,7 +419,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 unet=unet,
                 lora_dim=self.network_config.rank,
                 multiplier=1.0,
-                alpha=self.network_config.alpha
+                alpha=self.network_config.alpha,
+                train_unet=self.train_config.train_unet,
+                train_text_encoder=self.train_config.train_text_encoder,
             )
 
             self.network.force_to(self.device_torch, dtype=dtype)
@@ -376,8 +474,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.hook_before_train_loop()
 
         # sample first
-        self.print("Generating baseline samples before training")
-        self.sample(0)
+        if self.train_config.skip_first_sample:
+            self.print("Skipping first sample due to config setting")
+        else:
+            self.print("Generating baseline samples before training")
+            self.sample(0)
 
         self.progress_bar = tqdm(
             total=self.train_config.steps,

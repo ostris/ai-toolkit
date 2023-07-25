@@ -1,3 +1,4 @@
+import json
 import os
 
 from jobs import BaseJob
@@ -6,7 +7,7 @@ from collections import OrderedDict
 from typing import List
 from jobs.process import BaseExtractProcess, TrainFineTuneProcess
 from datetime import datetime
-
+import yaml
 from toolkit.paths import REPOS_ROOT
 
 import sys
@@ -16,6 +17,7 @@ sys.path.append(REPOS_ROOT)
 process_dict = {
     'vae': 'TrainVAEProcess',
     'slider': 'TrainSliderProcess',
+    'lora_hack': 'TrainLoRAHack',
 }
 
 
@@ -36,6 +38,13 @@ class TrainJob(BaseJob):
 
         # loads the processes from the config
         self.load_processes(process_dict)
+
+    def save_training_config(self):
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        os.makedirs(self.training_folder, exist_ok=True)
+        save_dif = os.path.join(self.training_folder, f'run_config_{timestamp}.yaml')
+        with open(save_dif, 'w') as f:
+            yaml.dump(self.raw_config, f)
 
     def run(self):
         super().run()

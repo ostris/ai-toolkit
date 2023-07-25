@@ -17,6 +17,7 @@ class BaseJob:
             raise ValueError('config is required')
 
         self.config = config['config']
+        self.raw_config = config
         self.job = config['job']
         self.name = self.get_conf('name', required=True)
         if 'meta' in config:

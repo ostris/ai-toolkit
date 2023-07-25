@@ -50,12 +50,14 @@ class TrainConfig:
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
         self.noise_offset = kwargs.get('noise_offset', 0.0)
         self.optimizer_params = kwargs.get('optimizer_params', {})
+        self.skip_first_sample = kwargs.get('skip_first_sample', False)
 
 
 class ModelConfig:
     def __init__(self, **kwargs):
         self.name_or_path: str = kwargs.get('name_or_path', None)
         self.is_v2: bool = kwargs.get('is_v2', False)
+        self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
 
         if self.name_or_path is None:

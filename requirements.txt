@@ -10,3 +10,4 @@ pyyaml
 oyaml
 tensorboard
 kornia
+invisible-watermark
