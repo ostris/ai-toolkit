@@ -244,16 +244,16 @@ class TrainSliderProcess(BaseSDTrainProcess):
         lr_scheduler = self.lr_scheduler
         loss_function = torch.nn.MSELoss()
 
-        def get_noise_pred(p, n):
+        def get_noise_pred(p, n, gs, cts, dn):
             return self.predict_noise(
-                latents=denoised_latents,
+                latents=dn,
                 text_embeddings=train_tools.concat_prompt_embeddings(
                     p,  # unconditional
                     n,  # positive
                     self.train_config.batch_size,
                 ),
-                timestep=current_timestep,
-                guidance_scale=1,
+                timestep=cts,
+                guidance_scale=gs,
             )
 
         # set network multiplier
@@ -302,11 +302,17 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 int(timesteps_to * 1000 / self.train_config.max_denoising_steps)
             ]
 
-            positive_latents = get_noise_pred(positive, negative)
+            positive_latents = get_noise_pred(
+                positive, negative, 1, current_timestep, denoised_latents
+            ).to("cpu", dtype=torch.float32)
 
-            neutral_latents = get_noise_pred(positive, neutral)
+            neutral_latents = get_noise_pred(
+                positive, neutral, 1, current_timestep, denoised_latents
+            ).to("cpu", dtype=torch.float32)
 
-            unconditional_latents = get_noise_pred(positive, positive)
+            unconditional_latents = get_noise_pred(
+                positive, positive, 1, current_timestep, denoised_latents
+            ).to("cpu", dtype=torch.float32)
 
         anchor_loss = None
         if len(self.anchor_pairs) > 0:
@@ -315,19 +321,25 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 torch.randint(0, len(self.anchor_pairs), (1,)).item()
             ]
             with torch.no_grad():
-                anchor_target_noise = get_noise_pred(anchor.prompt, anchor.neg_prompt)
+                anchor_target_noise = get_noise_pred(
+                    anchor.prompt, anchor.neg_prompt, 1, current_timestep, denoised_latents
+                ).to("cpu", dtype=torch.float32)
             with self.network:
                 # anchor whatever weight  prompt pair is using
                 pos_nem_mult = 1.0 if prompt_pair.multiplier > 0 else -1.0
                 self.network.multiplier = anchor.multiplier * pos_nem_mult
 
-                anchor_pred_noise = get_noise_pred(anchor.prompt, anchor.neg_prompt)
+                anchor_pred_noise = get_noise_pred(
+                    anchor.prompt, anchor.neg_prompt, 1, current_timestep, denoised_latents
+                ).to("cpu", dtype=torch.float32)
 
                 self.network.multiplier = prompt_pair.multiplier
 
         with self.network:
             self.network.multiplier = prompt_pair.multiplier
-            target_latents = get_noise_pred(positive, target_class)
+            target_latents = get_noise_pred(
+                positive, target_class, 1, current_timestep, denoised_latents
+            ).to("cpu", dtype=torch.float32)
 
             # if self.logging_config.verbose:
             #     self.print("target_latents:", target_latents[0, 0, :5, :5])

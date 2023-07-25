@@ -328,21 +328,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 guidance_rescale=guidance_rescale
             )
 
-            # compute the previous noisy sample x_t -> x_t-1
-            latents = self.sd.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
         else:
             noise_pred = train_util.predict_noise(
                 self.sd.unet,
                 self.sd.noise_scheduler,
                 timestep,
                 latents,
-                text_embeddings.text_embeds,
+                text_embeddings.text_embeds if hasattr(text_embeddings, 'text_embeds') else text_embeddings,
                 guidance_scale=guidance_scale
             )
 
-            # compute the previous noisy sample x_t -> x_t-1
-            latents = self.sd.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
-        return latents
+        return noise_pred
 
     # ref: https://github.com/huggingface/diffusers/blob/0bab447670f47c28df60fbd2f6a0f833f75a16f5/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L746
     def diffuse_some_steps(
@@ -357,7 +353,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     ):
 
         for timestep in tqdm(self.sd.noise_scheduler.timesteps[start_timesteps:total_timesteps], leave=False):
-            latents = self.predict_noise(
+            noise_pred = self.predict_noise(
                 latents,
                 text_embeddings,
                 timestep,
@@ -365,6 +361,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 add_time_ids=add_time_ids,
                 **kwargs,
             )
+            latents = self.sd.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
 
         # return latents_steps
         return latents
