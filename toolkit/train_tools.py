@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import time
+from typing import TYPE_CHECKING
 
 from diffusers import (
     StableDiffusionPipeline,
@@ -20,8 +21,6 @@ from diffusers import (
 from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipeline
 import torch
 import re
-
-from toolkit.stable_diffusion_model import PromptEmbeds
 
 SCHEDULER_LINEAR_START = 0.00085
 SCHEDULER_LINEAR_END = 0.0120
@@ -381,11 +380,16 @@ def apply_noise_offset(noise, noise_offset):
     return noise
 
 
+if TYPE_CHECKING:
+    from toolkit.stable_diffusion_model import PromptEmbeds
+
+
 def concat_prompt_embeddings(
-        unconditional: PromptEmbeds,
-        conditional: PromptEmbeds,
+        unconditional: 'PromptEmbeds',
+        conditional: 'PromptEmbeds',
         n_imgs: int,
 ):
+    from toolkit.stable_diffusion_model import PromptEmbeds
     text_embeds = torch.cat(
         [unconditional.text_embeds, conditional.text_embeds]
     ).repeat_interleave(n_imgs, dim=0)

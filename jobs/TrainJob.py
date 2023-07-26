@@ -18,6 +18,7 @@ process_dict = {
     'vae': 'TrainVAEProcess',
     'slider': 'TrainSliderProcess',
     'lora_hack': 'TrainLoRAHack',
+    'rescale_sd': 'TrainSDRescaleProcess',
 }
 
 

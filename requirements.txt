@@ -11,3 +11,5 @@ oyaml
 tensorboard
 kornia
 invisible-watermark
+einops
+accelerate

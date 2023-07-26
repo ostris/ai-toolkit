@@ -5,6 +5,7 @@ class SaveConfig:
     def __init__(self, **kwargs):
         self.save_every: int = kwargs.get('save_every', 1000)
         self.dtype: str = kwargs.get('save_dtype', 'float16')
+        self.max_step_saves_to_keep: int = kwargs.get('max_step_saves_to_keep', 5)
 
 
 class LogingConfig:
@@ -30,8 +31,16 @@ class SampleConfig:
 
 class NetworkConfig:
     def __init__(self, **kwargs):
-        self.type: str = kwargs.get('type', 'lierla')
-        self.rank: int = kwargs.get('rank', 4)
+        self.type: str = kwargs.get('type', 'lora')
+        rank = kwargs.get('rank', None)
+        linear = kwargs.get('linear', None)
+        if rank is not None:
+            self.rank: int = rank # rank for backward compatibility
+            self.linear: int = rank
+        elif linear is not None:
+            self.rank: int = linear
+            self.linear: int = linear
+        self.conv: int = kwargs.get('conv', None)
         self.alpha: float = kwargs.get('alpha', 1.0)
 
 
@@ -51,6 +60,7 @@ class TrainConfig:
         self.noise_offset = kwargs.get('noise_offset', 0.0)
         self.optimizer_params = kwargs.get('optimizer_params', {})
         self.skip_first_sample = kwargs.get('skip_first_sample', False)
+        self.gradient_checkpointing = kwargs.get('gradient_checkpointing', False)
 
 
 class ModelConfig:

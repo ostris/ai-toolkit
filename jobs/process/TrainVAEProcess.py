@@ -669,7 +669,7 @@ class TrainVAEProcess(BaseTrainProcess):
                         if self.writer is not None:
                             # get avg loss
                             for key in log_losses:
-                                log_losses[key] = sum(log_losses[key]) / len(log_losses[key])
+                                log_losses[key] = sum(log_losses[key]) / (len(log_losses[key]) + 1e-6)
                                 # if log_losses[key] > 0:
                                 self.writer.add_scalar(f"loss/{key}", log_losses[key], self.step_num)
                         # reset log losses
@@ -678,9 +678,10 @@ class TrainVAEProcess(BaseTrainProcess):
                 self.step_num += 1
             # end epoch
             if self.writer is not None:
+                eps = 1e-6
                 # get avg loss
                 for key in epoch_losses:
-                    epoch_losses[key] = sum(log_losses[key]) / len(log_losses[key])
+                    epoch_losses[key] = sum(log_losses[key]) / (len(log_losses[key]) + eps)
                     if epoch_losses[key] > 0:
                         self.writer.add_scalar(f"epoch loss/{key}", epoch_losses[key], epoch)
             # reset epoch losses

@@ -1,5 +1,8 @@
 import json
 from collections import OrderedDict
+
+from safetensors import safe_open
+
 from info import software_meta
 
 
@@ -25,4 +28,10 @@ def parse_metadata_from_safetensors(meta: OrderedDict) -> OrderedDict:
             parsed_meta[key] = json.loads(value)
         except json.decoder.JSONDecodeError:
             parsed_meta[key] = value
-    return meta
+    return parsed_meta
+
+
+def load_metadata_from_safetensors(file_path: str) -> OrderedDict:
+    with safe_open(file_path, framework="pt") as f:
+        metadata = f.metadata()
+    return parse_metadata_from_safetensors(metadata)
