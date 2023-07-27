@@ -13,3 +13,5 @@ kornia
 invisible-watermark
 einops
 accelerate
+toml
+albumentations
