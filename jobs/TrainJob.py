@@ -16,7 +16,8 @@ sys.path.append(REPOS_ROOT)
 
 process_dict = {
     'vae': 'TrainVAEProcess',
-    'slider': 'TrainSliderProcess',
+    'slider_dev': 'TrainSliderProcess',
+    'slider': 'TrainSliderProcessOld',
     'lora_hack': 'TrainLoRAHack',
     'rescale_sd': 'TrainSDRescaleProcess',
 }

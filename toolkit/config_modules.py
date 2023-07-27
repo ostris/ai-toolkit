@@ -99,3 +99,5 @@ class SliderConfig:
         anchors = [SliderConfigAnchors(**anchor) for anchor in anchors]
         self.anchors: List[SliderConfigAnchors] = anchors
         self.resolutions: List[List[int]] = kwargs.get('resolutions', [[512, 512]])
+        self.prompt_file: str = kwargs.get('prompt_file', '')
+        self.prompt_tensors: str = kwargs.get('prompt_tensors', '')

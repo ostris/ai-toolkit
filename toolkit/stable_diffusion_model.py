@@ -30,10 +30,10 @@ class PromptEmbeds:
             self.text_embeds = args
             self.pooled_embeds = None
 
-    def to(self, **kwargs):
-        self.text_embeds = self.text_embeds.to(**kwargs)
+    def to(self, *args, **kwargs):
+        self.text_embeds = self.text_embeds.to(*args, **kwargs)
         if self.pooled_embeds is not None:
-            self.pooled_embeds = self.pooled_embeds.to(**kwargs)
+            self.pooled_embeds = self.pooled_embeds.to(*args, **kwargs)
         return self
 
 
