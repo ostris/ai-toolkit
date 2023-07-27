@@ -171,9 +171,9 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
         loss_function = torch.nn.MSELoss()
 
         with torch.no_grad():
-            self.sd.noise_scheduler.set_timesteps(
-                self.train_config.max_denoising_steps, device=self.device_torch
-            )
+            # self.sd.noise_scheduler.set_timesteps(
+            #     self.train_config.max_denoising_steps, device=self.device_torch
+            # )
 
             self.optimizer.zero_grad()
 
@@ -183,6 +183,12 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
             ).item()
             absolute_total_timesteps = 1000
 
+            max_len_timestep_str = len(str(self.train_config.max_denoising_steps))
+            # pad with spaces
+            timestep_str = str(timesteps_to).rjust(max_len_timestep_str, " ")
+            new_description = f"{self.job.name} ts: {timestep_str}"
+            self.progress_bar.set_description(new_description)
+
             # get noise
             latents = self.get_latent_noise(
                 pixel_height=self.rescale_config.from_resolution,
@@ -190,21 +196,37 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
             ).to(self.device_torch, dtype=dtype)
 
             denoised_fraction = timesteps_to / absolute_total_timesteps
+            self.sd.pipeline.to(self.device_torch)
+            torch.set_default_device(self.device_torch)
 
-            denoised_latents = self.sd.pipeline(
-                num_inference_steps=1000,
-                denoising_end=denoised_fraction,
-                latents=latents,
-                prompt_embeds=prompt.text_embeds,
-                negative_prompt_embeds=neutral.text_embeds,
-                pooled_prompt_embeds=prompt.pooled_embeds,
-                negative_pooled_prompt_embeds=neutral.pooled_embeds,
-                output_type="latent",
-                num_images_per_prompt=self.train_config.batch_size,
-                guidance_scale=3,
-            ).images.to(self.device_torch, dtype=dtype)
+            # turn off progress bar
+            self.sd.pipeline.set_progress_bar_config(disable=True)
 
-            current_timestep = timesteps_to
+            pre_train = False
+
+            if not pre_train:
+                # partially denoise the latents
+                denoised_latents = self.sd.pipeline(
+                    num_inference_steps=self.train_config.max_denoising_steps,
+                    denoising_end=denoised_fraction,
+                    latents=latents,
+                    prompt_embeds=prompt.text_embeds,
+                    negative_prompt_embeds=neutral.text_embeds,
+                    pooled_prompt_embeds=prompt.pooled_embeds,
+                    negative_pooled_prompt_embeds=neutral.pooled_embeds,
+                    output_type="latent",
+                    num_images_per_prompt=self.train_config.batch_size,
+                    guidance_scale=3,
+                ).images.to(self.device_torch, dtype=dtype)
+                current_timestep = timesteps_to
+
+            else:
+                denoised_latents = latents
+                current_timestep = 1
+
+            self.sd.noise_scheduler.set_timesteps(
+                1000
+            )
 
             from_prediction = self.sd.pipeline.predict_noise(
                 latents=denoised_latents,
@@ -213,10 +235,13 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
                 pooled_prompt_embeds=prompt.pooled_embeds,
                 negative_pooled_prompt_embeds=neutral.pooled_embeds,
                 timestep=current_timestep,
-                guidance_scale=2
+                guidance_scale=1,
+                num_images_per_prompt=self.train_config.batch_size,
+                # predict_noise=True,
+                num_inference_steps=1000,
             )
 
-            reduced_from_prediction = self.reduce_size_fn(from_prediction).to("cpu", dtype=torch.float32)
+            reduced_from_prediction = self.reduce_size_fn(from_prediction)
 
             # get noise prediction at reduced scale
             to_denoised_latents = self.reduce_size_fn(denoised_latents).to(self.device_torch, dtype=dtype)
@@ -233,7 +258,10 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
                 pooled_prompt_embeds=prompt.pooled_embeds,
                 negative_pooled_prompt_embeds=neutral.pooled_embeds,
                 timestep=current_timestep,
-                guidance_scale=2
+                guidance_scale=1,
+                num_images_per_prompt=self.train_config.batch_size,
+                # predict_noise=True,
+                num_inference_steps=1000,
             )
 
         reduced_from_prediction.requires_grad = False
