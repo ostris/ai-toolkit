@@ -129,9 +129,12 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
                     print(f"Saving prompt tensors to {self.rescale_config.prompt_tensors}")
                     state_dict = {}
                     for prompt_txt, prompt_embeds in cache.prompts.items():
-                        state_dict[f"te:{prompt_txt}"] = prompt_embeds.text_embeds.to("cpu", dtype=get_torch_dtype('fp16'))
+                        state_dict[f"te:{prompt_txt}"] = prompt_embeds.text_embeds.to("cpu",
+                                                                                      dtype=get_torch_dtype('fp16'))
                         if prompt_embeds.pooled_embeds is not None:
-                            state_dict[f"pe:{prompt_txt}"] = prompt_embeds.pooled_embeds.to("cpu", dtype=get_torch_dtype('fp16'))
+                            state_dict[f"pe:{prompt_txt}"] = prompt_embeds.pooled_embeds.to("cpu",
+                                                                                            dtype=get_torch_dtype(
+                                                                                                'fp16'))
                     save_file(state_dict, self.rescale_config.prompt_tensors)
 
             self.print("Encoding complete.")
@@ -158,10 +161,15 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
         ]
         prompt = self.prompt_cache[prompt_txt].to(device=self.device_torch, dtype=dtype)
         prompt.text_embeds.to(device=self.device_torch, dtype=dtype)
-        prompt.pooled_embeds.to(device=self.device_torch, dtype=dtype)
         neutral = self.prompt_cache[""].to(device=self.device_torch, dtype=dtype)
         neutral.text_embeds.to(device=self.device_torch, dtype=dtype)
-        neutral.pooled_embeds.to(device=self.device_torch, dtype=dtype)
+        if hasattr(prompt, 'pooled_embeds') \
+                and hasattr(neutral, 'pooled_embeds') \
+                and prompt.pooled_embeds is not None \
+                and neutral.pooled_embeds is not None:
+            prompt.pooled_embeds.to(device=self.device_torch, dtype=dtype)
+            neutral.pooled_embeds.to(device=self.device_torch, dtype=dtype)
+
         if prompt is None:
             raise ValueError(f"Prompt {prompt_txt} is not in cache")
 
