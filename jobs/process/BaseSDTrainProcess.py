@@ -617,7 +617,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.train_config.lr_scheduler,
             optimizer,
             max_iterations=self.train_config.steps,
-            lr_min=self.train_config.lr / 100,  # not sure why leco did this, but ill do it to
+            lr_min=self.train_config.lr / 100,
         )
 
         self.lr_scheduler = lr_scheduler
@@ -651,7 +651,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             ### HOOK ###
             loss_dict = self.hook_train_loop()
 
-            if self.train_config.optimizer.startswith('dadaptation'):
+            if self.train_config.optimizer.lower().startswith('dadaptation') or \
+                    self.train_config.optimizer.lower().startswith('prodigy'):
                 learning_rate = (
                         optimizer.param_groups[0]["d"] *
                         optimizer.param_groups[0]["lr"]
