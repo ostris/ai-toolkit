@@ -115,12 +115,12 @@ class TrainSliderProcess(BaseSDTrainProcess):
                         cache[prompt] = self.sd.encode_prompt(prompt)
                 for resolution in self.slider_config.resolutions:
                     width, height = resolution
-                    only_erase = len(target.positive.strip()) == 0
-                    only_enhance = len(target.negative.strip()) == 0
+                    erase_negative = len(target.positive.strip()) == 0
+                    enhance_positive = len(target.negative.strip()) == 0
 
-                    both = not only_erase and not only_enhance
+                    both = not erase_negative and not enhance_positive
 
-                    if only_erase and only_enhance:
+                    if erase_negative and enhance_positive:
                         raise ValueError("target must have at least one of positive or negative or both")
                     # for slider we need to have an enhancer, an eraser, and then
                     # an inverse with negative weights to balance the network
@@ -128,7 +128,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                     # we only perform actions of enhancing and erasing on the negative
                     # todo work on way to do all of this in one shot
 
-                    if both or only_erase:
+                    if both or erase_negative:
                         prompt_pairs += [
                             # erase standard
                             EncodedPromptPair(
@@ -143,7 +143,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                                 weight=target.weight
                             ),
                         ]
-                    if both or only_enhance:
+                    if both or enhance_positive:
                         prompt_pairs += [
                             # enhance standard, swap pos neg
                             EncodedPromptPair(
@@ -158,7 +158,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                                 weight=target.weight
                             ),
                         ]
-                    if both:
+                    if both or enhance_positive:
                         prompt_pairs += [
                             # erase inverted
                             EncodedPromptPair(
@@ -173,6 +173,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                                 weight=target.weight
                             ),
                         ]
+                    if both or erase_negative:
                         prompt_pairs += [
                             # enhance inverted
                             EncodedPromptPair(
