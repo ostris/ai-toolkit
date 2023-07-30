@@ -40,6 +40,7 @@ class EncodedPromptPair:
     def __init__(
             self,
             target_class,
+            target_class_with_neutral,
             positive_target,
             positive_target_with_neutral,
             negative_target,
@@ -52,6 +53,7 @@ class EncodedPromptPair:
             weight=1.0
     ):
         self.target_class = target_class
+        self.target_class_with_neutral = target_class_with_neutral
         self.positive_target = positive_target
         self.positive_target_with_neutral = positive_target_with_neutral
         self.negative_target = negative_target
@@ -171,6 +173,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                     for target in self.slider_config.targets:
                         prompt_list = [
                             f"{target.target_class}", # target_class
+                            f"{target.target_class} {neutral}", # target_class with neutral
                             f"{target.positive}",  # positive_target
                             f"{target.positive} {neutral}",  # positive_target with neutral
                             f"{target.negative}",  # negative_target
@@ -217,6 +220,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                             # erase standard
                             EncodedPromptPair(
                                 target_class=cache[target.target_class],
+                                target_class_with_neutral=cache[f"{target.target_class} {neutral}"],
                                 positive_target=cache[f"{target.positive}"],
                                 positive_target_with_neutral=cache[f"{target.positive} {neutral}"],
                                 negative_target=cache[f"{target.negative}"],
@@ -234,6 +238,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                             # enhance standard, swap pos neg
                             EncodedPromptPair(
                                 target_class=cache[target.target_class],
+                                target_class_with_neutral=cache[f"{target.target_class} {neutral}"],
                                 positive_target=cache[f"{target.negative}"],
                                 positive_target_with_neutral=cache[f"{target.negative} {neutral}"],
                                 negative_target=cache[f"{target.positive}"],
@@ -251,6 +256,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                             # erase inverted
                             EncodedPromptPair(
                                 target_class=cache[target.target_class],
+                                target_class_with_neutral=cache[f"{target.target_class} {neutral}"],
                                 positive_target=cache[f"{target.negative}"],
                                 positive_target_with_neutral=cache[f"{target.negative} {neutral}"],
                                 negative_target=cache[f"{target.positive}"],
@@ -268,6 +274,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                             # enhance inverted
                             EncodedPromptPair(
                                 target_class=cache[target.target_class],
+                                target_class_with_neutral=cache[f"{target.target_class} {neutral}"],
                                 positive_target=cache[f"{target.positive}"],
                                 positive_target_with_neutral=cache[f"{target.positive} {neutral}"],
                                 negative_target=cache[f"{target.negative}"],
@@ -299,28 +306,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                         multiplier=anchor.multiplier
                     )
                 ]
-            # self.print("Encoding complete. Building prompt pairs..")
-            # for neutral in self.prompt_txt_list:
-            #     for target in self.slider_config.targets:
-            #         both_prompts_list = [
-            #             f"{target.positive} {target.negative}",
-            #             f"{target.negative} {target.positive}",
-            #         ]
-            #         # randomly pick one of the both prompts to prevent bias
-            #         both_prompts = both_prompts_list[torch.randint(0, 2, (1,)).item()]
-            #
-            #         prompt_pair = EncodedPromptPair(
-            #             positive_target=cache[f"{target.positive}"],
-            #             positive_target_with_neutral=cache[f"{target.positive} {neutral}"],
-            #             negative_target=cache[f"{target.negative}"],
-            #             negative_target_with_neutral=cache[f"{target.negative} {neutral}"],
-            #             neutral=cache[neutral],
-            #             both_targets=cache[both_prompts],
-            #             empty_prompt=cache[""],
-            #             target_class=cache[f"{target.target_class}"],
-            #             weight=target.weight,
-            #         ).to(device="cpu", dtype=torch.float32)
-            #         self.prompt_pairs.append(prompt_pair)
+
 
         # move to cpu to save vram
         # We don't need text encoder anymore, but keep it on cpu for sampling
@@ -340,7 +326,8 @@ class TrainSliderProcess(BaseSDTrainProcess):
         dtype = get_torch_dtype(self.train_config.dtype)
 
         # get random multiplier between 1 and 3
-        rand_weight = torch.rand((1,)).item() * 2 + 1
+        rand_weight = 1
+        # rand_weight = torch.rand((1,)).item() * 2 + 1
 
         # get a random pair
         prompt_pair: EncodedPromptPair = self.prompt_pairs[
@@ -367,12 +354,12 @@ class TrainSliderProcess(BaseSDTrainProcess):
         lr_scheduler = self.lr_scheduler
         loss_function = torch.nn.MSELoss()
 
-        def get_noise_pred(p, n, gs, cts, dn):
+        def get_noise_pred(neg, pos, gs, cts, dn):
             return self.predict_noise(
                 latents=dn,
                 text_embeddings=train_tools.concat_prompt_embeddings(
-                    p,  # negative prompt
-                    n,  # positive prompt
+                    neg,  # negative prompt
+                    pos,  # positive prompt
                     self.train_config.batch_size,
                 ),
                 timestep=cts,
@@ -410,8 +397,8 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 denoised_latents = self.diffuse_some_steps(
                     latents,  # pass simple noise latents
                     train_tools.concat_prompt_embeddings(
-                        positive,  # unconditional
-                        target_class,  # target
+                        prompt_pair.positive_target,  # unconditional
+                        prompt_pair.target_class,  # target
                         self.train_config.batch_size,
                     ),
                     start_timesteps=0,
@@ -426,15 +413,27 @@ class TrainSliderProcess(BaseSDTrainProcess):
             ]
 
             positive_latents = get_noise_pred(
-                positive, negative, 1, current_timestep, denoised_latents
+                prompt_pair.positive_target,  # negative prompt
+                prompt_pair.negative_target,  # positive prompt
+                1,
+                current_timestep,
+                denoised_latents
             ).to("cpu", dtype=torch.float32)
 
             neutral_latents = get_noise_pred(
-                positive, neutral, 1, current_timestep, denoised_latents
+                prompt_pair.positive_target,  # negative prompt
+                prompt_pair.empty_prompt,  # positive prompt (normally neutral
+                1,
+                current_timestep,
+                denoised_latents
             ).to("cpu", dtype=torch.float32)
 
             unconditional_latents = get_noise_pred(
-                positive, positive, 1, current_timestep, denoised_latents
+                prompt_pair.positive_target,  # negative prompt
+                prompt_pair.positive_target,  # positive prompt
+                1,
+                current_timestep,
+                denoised_latents
             ).to("cpu", dtype=torch.float32)
 
         anchor_loss = None
@@ -461,7 +460,11 @@ class TrainSliderProcess(BaseSDTrainProcess):
         with self.network:
             self.network.multiplier = prompt_pair.multiplier * rand_weight
             target_latents = get_noise_pred(
-                positive, target_class, 1, current_timestep, denoised_latents
+                prompt_pair.positive_target,
+                prompt_pair.target_class,
+                1,
+                current_timestep,
+                denoised_latents
             ).to("cpu", dtype=torch.float32)
 
             # if self.logging_config.verbose:
