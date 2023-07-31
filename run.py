@@ -36,6 +36,14 @@ def main():
         action='store_true',
         help='Continue running additional jobs even if a job fails'
     )
+
+    # flag to continue if failed job
+    parser.add_argument(
+        '-n', '--name',
+        type=str,
+        default=None,
+        help='Name to replace [name] tag in config file, useful for shared config file'
+    )
     args = parser.parse_args()
 
     config_file_list = args.config_file_list
@@ -49,7 +57,7 @@ def main():
 
     for config_file in config_file_list:
         try:
-            job = get_job(config_file)
+            job = get_job(config_file, args.name)
             job.run()
             job.cleanup()
             jobs_completed += 1

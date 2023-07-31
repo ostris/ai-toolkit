@@ -1,8 +1,8 @@
 from toolkit.config import get_config
 
 
-def get_job(config_path):
-    config = get_config(config_path)
+def get_job(config_path, name=None):
+    config = get_config(config_path, name)
     if not config['job']:
         raise ValueError('config file is invalid. Missing "job" key')
 
