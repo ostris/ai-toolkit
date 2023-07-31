@@ -15,20 +15,22 @@ def get_cwd_abs_path(path):
     return path
 
 
-def preprocess_config(config: OrderedDict):
+def preprocess_config(config: OrderedDict, name: str = None):
     if "job" not in config:
         raise ValueError("config file must have a job key")
     if "config" not in config:
         raise ValueError("config file must have a config section")
-    if "name" not in config["config"]:
+    if "name" not in config["config"] and name is None:
         raise ValueError("config file must have a config.name key")
     # we need to replace tags. For now just [name]
-    name = config["config"]["name"]
+    if name is not None:
+        config["config"]["name"] = name
+    else:
+        name = config["config"]["name"]
     config_string = json.dumps(config)
     config_string = config_string.replace("[name]", name)
     config = json.loads(config_string, object_pairs_hook=OrderedDict)
     return config
-
 
 
 # Fixes issue where yaml doesnt load exponents correctly
@@ -44,7 +46,8 @@ fixed_loader.add_implicit_resolver(
     |\\.(?:nan|NaN|NAN))$''', re.X),
     list(u'-+0123456789.'))
 
-def get_config(config_file_path):
+
+def get_config(config_file_path, name=None):
     # first check if it is in the config folder
     config_path = os.path.join(TOOLKIT_ROOT, 'config', config_file_path)
     # see if it is in the config folder with any of the possible extensions if it doesnt have one
@@ -75,4 +78,4 @@ def get_config(config_file_path):
     else:
         raise ValueError(f"Config file {config_file_path} must be a json or yaml file")
 
-    return preprocess_config(config)
+    return preprocess_config(config, name)
