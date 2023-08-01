@@ -54,6 +54,8 @@ def get_optimizer(
     elif lower_type == 'lion':
         from lion_pytorch import Lion
         return Lion(params, lr=learning_rate, **optimizer_params)
+    elif lower_type == 'adagrad':
+        optimizer = torch.optim.Adagrad(params, lr=float(learning_rate), **optimizer_params)
     else:
         raise ValueError(f'Unknown optimizer type {optimizer_type}')
     return optimizer

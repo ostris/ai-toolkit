@@ -13,6 +13,9 @@ def get_job(config_path, name=None):
     if job == 'train':
         from jobs import TrainJob
         return TrainJob(config)
+    if job == 'mod':
+        from jobs import ModJob
+        return ModJob(config)
 
     # elif job == 'train':
     #     from jobs import TrainJob

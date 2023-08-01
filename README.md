@@ -40,6 +40,8 @@ pip3 install -r requirements.txt
 I have so many hodge podge scripts I am going to be moving over to this that I use in my ML work. But this is what is
 here so far.
 
+---
+
 ### LoRA (lierla), LoCON (LyCORIS) extractor
 
 It is based on the extractor in the [LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS) tool, but adding some QOL features
@@ -64,6 +66,31 @@ Most people used fixed, which is traditional fixed dimension extraction.
 
 `process` is an array of different processes to run. You can add a few and mix and match. One LoRA, one LyCON, etc.
 
+---
+
+### LoRA Rescale
+
+Change `<lora:my_lora:4.6>` to `<lora:my_lora:1.0>` or whatever you want with the same effect. 
+A tool for rescaling a LoRA's weights. Should would with LoCON as well, but I have not tested it.
+It all runs off a config file, which you can find an example of in  `config/examples/mod_lora_scale.yml`.
+Just copy that file, into the `config` folder, and rename it to `whatever_you_want.yml`.
+Then you can edit the file to your liking. and call it like so:
+
+```bash
+python3 run.py config/whatever_you_want.yml
+```
+
+You can also put a full path to a config file, if you want to keep it somewhere else.
+
+```bash
+python3 run.py "/home/user/whatever_you_want.yml"
+```
+
+More notes on how it works are available in the example config file itself. This is useful when making 
+all LoRAs, as the ideal weight is rarely 1.0, but now you can fix that. For sliders, they can have weird scales form -2 to 2
+or even -15 to 15. This will allow you to dile it in so they all have your desired scale
+
+---
 
 ### LoRA Slider Trainer
 
@@ -108,13 +135,32 @@ Just went in and out. It is much worse on smaller faces than shown here.
 
 ## TODO
 - [X] Add proper regs on sliders
-- [ ] Add SDXL support (base model only for now)
+- [X] Add SDXL support (base model only for now)
 - [ ] Add plain erasing
 - [ ] Make Textual inversion network trainer (network that spits out TI embeddings)
 
 ---
 
 ## Change Log
+
+#### 2021-08-01
+Major changes and update. New LoRA rescale tool, look above for details. Added better metadata so
+Automatic1111 knows what the base model is. Added some experiments and a ton of updates. This thing is still unstable
+at the moment, so hopefully there are not breaking changes. 
+
+Unfortunately, I am too lazy to write a proper changelog with all the changes.
+
+I added SDXL training to sliders... but.. it does not work properly. 
+The slider training relies on a model's ability to understand that an unconditional (negative prompt)
+means you do not want that concept in the output. SDXL does not understand this for whatever reason, 
+which makes separating out
+concepts within the model hard. I am sure the community will find a way to fix this 
+over time, but for now, it is not 
+going to work properly. And if any of you are thinking "Could we maybe fix it by adding 1 or 2 more text
+encoders to the model as well as a few more entirely separate diffusion networks?" No. God no. It just needs a little
+training without every experimental new paper added to it. The KISS principal. 
+
+
 #### 2021-07-30
 Added "anchors" to the slider trainer. This allows you to set a prompt that will be used as a 
 regularizer. You can set the network multiplier to force spread consistency at high weights
