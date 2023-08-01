@@ -60,7 +60,7 @@ class TrainConfig:
         self.noise_offset = kwargs.get('noise_offset', 0.0)
         self.optimizer_params = kwargs.get('optimizer_params', {})
         self.skip_first_sample = kwargs.get('skip_first_sample', False)
-        self.gradient_checkpointing = kwargs.get('gradient_checkpointing', False)
+        self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
 
 
 class ModelConfig:

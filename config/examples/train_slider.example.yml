@@ -34,6 +34,8 @@ config:
         steps: 500
         # I have had good results with 4e-4 to 1e-4 at 500 steps
         lr: 1e-4
+        # enables gradient checkpoint, saves vram, leave it on
+        gradient_checkpointing: true
         # train the unet. I recommend leaving this true
         train_unet: true
         # train the text encoder. I don't recommend this unless you have a special use case
@@ -66,6 +68,7 @@ config:
         name_or_path: "runwayml/stable-diffusion-v1-5"
         is_v2: false  # for v2 models
         is_v_pred: false # for v-prediction models (most v2 models)
+        is_xl: false  # for SDXL models
 
       # saving config
       save:
