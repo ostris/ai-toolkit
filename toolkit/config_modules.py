@@ -42,6 +42,8 @@ class NetworkConfig:
             self.linear: int = linear
         self.conv: int = kwargs.get('conv', None)
         self.alpha: float = kwargs.get('alpha', 1.0)
+        self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
+        self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
 
 
 class TrainConfig:

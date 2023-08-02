@@ -241,6 +241,9 @@ class LoRASpecialNetwork(LoRANetwork):
 
     @multiplier.setter
     def multiplier(self, value):
+        # only update if changed
+        if self._multiplier == value:
+            return
         self._multiplier = value
         self._update_lora_multiplier()
 
