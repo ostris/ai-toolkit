@@ -57,7 +57,8 @@ config:
         # bf16 works best if your GPU supports it (modern)
         dtype: bf16  # fp32, bf16, fp16
         # if you have it, use it. It is faster and better
-        xformers: true
+        # torch 2.0 doesnt need xformers anymore, only use if you have lower version
+#        xformers: true
         # I don't recommend using unless you are trying to make a darker lora. Then do 0.1 MAX
         # although, the way we train sliders is comparative, so it probably won't work anyway
         noise_offset: 0.0

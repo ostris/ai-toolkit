@@ -1,10 +1,9 @@
 import copy
 import json
 from collections import OrderedDict
-from typing import ForwardRef
 
 
-class BaseProcess:
+class BaseProcess(object):
     meta: OrderedDict
 
     def __init__(

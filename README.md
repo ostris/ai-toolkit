@@ -42,6 +42,16 @@ here so far.
 
 ---
 
+### Batch Image Generation
+
+A image generator that can take frompts from a config file or form a txt file and generate them to a 
+folder. I mainly needed this for an SDXL test I am doing but added some polish to it so it can be used
+for generat batch image generation.
+It all runs off a config file, which you can find an example of in  `config/examples/generate.example.yaml`.
+Mere info is in the comments in the example
+
+---
+
 ### LoRA (lierla), LoCON (LyCORIS) extractor
 
 It is based on the extractor in the [LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS) tool, but adding some QOL features
@@ -142,6 +152,11 @@ Just went in and out. It is much worse on smaller faces than shown here.
 ---
 
 ## Change Log
+
+#### 2021-08-03
+Another big refactor to make SD more modular.
+
+Made batch image generation script
 
 #### 2021-08-01
 Major changes and update. New LoRA rescale tool, look above for details. Added better metadata so

@@ -10,3 +10,4 @@ from .TrainSliderProcessOld import TrainSliderProcessOld
 from .TrainLoRAHack import TrainLoRAHack
 from .TrainSDRescaleProcess import TrainSDRescaleProcess
 from .ModRescaleLoraProcess import ModRescaleLoraProcess
+from .GenerateProcess import GenerateProcess

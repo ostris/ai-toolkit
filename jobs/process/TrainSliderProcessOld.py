@@ -245,7 +245,7 @@ class TrainSliderProcessOld(BaseSDTrainProcess):
         loss_function = torch.nn.MSELoss()
 
         def get_noise_pred(p, n, gs, cts, dn):
-            return self.predict_noise(
+            return self.sd.predict_noise(
                 latents=dn,
                 text_embeddings=train_tools.concat_prompt_embeddings(
                     p,  # unconditional
@@ -272,9 +272,11 @@ class TrainSliderProcessOld(BaseSDTrainProcess):
             ).item()
 
             # get noise
-            noise = self.get_latent_noise(
+            noise = self.sd.get_latent_noise(
                 pixel_height=height,
                 pixel_width=width,
+                batch_size=self.train_config.batch_size,
+                noise_offset=self.train_config.noise_offset,
             ).to(self.device_torch, dtype=dtype)
 
             # get latents
@@ -284,7 +286,7 @@ class TrainSliderProcessOld(BaseSDTrainProcess):
             with self.network:
                 assert self.network.is_active
                 self.network.multiplier = multiplier
-                denoised_latents = self.diffuse_some_steps(
+                denoised_latents = self.sd.diffuse_some_steps(
                     latents,  # pass simple noise latents
                     train_tools.concat_prompt_embeddings(
                         positive,  # unconditional

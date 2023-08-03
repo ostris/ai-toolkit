@@ -202,9 +202,11 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
             )
 
             # get noise
-            noise = self.get_latent_noise(
+            noise = self.sd.get_latent_noise(
                 pixel_height=self.rescale_config.from_resolution,
                 pixel_width=self.rescale_config.from_resolution,
+                batch_size=self.train_config.batch_size,
+                noise_offset=self.train_config.noise_offset,
             ).to(self.device_torch, dtype=dtype)
 
             torch.set_default_device(self.device_torch)
@@ -238,7 +240,7 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
             )
 
             with torch.no_grad():
-                noise_pred_target = self.predict_noise(
+                noise_pred_target = self.sd.predict_noise(
                     latents,
                     text_embeddings=text_embeddings,
                     timestep=timestep,
@@ -256,7 +258,7 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
                 with self.network:
                     assert self.network.is_active
                     self.network.multiplier = 1.0
-                    noise_pred_train = self.predict_noise(
+                    noise_pred_train = self.sd.predict_noise(
                         reduced_latents,
                         text_embeddings=text_embeddings,
                         timestep=timestep,

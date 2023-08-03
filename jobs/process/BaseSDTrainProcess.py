@@ -1,34 +1,23 @@
 import glob
-import time
 from collections import OrderedDict
 import os
 
-from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
-
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.optimizer import get_optimizer
-from toolkit.paths import REPOS_ROOT
-import sys
 
-from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffusionPipeline
-
-sys.path.append(REPOS_ROOT)
-sys.path.append(os.path.join(REPOS_ROOT, 'leco'))
-
-from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, KDPM2DiscreteScheduler, PNDMScheduler, \
-    DDIMScheduler, DDPMScheduler
+from toolkit.scheduler import get_lr_scheduler
+from toolkit.stable_diffusion_model import StableDiffusion
 
 from jobs.process import BaseTrainProcess
 from toolkit.metadata import get_meta_for_safetensors, load_metadata_from_safetensors, add_base_model_info_to_meta
-from toolkit.train_tools import get_torch_dtype, apply_noise_offset
+from toolkit.train_tools import get_torch_dtype
 import gc
 
 import torch
 from tqdm import tqdm
 
-from leco import train_util, model_util
-from toolkit.config_modules import SaveConfig, LogingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig
-from toolkit.stable_diffusion_model import StableDiffusion, PromptEmbeds
+from toolkit.config_modules import SaveConfig, LogingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
+    GenerateImageConfig
 
 
 def flush():
@@ -36,11 +25,9 @@ def flush():
     gc.collect()
 
 
-UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。
-VAE_SCALE_FACTOR = 8  # 2 ** (len(vae.config.block_out_channels) - 1) = 8
-
-
 class BaseSDTrainProcess(BaseTrainProcess):
+    sd: StableDiffusion
+
     def __init__(self, process_id: int, job, config: OrderedDict, custom_pipeline=None):
         super().__init__(process_id, job, config)
         self.custom_pipeline = custom_pipeline
@@ -64,177 +51,52 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.logging_config = LogingConfig(**self.get_conf('logging', {}))
         self.optimizer = None
         self.lr_scheduler = None
-        self.sd: 'StableDiffusion' = None
 
-        # sdxl stuff
-        self.logit_scale = None
-        self.ckppt_info = None
+        self.sd = StableDiffusion(
+            device=self.device,
+            model_config=self.model_config,
+            dtype=self.train_config.dtype,
+            custom_pipeline=self.custom_pipeline,
+        )
 
-        # added later
+        # to hold network if there is one
         self.network = None
 
     def sample(self, step=None, is_first=False):
         sample_folder = os.path.join(self.save_root, 'samples')
-        if not os.path.exists(sample_folder):
-            os.makedirs(sample_folder, exist_ok=True)
-
-        if self.network is not None:
-            self.network.eval()
-
-        # save current seed state for training
-        rng_state = torch.get_rng_state()
-        cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
-
-        original_device_dict = {
-            'vae': self.sd.vae.device,
-            'unet': self.sd.unet.device,
-            # 'tokenizer': self.sd.tokenizer.device,
-        }
-
-        # handle sdxl text encoder
-        if isinstance(self.sd.text_encoder, list):
-            for encoder, i in zip(self.sd.text_encoder, range(len(self.sd.text_encoder))):
-                original_device_dict[f'text_encoder_{i}'] = encoder.device
-                encoder.to(self.device_torch)
-        else:
-            original_device_dict['text_encoder'] = self.sd.text_encoder.device
-            self.sd.text_encoder.to(self.device_torch)
-
-        self.sd.vae.to(self.device_torch)
-        self.sd.unet.to(self.device_torch)
-        # self.sd.text_encoder.to(self.device_torch)
-        # self.sd.tokenizer.to(self.device_torch)
-        # TODO add clip skip
-        if self.sd.is_xl:
-            pipeline = StableDiffusionXLPipeline(
-                vae=self.sd.vae,
-                unet=self.sd.unet,
-                text_encoder=self.sd.text_encoder[0],
-                text_encoder_2=self.sd.text_encoder[1],
-                tokenizer=self.sd.tokenizer[0],
-                tokenizer_2=self.sd.tokenizer[1],
-                scheduler=self.sd.noise_scheduler,
-            ).to(self.device_torch)
-        else:
-            pipeline = StableDiffusionPipeline(
-                vae=self.sd.vae,
-                unet=self.sd.unet,
-                text_encoder=self.sd.text_encoder,
-                tokenizer=self.sd.tokenizer,
-                scheduler=self.sd.noise_scheduler,
-                safety_checker=None,
-                feature_extractor=None,
-                requires_safety_checker=False,
-            ).to(self.device_torch)
-        # disable progress bar
-        pipeline.set_progress_bar_config(disable=True)
+        gen_img_config_list = []
 
         sample_config = self.first_sample_config if is_first else self.sample_config
-
         start_seed = sample_config.seed
-        start_multiplier = self.network.multiplier
         current_seed = start_seed
+        for i in range(len(sample_config.prompts)):
+            if sample_config.walk_seed:
+                current_seed = start_seed + i
 
-        pipeline.to(self.device_torch)
-        with self.network:
-            with torch.no_grad():
-                if self.network is not None:
-                    assert self.network.is_active
-                    if self.logging_config.verbose:
-                        print("network_state", {
-                            'is_active': self.network.is_active,
-                            'multiplier': self.network.multiplier,
-                        })
+            step_num = ''
+            if step is not None:
+                # zero-pad 9 digits
+                step_num = f"_{str(step).zfill(9)}"
 
-                for i in tqdm(range(len(sample_config.prompts)), desc=f"Generating Samples - step: {step}",
-                              leave=False):
-                    raw_prompt = sample_config.prompts[i]
+            filename = f"[time]_{step_num}_[count].png"
 
-                    neg = sample_config.neg
-                    multiplier = sample_config.network_multiplier
-                    p_split = raw_prompt.split('--')
-                    prompt = p_split[0].strip()
-                    height = sample_config.height
-                    width = sample_config.width
+            output_path = os.path.join(sample_folder, filename)
 
-                    if len(p_split) > 1:
-                        for split in p_split:
-                            flag = split[:1]
-                            content = split[1:].strip()
-                            if flag == 'n':
-                                neg = content
-                            elif flag == 'm':
-                                # multiplier
-                                multiplier = float(content)
-                            elif flag == 'w':
-                                # multiplier
-                                width = int(content)
-                            elif flag == 'h':
-                                # multiplier
-                                height = int(content)
+            gen_img_config_list.append(GenerateImageConfig(
+                prompt=sample_config.prompts[i],  # it will autoparse the prompt
+                width=sample_config.width,
+                height=sample_config.height,
+                negative_prompt=sample_config.neg,
+                seed=current_seed,
+                guidance_scale=sample_config.guidance_scale,
+                guidance_rescale=sample_config.guidance_rescale,
+                num_inference_steps=sample_config.sample_steps,
+                network_multiplier=sample_config.network_multiplier,
+                output_path=output_path,
+            ))
 
-                    height = max(64, height - height % 8)  # round to divisible by 8
-                    width = max(64, width - width % 8)  # round to divisible by 8
-
-                    if sample_config.walk_seed:
-                        current_seed += i
-
-                    if self.network is not None:
-                        self.network.multiplier = multiplier
-                    torch.manual_seed(current_seed)
-                    torch.cuda.manual_seed(current_seed)
-
-                    if self.sd.is_xl:
-                        img = pipeline(
-                            prompt,
-                            height=height,
-                            width=width,
-                            num_inference_steps=sample_config.sample_steps,
-                            guidance_scale=sample_config.guidance_scale,
-                            negative_prompt=neg,
-                            guidance_rescale=0.7,
-                        ).images[0]
-                    else:
-                        img = pipeline(
-                            prompt,
-                            height=height,
-                            width=width,
-                            num_inference_steps=sample_config.sample_steps,
-                            guidance_scale=sample_config.guidance_scale,
-                            negative_prompt=neg,
-                        ).images[0]
-
-                    step_num = ''
-                    if step is not None:
-                        # zero-pad 9 digits
-                        step_num = f"_{str(step).zfill(9)}"
-                    seconds_since_epoch = int(time.time())
-                    # zero-pad 2 digits
-                    i_str = str(i).zfill(2)
-                    filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
-                    output_path = os.path.join(sample_folder, filename)
-                    img.save(output_path)
-
-        # clear pipeline and cache to reduce vram usage
-        del pipeline
-        torch.cuda.empty_cache()
-
-        # restore training state
-        torch.set_rng_state(rng_state)
-        if cuda_rng_state is not None:
-            torch.cuda.set_rng_state(cuda_rng_state)
-
-        self.sd.vae.to(original_device_dict['vae'])
-        self.sd.unet.to(original_device_dict['unet'])
-        if isinstance(self.sd.text_encoder, list):
-            for encoder, i in zip(self.sd.text_encoder, range(len(self.sd.text_encoder))):
-                encoder.to(original_device_dict[f'text_encoder_{i}'])
-        else:
-            self.sd.text_encoder.to(original_device_dict['text_encoder'])
-        if self.network is not None:
-            self.network.train()
-            self.network.multiplier = start_multiplier
-        # self.sd.tokenizer.to(original_device_dict['tokenizer'])
+        # send to be generated
+        self.sd.generate_images(gen_img_config_list)
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
@@ -328,147 +190,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_before_train_loop(self):
         pass
 
-    def get_latent_noise(
-            self,
-            height=None,
-            width=None,
-            pixel_height=None,
-            pixel_width=None,
-    ):
-        if height is None and pixel_height is None:
-            raise ValueError("height or pixel_height must be specified")
-        if width is None and pixel_width is None:
-            raise ValueError("width or pixel_width must be specified")
-        if height is None:
-            height = pixel_height // VAE_SCALE_FACTOR
-        if width is None:
-            width = pixel_width // VAE_SCALE_FACTOR
-
-        noise = torch.randn(
-            (
-                self.train_config.batch_size,
-                UNET_IN_CHANNELS,
-                height,
-                width,
-            ),
-            device="cpu",
-        )
-        noise = apply_noise_offset(noise, self.train_config.noise_offset)
-        return noise
-
     def hook_train_loop(self):
         # return loss
         return 0.0
-
-    def get_time_ids_from_latents(self, latents):
-        bs, ch, h, w = list(latents.shape)
-
-        height = h * VAE_SCALE_FACTOR
-        width = w * VAE_SCALE_FACTOR
-
-        dtype = get_torch_dtype(self.train_config.dtype)
-
-        if self.sd.is_xl:
-            prompt_ids = train_util.get_add_time_ids(
-                height,
-                width,
-                dynamic_crops=False,  # look into this
-                dtype=dtype,
-            ).to(self.device_torch, dtype=dtype)
-            return train_util.concat_embeddings(
-                prompt_ids, prompt_ids, bs
-            )
-        else:
-            return None
-
-    def predict_noise(
-            self,
-            latents: torch.FloatTensor,
-            text_embeddings: PromptEmbeds,
-            timestep: int,
-            guidance_scale=7.5,
-            guidance_rescale=0,  # 0.7
-            add_time_ids=None,
-            **kwargs,
-    ):
-
-        if self.sd.is_xl:
-            if add_time_ids is None:
-                add_time_ids = self.get_time_ids_from_latents(latents)
-
-            latent_model_input = torch.cat([latents] * 2)
-
-            latent_model_input = self.sd.noise_scheduler.scale_model_input(latent_model_input, timestep)
-
-            added_cond_kwargs = {
-                "text_embeds": text_embeddings.pooled_embeds,
-                "time_ids": add_time_ids,
-            }
-
-            # predict the noise residual
-            noise_pred = self.sd.unet(
-                latent_model_input,
-                timestep,
-                encoder_hidden_states=text_embeddings.text_embeds,
-                added_cond_kwargs=added_cond_kwargs,
-            ).sample
-
-            # perform guidance
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (
-                    noise_pred_text - noise_pred_uncond
-            )
-
-            # https://github.com/huggingface/diffusers/blob/7a91ea6c2b53f94da930a61ed571364022b21044/src/diffusers/pipelines/stable_diffusion_xl/pipeline_stable_diffusion_xl.py#L775
-            if guidance_rescale > 0.0:
-                # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-                noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
-
-        else:
-            # if we are doing classifier free guidance, need to double up
-            latent_model_input = torch.cat([latents] * 2)
-
-            latent_model_input = self.sd.noise_scheduler.scale_model_input(latent_model_input, timestep)
-
-            # predict the noise residual
-            noise_pred = self.sd.unet(
-                latent_model_input,
-                timestep,
-                encoder_hidden_states=text_embeddings.text_embeds,
-            ).sample
-
-            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (
-                    noise_pred_text - noise_pred_uncond
-            )
-
-        return noise_pred
-
-    # ref: https://github.com/huggingface/diffusers/blob/0bab447670f47c28df60fbd2f6a0f833f75a16f5/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L746
-    def diffuse_some_steps(
-            self,
-            latents: torch.FloatTensor,
-            text_embeddings: PromptEmbeds,
-            total_timesteps: int = 1000,
-            start_timesteps=0,
-            guidance_scale=1,
-            add_time_ids=None,
-            **kwargs,
-    ):
-
-        for timestep in tqdm(self.sd.noise_scheduler.timesteps[start_timesteps:total_timesteps], leave=False):
-            noise_pred = self.predict_noise(
-                latents,
-                text_embeddings,
-                timestep,
-                guidance_scale=guidance_scale,
-                add_time_ids=add_time_ids,
-                **kwargs,
-            )
-            latents = self.sd.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
-
-        # return latents_steps
-        return latents
 
     def get_latest_save_path(self):
         # get latest saved step
@@ -497,92 +221,33 @@ class BaseSDTrainProcess(BaseTrainProcess):
             print("load_weights not implemented for non-network models")
 
     def run(self):
-        super().run()
-
+        # run base process run
+        BaseTrainProcess.run(self)
         ### HOOK ###
         self.hook_before_model_load()
+        # run base sd process run
+        self.sd.load_model()
 
         dtype = get_torch_dtype(self.train_config.dtype)
 
-        # TODO handle other schedulers
-        # sch = KDPM2DiscreteScheduler
-        sch = DDPMScheduler
-        # do our own scheduler
-        prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
-        scheduler = sch(
-            num_train_timesteps=1000,
-            beta_start=0.00085,
-            beta_end=0.0120,
-            beta_schedule="scaled_linear",
-            clip_sample=False,
-            prediction_type=prediction_type,
-        )
-        if self.model_config.is_xl:
-            if self.custom_pipeline is not None:
-                pipln = self.custom_pipeline
-            else:
-                pipln = CustomStableDiffusionXLPipeline
-            pipe = pipln.from_single_file(
-                self.model_config.name_or_path,
-                dtype=dtype,
-                scheduler_type='ddpm',
-                device=self.device_torch,
-            ).to(self.device_torch)
+        # model is loaded from BaseSDProcess
+        unet = self.sd.unet
+        vae = self.sd.vae
+        tokenizer = self.sd.tokenizer
+        text_encoder = self.sd.text_encoder
+        noise_scheduler = self.sd.noise_scheduler
 
-            text_encoders = [pipe.text_encoder, pipe.text_encoder_2]
-            tokenizer = [pipe.tokenizer, pipe.tokenizer_2]
-            for text_encoder in text_encoders:
-                text_encoder.to(self.device_torch, dtype=dtype)
-                text_encoder.requires_grad_(False)
-                text_encoder.eval()
-            text_encoder = text_encoders
-        else:
-            if self.custom_pipeline is not None:
-                pipln = self.custom_pipeline
-            else:
-                pipln = CustomStableDiffusionPipeline
-            pipe = pipln.from_single_file(
-                self.model_config.name_or_path,
-                dtype=dtype,
-                scheduler_type='dpm',
-                device=self.device_torch,
-                load_safety_checker=False,
-            ).to(self.device_torch)
-            pipe.register_to_config(requires_safety_checker=False)
-            text_encoder = pipe.text_encoder
-            text_encoder.to(self.device_torch, dtype=dtype)
-            text_encoder.requires_grad_(False)
-            text_encoder.eval()
-            tokenizer = pipe.tokenizer
-
-        # scheduler doesn't get set sometimes, so we set it here
-        pipe.scheduler = scheduler
-
-        unet = pipe.unet
-        noise_scheduler = pipe.scheduler
-        vae = pipe.vae.to('cpu', dtype=dtype)
-        vae.eval()
-        vae.requires_grad_(False)
-        flush()
-
-        self.sd = StableDiffusion(
-            vae,
-            tokenizer,
-            text_encoder,
-            unet,
-            noise_scheduler,
-            is_xl=self.model_config.is_xl,
-            pipeline=pipe
-        )
-
-        unet.to(self.device_torch, dtype=dtype)
         if self.train_config.xformers:
             vae.set_use_memory_efficient_attention_xformers(True)
             unet.enable_xformers_memory_efficient_attention()
         if self.train_config.gradient_checkpointing:
             unet.enable_gradient_checkpointing()
+        unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
+        vae = vae.to(torch.device('cpu'), dtype=dtype)
+        vae.requires_grad_(False)
+        vae.eval()
 
         if self.network_config is not None:
             self.network = LoRASpecialNetwork(
@@ -598,6 +263,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             )
 
             self.network.force_to(self.device_torch, dtype=dtype)
+            # give network to sd so it can use it
+            self.sd.network = self.network
 
             self.network.apply_to(
                 text_encoder,
@@ -650,7 +317,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                   optimizer_params=self.train_config.optimizer_params)
         self.optimizer = optimizer
 
-        lr_scheduler = train_util.get_lr_scheduler(
+        lr_scheduler = get_lr_scheduler(
             self.train_config.lr_scheduler,
             optimizer,
             max_iterations=self.train_config.steps,
