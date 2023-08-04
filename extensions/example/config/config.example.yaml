@@ -1,0 +1,48 @@
+---
+# Always include at least one example config file to show how to use your extension.
+# use plenty of comments so users know how to use it and what everything does
+
+# all extensions will use this job name
+job: extension
+config:
+  name: 'my_awesome_merge'
+  process:
+    # Put your example processes here. This will be passed
+    # to your extension process in the config argument.
+    # the type MUST match your extension uid
+    - type: "example_merge_extension"
+      # save path for the merged model
+      save_path: "output/merge/[name].safetensors"
+      # save type
+      dtype: fp16
+      # device to run it on
+      device: cuda:0
+      # input models can only be SD1.x and SD2.x models for this example (currently)
+      models_to_merge:
+        # weights are relative, total weights will be normalized
+        # for example. If you have 2 models with weight 1.0, they will
+        # both be weighted 0.5. If you have 1 model with weight 1.0 and
+        # another with weight 2.0, the first will be weighted 1/3 and the
+        # second will be weighted 2/3
+        - name_or_path: "input/model1.safetensors"
+          weight: 1.0
+        - name_or_path: "input/model2.safetensors"
+          weight: 1.0
+        - name_or_path: "input/model3.safetensors"
+          weight: 0.3
+        - name_or_path: "input/model4.safetensors"
+          weight: 1.0
+
+
+# you can put any information you want here, and it will be saved in the model
+# the below is an example. I recommend doing trigger words at a minimum
+# in the metadata. The software will include this plus some other information
+meta:
+  name: "[name]"  # [name] gets replaced with the name above
+  description: A short description of your model
+  version: '0.1'
+  creator:
+    name: Your Name
+    email: your@email.com
+    website: https://yourwebsite.com
+  any: All meta data above is arbitrary, it can be whatever you want.

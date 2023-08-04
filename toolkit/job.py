@@ -19,6 +19,9 @@ def get_job(config_path, name=None):
     if job == 'generate':
         from jobs import GenerateJob
         return GenerateJob(config)
+    if job == 'extension':
+        from jobs import ExtensionJob
+        return ExtensionJob(config)
 
     # elif job == 'train':
     #     from jobs import TrainJob

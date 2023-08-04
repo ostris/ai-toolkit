@@ -126,6 +126,23 @@ I will post an better tutorial soon.
 
 ---
 
+## Extensions!!
+
+You can now make and share custom extensions. That run within this framework and have all the inbuilt tools
+available to them. I will probably use this as the primary development method going
+forward so I dont keep adding and adding more and more features to this base repo. I will likely migrate a lot
+of the existing functionality as well to make everything modular. There is an example extension in the `extensions`
+folder that shows how to make a model merger extension. All of the code is heavily documented which is hopefully
+enough to get you started. To make an extension, just copy that example and replace all the things you need to.
+
+
+### Model Merger - Example Extension
+It is located in the `extensions` folder. It is a fully finctional model merger that can merge as many models together
+as you want. It is a good example of how to make an extension, but is also a pretty useful feature as well since most
+mergers can only do one model at a time and this one will take as many as you want to feed it. There is an 
+example config file in there, just copy that to your `config` folder and rename it to `whatever_you_want.yml`.
+and use it like any other config file.
+
 ## WIP Tools
 
 
@@ -152,6 +169,12 @@ Just went in and out. It is much worse on smaller faces than shown here.
 ---
 
 ## Change Log
+
+#### 2021-10-20
+ - Windows support bug fixes
+ - Extensions! Added functionality to make and share custom extensions for training, merging, whatever.
+check out the example in the `extensions` folder. Read more about that above.
+ - Model Merging, provided via the example extension.
 
 #### 2021-08-03
 Another big refactor to make SD more modular.

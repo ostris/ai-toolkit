@@ -3,6 +3,6 @@ from collections import OrderedDict
 v = OrderedDict()
 v["name"] = "ai-toolkit"
 v["repo"] = "https://github.com/ostris/ai-toolkit"
-v["version"] = "0.0.2"
+v["version"] = "0.0.3"
 
 software_meta = v

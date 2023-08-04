@@ -60,7 +60,11 @@ class BaseJob:
 
             # check if dict key is process type
             if process['type'] in process_dict:
-                ProcessClass = getattr(module, process_dict[process['type']])
+                if isinstance(process_dict[process['type']], str):
+                    ProcessClass = getattr(module, process_dict[process['type']])
+                else:
+                    # it is the class
+                    ProcessClass = process_dict[process['type']]
                 self.process.append(ProcessClass(i, self, process))
             else:
                 raise ValueError(f'config file is invalid. Unknown process type: {process["type"]}')
