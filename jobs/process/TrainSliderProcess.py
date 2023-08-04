@@ -119,7 +119,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
 
         # read line by line from file
         if self.slider_config.prompt_file:
-            with open(self.slider_config.prompt_file, 'r') as f:
+            with open(self.slider_config.prompt_file, 'r', encoding='utf-8') as f:
                 self.prompt_txt_list = f.readlines()
                 # clean empty lines
                 self.prompt_txt_list = [line.strip() for line in self.prompt_txt_list if len(line.strip()) > 0]

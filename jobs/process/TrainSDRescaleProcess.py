@@ -87,7 +87,7 @@ class TrainSDRescaleProcess(BaseSDTrainProcess):
         self.print(f"Loading prompt file from {self.rescale_config.prompt_file}")
 
         # read line by line from file
-        with open(self.rescale_config.prompt_file, 'r') as f:
+        with open(self.rescale_config.prompt_file, 'r', encoding='utf-8') as f:
             self.prompt_txt_list = f.readlines()
             # clean empty lines
             self.prompt_txt_list = [line.strip() for line in self.prompt_txt_list if len(line.strip()) > 0]

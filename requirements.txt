@@ -5,7 +5,6 @@ diffusers
 transformers
 lycoris_lora
 flatten_json
-accelerator
 pyyaml
 oyaml
 tensorboard

@@ -35,7 +35,7 @@ class GenerateConfig:
             raise ValueError("Prompts must be set")
         if isinstance(self.prompts, str):
             if os.path.exists(self.prompts):
-                with open(self.prompts, 'r') as f:
+                with open(self.prompts, 'r', encoding='utf-8') as f:
                     self.prompts = f.read().splitlines()
                     self.prompts = [p.strip() for p in self.prompts if len(p.strip()) > 0]
             else:

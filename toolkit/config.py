@@ -70,10 +70,10 @@ def get_config(config_file_path, name=None):
 
     # if we found it, check if it is a json or yaml file
     if real_config_path.endswith('.json') or real_config_path.endswith('.jsonc'):
-        with open(real_config_path, 'r') as f:
+        with open(real_config_path, 'r', encoding='utf-8') as f:
             config = json.load(f, object_pairs_hook=OrderedDict)
     elif real_config_path.endswith('.yaml') or real_config_path.endswith('.yml'):
-        with open(real_config_path, 'r') as f:
+        with open(real_config_path, 'r', encoding='utf-8') as f:
             config = yaml.load(f, Loader=fixed_loader)
     else:
         raise ValueError(f"Config file {config_file_path} must be a json or yaml file")
