@@ -14,3 +14,4 @@ einops
 accelerate
 toml
 albumentations
+pydantic
