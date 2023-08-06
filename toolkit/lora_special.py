@@ -1,4 +1,6 @@
+import math
 import os
+import re
 import sys
 from typing import List, Optional, Dict, Type, Union
 
@@ -9,7 +11,170 @@ from .paths import SD_SCRIPTS_ROOT
 
 sys.path.append(SD_SCRIPTS_ROOT)
 
-from networks.lora import LoRANetwork, LoRAModule, get_block_index
+from networks.lora import LoRANetwork, get_block_index
+
+from torch.utils.checkpoint import checkpoint
+
+RE_UPDOWN = re.compile(r"(up|down)_blocks_(\d+)_(resnets|upsamplers|downsamplers|attentions)_(\d+)_")
+
+
+class LoRAModule(torch.nn.Module):
+    """
+    replaces forward method of the original Linear, instead of replacing the original Linear module.
+    """
+
+    def __init__(
+            self,
+            lora_name,
+            org_module: torch.nn.Module,
+            multiplier=1.0,
+            lora_dim=4,
+            alpha=1,
+            dropout=None,
+            rank_dropout=None,
+            module_dropout=None,
+    ):
+        """if alpha == 0 or None, alpha is rank (no scaling)."""
+        super().__init__()
+        self.lora_name = lora_name
+
+        if org_module.__class__.__name__ == "Conv2d":
+            in_dim = org_module.in_channels
+            out_dim = org_module.out_channels
+        else:
+            in_dim = org_module.in_features
+            out_dim = org_module.out_features
+
+        # if limit_rank:
+        #   self.lora_dim = min(lora_dim, in_dim, out_dim)
+        #   if self.lora_dim != lora_dim:
+        #     print(f"{lora_name} dim (rank) is changed to: {self.lora_dim}")
+        # else:
+        self.lora_dim = lora_dim
+
+        if org_module.__class__.__name__ == "Conv2d":
+            kernel_size = org_module.kernel_size
+            stride = org_module.stride
+            padding = org_module.padding
+            self.lora_down = torch.nn.Conv2d(in_dim, self.lora_dim, kernel_size, stride, padding, bias=False)
+            self.lora_up = torch.nn.Conv2d(self.lora_dim, out_dim, (1, 1), (1, 1), bias=False)
+        else:
+            self.lora_down = torch.nn.Linear(in_dim, self.lora_dim, bias=False)
+            self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=False)
+
+        if type(alpha) == torch.Tensor:
+            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+        alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
+        self.scale = alpha / self.lora_dim
+        self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える
+
+        # same as microsoft's
+        torch.nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
+        torch.nn.init.zeros_(self.lora_up.weight)
+
+        self.multiplier: Union[float, List[float]] = multiplier
+        self.org_module = org_module  # remove in applying
+        self.dropout = dropout
+        self.rank_dropout = rank_dropout
+        self.module_dropout = module_dropout
+        self.is_checkpointing = False
+
+    def apply_to(self):
+        self.org_forward = self.org_module.forward
+        self.org_module.forward = self.forward
+        del self.org_module
+
+    # this allows us to set different multipliers on a per item in a batch basis
+    # allowing us to run positive and negative weights in the same batch
+    # really only useful for slider training for now
+    def get_multiplier(self, lora_up):
+        batch_size = lora_up.size(0)
+        # batch will have all negative prompts first and positive prompts second
+        # our multiplier list is for a prompt pair. So we need to repeat it for positive and negative prompts
+        # if there is more than our multiplier, it is liekly a batch size increase, so we need to
+        # interleve the multipliers
+        if isinstance(self.multiplier, list):
+            if len(self.multiplier) == 0:
+                # single item, just return it
+                return self.multiplier[0]
+            else:
+                # we have a list of multipliers, so we need to get the multiplier for this batch
+                multiplier_tensor = torch.tensor(self.multiplier * 2).to(lora_up.device, dtype=lora_up.dtype)
+                # should be 1 for if total batch size was 1
+                num_interleaves = (batch_size // 2) // len(self.multiplier)
+                multiplier_tensor = multiplier_tensor.repeat_interleave(num_interleaves)
+
+                # match lora_up rank
+                if len(lora_up.size()) == 2:
+                    multiplier_tensor = multiplier_tensor.view(-1, 1)
+                elif len(lora_up.size()) == 3:
+                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
+                elif len(lora_up.size()) == 4:
+                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
+                return multiplier_tensor
+
+        else:
+            return self.multiplier
+
+    def _call_forward(self, x):
+        # module dropout
+        if self.module_dropout is not None and self.training:
+            if torch.rand(1) < self.module_dropout:
+                return 0.0  # added to original forward
+
+        lx = self.lora_down(x)
+
+        # normal dropout
+        if self.dropout is not None and self.training:
+            lx = torch.nn.functional.dropout(lx, p=self.dropout)
+
+        # rank dropout
+        if self.rank_dropout is not None and self.training:
+            mask = torch.rand((lx.size(0), self.lora_dim), device=lx.device) > self.rank_dropout
+            if len(lx.size()) == 3:
+                mask = mask.unsqueeze(1)  # for Text Encoder
+            elif len(lx.size()) == 4:
+                mask = mask.unsqueeze(-1).unsqueeze(-1)  # for Conv2d
+            lx = lx * mask
+
+            # scaling for rank dropout: treat as if the rank is changed
+            # maskから計算することも考えられるが、augmentation的な効果を期待してrank_dropoutを用いる
+            scale = self.scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
+        else:
+            scale = self.scale
+
+        lx = self.lora_up(lx)
+
+        multiplier = self.get_multiplier(lx)
+
+        return lx * multiplier * scale
+
+    def create_custom_forward(self):
+        def custom_forward(*inputs):
+            return self._call_forward(*inputs)
+
+        return custom_forward
+
+    def forward(self, x):
+        org_forwarded = self.org_forward(x)
+        # TODO this just loses the grad. Not sure why. Probably why no one else is doing it either
+        # if torch.is_grad_enabled() and self.is_checkpointing and self.training:
+        #     lora_output = checkpoint(
+        #         self.create_custom_forward(),
+        #         x,
+        #     )
+        # else:
+        #     lora_output = self._call_forward(x)
+
+        lora_output = self._call_forward(x)
+
+        return org_forwarded + lora_output
+
+    def enable_gradient_checkpointing(self):
+        self.is_checkpointing = True
+
+    def disable_gradient_checkpointing(self):
+        self.is_checkpointing = False
 
 
 class LoRASpecialNetwork(LoRANetwork):
@@ -70,6 +235,7 @@ class LoRASpecialNetwork(LoRANetwork):
         self.dropout = dropout
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
+        self.is_checkpointing = False
 
         if modules_dim is not None:
             print(f"create LoRA network from weights")
@@ -236,14 +402,11 @@ class LoRASpecialNetwork(LoRANetwork):
             torch.save(state_dict, file)
 
     @property
-    def multiplier(self):
+    def multiplier(self) -> Union[float, List[float]]:
         return self._multiplier
 
     @multiplier.setter
-    def multiplier(self, value):
-        # only update if changed
-        if self._multiplier == value:
-            return
+    def multiplier(self, value: Union[float, List[float]]):
         self._multiplier = value
         self._update_lora_multiplier()
 
@@ -264,6 +427,8 @@ class LoRASpecialNetwork(LoRANetwork):
                 for lora in self.text_encoder_loras:
                     lora.multiplier = 0
 
+    # called when the context manager is entered
+    # ie: with network:
     def __enter__(self):
         self.is_active = True
         self._update_lora_multiplier()
@@ -281,3 +446,29 @@ class LoRASpecialNetwork(LoRANetwork):
             loras += self.text_encoder_loras
         for lora in loras:
             lora.to(device, dtype)
+
+    def _update_checkpointing(self):
+        if self.is_checkpointing:
+            if hasattr(self, 'unet_loras'):
+                for lora in self.unet_loras:
+                    lora.enable_gradient_checkpointing()
+            if hasattr(self, 'text_encoder_loras'):
+                for lora in self.text_encoder_loras:
+                    lora.enable_gradient_checkpointing()
+        else:
+            if hasattr(self, 'unet_loras'):
+                for lora in self.unet_loras:
+                    lora.disable_gradient_checkpointing()
+            if hasattr(self, 'text_encoder_loras'):
+                for lora in self.text_encoder_loras:
+                    lora.disable_gradient_checkpointing()
+
+    def enable_gradient_checkpointing(self):
+        # not supported
+        self.is_checkpointing = True
+        self._update_checkpointing()
+
+    def disable_gradient_checkpointing(self):
+        # not supported
+        self.is_checkpointing = False
+        self._update_checkpointing()

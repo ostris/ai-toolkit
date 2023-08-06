@@ -170,18 +170,27 @@ Just went in and out. It is much worse on smaller faces than shown here.
 
 ## Change Log
 
+#### 2023-08-05
+ - Huge memory rework and slider rework. Slider training is better thant ever with no more
+ram spikes. I also made it so all 4 parts of the slider algorythm run in one batch so they share gradient
+accumulation. This makes it much faster and more stable. 
+ - Updated the example config to be something more practical and more updated to current methods. It is now
+a detail slide and shows how to train one without a subject. 512x512 slider training for 1.5 should work on 
+6GB gpu now. Will test soon to verify. 
+
+
 #### 2021-10-20
  - Windows support bug fixes
  - Extensions! Added functionality to make and share custom extensions for training, merging, whatever.
 check out the example in the `extensions` folder. Read more about that above.
  - Model Merging, provided via the example extension.
 
-#### 2021-08-03
+#### 2023-08-03
 Another big refactor to make SD more modular.
 
 Made batch image generation script
 
-#### 2021-08-01
+#### 2023-08-01
 Major changes and update. New LoRA rescale tool, look above for details. Added better metadata so
 Automatic1111 knows what the base model is. Added some experiments and a ton of updates. This thing is still unstable
 at the moment, so hopefully there are not breaking changes. 
@@ -199,7 +208,7 @@ encoders to the model as well as a few more entirely separate diffusion networks
 training without every experimental new paper added to it. The KISS principal. 
 
 
-#### 2021-07-30
+#### 2023-07-30
 Added "anchors" to the slider trainer. This allows you to set a prompt that will be used as a 
 regularizer. You can set the network multiplier to force spread consistency at high weights
 

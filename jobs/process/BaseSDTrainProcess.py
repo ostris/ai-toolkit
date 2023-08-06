@@ -242,6 +242,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             unet.enable_xformers_memory_efficient_attention()
         if self.train_config.gradient_checkpointing:
             unet.enable_gradient_checkpointing()
+            # if isinstance(text_encoder, list):
+            #     for te in text_encoder:
+            #         te.enable_gradient_checkpointing()
+            # else:
+            #     text_encoder.enable_gradient_checkpointing()
+
         unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
@@ -280,6 +286,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 unet_lr=self.train_config.lr,
                 default_lr=self.train_config.lr
             )
+
+            if self.train_config.gradient_checkpointing:
+                self.network.enable_gradient_checkpointing()
 
             latest_save_path = self.get_latest_save_path()
             if latest_save_path is not None:

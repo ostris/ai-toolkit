@@ -1,6 +1,6 @@
 import gc
 import typing
-from typing import Union, OrderedDict, List
+from typing import Union, OrderedDict, List, Tuple
 import sys
 import os
 
@@ -50,10 +50,10 @@ VAE_SCALE_FACTOR = 8  # 2 ** (len(vae.config.block_out_channels) - 1) = 8
 
 
 class PromptEmbeds:
-    text_embeds: torch.FloatTensor
-    pooled_embeds: Union[torch.FloatTensor, None]
+    text_embeds: torch.Tensor
+    pooled_embeds: Union[torch.Tensor, None]
 
-    def __init__(self, args) -> None:
+    def __init__(self, args: Union[Tuple[torch.Tensor], List[torch.Tensor], torch.Tensor]) -> None:
         if isinstance(args, list) or isinstance(args, tuple):
             # xl
             self.text_embeds = args[0]
@@ -139,12 +139,23 @@ class StableDiffusion:
                 pipln = self.custom_pipeline
             else:
                 pipln = CustomStableDiffusionXLPipeline
-            pipe = pipln.from_single_file(
-                self.model_config.name_or_path,
-                dtype=dtype,
-                scheduler_type='ddpm',
-                device=self.device_torch,
-            ).to(self.device_torch)
+
+            # see if path exists
+            if not os.path.exists(self.model_config.name_or_path):
+                # try to load with default diffusers
+                pipe = pipln.from_pretrained(
+                    self.model_config.name_or_path,
+                    dtype=dtype,
+                    scheduler_type='ddpm',
+                    device=self.device_torch,
+                ).to(self.device_torch)
+            else:
+                pipe = pipln.from_single_file(
+                    self.model_config.name_or_path,
+                    dtype=dtype,
+                    scheduler_type='ddpm',
+                    device=self.device_torch,
+                ).to(self.device_torch)
 
             text_encoders = [pipe.text_encoder, pipe.text_encoder_2]
             tokenizer = [pipe.tokenizer, pipe.tokenizer_2]
@@ -158,14 +169,27 @@ class StableDiffusion:
                 pipln = self.custom_pipeline
             else:
                 pipln = CustomStableDiffusionPipeline
-            pipe = pipln.from_single_file(
-                self.model_config.name_or_path,
-                dtype=dtype,
-                scheduler_type='dpm',
-                device=self.device_torch,
-                load_safety_checker=False,
-                requires_safety_checker=False,
-            ).to(self.device_torch)
+
+            # see if path exists
+            if not os.path.exists(self.model_config.name_or_path):
+                # try to load with default diffusers
+                pipe = pipln.from_pretrained(
+                    self.model_config.name_or_path,
+                    dtype=dtype,
+                    scheduler_type='dpm',
+                    device=self.device_torch,
+                    load_safety_checker=False,
+                    requires_safety_checker=False,
+                ).to(self.device_torch)
+            else:
+                pipe = pipln.from_single_file(
+                    self.model_config.name_or_path,
+                    dtype=dtype,
+                    scheduler_type='dpm',
+                    device=self.device_torch,
+                    load_safety_checker=False,
+                    requires_safety_checker=False,
+                ).to(self.device_torch)
             pipe.register_to_config(requires_safety_checker=False)
             text_encoder = pipe.text_encoder
             text_encoder.to(self.device_torch, dtype=dtype)

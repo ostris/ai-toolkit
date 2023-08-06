@@ -108,6 +108,7 @@ class SliderConfig:
         self.resolutions: List[List[int]] = kwargs.get('resolutions', [[512, 512]])
         self.prompt_file: str = kwargs.get('prompt_file', None)
         self.prompt_tensors: str = kwargs.get('prompt_tensors', None)
+        self.batch_full_slide: bool = kwargs.get('batch_full_slide', True)
 
 
 class GenerateImageConfig:
