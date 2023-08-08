@@ -20,6 +20,7 @@ process_dict = {
     'slider_old': 'TrainSliderProcessOld',
     'lora_hack': 'TrainLoRAHack',
     'rescale_sd': 'TrainSDRescaleProcess',
+    'esrgan': 'TrainESRGANProcess',
 }
 
 

@@ -6,6 +6,8 @@ from collections import OrderedDict
 
 from PIL import Image
 from PIL.ImageOps import exif_transpose
+# from basicsr.archs.rrdbnet_arch import RRDBNet
+from toolkit.models.RRDB import RRDBNet as ESRGAN
 from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader, ConcatDataset
 import torch
@@ -13,8 +15,8 @@ from torch import nn
 from torchvision.transforms import transforms
 
 from jobs.process import BaseTrainProcess
-from toolkit.kohya_model_util import load_vae, convert_diffusers_back_to_ldm
-from toolkit.data_loader import ImageDataset
+from toolkit.data_loader import AugmentedImageDataset
+from toolkit.esrgan_utils import convert_state_dict_to_basicsr, convert_basicsr_state_dict_to_save_format
 from toolkit.losses import ComparativeTotalVariation, get_gradient_penalty, PatternLoss
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.optimizer import get_optimizer
@@ -29,22 +31,18 @@ from .models.vgg19_critic import Critic
 IMAGE_TRANSFORMS = transforms.Compose(
     [
         transforms.ToTensor(),
-        transforms.Normalize([0.5], [0.5]),
+        # transforms.Normalize([0.5], [0.5]),
     ]
 )
 
 
-def unnormalize(tensor):
-    return (tensor / 2 + 0.5).clamp(0, 1)
-
-
-class TrainVAEProcess(BaseTrainProcess):
+class TrainESRGANProcess(BaseTrainProcess):
     def __init__(self, process_id: int, job, config: OrderedDict):
         super().__init__(process_id, job, config)
         self.data_loader = None
-        self.vae = None
+        self.model = None
         self.device = self.get_conf('device', self.job.device)
-        self.vae_path = self.get_conf('vae_path', required=True)
+        self.pretrained_path = self.get_conf('pretrained_path', 'None')
         self.datasets_objects = self.get_conf('datasets', required=True)
         self.batch_size = self.get_conf('batch_size', 1, as_type=int)
         self.resolution = self.get_conf('resolution', 256, as_type=int)
@@ -54,23 +52,31 @@ class TrainVAEProcess(BaseTrainProcess):
         self.epochs = self.get_conf('epochs', None, as_type=int)
         self.max_steps = self.get_conf('max_steps', None, as_type=int)
         self.save_every = self.get_conf('save_every', None)
+        self.upscale_sample = self.get_conf('upscale_sample', 4)
         self.dtype = self.get_conf('dtype', 'float32')
         self.sample_sources = self.get_conf('sample_sources', None)
         self.log_every = self.get_conf('log_every', 100, as_type=int)
         self.style_weight = self.get_conf('style_weight', 0, as_type=float)
         self.content_weight = self.get_conf('content_weight', 0, as_type=float)
-        self.kld_weight = self.get_conf('kld_weight', 0, as_type=float)
         self.mse_weight = self.get_conf('mse_weight', 1e0, as_type=float)
+        self.zoom = self.get_conf('zoom', 4, as_type=int)
         self.tv_weight = self.get_conf('tv_weight', 1e0, as_type=float)
         self.critic_weight = self.get_conf('critic_weight', 1, as_type=float)
         self.pattern_weight = self.get_conf('pattern_weight', 1, as_type=float)
         self.optimizer_params = self.get_conf('optimizer_params', {})
-
-        self.blocks_to_train = self.get_conf('blocks_to_train', ['all'])
+        self.augmentations = self.get_conf('augmentations', {})
         self.torch_dtype = get_torch_dtype(self.dtype)
+        if self.torch_dtype == torch.bfloat16:
+            self.esrgan_dtype = torch.float16
+        else:
+            self.esrgan_dtype = torch.float32
         self.vgg_19 = None
         self.style_weight_scalers = []
         self.content_weight_scalers = []
+
+        # throw error if zoom if not divisible by 2
+        if self.zoom % 2 != 0:
+            raise ValueError('zoom must be divisible by 2')
 
         self.step_num = 0
         self.epoch_num = 0
@@ -108,6 +114,9 @@ class TrainVAEProcess(BaseTrainProcess):
 
         self._pattern_loss = None
 
+        # build augmentation transforms
+        aug_transforms = []
+
     def update_training_metadata(self):
         self.add_meta(OrderedDict({"training_info": self.get_training_info()}))
 
@@ -126,7 +135,22 @@ class TrainVAEProcess(BaseTrainProcess):
                 print(f" - Dataset: {dataset['path']}")
                 ds = copy.copy(dataset)
                 ds['resolution'] = self.resolution
-                image_dataset = ImageDataset(ds)
+
+                if 'augmentations' not in ds:
+                    ds['augmentations'] = self.augmentations
+
+                # add the resize down augmentation
+                ds['augmentations'] = [{
+                    'method': 'Resize',
+                    'params': {
+                        'width': int(self.resolution // self.zoom),
+                        'height': int(self.resolution // self.zoom),
+                        # downscale interpolation, string will be evaluated
+                        'interpolation': 'cv2.INTER_AREA'
+                    }
+                }] + ds['augmentations']
+
+                image_dataset = AugmentedImageDataset(ds)
                 datasets.append(image_dataset)
 
             concatenated_dataset = ConcatDataset(datasets)
@@ -159,6 +183,10 @@ class TrainVAEProcess(BaseTrainProcess):
             for content_loss in self.content_losses:
                 # get a scaler  to normalize to 1
                 scaler = 1 / torch.mean(content_loss.loss).item()
+                # if is nan, set to 1
+                if scaler != scaler:
+                    scaler = 1
+                    print(f"Warning: content loss scaler is nan, setting to 1")
                 self.content_weight_scalers.append(scaler)
 
             self.print(f"Style weight scalers: {self.style_weight_scalers}")
@@ -190,17 +218,6 @@ class TrainVAEProcess(BaseTrainProcess):
         else:
             return torch.tensor(0.0, device=self.device)
 
-    def get_kld_loss(self, mu, log_var):
-        if self.kld_weight > 0:
-            # Kullback-Leibler divergence
-            # added here for full training (not implemented). Not needed for only decoder
-            # as we are not changing the distribution of the latent space
-            # normally it would help keep a normal distribution for latents
-            KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())  # KL divergence
-            return KLD
-        else:
-            return torch.tensor(0.0, device=self.device)
-
     def get_tv_loss(self, pred, target):
         if self.tv_weight > 0:
             get_tv_loss = ComparativeTotalVariation()
@@ -211,8 +228,10 @@ class TrainVAEProcess(BaseTrainProcess):
 
     def get_pattern_loss(self, pred, target):
         if self._pattern_loss is None:
-            self._pattern_loss = PatternLoss(pattern_size=8, dtype=self.torch_dtype).to(self.device,
-                                                                                        dtype=self.torch_dtype)
+            self._pattern_loss = PatternLoss(
+                pattern_size=self.zoom,
+                dtype=self.torch_dtype
+            ).to(self.device, dtype=self.torch_dtype)
         loss = torch.mean(self._pattern_loss(pred, target))
         return loss
 
@@ -230,15 +249,18 @@ class TrainVAEProcess(BaseTrainProcess):
         # prepare meta
         save_meta = get_meta_for_safetensors(self.meta, self.job.name)
 
-        state_dict = convert_diffusers_back_to_ldm(self.vae)
+        # state_dict = self.model.state_dict()
 
-        for key in list(state_dict.keys()):
-            v = state_dict[key]
+        # state has the original state dict keys so we can save what we started from
+        save_state_dict = self.model.state
+
+        for key in list(save_state_dict.keys()):
+            v = save_state_dict[key]
             v = v.detach().clone().to("cpu").to(torch.float32)
-            state_dict[key] = v
+            save_state_dict[key] = v
 
         # having issues with meta
-        save_file(state_dict, os.path.join(self.save_root, filename), save_meta)
+        save_file(save_state_dict, os.path.join(self.save_root, filename), save_meta)
 
         self.print(f"Saved to {os.path.join(self.save_root, filename)}")
 
@@ -250,6 +272,8 @@ class TrainVAEProcess(BaseTrainProcess):
         if not os.path.exists(sample_folder):
             os.makedirs(sample_folder, exist_ok=True)
 
+        self.model.eval()
+
         with torch.no_grad():
             for i, img_url in enumerate(self.sample_sources):
                 img = exif_transpose(Image.open(img_url))
@@ -259,26 +283,40 @@ class TrainVAEProcess(BaseTrainProcess):
                     min_dim = min(img.width, img.height)
                     img = img.crop((0, 0, min_dim, min_dim))
                 # resize
-                img = img.resize((self.resolution, self.resolution))
+                img = img.resize((self.resolution * self.zoom, self.resolution * self.zoom), resample=Image.BICUBIC)
 
-                input_img = img
-                img = IMAGE_TRANSFORMS(img).unsqueeze(0).to(self.device, dtype=self.torch_dtype)
+                target_image = img
+                # downscale the image input
+                img = img.resize((self.resolution, self.resolution), resample=Image.BICUBIC)
+
+                # downscale the image input
+
+                img = IMAGE_TRANSFORMS(img).unsqueeze(0).to(self.device, dtype=self.esrgan_dtype)
                 img = img
-                decoded = self.vae(img).sample
-                decoded = (decoded / 2 + 0.5).clamp(0, 1)
+                output = self.model(img)
+                # output = (output / 2 + 0.5).clamp(0, 1)
+                output = output.clamp(0, 1)
                 # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
-                decoded = decoded.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
+                output = output.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
 
                 # convert to pillow image
-                decoded = Image.fromarray((decoded * 255).astype(np.uint8))
+                output = Image.fromarray((output * 255).astype(np.uint8))
+
+                # upscale to size * self.upscale_sample while maintaining pixels
+                output = output.resize(
+                    (self.resolution * self.upscale_sample, self.resolution * self.upscale_sample),
+                    resample=Image.NEAREST
+                )
+
+                width, height = output.size
 
                 # stack input image and decoded image
-                input_img = input_img.resize((self.resolution, self.resolution))
-                decoded = decoded.resize((self.resolution, self.resolution))
+                target_image = target_image.resize((width, height))
+                output = output.resize((width, height))
 
-                output_img = Image.new('RGB', (self.resolution * 2, self.resolution))
-                output_img.paste(input_img, (0, 0))
-                output_img.paste(decoded, (self.resolution, 0))
+                output_img = Image.new('RGB', (width * 2, height))
+                output_img.paste(target_image, (0, 0))
+                output_img.paste(output, (width, 0))
 
                 step_num = ''
                 if step is not None:
@@ -290,8 +328,11 @@ class TrainVAEProcess(BaseTrainProcess):
                 filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
                 output_img.save(os.path.join(sample_folder, filename))
 
-    def load_vae(self):
-        path_to_load = self.vae_path
+        self.model.train()
+
+    def load_model(self):
+        state_dict = None
+        path_to_load = self.pretrained_path
         # see if we have a checkpoint in out output to resume from
         self.print(f"Looking for latest checkpoint in {self.save_root}")
         files = glob.glob(os.path.join(self.save_root, f"{self.job.name}*.safetensors"))
@@ -300,19 +341,30 @@ class TrainVAEProcess(BaseTrainProcess):
             print(f" - Latest checkpoint is: {latest_file}")
             path_to_load = latest_file
             # todo update step and epoch count
-        else:
+        elif self.pretrained_path is None:
             self.print(f" - No checkpoint found, starting from scratch")
-        # load vae
-        self.print(f"Loading VAE")
-        self.print(f" - Loading VAE: {path_to_load}")
-        if self.vae is None:
-            self.vae = load_vae(path_to_load, dtype=self.torch_dtype)
+        else:
+            self.print(f" - No checkpoint found, loading pretrained model")
+            self.print(f" - path: {path_to_load}")
 
-        # set decoder to train
-        self.vae.to(self.device, dtype=self.torch_dtype)
-        self.vae.requires_grad_(False)
-        self.vae.eval()
-        self.vae.decoder.train()
+        if path_to_load is not None:
+            self.print(f" - Loading pretrained checkpoint: {self.pretrained_path}")
+            # if ends with pth then assume pytorch checkpoint
+            if path_to_load.endswith('.pth') or path_to_load.endswith('.pt'):
+                state_dict = torch.load(path_to_load, map_location=self.device)
+            elif path_to_load.endswith('.safetensors'):
+                state_dict = load_file(path_to_load)
+            else:
+                raise Exception(f"Unknown file extension for checkpoint: {path_to_load}")
+
+        # todo determine architecture from checkpoint
+        self.model = ESRGAN(
+            state_dict
+        ).to(self.device, dtype=self.esrgan_dtype)
+
+        # set the model to training mode
+        self.model.train()
+        self.model.requires_grad_(True)
 
     def run(self):
         super().run()
@@ -332,40 +384,17 @@ class TrainVAEProcess(BaseTrainProcess):
         start_step = self.step_num
         self.first_step = start_step
 
-        self.print(f"Training VAE")
+        self.print(f"Training ESRGAN model:")
         self.print(f" - Training folder: {self.training_folder}")
         self.print(f" - Batch size: {self.batch_size}")
         self.print(f" - Learning rate: {self.learning_rate}")
         self.print(f" - Epochs: {num_epochs}")
         self.print(f" - Max steps: {self.max_steps}")
 
-        # load vae
-        self.load_vae()
+        # load model
+        self.load_model()
 
-        params = []
-
-        # only set last 2 layers to trainable
-        for param in self.vae.decoder.parameters():
-            param.requires_grad = False
-
-        train_all = 'all' in self.blocks_to_train
-
-        if train_all:
-            params = list(self.vae.decoder.parameters())
-            self.vae.decoder.requires_grad_(True)
-        else:
-            # mid_block
-            if train_all or 'mid_block' in self.blocks_to_train:
-                params += list(self.vae.decoder.mid_block.parameters())
-                self.vae.decoder.mid_block.requires_grad_(True)
-            # up_blocks
-            if train_all or 'up_blocks' in self.blocks_to_train:
-                params += list(self.vae.decoder.up_blocks.parameters())
-                self.vae.decoder.up_blocks.requires_grad_(True)
-            # conv_out (single conv layer output)
-            if train_all or 'conv_out' in self.blocks_to_train:
-                params += list(self.vae.decoder.conv_out.parameters())
-                self.vae.decoder.conv_out.requires_grad_(True)
+        params = self.model.parameters()
 
         if self.style_weight > 0 or self.content_weight > 0 or self.use_critic:
             self.setup_vgg19()
@@ -389,12 +418,10 @@ class TrainVAEProcess(BaseTrainProcess):
         # setup tqdm progress bar
         self.progress_bar = tqdm(
             total=num_steps,
-            desc='Training VAE',
+            desc='Training ESRGAN',
             leave=True
         )
 
-        # sample first
-        self.sample()
         blank_losses = OrderedDict({
             "total": [],
             "style": [],
@@ -408,28 +435,29 @@ class TrainVAEProcess(BaseTrainProcess):
         })
         epoch_losses = copy.deepcopy(blank_losses)
         log_losses = copy.deepcopy(blank_losses)
+        print("Generating baseline samples")
+        self.sample(step=0)
         # range start at self.epoch_num go to self.epochs
         for epoch in range(self.epoch_num, self.epochs, 1):
             if self.step_num >= self.max_steps:
                 break
-            for batch in self.data_loader:
+            for targets, inputs in self.data_loader:
                 if self.step_num >= self.max_steps:
                     break
+                with torch.no_grad():
+                    targets = targets.to(self.device, dtype=self.esrgan_dtype).clamp(0, 1)
+                    inputs = inputs.to(self.device, dtype=self.esrgan_dtype).clamp(0, 1)
 
-                batch = batch.to(self.device, dtype=self.torch_dtype)
+                pred = self.model(inputs)
 
-                # forward pass
-                dgd = self.vae.encode(batch).latent_dist
-                mu, logvar = dgd.mean, dgd.logvar
-                latents = dgd.sample()
-                latents.requires_grad_(True)
-
-                pred = self.vae.decode(latents).sample
+                pred = pred.to(self.device, dtype=self.torch_dtype).clamp(0, 1)
+                targets = targets.to(self.device, dtype=self.torch_dtype).clamp(0, 1)
 
                 # Run through VGG19
                 if self.style_weight > 0 or self.content_weight > 0 or self.use_critic:
-                    stacked = torch.cat([pred, batch], dim=0)
-                    stacked = (stacked / 2 + 0.5).clamp(0, 1)
+                    stacked = torch.cat([pred, targets], dim=0)
+                    # stacked = (stacked / 2 + 0.5).clamp(0, 1)
+                    stacked = stacked.clamp(0, 1)
                     self.vgg_19(stacked)
 
                 if self.use_critic:
@@ -439,16 +467,15 @@ class TrainVAEProcess(BaseTrainProcess):
 
                 style_loss = self.get_style_loss() * self.style_weight
                 content_loss = self.get_content_loss() * self.content_weight
-                kld_loss = self.get_kld_loss(mu, logvar) * self.kld_weight
-                mse_loss = self.get_mse_loss(pred, batch) * self.mse_weight
-                tv_loss = self.get_tv_loss(pred, batch) * self.tv_weight
-                pattern_loss = self.get_pattern_loss(pred, batch) * self.pattern_weight
+                mse_loss = self.get_mse_loss(pred, targets) * self.mse_weight
+                tv_loss = self.get_tv_loss(pred, targets) * self.tv_weight
+                pattern_loss = self.get_pattern_loss(pred, targets) * self.pattern_weight
                 if self.use_critic:
                     critic_gen_loss = self.critic.get_critic_loss(self.vgg19_pool_4.tensor) * self.critic_weight
                 else:
                     critic_gen_loss = torch.tensor(0.0, device=self.device, dtype=self.torch_dtype)
 
-                loss = style_loss + content_loss + kld_loss + mse_loss + tv_loss + critic_gen_loss + pattern_loss
+                loss = style_loss + content_loss + mse_loss + tv_loss + critic_gen_loss + pattern_loss
 
                 # Backward pass and optimization
                 optimizer.zero_grad()
@@ -464,8 +491,6 @@ class TrainVAEProcess(BaseTrainProcess):
                     loss_string += f" cnt: {content_loss.item():.2e}"
                 if self.style_weight > 0:
                     loss_string += f" sty: {style_loss.item():.2e}"
-                if self.kld_weight > 0:
-                    loss_string += f" kld: {kld_loss.item():.2e}"
                 if self.mse_weight > 0:
                     loss_string += f" mse: {mse_loss.item():.2e}"
                 if self.tv_weight > 0:
@@ -477,7 +502,7 @@ class TrainVAEProcess(BaseTrainProcess):
                 if self.use_critic:
                     loss_string += f" crD: {critic_d_loss:.2e}"
 
-                if self.optimizer_type.startswith('dadaptation'):
+                if self.optimizer_type.startswith('dadaptation') or self.optimizer_type.startswith('prodigy'):
                     learning_rate = (
                             optimizer.param_groups[0]["d"] *
                             optimizer.param_groups[0]["lr"]
@@ -498,7 +523,6 @@ class TrainVAEProcess(BaseTrainProcess):
                 epoch_losses["style"].append(style_loss.item())
                 epoch_losses["content"].append(content_loss.item())
                 epoch_losses["mse"].append(mse_loss.item())
-                epoch_losses["kl"].append(kld_loss.item())
                 epoch_losses["tv"].append(tv_loss.item())
                 epoch_losses["ptn"].append(pattern_loss.item())
                 epoch_losses["crG"].append(critic_gen_loss.item())
@@ -508,7 +532,6 @@ class TrainVAEProcess(BaseTrainProcess):
                 log_losses["style"].append(style_loss.item())
                 log_losses["content"].append(content_loss.item())
                 log_losses["mse"].append(mse_loss.item())
-                log_losses["kl"].append(kld_loss.item())
                 log_losses["tv"].append(tv_loss.item())
                 log_losses["ptn"].append(pattern_loss.item())
                 log_losses["crG"].append(critic_gen_loss.item())

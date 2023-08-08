@@ -12,3 +12,4 @@ from .TrainSDRescaleProcess import TrainSDRescaleProcess
 from .ModRescaleLoraProcess import ModRescaleLoraProcess
 from .GenerateProcess import GenerateProcess
 from .BaseExtensionProcess import BaseExtensionProcess
+from .TrainESRGANProcess import TrainESRGANProcess
