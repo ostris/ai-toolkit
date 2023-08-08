@@ -4,6 +4,10 @@ import json
 import os
 import time
 from typing import TYPE_CHECKING
+import sys
+from toolkit.paths import SD_SCRIPTS_ROOT
+
+sys.path.append(SD_SCRIPTS_ROOT)
 
 from diffusers import (
     StableDiffusionPipeline,

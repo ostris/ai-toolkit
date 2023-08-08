@@ -29,7 +29,9 @@ cd ai-toolkit
 git submodule update --init --recursive
 python3 -m venv venv
 source venv/bin/activate
-# or source venv/Scripts/activate on windows
+# .\venv\Scripts\activate on windows
+# windows install pytorch first with 
+# pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu117
 pip3 install -r requirements.txt
 ```
 
