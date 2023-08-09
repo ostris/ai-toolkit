@@ -7,7 +7,7 @@ from collections import OrderedDict
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 # from basicsr.archs.rrdbnet_arch import RRDBNet
-from toolkit.models.RRDB import RRDBNet as ESRGAN
+from toolkit.models.RRDB import RRDBNet as ESRGAN, esrgan_safetensors_keys
 from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader, ConcatDataset
 import torch
@@ -40,7 +40,7 @@ class TrainESRGANProcess(BaseTrainProcess):
     def __init__(self, process_id: int, job, config: OrderedDict):
         super().__init__(process_id, job, config)
         self.data_loader = None
-        self.model = None
+        self.model: ESRGAN = None
         self.device = self.get_conf('device', self.job.device)
         self.pretrained_path = self.get_conf('pretrained_path', 'None')
         self.datasets_objects = self.get_conf('datasets', required=True)
@@ -245,22 +245,24 @@ class TrainESRGANProcess(BaseTrainProcess):
             step_num = f"_{str(step).zfill(9)}"
 
         self.update_training_metadata()
-        filename = f'{self.job.name}{step_num}.safetensors'
+        # filename = f'{self.job.name}{step_num}.safetensors'
+        filename = f'{self.job.name}{step_num}.pth'
         # prepare meta
         save_meta = get_meta_for_safetensors(self.meta, self.job.name)
 
         # state_dict = self.model.state_dict()
 
         # state has the original state dict keys so we can save what we started from
-        save_state_dict = self.model.state
+        save_state_dict = self.model.state_dict()
 
         for key in list(save_state_dict.keys()):
             v = save_state_dict[key]
             v = v.detach().clone().to("cpu").to(torch.float32)
             save_state_dict[key] = v
 
-        # having issues with meta
-        save_file(save_state_dict, os.path.join(self.save_root, filename), save_meta)
+        # most things wont use safetensors, save as torch
+        # save_file(save_state_dict, os.path.join(self.save_root, filename), save_meta)
+        torch.save(save_state_dict, os.path.join(self.save_root, filename))
 
         self.print(f"Saved to {os.path.join(self.save_root, filename)}")
 
@@ -336,6 +338,7 @@ class TrainESRGANProcess(BaseTrainProcess):
         # see if we have a checkpoint in out output to resume from
         self.print(f"Looking for latest checkpoint in {self.save_root}")
         files = glob.glob(os.path.join(self.save_root, f"{self.job.name}*.safetensors"))
+        files += glob.glob(os.path.join(self.save_root, f"{self.job.name}*.pth"))
         if files and len(files) > 0:
             latest_file = max(files, key=os.path.getmtime)
             print(f" - Latest checkpoint is: {latest_file}")
@@ -348,12 +351,16 @@ class TrainESRGANProcess(BaseTrainProcess):
             self.print(f" - path: {path_to_load}")
 
         if path_to_load is not None:
-            self.print(f" - Loading pretrained checkpoint: {self.pretrained_path}")
+            self.print(f" - Loading pretrained checkpoint: {path_to_load}")
             # if ends with pth then assume pytorch checkpoint
             if path_to_load.endswith('.pth') or path_to_load.endswith('.pt'):
                 state_dict = torch.load(path_to_load, map_location=self.device)
             elif path_to_load.endswith('.safetensors'):
-                state_dict = load_file(path_to_load)
+                state_dict_raw = load_file(path_to_load)
+                # make ordered dict as most things need it
+                state_dict = OrderedDict()
+                for key in esrgan_safetensors_keys:
+                    state_dict[key] = state_dict_raw[key]
             else:
                 raise Exception(f"Unknown file extension for checkpoint: {path_to_load}")
 
