@@ -35,7 +35,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.start_step = 0
         self.device = self.get_conf('device', self.job.device)
         self.device_torch = torch.device(self.device)
-        self.network_config = NetworkConfig(**self.get_conf('network', None))
+        network_config = self.get_conf('network', None)
+        if network_config is not None:
+            self.network_config = NetworkConfig(**network_config)
+        else:
+            self.network_config = None
         self.training_folder = self.get_conf('training_folder', self.job.training_folder)
         self.train_config = TrainConfig(**self.get_conf('train', {}))
         self.model_config = ModelConfig(**self.get_conf('model', {}))
