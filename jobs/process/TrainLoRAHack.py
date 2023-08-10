@@ -68,7 +68,7 @@ class TrainLoRAHack(BaseSDTrainProcess):
 
         return loss_dict
 
-    def hook_train_loop(self):
+    def hook_train_loop(self, batch):
         if self.hack_config.type == 'suppression':
             return self.supress_loop()
         else:

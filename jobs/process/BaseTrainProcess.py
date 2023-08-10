@@ -29,11 +29,11 @@ class BaseTrainProcess(BaseProcess):
         super().__init__(process_id, job, config)
         self.progress_bar = None
         self.writer = None
-        self.training_folder = self.get_conf('training_folder', self.job.training_folder)
-        self.save_root = os.path.join(self.training_folder, self.job.name)
+        self.training_folder = self.get_conf('training_folder', self.job.training_folder if hasattr(self.job, 'training_folder') else None)
+        self.save_root = os.path.join(self.training_folder, self.name)
         self.step = 0
         self.first_step = 0
-        self.log_dir = self.get_conf('log_dir', self.job.log_dir)
+        self.log_dir = self.get_conf('log_dir', self.job.log_dir if hasattr(self.job, 'log_dir') else None)
         self.setup_tensorboard()
         self.save_training_config()
 
@@ -62,7 +62,7 @@ class BaseTrainProcess(BaseProcess):
 
     def save_training_config(self):
         timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        os.makedirs(self.training_folder, exist_ok=True)
-        save_dif = os.path.join(self.training_folder, f'process_config_{timestamp}.yaml')
+        os.makedirs(self.save_root, exist_ok=True)
+        save_dif = os.path.join(self.save_root, f'process_config_{timestamp}.yaml')
         with open(save_dif, 'w') as f:
             yaml.dump(self.raw_process_config, f)

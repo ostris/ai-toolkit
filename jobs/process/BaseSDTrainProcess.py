@@ -1,6 +1,9 @@
 import glob
 from collections import OrderedDict
 import os
+from typing import Union
+
+from torch.utils.data import DataLoader
 
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.optimizer import get_optimizer
@@ -54,6 +57,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.logging_config = LogingConfig(**self.get_conf('logging', {}))
         self.optimizer = None
         self.lr_scheduler = None
+        self.data_loader: Union[DataLoader, None] = None
 
         self.sd = StableDiffusion(
             device=self.device,
@@ -193,7 +197,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_before_train_loop(self):
         pass
 
-    def hook_train_loop(self):
+    def hook_train_loop(self, batch=None):
         # return loss
         return 0.0
 
@@ -358,12 +362,29 @@ class BaseSDTrainProcess(BaseTrainProcess):
             iterable=range(0, self.train_config.steps),
         )
 
+        if self.data_loader is not None:
+            dataloader = self.data_loader
+            dataloader_iterator = iter(dataloader)
+        else:
+            dataloader = None
+            dataloader_iterator = None
+
         # self.step_num = 0
         for step in range(self.step_num, self.train_config.steps):
-            # todo handle dataloader here maybe, not sure
+            if dataloader is not None:
+                try:
+                    batch = next(dataloader_iterator)
+                except StopIteration:
+                    # hit the end of an epoch, reset
+                    # todo, should we do something else here? like blow up balloons?
+                    dataloader_iterator = iter(dataloader)
+                    batch = next(dataloader_iterator)
+            else:
+                batch = None
 
             ### HOOK ###
-            loss_dict = self.hook_train_loop()
+            loss_dict = self.hook_train_loop(batch)
+            flush()
 
             if self.train_config.optimizer.lower().startswith('dadaptation') or \
                     self.train_config.optimizer.lower().startswith('prodigy'):

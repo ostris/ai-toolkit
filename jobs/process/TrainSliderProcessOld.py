@@ -221,7 +221,7 @@ class TrainSliderProcessOld(BaseSDTrainProcess):
         flush()
         # end hook_before_train_loop
 
-    def hook_train_loop(self):
+    def hook_train_loop(self, batch):
         dtype = get_torch_dtype(self.train_config.dtype)
 
         # get a random pair

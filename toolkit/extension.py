@@ -25,25 +25,26 @@ class Extension(object):
 
 
 def get_all_extensions() -> List[Extension]:
-    # Get the path of the "extensions" directory
-    extensions_dir = os.path.join(TOOLKIT_ROOT, "extensions")
+    extension_folders = ['extensions', 'extensions_built_in']
 
     # This will hold the classes from all extension modules
     all_extension_classes: List[Extension] = []
 
     # Iterate over all directories (i.e., packages) in the "extensions" directory
-    for (_, name, _) in pkgutil.iter_modules([extensions_dir]):
-        try:
-            # Import the module
-            module = importlib.import_module(f"extensions.{name}")
-            # Get the value of the AI_TOOLKIT_EXTENSIONS variable
-            extensions = getattr(module, "AI_TOOLKIT_EXTENSIONS", None)
-            # Check if the value is a list
-            if isinstance(extensions, list):
-                # Iterate over the list and add the classes to the main list
-                all_extension_classes.extend(extensions)
-        except ImportError as e:
-            print(f"Failed to import the {name} module. Error: {str(e)}")
+    for sub_dir in extension_folders:
+        extensions_dir = os.path.join(TOOLKIT_ROOT, sub_dir)
+        for (_, name, _) in pkgutil.iter_modules([extensions_dir]):
+            try:
+                # Import the module
+                module = importlib.import_module(f"{sub_dir}.{name}")
+                # Get the value of the AI_TOOLKIT_EXTENSIONS variable
+                extensions = getattr(module, "AI_TOOLKIT_EXTENSIONS", None)
+                # Check if the value is a list
+                if isinstance(extensions, list):
+                    # Iterate over the list and add the classes to the main list
+                    all_extension_classes.extend(extensions)
+            except ImportError as e:
+                print(f"Failed to import the {name} module. Error: {str(e)}")
 
     return all_extension_classes
 
