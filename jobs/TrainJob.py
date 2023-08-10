@@ -21,6 +21,7 @@ process_dict = {
     'lora_hack': 'TrainLoRAHack',
     'rescale_sd': 'TrainSDRescaleProcess',
     'esrgan': 'TrainESRGANProcess',
+    'reference': 'TrainReferenceProcess',
 }
 
 
@@ -36,18 +37,9 @@ class TrainJob(BaseJob):
         # self.mixed_precision = self.get_conf('mixed_precision', False)  # fp16
         self.log_dir = self.get_conf('log_dir', None)
 
-        self.writer = None
-        self.setup_tensorboard()
-
         # loads the processes from the config
         self.load_processes(process_dict)
 
-    def save_training_config(self):
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-        os.makedirs(self.training_folder, exist_ok=True)
-        save_dif = os.path.join(self.training_folder, f'run_config_{timestamp}.yaml')
-        with open(save_dif, 'w') as f:
-            yaml.dump(self.raw_config, f)
 
     def run(self):
         super().run()
@@ -56,12 +48,3 @@ class TrainJob(BaseJob):
 
         for process in self.process:
             process.run()
-
-    def setup_tensorboard(self):
-        if self.log_dir:
-            from torch.utils.tensorboard import SummaryWriter
-            now = datetime.now()
-            time_str = now.strftime('%Y%m%d-%H%M%S')
-            summary_name = f"{self.name}_{time_str}"
-            summary_dir = os.path.join(self.log_dir, summary_name)
-            self.writer = SummaryWriter(summary_dir)

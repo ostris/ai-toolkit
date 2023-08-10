@@ -40,7 +40,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.network_config = NetworkConfig(**network_config)
         else:
             self.network_config = None
-        self.training_folder = self.get_conf('training_folder', self.job.training_folder)
         self.train_config = TrainConfig(**self.get_conf('train', {}))
         self.model_config = ModelConfig(**self.get_conf('model', {}))
         self.save_config = SaveConfig(**self.get_conf('save', {}))
@@ -319,8 +318,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 unet.requires_grad_(True)
                 unet.train()
                 params += unet.parameters()
-
-            # TODO recover save if training network. Maybe load from beginning
 
         ### HOOK ###
         params = self.hook_add_extra_train_params(params)

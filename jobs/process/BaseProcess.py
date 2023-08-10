@@ -15,6 +15,8 @@ class BaseProcess(object):
         self.process_id = process_id
         self.job = job
         self.config = config
+        self.raw_process_config = config
+        self.name = self.get_conf('name', self.job.name)
         self.meta = copy.deepcopy(self.job.meta)
         print(json.dumps(self.config, indent=4))
 
