@@ -97,21 +97,25 @@ class LoRAModule(torch.nn.Module):
             if len(self.multiplier) == 0:
                 # single item, just return it
                 return self.multiplier[0]
+            elif len(self.multiplier) == batch_size:
+                # not doing CFG
+                multiplier_tensor = torch.tensor(self.multiplier).to(lora_up.device, dtype=lora_up.dtype)
             else:
+
                 # we have a list of multipliers, so we need to get the multiplier for this batch
                 multiplier_tensor = torch.tensor(self.multiplier * 2).to(lora_up.device, dtype=lora_up.dtype)
                 # should be 1 for if total batch size was 1
                 num_interleaves = (batch_size // 2) // len(self.multiplier)
                 multiplier_tensor = multiplier_tensor.repeat_interleave(num_interleaves)
 
-                # match lora_up rank
-                if len(lora_up.size()) == 2:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1)
-                elif len(lora_up.size()) == 3:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
-                elif len(lora_up.size()) == 4:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
-                return multiplier_tensor
+            # match lora_up rank
+            if len(lora_up.size()) == 2:
+                multiplier_tensor = multiplier_tensor.view(-1, 1)
+            elif len(lora_up.size()) == 3:
+                multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
+            elif len(lora_up.size()) == 4:
+                multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
+            return multiplier_tensor
 
         else:
             return self.multiplier

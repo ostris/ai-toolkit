@@ -9,17 +9,21 @@ config:
       # for tensorboard logging
       log_dir: "/home/jaret/Dev/.tensorboard"
       network:
-        type: "lierla" # lierla is traditional LoRA that works everywhere, only linear layers
-        rank: 16
-        alpha: 8
+        type: "lora"
+        linear: 64
+        linear_alpha: 32
+        conv: 32
+        conv_alpha: 16
       train:
         noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
-        steps: 1000
-        lr: 5e-5
+        steps: 5000
+        lr: 1e-4
         train_unet: true
         gradient_checkpointing: true
-        train_text_encoder: false
-        optimizer: "lion8bit"
+        train_text_encoder: true
+        optimizer: "adamw"
+        optimizer_params:
+          weight_decay: 1e-2
         lr_scheduler: "constant"
         max_denoising_steps: 1000
         batch_size: 1
@@ -36,11 +40,11 @@ config:
         is_v_pred: false # for v-prediction models (most v2 models)
       save:
         dtype: float16 # precision to save
-        save_every: 100 # save every this many steps
+        save_every: 1000 # save every this many steps
         max_step_saves_to_keep: 2 # only affects step counts
       sample:
         sampler: "ddpm" # must match train.noise_scheduler
-        sample_every: 20 # sample every this many steps
+        sample_every: 100 # sample every this many steps
         width: 512
         height: 512
         prompts:
@@ -81,6 +85,8 @@ config:
           - 512
         slider_pair_folder: "/mnt/Datasets/stable-diffusion/slider_reference/subject_turner"
         target_class: "photo of a person"
+#        additional_losses:
+#          - "mirror"
 
 
 meta:
