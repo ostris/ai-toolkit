@@ -1,7 +1,7 @@
 ---
 job: extension
 config:
-  name: subject_turner_v1
+  name: example_name
   process:
     - type: 'image_reference_slider_trainer'
       training_folder: "/mnt/Train/out/LoRA"
@@ -10,10 +10,8 @@ config:
       log_dir: "/home/jaret/Dev/.tensorboard"
       network:
         type: "lora"
-        linear: 64
-        linear_alpha: 32
-        conv: 32
-        conv_alpha: 16
+        linear: 8
+        linear_alpha: 8
       train:
         noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
         steps: 5000
@@ -30,11 +28,9 @@ config:
         dtype: bf16
         xformers: true
         skip_first_sample: true
-        noise_offset: 0.0 # I don't recommend using unless you are trying to make a darker lora. Then do 0.1 MAX
+        noise_offset: 0.0
       model:
-#        name_or_path: "/mnt/Models/stable-diffusion/models/stable-diffusion/sdxl/sd_xl_base_0.9.safetensors"
-        name_or_path: "/mnt/Models/stable-diffusion/models/stable-diffusion/Ostris/Ostris_Real_v1.safetensors"
-        #        name_or_path: "/mnt/Models/stable-diffusion/models/stable-diffusion/sd_v1-5_vae.ckpt"
+        name_or_path: "/path/to/model.safetensors"
         is_v2: false  # for v2 models
         is_xl: false  # for SDXL models
         is_v_pred: false # for v-prediction models (most v2 models)
@@ -81,18 +77,31 @@ config:
         verbose: false
 
       slider:
-        resolutions:
-          - 512
-        slider_pair_folder: "/mnt/Datasets/stable-diffusion/slider_reference/subject_turner"
-        target_class: "photo of a person"
-#        additional_losses:
-#          - "mirror"
+        datasets:
+          - pair_folder: "/path/to/folder/side/by/side/images"
+            network_weight: 2.0
+            target_class: "" # only used as default if caption txt are not present
+            size: 512
+          - pair_folder: "/path/to/folder/side/by/side/images"
+            network_weight: 4.0
+            target_class: "" # only used as default if caption txt are not present
+            size: 512
 
 
+# you can put any information you want here, and it will be saved in the model
+# the below is an example. I recommend doing trigger words at a minimum
+# in the metadata. The software will include this plus some other information
 meta:
-  name: "[name]"
-  version: '1.0'
+  name: "[name]"  # [name] gets replaced with the name above
+  description: A short description of your model
+  trigger_words:
+  - put
+  - trigger
+  - words
+  - here
+  version: '0.1'
   creator:
-    name: Ostris - Jaret Burkett
-    email: jaret@ostris.com
-    website: https://ostris.com
+    name: Your Name
+    email: your@email.com
+    website: https://yourwebsite.com
+  any: All meta data above is arbitrary, it can be whatever you want.

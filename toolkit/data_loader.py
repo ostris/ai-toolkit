@@ -149,6 +149,7 @@ class PairedImageDataset(Dataset):
         self.size = self.get_config('size', 512)
         self.path = self.get_config('path', required=True)
         self.default_prompt = self.get_config('default_prompt', '')
+        self.network_weight = self.get_config('network_weight', 1.0)
         self.file_list = [os.path.join(self.path, file) for file in os.listdir(self.path) if
                           file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
         print(f"  -  Found {len(self.file_list)} images")
@@ -200,5 +201,5 @@ class PairedImageDataset(Dataset):
         img = img.resize((width, height), Image.BICUBIC)
         img = self.transform(img)
 
-        return img, prompt
+        return img, prompt, self.network_weight
 
