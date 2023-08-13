@@ -33,3 +33,12 @@ def get_job(
     #     return TrainJob(config)
     else:
         raise ValueError(f'Unknown job type {job}')
+
+
+def run_job(
+        config: Union[str, dict, OrderedDict],
+        name=None
+):
+    job = get_job(config, name)
+    job.run()
+    job.cleanup()

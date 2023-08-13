@@ -21,17 +21,6 @@ def print_end_message(jobs_completed, jobs_failed):
     print("========================================")
 
 
-def run_job(
-        config: Union[str, dict, OrderedDict],
-        name=None
-):
-    from toolkit.job import get_job
-
-    job = get_job(config, name)
-    job.run()
-    job.cleanup()
-
-
 def main():
     parser = argparse.ArgumentParser()
 
