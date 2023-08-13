@@ -106,6 +106,10 @@ or even -15 to 15. This will allow you to dile it in so they all have your desir
 
 ### LoRA Slider Trainer
 
+<a target="_blank" href="https://colab.research.google.com/github/ostris/ai-toolkit/blob/main/notebooks/SliderTraining.ipynb">
+  <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
+</a>
+
 This is how I train most of the recent sliders I have on Civitai, you can check them out in my [Civitai profile](https://civitai.com/user/Ostris/models).
 It is based off the work by [p1atdev/LECO](https://github.com/p1atdev/LECO) and [rohitgandikota/erasing](https://github.com/rohitgandikota/erasing)
 But has been heavily modified to create sliders rather than erasing concepts. I have a lot more plans on this, but it is
