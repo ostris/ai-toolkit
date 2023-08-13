@@ -1,5 +1,7 @@
 import os
 import json
+from typing import Union
+
 import oyaml as yaml
 import re
 from collections import OrderedDict
@@ -47,7 +49,17 @@ fixed_loader.add_implicit_resolver(
     list(u'-+0123456789.'))
 
 
-def get_config(config_file_path, name=None):
+def get_config(
+        config_file_path_or_dict: Union[str, dict, OrderedDict],
+        name=None
+):
+    # if we got a dict, process it and return it
+    if isinstance(config_file_path_or_dict, dict) or isinstance(config_file_path_or_dict, OrderedDict):
+        config = config_file_path_or_dict
+        return preprocess_config(config, name)
+
+    config_file_path = config_file_path_or_dict
+
     # first check if it is in the config folder
     config_path = os.path.join(TOOLKIT_ROOT, 'config', config_file_path)
     # see if it is in the config folder with any of the possible extensions if it doesnt have one

@@ -1,5 +1,7 @@
 import os
 import sys
+from typing import Union, OrderedDict
+
 sys.path.insert(0, os.getcwd())
 import argparse
 from toolkit.job import get_job
@@ -17,6 +19,17 @@ def print_end_message(jobs_completed, jobs_failed):
     if len(failure_string) > 0:
         print(f" - {failure_string}")
     print("========================================")
+
+
+def run_job(
+        config: Union[str, dict, OrderedDict],
+        name=None
+):
+    from toolkit.job import get_job
+
+    job = get_job(config, name)
+    job.run()
+    job.cleanup()
 
 
 def main():
