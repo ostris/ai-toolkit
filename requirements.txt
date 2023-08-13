@@ -15,3 +15,4 @@ accelerate
 toml
 albumentations
 pydantic
+omegaconf
