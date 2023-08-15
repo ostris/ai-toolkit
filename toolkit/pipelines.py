@@ -2,8 +2,75 @@ from typing import Union, List, Optional, Dict, Any, Tuple, Callable
 
 import torch
 from diffusers import StableDiffusionXLPipeline, StableDiffusionPipeline
+from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
+
+from typing import TYPE_CHECKING
+
+from diffusers.pipelines.stable_diffusion_xl.watermark import StableDiffusionXLWatermarker
+
+if TYPE_CHECKING:
+    from diffusers import AutoencoderKL, UNet2DConditionModel
+    from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjection
+    from diffusers.schedulers import KarrasDiffusionSchedulers
+
+
+class FakeWatermarker(StableDiffusionXLWatermarker):
+    def __init__(self):
+        super().__init__()
+
+    def apply_watermark(self, image):
+        return image
+
+
+class HackedStableDiffusionXLPipeline(StableDiffusionXLPipeline):
+    def __init__(
+            self,
+            vae: 'AutoencoderKL',
+            text_encoder: 'CLIPTextModel',
+            text_encoder_2: 'CLIPTextModelWithProjection',
+            tokenizer: 'CLIPTokenizer',
+            tokenizer_2: 'CLIPTokenizer',
+            unet: 'UNet2DConditionModel',
+            scheduler: 'KarrasDiffusionSchedulers',
+            force_zeros_for_empty_prompt: bool = True,
+            add_watermarker: bool = False,
+    ):
+        # call parents parent super skipping parent
+        super(StableDiffusionXLPipeline, self).__init__()
+
+        self.register_modules(
+            vae=vae,
+            text_encoder=text_encoder,
+            text_encoder_2=text_encoder_2,
+            tokenizer=tokenizer,
+            tokenizer_2=tokenizer_2,
+            unet=unet,
+            scheduler=scheduler,
+        )
+        self.register_to_config(force_zeros_for_empty_prompt=force_zeros_for_empty_prompt)
+        self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
+        self.default_sample_size = 1024
+
+        self.watermark = FakeWatermarker()
+
+    def _get_add_time_ids(self, original_size, crops_coords_top_left, target_size, dtype):
+        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+
+        # passed_add_embed_dim = (
+        #     self.unet.config.addition_time_embed_dim * len(add_time_ids) + self.text_encoder_2.config.projection_dim
+        # )
+        # expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
+        #
+        # if expected_add_embed_dim != passed_add_embed_dim:
+        #     raise ValueError(
+        #         f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
+        #     )
+
+        add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
+        return add_time_ids
 
 
 class CustomStableDiffusionXLPipeline(StableDiffusionXLPipeline):

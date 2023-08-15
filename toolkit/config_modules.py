@@ -76,6 +76,7 @@ class ModelConfig:
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
         self.dtype: str = kwargs.get('dtype', 'float16')
+        self.vae_path: str = kwargs.get('vae_path', None)
 
         if self.name_or_path is None:
             raise ValueError('name_or_path must be specified')
