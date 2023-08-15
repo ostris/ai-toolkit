@@ -607,6 +607,24 @@ class StableDiffusion:
 
         return embedding_list, latent_list
 
+    def get_weight_by_name(self, name):
+        # weights begin with te{te_num}_ for text encoder
+        # weights begin with unet_ for unet_
+        if name.startswith('te'):
+            key = name[4:]
+            # text encoder
+            te_num = int(name[2])
+            if isinstance(self.text_encoder, list):
+                return self.text_encoder[te_num].state_dict()[key]
+            else:
+                return self.text_encoder.state_dict()[key]
+        elif name.startswith('unet'):
+            key = name[5:]
+            # unet
+            return self.unet.state_dict()[key]
+
+        raise ValueError(f"Unknown weight name: {name}")
+
     def save(self, output_file: str, meta: OrderedDict, save_dtype=get_torch_dtype('fp16'), logit_scale=None):
         state_dict = {}
 
