@@ -453,6 +453,8 @@ class StableDiffusion:
 
             if do_classifier_free_guidance:
                 latent_model_input = torch.cat([latents] * 2)
+            else:
+                latent_model_input = latents
 
             latent_model_input = self.noise_scheduler.scale_model_input(latent_model_input, timestep)
 
@@ -633,6 +635,9 @@ class StableDiffusion:
                 key = prefix + k
                 v = v.detach().clone()
                 state_dict[key] = v.to("cpu", dtype=get_torch_dtype(save_dtype))
+                # make sure there are not nan values
+                if torch.isnan(state_dict[key]).any():
+                    raise ValueError(f"NaN value in state dict: {key}")
 
         # todo see what logit scale is
         if self.is_xl:

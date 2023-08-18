@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from typing import Optional, Union, List
 from torch.utils.data import ConcatDataset, DataLoader
 from toolkit.data_loader import PairedImageDataset
-from toolkit.prompt_utils import concat_prompt_embeds
+from toolkit.prompt_utils import concat_prompt_embeds, split_prompt_embeds
 from toolkit.stable_diffusion_model import StableDiffusion, PromptEmbeds
 from toolkit.train_tools import get_torch_dtype
 import gc
@@ -22,8 +22,18 @@ def flush():
 
 class DatasetConfig:
     def __init__(self, **kwargs):
+        # can pass with a side by side pait or a folder with pos and neg folder
         self.pair_folder: str = kwargs.get('pair_folder', None)
-        self.network_weight: float = kwargs.get('network_weight', 1.0)
+        self.pos_folder: str = kwargs.get('pos_folder', None)
+        self.neg_folder: str = kwargs.get('neg_folder', None)
+
+        self.network_weight: float = float(kwargs.get('network_weight', 1.0))
+        self.pos_weight: float = float(kwargs.get('pos_weight', self.network_weight))
+        self.neg_weight: float = float(kwargs.get('neg_weight', self.network_weight))
+        # make sure they are all absolute values no negatives
+        self.pos_weight = abs(self.pos_weight)
+        self.neg_weight = abs(self.neg_weight)
+
         self.target_class: str = kwargs.get('target_class', '')
         self.size: int = kwargs.get('size', 512)
 
@@ -58,6 +68,10 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
                     'size': dataset.size,
                     'default_prompt': dataset.target_class,
                     'network_weight': dataset.network_weight,
+                    'pos_weight': dataset.pos_weight,
+                    'neg_weight': dataset.neg_weight,
+                    'pos_folder': dataset.pos_folder,
+                    'neg_folder': dataset.neg_folder,
                 }
                 image_dataset = PairedImageDataset(config)
                 datasets.append(image_dataset)
@@ -81,10 +95,15 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
         pass
 
     def hook_train_loop(self, batch):
-        do_mirror_loss = 'mirror' in self.slider_config.additional_losses
-
         with torch.no_grad():
-            imgs, prompts, base_network_weight = batch
+            imgs, prompts, network_weights = batch
+            network_pos_weight, network_neg_weight = network_weights
+            if isinstance(network_pos_weight, torch.Tensor):
+                network_pos_weight = network_pos_weight.item()
+            if isinstance(network_neg_weight, torch.Tensor):
+                network_neg_weight = network_neg_weight.item()
+            # if items in network_weight list are tensors, convert them to floats
+
             dtype = get_torch_dtype(self.train_config.dtype)
             imgs: torch.Tensor = imgs.to(self.device_torch, dtype=dtype)
             # split batched images in half so left is negative and right is positive
@@ -120,12 +139,7 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
                 noise_offset=self.train_config.noise_offset,
             ).to(self.device_torch, dtype=dtype)
 
-            if do_mirror_loss:
-                # mirror the noise
-                # torch shape is [batch, channels, height, width]
-                noise_negative = torch.flip(noise_positive.clone(), dims=[3])
-            else:
-                noise_negative = noise_positive.clone()
+            noise_negative = noise_positive.clone()
 
             # Add noise to the latents according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
@@ -135,12 +149,11 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
             noisy_latents = torch.cat([noisy_positive_latents, noisy_negative_latents], dim=0)
             noise = torch.cat([noise_positive, noise_negative], dim=0)
             timesteps = torch.cat([timesteps, timesteps], dim=0)
-            network_multiplier = [base_network_weight * 1.0, base_network_weight * -1.0]
+            network_multiplier = [network_pos_weight * 1.0, network_neg_weight * -1.0]
 
         flush()
 
         loss_float = None
-        loss_slide_float = None
         loss_mirror_float = None
 
         self.optimizer.zero_grad()
@@ -157,48 +170,58 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
             conditional_embeds = concat_prompt_embeds(embedding_list)
             conditional_embeds = concat_prompt_embeds([conditional_embeds, conditional_embeds])
 
-        with self.network:
-            assert self.network.is_active
+        if self.model_config.is_xl:
+            # todo also allow for setting this for low ram in general, but sdxl spikes a ton on back prop
+            network_multiplier_list = network_multiplier
+            noisy_latent_list = torch.chunk(noisy_latents, 2, dim=0)
+            noise_list = torch.chunk(noise, 2, dim=0)
+            timesteps_list = torch.chunk(timesteps, 2, dim=0)
+            conditional_embeds_list = split_prompt_embeds(conditional_embeds)
+        else:
+            network_multiplier_list = [network_multiplier]
+            noisy_latent_list = [noisy_latents]
+            noise_list = [noise]
+            timesteps_list = [timesteps]
+            conditional_embeds_list = [conditional_embeds]
 
-            self.network.multiplier = network_multiplier
+        losses = []
+        # allow to chunk it out to save vram
+        for network_multiplier, noisy_latents, noise, timesteps, conditional_embeds in zip(
+                network_multiplier_list, noisy_latent_list, noise_list, timesteps_list, conditional_embeds_list
+        ):
+            with self.network:
+                assert self.network.is_active
 
-            noise_pred = self.sd.predict_noise(
-                latents=noisy_latents,
-                conditional_embeddings=conditional_embeds,
-                timestep=timesteps,
-            )
+                self.network.multiplier = network_multiplier
 
-            if self.sd.prediction_type == 'v_prediction':
-                # v-parameterization training
-                target = noise_scheduler.get_velocity(noisy_latents, noise, timesteps)
-            else:
-                target = noise
+                noise_pred = self.sd.predict_noise(
+                    latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                    conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
+                    timestep=timesteps,
+                )
+                noise = noise.to(self.device_torch, dtype=dtype)
 
-            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-            loss = loss.mean([1, 2, 3])
+                if self.sd.prediction_type == 'v_prediction':
+                    # v-parameterization training
+                    target = noise_scheduler.get_velocity(noisy_latents, noise, timesteps)
+                else:
+                    target = noise
 
-            # todo add snr gamma here
+                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                loss = loss.mean([1, 2, 3])
 
-            loss = loss.mean()
-            loss_slide_float = loss.item()
+                # todo add snr gamma here
 
-            if do_mirror_loss:
-                noise_pred_pos, noise_pred_neg = torch.chunk(noise_pred, 2, dim=0)
-                # mirror the negative
-                noise_pred_neg = torch.flip(noise_pred_neg.clone(), dims=[3])
-                loss_mirror = torch.nn.functional.mse_loss(noise_pred_pos.float(), noise_pred_neg.float(),
-                                                           reduction="none")
-                loss_mirror = loss_mirror.mean([1, 2, 3])
-                loss_mirror = loss_mirror.mean()
-                loss_mirror_float = loss_mirror.item()
-                loss += loss_mirror
+                loss = loss.mean()
+                loss_slide_float = loss.item()
 
-            loss_float = loss.item()
+                loss_float = loss.item()
+                losses.append(loss_float)
 
-            # back propagate loss to free ram
-            loss.backward()
+                # back propagate loss to free ram
+                loss.backward()
+                flush()
 
-            flush()
 
         # apply gradients
         optimizer.step()
@@ -208,11 +231,8 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
         self.network.multiplier = 1.0
 
         loss_dict = OrderedDict(
-            {'loss': loss_float},
+            {'loss': sum(losses) / len(losses) if len(losses) > 0 else 0.0}
         )
 
-        if do_mirror_loss:
-            loss_dict['l/s'] = loss_slide_float
-            loss_dict['l/m'] = loss_mirror_float
         return loss_dict
         # end hook_train_loop
