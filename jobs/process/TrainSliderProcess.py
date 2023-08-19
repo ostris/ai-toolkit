@@ -86,6 +86,9 @@ class TrainSliderProcess(BaseSDTrainProcess):
             # remove duplicates
             prompts_to_cache = list(dict.fromkeys(prompts_to_cache))
 
+            # trim to max steps if max steps is lower than prompt count
+            prompts_to_cache = prompts_to_cache[:self.train_config.steps]
+
             # encode them
             cache = encode_prompts_to_cache(
                 prompt_list=prompts_to_cache,

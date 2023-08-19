@@ -184,6 +184,10 @@ config:
             # if you are doing more than one target it may be good to set less important ones
             # to a lower number like 0.1 so they don't outweigh the primary target
             weight: 1.0
+            # shuffle the prompts split by the comma. We will run every combination randomly
+            # this will make the LoRA more robust. You probably want this on unless prompt order
+            # is important for some reason
+            shuffle: true
 
 
         # anchors are prompts that we will try to hold on to while training the slider
