@@ -4,7 +4,6 @@ from typing import List, Optional
 import random
 
 
-
 class SaveConfig:
     def __init__(self, **kwargs):
         self.save_every: int = kwargs.get('save_every', 1000)
@@ -85,6 +84,24 @@ class ModelConfig:
 
         if self.name_or_path is None:
             raise ValueError('name_or_path must be specified')
+
+
+class ReferenceDatasetConfig:
+    def __init__(self, **kwargs):
+        # can pass with a side by side pait or a folder with pos and neg folder
+        self.pair_folder: str = kwargs.get('pair_folder', None)
+        self.pos_folder: str = kwargs.get('pos_folder', None)
+        self.neg_folder: str = kwargs.get('neg_folder', None)
+
+        self.network_weight: float = float(kwargs.get('network_weight', 1.0))
+        self.pos_weight: float = float(kwargs.get('pos_weight', self.network_weight))
+        self.neg_weight: float = float(kwargs.get('neg_weight', self.network_weight))
+        # make sure they are all absolute values no negatives
+        self.pos_weight = abs(self.pos_weight)
+        self.neg_weight = abs(self.neg_weight)
+
+        self.target_class: str = kwargs.get('target_class', '')
+        self.size: int = kwargs.get('size', 512)
 
 
 class SliderTargetConfig:

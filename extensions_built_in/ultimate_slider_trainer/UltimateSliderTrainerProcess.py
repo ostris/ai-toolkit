@@ -17,20 +17,37 @@ import torch
 from jobs.process import BaseSDTrainProcess
 import random
 
+import random
+from collections import OrderedDict
+from tqdm import tqdm
+
+from toolkit.config_modules import SliderConfig
+from toolkit.train_tools import get_torch_dtype, apply_snr_weight
+import gc
+from toolkit import train_tools
+from toolkit.prompt_utils import \
+    EncodedPromptPair, ACTION_TYPES_SLIDER, \
+    EncodedAnchor, concat_prompt_pairs, \
+    concat_anchors, PromptEmbedsCache, encode_prompts_to_cache, build_prompt_pair_batch_from_cache, split_anchors, \
+    split_prompt_pairs
+
+import torch
+
 
 def flush():
     torch.cuda.empty_cache()
     gc.collect()
 
 
-class ReferenceSliderConfig:
+class UltimateSliderConfig(SliderConfig):
     def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.additional_losses: List[str] = kwargs.get('additional_losses', [])
         self.weight_jitter: float = kwargs.get('weight_jitter', 0.0)
         self.datasets: List[ReferenceDatasetConfig] = [ReferenceDatasetConfig(**d) for d in kwargs.get('datasets', [])]
 
 
-class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
+class UltimateSliderTrainerProcess(BaseSDTrainProcess):
     sd: StableDiffusion
     data_loader: DataLoader = None
 
@@ -41,10 +58,21 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
         self.start_step = 0
         self.device = self.get_conf('device', self.job.device)
         self.device_torch = torch.device(self.device)
-        self.slider_config = ReferenceSliderConfig(**self.get_conf('slider', {}))
+        self.slider_config = UltimateSliderConfig(**self.get_conf('slider', {}))
+
+        self.prompt_cache = PromptEmbedsCache()
+        self.prompt_pairs: list[EncodedPromptPair] = []
+        self.anchor_pairs: list[EncodedAnchor] = []
+        # keep track of prompt chunk size
+        self.prompt_chunk_size = 1
+
+        # store a list of all the prompts from the dataset so we can cache it
+        self.dataset_prompts = []
+        self.train_with_dataset = self.slider_config.datasets is not None and len(self.slider_config.datasets) > 0
 
     def load_datasets(self):
-        if self.data_loader is None:
+        if self.data_loader is None and \
+                self.slider_config.datasets is not None and len(self.slider_config.datasets) > 0:
             print(f"Loading datasets")
             datasets = []
             for dataset in self.slider_config.datasets:
@@ -62,6 +90,9 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
                 image_dataset = PairedImageDataset(config)
                 datasets.append(image_dataset)
 
+                # capture all the prompts from it so we can cache the embeds
+                self.dataset_prompts += image_dataset.get_all_prompts()
+
             concatenated_dataset = ConcatDataset(datasets)
             self.data_loader = DataLoader(
                 concatenated_dataset,
@@ -74,14 +105,125 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
         pass
 
     def hook_before_train_loop(self):
-        self.sd.vae.eval()
-        self.sd.vae.to(self.device_torch)
+        # load any datasets if they were passed
         self.load_datasets()
 
-        pass
+        # read line by line from file
+        if self.slider_config.prompt_file:
+            self.print(f"Loading prompt file from {self.slider_config.prompt_file}")
+            with open(self.slider_config.prompt_file, 'r', encoding='utf-8') as f:
+                self.prompt_txt_list = f.readlines()
+                # clean empty lines
+                self.prompt_txt_list = [line.strip() for line in self.prompt_txt_list if len(line.strip()) > 0]
+
+            self.print(f"Found {len(self.prompt_txt_list)} prompts.")
+
+            if not self.slider_config.prompt_tensors:
+                print(f"Prompt tensors not found. Building prompt tensors for {self.train_config.steps} steps.")
+                # shuffle
+                random.shuffle(self.prompt_txt_list)
+                # trim to max steps
+                self.prompt_txt_list = self.prompt_txt_list[:self.train_config.steps]
+                # trim list to our max steps
+
+        cache = PromptEmbedsCache()
+
+        # get encoded latents for our prompts
+        with torch.no_grad():
+            # list of neutrals. Can come from file or be empty
+            neutral_list = self.prompt_txt_list if self.prompt_txt_list is not None else [""]
+
+            # build the prompts to cache
+            prompts_to_cache = []
+            for neutral in neutral_list:
+                for target in self.slider_config.targets:
+                    prompt_list = [
+                        f"{target.target_class}",  # target_class
+                        f"{target.target_class} {neutral}",  # target_class with neutral
+                        f"{target.positive}",  # positive_target
+                        f"{target.positive} {neutral}",  # positive_target with neutral
+                        f"{target.negative}",  # negative_target
+                        f"{target.negative} {neutral}",  # negative_target with neutral
+                        f"{neutral}",  # neutral
+                        f"{target.positive} {target.negative}",  # both targets
+                        f"{target.negative} {target.positive}",  # both targets reverse
+                    ]
+                    prompts_to_cache += prompt_list
+
+            # remove duplicates
+            prompts_to_cache = list(dict.fromkeys(prompts_to_cache))
+
+            # trim to max steps if max steps is lower than prompt count
+            prompts_to_cache = prompts_to_cache[:self.train_config.steps]
+
+            if len(self.dataset_prompts) > 0:
+                # add the prompts from the dataset
+                prompts_to_cache += self.dataset_prompts
+
+            # encode them
+            cache = encode_prompts_to_cache(
+                prompt_list=prompts_to_cache,
+                sd=self.sd,
+                cache=cache,
+                prompt_tensor_file=self.slider_config.prompt_tensors
+            )
+
+            prompt_pairs = []
+            prompt_batches = []
+            for neutral in tqdm(neutral_list, desc="Building Prompt Pairs", leave=False):
+                for target in self.slider_config.targets:
+                    prompt_pair_batch = build_prompt_pair_batch_from_cache(
+                        cache=cache,
+                        target=target,
+                        neutral=neutral,
+
+                    )
+                    if self.slider_config.batch_full_slide:
+                        # concat the prompt pairs
+                        # this allows us to run the entire 4 part process in one shot (for slider)
+                        self.prompt_chunk_size = 4
+                        concat_prompt_pair_batch = concat_prompt_pairs(prompt_pair_batch).to('cpu')
+                        prompt_pairs += [concat_prompt_pair_batch]
+                    else:
+                        self.prompt_chunk_size = 1
+                        # do them one at a time (probably not necessary after new optimizations)
+                        prompt_pairs += [x.to('cpu') for x in prompt_pair_batch]
+
+
+        # move to cpu to save vram
+        # We don't need text encoder anymore, but keep it on cpu for sampling
+        # if text encoder is list
+        if isinstance(self.sd.text_encoder, list):
+            for encoder in self.sd.text_encoder:
+                encoder.to("cpu")
+        else:
+            self.sd.text_encoder.to("cpu")
+        self.prompt_cache = cache
+        self.prompt_pairs = prompt_pairs
+        # end hook_before_train_loop
+
+        # move vae to device so we can encode on the fly
+        # todo cache latents
+        self.sd.vae.to(self.device_torch)
+        self.sd.vae.eval()
+        self.sd.vae.requires_grad_(False)
+
+        if self.train_config.gradient_checkpointing:
+            # may get disabled elsewhere
+            self.sd.unet.enable_gradient_checkpointing()
+
+        flush()
+        # end hook_before_train_loop
 
     def hook_train_loop(self, batch):
         with torch.no_grad():
+            ### LOOP SETUP ###
+            noise_scheduler = self.sd.noise_scheduler
+            optimizer = self.optimizer
+            lr_scheduler = self.lr_scheduler
+
+            ### PREP REFERENCE IMAGES ###
+
             imgs, prompts, network_weights = batch
             network_pos_weight, network_neg_weight = network_weights
 
@@ -104,20 +246,12 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
             # split batched images in half so left is negative and right is positive
             negative_images, positive_images = torch.chunk(imgs, 2, dim=3)
 
-            positive_latents = self.sd.encode_images(positive_images)
-            negative_latents = self.sd.encode_images(negative_images)
-
             height = positive_images.shape[2]
             width = positive_images.shape[3]
             batch_size = positive_images.shape[0]
 
-            if self.train_config.gradient_checkpointing:
-                # may get disabled elsewhere
-                self.sd.unet.enable_gradient_checkpointing()
-
-            noise_scheduler = self.sd.noise_scheduler
-            optimizer = self.optimizer
-            lr_scheduler = self.lr_scheduler
+            positive_latents = self.sd.encode_images(positive_images)
+            negative_latents = self.sd.encode_images(negative_images)
 
             self.sd.noise_scheduler.set_timesteps(
                 self.train_config.max_denoising_steps, device=self.device_torch
@@ -154,16 +288,32 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
         self.optimizer.zero_grad()
         noisy_latents.requires_grad = False
 
+        # TODO allow both processed to train text encoder, for now, we just to unet and cache all text encodes
         # if training text encoder enable grads, else do context of no grad
-        with torch.set_grad_enabled(self.train_config.train_text_encoder):
-            # text encoding
+        # with torch.set_grad_enabled(self.train_config.train_text_encoder):
+        #     # text encoding
+        #     embedding_list = []
+        #     # embed the prompts
+        #     for prompt in prompts:
+        #         embedding = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=dtype)
+        #         embedding_list.append(embedding)
+        #     conditional_embeds = concat_prompt_embeds(embedding_list)
+        #     conditional_embeds = concat_prompt_embeds([conditional_embeds, conditional_embeds])
+
+        if self.train_with_dataset:
             embedding_list = []
-            # embed the prompts
-            for prompt in prompts:
-                embedding = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=dtype)
-                embedding_list.append(embedding)
-            conditional_embeds = concat_prompt_embeds(embedding_list)
-            conditional_embeds = concat_prompt_embeds([conditional_embeds, conditional_embeds])
+            with torch.set_grad_enabled(self.train_config.train_text_encoder):
+                for prompt in prompts:
+                    # get embedding form cache
+                    embedding = self.prompt_cache[prompt]
+                    embedding = embedding.to(self.device_torch, dtype=dtype)
+                    embedding_list.append(embedding)
+                conditional_embeds = concat_prompt_embeds(embedding_list)
+                # double up so we can do both sides of the slider
+                conditional_embeds = concat_prompt_embeds([conditional_embeds, conditional_embeds])
+        else:
+            # throw error. Not supported yet
+            raise Exception("Datasets and targets required for ultimate slider")
 
         if self.model_config.is_xl:
             # todo also allow for setting this for low ram in general, but sdxl spikes a ton on back prop
