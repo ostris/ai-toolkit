@@ -23,9 +23,8 @@ config:
         # network type lierla is traditional LoRA that works everywhere, only linear layers
         type: "lierla"
         # rank / dim of the network. Bigger is not always better. Especially for sliders. 8 is good
-        rank: 8
-        alpha: 4 # Do about half of rank
-
+        linear: 8
+        linear_alpha: 4 # Do about half of rank
       # training config
       train:
         # this is also used in sampling. Stick with ddpm unless you know what you are doing
@@ -42,8 +41,8 @@ config:
         # for sliders we are adjusting representation of the concept (unet),
         # not the description of it (text encoder)
         train_text_encoder: false
-
-
+        # same as from sd-scripts, not fully tested but should speed up training
+        min_snr_gamma: 5.0
         # just leave unless you know what you are doing
         # also supports "dadaptation" but set lr to 1 if you use that,
         # but it learns too fast and I don't recommend it
@@ -64,6 +63,7 @@ config:
         # I don't recommend using unless you are trying to make a darker lora. Then do 0.1 MAX
         # although, the way we train sliders is comparative, so it probably won't work anyway
         noise_offset: 0.0
+#        noise_offset: 0.0357  # SDXL was trained with offset of 0.0357. So use that when training on SDXL
 
       # the model to train the LoRA network on
       model:

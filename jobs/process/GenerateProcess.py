@@ -12,6 +12,7 @@ from toolkit.metadata import get_meta_for_safetensors, load_metadata_from_safete
     add_base_model_info_to_meta
 from toolkit.stable_diffusion_model import StableDiffusion
 from toolkit.train_tools import get_torch_dtype
+import random
 
 
 class GenerateConfig:
@@ -40,6 +41,10 @@ class GenerateConfig:
                     self.prompts = [p.strip() for p in self.prompts if len(p.strip()) > 0]
             else:
                 raise ValueError("Prompts file does not exist, put in list if you want to use a list of prompts")
+
+        if kwargs.get('shuffle', False):
+            # shuffle the prompts
+            random.shuffle(self.prompts)
 
 
 class GenerateProcess(BaseProcess):

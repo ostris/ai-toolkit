@@ -63,6 +63,7 @@ class TrainConfig:
         self.xformers = kwargs.get('xformers', False)
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
+        self.min_snr_gamma = kwargs.get('min_snr_gamma', None)
         self.noise_offset = kwargs.get('noise_offset', 0.0)
         self.optimizer_params = kwargs.get('optimizer_params', {})
         self.skip_first_sample = kwargs.get('skip_first_sample', False)
@@ -76,6 +77,10 @@ class ModelConfig:
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
         self.dtype: str = kwargs.get('dtype', 'float16')
+
+        # only for SDXL models for now
+        self.use_text_encoder_1: bool = kwargs.get('use_text_encoder_1', True)
+        self.use_text_encoder_2: bool = kwargs.get('use_text_encoder_2', True)
 
         if self.name_or_path is None:
             raise ValueError('name_or_path must be specified')
