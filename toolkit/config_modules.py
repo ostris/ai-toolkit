@@ -233,7 +233,11 @@ class GenerateImageConfig:
 
     def get_image_path(self, count: int = 0, max_count=0):
         filename = self._get_path_no_ext(count, max_count)
-        filename += '.' + self.output_ext
+        ext = self.output_ext
+        # if it does not start with a dot add one
+        if ext[0] != '.':
+            ext = '.' + ext
+        filename += ext
         # join with folder
         return os.path.join(self.output_folder, filename)
 
