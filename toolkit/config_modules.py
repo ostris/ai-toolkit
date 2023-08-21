@@ -77,6 +77,7 @@ class ModelConfig:
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
         self.dtype: str = kwargs.get('dtype', 'float16')
+        self.vae_path = kwargs.get('vae_path', None)
 
         # only for SDXL models for now
         self.use_text_encoder_1: bool = kwargs.get('use_text_encoder_1', True)

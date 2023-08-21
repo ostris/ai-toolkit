@@ -95,7 +95,7 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
             if weight_jitter > 0.0:
                 jitter_list = random.uniform(-weight_jitter, weight_jitter)
                 network_pos_weight += jitter_list
-                network_neg_weight += jitter_list
+                network_neg_weight += (jitter_list * -1.0)
 
             # if items in network_weight list are tensors, convert them to floats
 
