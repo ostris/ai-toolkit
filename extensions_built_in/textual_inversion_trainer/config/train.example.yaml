@@ -25,7 +25,6 @@ config:
           resolution: 512
       train:
         noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
-        noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
         steps: 3000
         weight_jitter: 0.0
         lr: 5e-5
