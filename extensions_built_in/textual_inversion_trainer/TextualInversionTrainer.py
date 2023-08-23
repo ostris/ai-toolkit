@@ -52,41 +52,14 @@ class TextualInversionTrainer(BaseSDTrainProcess):
             # very loosely based on this. very loosely
             # ref https://github.com/huggingface/diffusers/blob/main/examples/textual_inversion/textual_inversion.py
 
-            conditioned_prompts = []
+            # make sure the embedding is in the prompts
+            conditioned_prompts = [self.embedding.inject_embedding_to_prompt(
+                x,
+                expand_token=True,
+                add_if_not_present=True,
+            ) for x in prompts]
 
-            for prompt in prompts:
-                # replace our name with the embedding
-                if self.embed_config.trigger in prompt:
-                    # if the trigger is a part of the prompt, replace it with the token ids
-                    prompt = prompt.replace(self.embed_config.trigger, self.embedding.get_embedding_string())
-                if self.name in prompt:
-                    # if the name is in the prompt, replace it with the trigger
-                    prompt = prompt.replace(self.name, self.embedding.get_embedding_string())
-                if "[name]" in prompt:
-                    # in [name] in prompt, replace it with the trigger
-                    prompt = prompt.replace("[name]", self.embedding.get_embedding_string())
-                if self.embedding.get_embedding_string() not in prompt:
-                    # add it to the beginning of the prompt
-                    prompt = self.embedding.get_embedding_string() + " " + prompt
-
-                conditioned_prompts.append(prompt)
-
-            # # get embedding ids
-            # embedding_ids_list = [self.sd.tokenizer(
-            #     text,
-            #     padding="max_length",
-            #     truncation=True,
-            #     max_length=self.sd.tokenizer.model_max_length,
-            #     return_tensors="pt",
-            # ).input_ids[0] for text in conditioned_prompts]
-
-            # hidden_states = []
-            # for embedding_ids, img in zip(embedding_ids_list, imgs):
-            #     hidden_state = {
-            #         "input_ids": embedding_ids,
-            #         "pixel_values": img
-            #     }
-            #     hidden_states.append(hidden_state)
+            batch_size = imgs.shape[0]
 
             dtype = get_torch_dtype(self.train_config.dtype)
             imgs = imgs.to(self.device_torch, dtype=dtype)
@@ -100,14 +73,14 @@ class TextualInversionTrainer(BaseSDTrainProcess):
                 self.train_config.max_denoising_steps, device=self.device_torch
             )
 
-            timesteps = torch.randint(0, self.train_config.max_denoising_steps, (1,), device=self.device_torch)
+            timesteps = torch.randint(0, self.train_config.max_denoising_steps, (batch_size,), device=self.device_torch)
             timesteps = timesteps.long()
 
             # get noise
             noise = self.sd.get_latent_noise(
                 pixel_height=imgs.shape[2],
                 pixel_width=imgs.shape[3],
-                batch_size=self.train_config.batch_size,
+                batch_size=batch_size,
                 noise_offset=self.train_config.noise_offset
             ).to(self.device_torch, dtype=dtype)
 

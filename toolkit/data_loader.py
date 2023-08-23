@@ -14,6 +14,13 @@ import albumentations as A
 from toolkit.config_modules import DatasetConfig
 from toolkit.dataloader_mixins import CaptionMixin
 
+BUCKET_STEPS = 64
+
+def get_bucket_sizes_for_resolution(resolution: int) -> List[int]:
+    # make sure resolution is divisible by 8
+    if resolution % 8 != 0:
+        resolution = resolution - (resolution % 8)
+
 
 class ImageDataset(Dataset, CaptionMixin):
     def __init__(self, config):
@@ -357,6 +364,7 @@ class AiToolkitDataset(Dataset, CaptionMixin):
 
 
 def get_dataloader_from_datasets(dataset_options, batch_size=1):
+    # TODO do bucketing
     if dataset_options is None or len(dataset_options) == 0:
         return None
 
