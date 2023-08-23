@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional
+from typing import List, Optional, Literal
 import random
 
 
@@ -49,6 +49,13 @@ class NetworkConfig:
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
         self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
 
+
+class EmbeddingConfig:
+    def __init__(self, **kwargs):
+        self.trigger = kwargs.get('trigger', 'custom_embedding')
+        self.tokens = kwargs.get('tokens', 4)
+        self.init_words = kwargs.get('init_phrase', '*')
+        self.save_format = kwargs.get('save_format', 'safetensors')
 
 class TrainConfig:
     def __init__(self, **kwargs):
@@ -144,6 +151,20 @@ class SliderConfig:
                 self.targets = self.targets + target_permutations
             else:
                 self.targets.append(target)
+
+
+class DatasetConfig:
+    caption_type: Literal["txt", "caption"] = 'txt'
+
+    def __init__(self, **kwargs):
+        self.type = kwargs.get('type', 'image')  # sd, slider, reference
+        self.folder_path: str = kwargs.get('folder_path', None)
+        self.default_caption: str = kwargs.get('default_caption', None)
+        self.caption_type: str = kwargs.get('caption_type', None)
+        self.random_scale: bool = kwargs.get('random_scale', False)
+        self.random_crop: bool = kwargs.get('random_crop', False)
+        self.resolution: int = kwargs.get('resolution', 512)
+        self.scale: float = kwargs.get('scale', 1.0)
 
 
 class GenerateImageConfig:

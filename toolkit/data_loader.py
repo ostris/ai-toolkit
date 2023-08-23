@@ -1,23 +1,33 @@
 import os
 import random
+from typing import List
 
 import cv2
 import numpy as np
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from torchvision import transforms
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from tqdm import tqdm
 import albumentations as A
 
+from toolkit.config_modules import DatasetConfig
+from toolkit.dataloader_mixins import CaptionMixin
 
-class ImageDataset(Dataset):
+
+class ImageDataset(Dataset, CaptionMixin):
     def __init__(self, config):
         self.config = config
         self.name = self.get_config('name', 'dataset')
         self.path = self.get_config('path', required=True)
         self.scale = self.get_config('scale', 1)
         self.random_scale = self.get_config('random_scale', False)
+        self.include_prompt = self.get_config('include_prompt', False)
+        self.default_prompt = self.get_config('default_prompt', '')
+        if self.include_prompt:
+            self.caption_type = self.get_config('caption_type', 'txt')
+        else:
+            self.caption_type = None
         # we always random crop if random scale is enabled
         self.random_crop = self.random_scale if self.random_scale else self.get_config('random_crop', False)
 
@@ -81,7 +91,11 @@ class ImageDataset(Dataset):
 
         img = self.transform(img)
 
-        return img
+        if self.include_prompt:
+            prompt = self.get_caption_item(index)
+            return img, prompt
+        else:
+            return img
 
 
 class Augments:
@@ -268,3 +282,101 @@ class PairedImageDataset(Dataset):
         img = self.transform(img)
 
         return img, prompt, (self.neg_weight, self.pos_weight)
+
+
+class AiToolkitDataset(Dataset, CaptionMixin):
+    def __init__(self, dataset_config: 'DatasetConfig'):
+        self.dataset_config = dataset_config
+        self.folder_path = dataset_config.folder_path
+        self.caption_type = dataset_config.caption_type
+        self.default_caption = dataset_config.default_caption
+        self.random_scale = dataset_config.random_scale
+        self.scale = dataset_config.scale
+        # we always random crop if random scale is enabled
+        self.random_crop = self.random_scale if self.random_scale else dataset_config.random_crop
+        self.resolution = dataset_config.resolution
+
+        # get the file list
+        self.file_list = [
+            os.path.join(self.folder_path, file) for file in os.listdir(self.folder_path) if
+            file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+        ]
+
+        # this might take a while
+        print(f"  -  Preprocessing image dimensions")
+        new_file_list = []
+        bad_count = 0
+        for file in tqdm(self.file_list):
+            img = Image.open(file)
+            if int(min(img.size) * self.scale) >= self.resolution:
+                new_file_list.append(file)
+            else:
+                bad_count += 1
+
+        print(f"  -  Found {len(self.file_list)} images")
+        print(f"  -  Found {bad_count} images that are too small")
+        assert len(self.file_list) > 0, f"no images found in {self.folder_path}"
+
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5]),  # normalize to [-1, 1]
+        ])
+
+    def __len__(self):
+        return len(self.file_list)
+
+    def __getitem__(self, index):
+        img_path = self.file_list[index]
+        img = exif_transpose(Image.open(img_path)).convert('RGB')
+
+        # Downscale the source image first
+        img = img.resize((int(img.size[0] * self.scale), int(img.size[1] * self.scale)), Image.BICUBIC)
+        min_img_size = min(img.size)
+
+        if self.random_crop:
+            if self.random_scale and min_img_size > self.resolution:
+                if min_img_size < self.resolution:
+                    print(
+                        f"Unexpected values: min_img_size={min_img_size}, self.resolution={self.resolution}, image file={img_path}")
+                    scale_size = self.resolution
+                else:
+                    scale_size = random.randint(self.resolution, int(min_img_size))
+                img = img.resize((scale_size, scale_size), Image.BICUBIC)
+            img = transforms.RandomCrop(self.resolution)(img)
+        else:
+            img = transforms.CenterCrop(min_img_size)(img)
+            img = img.resize((self.resolution, self.resolution), Image.BICUBIC)
+
+        img = self.transform(img)
+
+        if self.caption_type is not None:
+            prompt = self.get_caption_item(index)
+            return img, prompt
+        else:
+            return img
+
+
+def get_dataloader_from_datasets(dataset_options, batch_size=1):
+    if dataset_options is None or len(dataset_options) == 0:
+        return None
+
+    datasets = []
+    for dataset_option in dataset_options:
+        if isinstance(dataset_option, DatasetConfig):
+            config = dataset_option
+        else:
+            config = DatasetConfig(**dataset_option)
+        if config.type == 'image':
+            dataset = AiToolkitDataset(config)
+            datasets.append(dataset)
+        else:
+            raise ValueError(f"invalid dataset type: {config.type}")
+
+    concatenated_dataset = ConcatDataset(datasets)
+    data_loader = DataLoader(
+        concatenated_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=2
+    )
+    return data_loader
