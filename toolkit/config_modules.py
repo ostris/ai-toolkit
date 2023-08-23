@@ -168,6 +168,7 @@ class DatasetConfig:
         self.resolution: int = kwargs.get('resolution', 512)
         self.scale: float = kwargs.get('scale', 1.0)
         self.buckets: bool = kwargs.get('buckets', False)
+        self.is_reg: bool = kwargs.get('is_reg', False)
 
 
 class GenerateImageConfig:

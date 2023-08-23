@@ -356,11 +356,16 @@ class AiToolkitDataset(Dataset, CaptionMixin):
 
         img = self.transform(img)
 
+        # todo convert it all
+        dataset_config_dict = {
+            "is_reg": 1 if self.dataset_config.is_reg else 0,
+        }
+
         if self.caption_type is not None:
             prompt = self.get_caption_item(index)
-            return img, prompt
+            return img, prompt, dataset_config_dict
         else:
-            return img
+            return img, dataset_config_dict
 
 
 def get_dataloader_from_datasets(dataset_options, batch_size=1):

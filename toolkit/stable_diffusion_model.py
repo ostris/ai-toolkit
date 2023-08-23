@@ -515,7 +515,8 @@ class StableDiffusion:
                     elif ts_bs * 2 == latent_model_input.shape[0]:
                         timestep = torch.cat([timestep] * 2)
                     else:
-                        raise ValueError(f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
+                        raise ValueError(
+                            f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
 
             # predict the noise residual
             noise_pred = self.unet(
@@ -658,6 +659,39 @@ class StableDiffusion:
             return self.unet.state_dict()[key]
 
         raise ValueError(f"Unknown weight name: {name}")
+
+    def inject_trigger_into_prompt(self, prompt, trigger=None, to_replace_list=None, add_if_not_present=True):
+        if trigger is None:
+            return prompt
+        output_prompt = prompt
+        default_replacements = ["[name]", "[trigger]"]
+
+        replace_with = trigger
+        if to_replace_list is None:
+            to_replace_list = default_replacements
+        else:
+            to_replace_list += default_replacements
+
+        # remove duplicates
+        to_replace_list = list(set(to_replace_list))
+
+        # replace them all
+        for to_replace in to_replace_list:
+            # replace it
+            output_prompt = output_prompt.replace(to_replace, replace_with)
+
+        # see how many times replace_with is in the prompt
+        num_instances = prompt.count(replace_with)
+
+        if num_instances == 0 and add_if_not_present:
+            # add it to the beginning of the prompt
+            output_prompt = replace_with + " " + output_prompt
+
+        if num_instances > 1:
+            print(
+                f"Warning: {trigger} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+
+        return output_prompt
 
     def state_dict(self, vae=True, text_encoder=True, unet=True):
         state_dict = OrderedDict()
