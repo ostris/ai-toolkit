@@ -36,6 +36,12 @@ class TrainSliderProcess(BaseSDTrainProcess):
         # keep track of prompt chunk size
         self.prompt_chunk_size = 1
 
+        # check if we have more targets than steps
+        # this can happen because of permutation son shuffling
+        if len(self.slider_config.targets) > self.train_config.steps:
+            # trim targets
+            self.slider_config.targets = self.slider_config.targets[:self.train_config.steps]
+
     def before_model_load(self):
         pass
 
@@ -87,7 +93,8 @@ class TrainSliderProcess(BaseSDTrainProcess):
             prompts_to_cache = list(dict.fromkeys(prompts_to_cache))
 
             # trim to max steps if max steps is lower than prompt count
-            prompts_to_cache = prompts_to_cache[:self.train_config.steps]
+            # todo, this can break if we have more targets than steps, should be fixed, by reducing permuations, but could stil happen with low steps
+            # prompts_to_cache = prompts_to_cache[:self.train_config.steps]
 
             # encode them
             cache = encode_prompts_to_cache(
