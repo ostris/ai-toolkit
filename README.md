@@ -35,6 +35,18 @@ source venv/bin/activate
 pip3 install -r requirements.txt
 ```
 
+Windows:
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+git submodule update --init --recursive
+python -m venv venv
+.\venv\Scripts\activate
+pip install torch --use-pep517 --extra-index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
+```
+
+
 ---
 
 ## Current Tools
