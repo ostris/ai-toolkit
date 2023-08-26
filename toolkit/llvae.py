@@ -101,14 +101,16 @@ if __name__ == '__main__':
     from PIL import Image
     import torchvision.transforms as transforms
     user_path = os.path.expanduser('~')
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float32
 
     input_path = os.path.join(user_path, "Pictures/sample_2_512.png")
     output_path = os.path.join(user_path, "Pictures/sample_2_512_llvae.png")
     img = Image.open(input_path)
     img_tensor = transforms.ToTensor()(img)
-    img_tensor = img_tensor.unsqueeze(0)
+    img_tensor = img_tensor.unsqueeze(0).to(device=device, dtype=dtype)
     print("input_shape: ", list(img_tensor.shape))
-    vae = LosslessLatentVAE(in_channels=3, latent_depth=8)
+    vae = LosslessLatentVAE(in_channels=3, latent_depth=8, dtype=dtype).to(device=device, dtype=dtype)
     latent = vae.encode(img_tensor)
     print("latent_shape: ", list(latent.shape))
     out_tensor = vae.decode(latent)

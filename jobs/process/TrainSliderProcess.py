@@ -169,10 +169,15 @@ class TrainSliderProcess(BaseSDTrainProcess):
         self.prompt_pairs = prompt_pairs
         # self.anchor_pairs = anchor_pairs
         flush()
+        if self.data_loader is not None:
+            # we will have images, prep the vae
+            self.sd.vae.eval()
+            self.sd.vae.to(self.device_torch)
         # end hook_before_train_loop
 
     def hook_train_loop(self, batch):
         dtype = get_torch_dtype(self.train_config.dtype)
+
 
         # get a random pair
         prompt_pair: EncodedPromptPair = self.prompt_pairs[
@@ -207,55 +212,67 @@ class TrainSliderProcess(BaseSDTrainProcess):
             )
 
         with torch.no_grad():
-            self.sd.noise_scheduler.set_timesteps(
-                self.train_config.max_denoising_steps, device=self.device_torch
-            )
-
-            self.optimizer.zero_grad()
-
-            # ger a random number of steps
-            timesteps_to = torch.randint(
-                1, self.train_config.max_denoising_steps, (1,)
-            ).item()
-
             # for a complete slider, the batch size is 4 to begin with now
             true_batch_size = prompt_pair.target_class.text_embeds.shape[0] * self.train_config.batch_size
+            from_batch = False
+            if batch is not None:
+                # traing from a batch of images, not generating ourselves
+                from_batch = True
+                noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
 
-            # get noise
-            noise = self.sd.get_latent_noise(
-                pixel_height=height,
-                pixel_width=width,
-                batch_size=true_batch_size,
-                noise_offset=self.train_config.noise_offset,
-            ).to(self.device_torch, dtype=dtype)
+                denoised_latent_chunks = [noisy_latents] * self.prompt_chunk_size
+                denoised_latents = torch.cat(denoised_latent_chunks, dim=0)
+                current_timestep = timesteps
+            else:
 
-            # get latents
-            latents = noise * self.sd.noise_scheduler.init_noise_sigma
-            latents = latents.to(self.device_torch, dtype=dtype)
-
-            with self.network:
-                assert self.network.is_active
-                # pass the multiplier list to the network
-                self.network.multiplier = prompt_pair.multiplier_list
-                denoised_latents = self.sd.diffuse_some_steps(
-                    latents,  # pass simple noise latents
-                    train_tools.concat_prompt_embeddings(
-                        prompt_pair.positive_target,  # unconditional
-                        prompt_pair.target_class,  # target
-                        self.train_config.batch_size,
-                    ),
-                    start_timesteps=0,
-                    total_timesteps=timesteps_to,
-                    guidance_scale=3,
+                self.sd.noise_scheduler.set_timesteps(
+                    self.train_config.max_denoising_steps, device=self.device_torch
                 )
 
-            # split the latents into out prompt pair chunks
-            denoised_latent_chunks = torch.chunk(denoised_latents, self.prompt_chunk_size, dim=0)
+                self.optimizer.zero_grad()
 
-            noise_scheduler.set_timesteps(1000)
+                # ger a random number of steps
+                timesteps_to = torch.randint(
+                    1, self.train_config.max_denoising_steps, (1,)
+                ).item()
 
-            current_timestep_index = int(timesteps_to * 1000 / self.train_config.max_denoising_steps)
-            current_timestep = noise_scheduler.timesteps[current_timestep_index]
+
+                # get noise
+                noise = self.sd.get_latent_noise(
+                    pixel_height=height,
+                    pixel_width=width,
+                    batch_size=true_batch_size,
+                    noise_offset=self.train_config.noise_offset,
+                ).to(self.device_torch, dtype=dtype)
+
+                # get latents
+                latents = noise * self.sd.noise_scheduler.init_noise_sigma
+                latents = latents.to(self.device_torch, dtype=dtype)
+
+                with self.network:
+                    assert self.network.is_active
+                    # pass the multiplier list to the network
+                    self.network.multiplier = prompt_pair.multiplier_list
+                    denoised_latents = self.sd.diffuse_some_steps(
+                        latents,  # pass simple noise latents
+                        train_tools.concat_prompt_embeddings(
+                            prompt_pair.positive_target,  # unconditional
+                            prompt_pair.target_class,  # target
+                            self.train_config.batch_size,
+                        ),
+                        start_timesteps=0,
+                        total_timesteps=timesteps_to,
+                        guidance_scale=3,
+                    )
+
+                noise_scheduler.set_timesteps(1000)
+
+                # split the latents into out prompt pair chunks
+                denoised_latent_chunks = torch.chunk(denoised_latents, self.prompt_chunk_size, dim=0)
+                denoised_latent_chunks = [x.detach() for x in denoised_latent_chunks]
+
+                current_timestep_index = int(timesteps_to * 1000 / self.train_config.max_denoising_steps)
+                current_timestep = noise_scheduler.timesteps[current_timestep_index]
 
             # flush()  # 4.2GB to 3GB on 512x512
 
@@ -267,6 +284,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 current_timestep,
                 denoised_latents
             )
+            positive_latents = positive_latents.detach()
             positive_latents.requires_grad = False
             positive_latents_chunks = torch.chunk(positive_latents, self.prompt_chunk_size, dim=0)
 
@@ -277,6 +295,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 current_timestep,
                 denoised_latents
             )
+            neutral_latents = neutral_latents.detach()
             neutral_latents.requires_grad = False
             neutral_latents_chunks = torch.chunk(neutral_latents, self.prompt_chunk_size, dim=0)
 
@@ -287,8 +306,11 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 current_timestep,
                 denoised_latents
             )
+            unconditional_latents = unconditional_latents.detach()
             unconditional_latents.requires_grad = False
             unconditional_latents_chunks = torch.chunk(unconditional_latents, self.prompt_chunk_size, dim=0)
+
+            denoised_latents = denoised_latents.detach()
 
         flush()  # 4.2GB to 3GB on 512x512
 
@@ -402,10 +424,14 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 loss = loss.mean([1, 2, 3])
 
                 if self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001:
-                    # match batch size
-                    timesteps_index_list = [current_timestep_index for _ in range(target_latents.shape[0])]
-                    # add min_snr_gamma
-                    loss = apply_snr_weight(loss, timesteps_index_list, noise_scheduler, self.train_config.min_snr_gamma)
+                    if from_batch:
+                        # match batch size
+                        loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
+                    else:
+                        # match batch size
+                        timesteps_index_list = [current_timestep_index for _ in range(target_latents.shape[0])]
+                        # add min_snr_gamma
+                        loss = apply_snr_weight(loss, timesteps_index_list, noise_scheduler, self.train_config.min_snr_gamma)
 
                 loss = loss.mean() * prompt_pair_chunk.weight
 
@@ -427,7 +453,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
             positive_latents,
             neutral_latents,
             unconditional_latents,
-            latents
+            # latents
         )
         # move back to cpu
         prompt_pair.to("cpu")

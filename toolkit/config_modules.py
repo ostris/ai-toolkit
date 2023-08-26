@@ -77,6 +77,7 @@ class TrainConfig:
         self.skip_first_sample = kwargs.get('skip_first_sample', False)
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
         self.weight_jitter = kwargs.get('weight_jitter', 0.0)
+        self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
 
 
 class ModelConfig:

@@ -152,6 +152,11 @@ class StableDiffusion:
             steps_offset=1
         )
 
+        # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
+        scheduler.betas = scheduler.betas.to(self.device_torch)
+        scheduler.alphas = scheduler.alphas.to(self.device_torch)
+        scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(self.device_torch)
+
         model_path = self.model_config.name_or_path
         if 'civitai.com' in self.model_config.name_or_path:
             # load is a civit ai model, use the loader.
@@ -323,6 +328,13 @@ class StableDiffusion:
 
                     # todo do we disable text encoder here as well if disabled for model, or only do that for training?
                     if self.is_xl:
+                        # fix guidance rescale for sdxl
+                        # was trained on 0.7 (I believe)
+
+                        grs = gen_config.guidance_rescale
+                        if grs is None or grs < 0.00001:
+                            grs = 0.7
+
                         img = pipeline(
                             prompt=gen_config.prompt,
                             prompt_2=gen_config.prompt_2,
@@ -332,7 +344,7 @@ class StableDiffusion:
                             width=gen_config.width,
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
-                            guidance_rescale=gen_config.guidance_rescale,
+                            guidance_rescale=grs,
                         ).images[0]
                     else:
                         img = pipeline(
@@ -618,6 +630,27 @@ class StableDiffusion:
         latents = latents.to(device, dtype=dtype)
 
         return latents
+
+    def decode_latents(
+            self,
+            latents: torch.Tensor,
+            device=None,
+            dtype=None
+    ):
+        if device is None:
+            device = self.device
+        if dtype is None:
+            dtype = self.torch_dtype
+
+        # Move to vae to device if on cpu
+        if self.vae.device == 'cpu':
+            self.vae.to(self.device)
+        latents = latents.to(device, dtype=dtype)
+        latents = latents / 0.18215
+        images = self.vae.decode(latents).sample
+        images = images.to(device, dtype=dtype)
+
+        return images
 
     def encode_image_prompt_pairs(
             self,
