@@ -8,6 +8,7 @@ import torch
 from transformers import CLIPTextModel
 
 from .paths import SD_SCRIPTS_ROOT
+from .train_tools import get_torch_dtype
 
 sys.path.append(SD_SCRIPTS_ROOT)
 
@@ -78,6 +79,8 @@ class LoRAModule(torch.nn.Module):
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
         self.is_checkpointing = False
+        self.is_normalizing = False
+        self.normalize_scaler = 1.0
 
     def apply_to(self):
         self.org_forward = self.org_module.forward
@@ -91,8 +94,8 @@ class LoRAModule(torch.nn.Module):
         batch_size = lora_up.size(0)
         # batch will have all negative prompts first and positive prompts second
         # our multiplier list is for a prompt pair. So we need to repeat it for positive and negative prompts
-        # if there is more than our multiplier, it is liekly a batch size increase, so we need to
-        # interleve the multipliers
+        # if there is more than our multiplier, it is likely a batch size increase, so we need to
+        # interleave the multipliers
         if isinstance(self.multiplier, list):
             if len(self.multiplier) == 0:
                 # single item, just return it
@@ -153,24 +156,29 @@ class LoRAModule(torch.nn.Module):
 
         return lx * multiplier * scale
 
-    def create_custom_forward(self):
-        def custom_forward(*inputs):
-            return self._call_forward(*inputs)
-
-        return custom_forward
-
     def forward(self, x):
         org_forwarded = self.org_forward(x)
-        # TODO this just loses the grad. Not sure why. Probably why no one else is doing it either
-        # if torch.is_grad_enabled() and self.is_checkpointing and self.training:
-        #     lora_output = checkpoint(
-        #         self.create_custom_forward(),
-        #         x,
-        #     )
-        # else:
-        #     lora_output = self._call_forward(x)
-
         lora_output = self._call_forward(x)
+
+        if self.is_normalizing:
+            # get a dim array from orig forward that had index of all dimensions except the batch and channel
+
+            # Calculate the target magnitude for the combined output
+            orig_max = torch.max(torch.abs(org_forwarded))
+
+            # Calculate the additional increase in magnitude that lora_output would introduce
+            potential_max_increase = torch.max(torch.abs(org_forwarded + lora_output) - torch.abs(org_forwarded))
+
+            epsilon = 1e-6  # Small constant to avoid division by zero
+
+            # Calculate the scaling factor for the lora_output
+            # to ensure that the potential increase in magnitude doesn't change the original max
+            normalize_scaler = orig_max / (orig_max + potential_max_increase + epsilon)
+
+            # save the scaler so it can be applied later
+            self.normalize_scaler = normalize_scaler.clone().detach()
+
+            lora_output *= normalize_scaler
 
         return org_forwarded + lora_output
 
@@ -180,11 +188,39 @@ class LoRAModule(torch.nn.Module):
     def disable_gradient_checkpointing(self):
         self.is_checkpointing = False
 
+    @torch.no_grad()
+    def apply_stored_normalizer(self, target_normalize_scaler: float = 1.0):
+        """
+        Applied the previous normalization calculation to the module.
+        This must be called before saving or normalization will be lost.
+        It is probably best to call after each batch as well.
+        We just scale the up down weights to match this vector
+        :return:
+        """
+        # get state dict
+        state_dict = self.state_dict()
+        dtype = state_dict['lora_up.weight'].dtype
+        device = state_dict['lora_up.weight'].device
+
+        # todo should we do this at fp32?
+
+        total_module_scale = torch.tensor(self.normalize_scaler / target_normalize_scaler) \
+            .to(device, dtype=dtype)
+        num_modules_layers = 2  # up and down
+        up_down_scale = torch.pow(total_module_scale, 1.0 / num_modules_layers) \
+            .to(device, dtype=dtype)
+
+        # apply the scaler to the up and down weights
+        for key in state_dict.keys():
+            if key.endswith('.lora_up.weight') or key.endswith('.lora_down.weight'):
+                # do it inplace do params are updated
+                state_dict[key] *= up_down_scale
+
+        # reset the normalization scaler
+        self.normalize_scaler = target_normalize_scaler
+
 
 class LoRASpecialNetwork(LoRANetwork):
-    _multiplier: float = 1.0
-    is_active: bool = False
-
     NUM_OF_BLOCKS = 12  # フルモデル相当でのup,downの層の数
 
     UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel"]
@@ -230,7 +266,6 @@ class LoRASpecialNetwork(LoRANetwork):
         """
         # call the parent of the parent we are replacing (LoRANetwork) init
         super(LoRANetwork, self).__init__()
-        self.multiplier = multiplier
 
         self.lora_dim = lora_dim
         self.alpha = alpha
@@ -240,6 +275,11 @@ class LoRASpecialNetwork(LoRANetwork):
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
         self.is_checkpointing = False
+        self._multiplier: float = 1.0
+        self.is_active: bool = False
+        self._is_normalizing: bool = False
+        # triggers the state updates
+        self.multiplier = multiplier
 
         if modules_dim is not None:
             print(f"create LoRA network from weights")
@@ -451,21 +491,20 @@ class LoRASpecialNetwork(LoRANetwork):
         for lora in loras:
             lora.to(device, dtype)
 
+    def get_all_modules(self):
+        loras = []
+        if hasattr(self, 'unet_loras'):
+            loras += self.unet_loras
+        if hasattr(self, 'text_encoder_loras'):
+            loras += self.text_encoder_loras
+        return loras
+
     def _update_checkpointing(self):
-        if self.is_checkpointing:
-            if hasattr(self, 'unet_loras'):
-                for lora in self.unet_loras:
-                    lora.enable_gradient_checkpointing()
-            if hasattr(self, 'text_encoder_loras'):
-                for lora in self.text_encoder_loras:
-                    lora.enable_gradient_checkpointing()
-        else:
-            if hasattr(self, 'unet_loras'):
-                for lora in self.unet_loras:
-                    lora.disable_gradient_checkpointing()
-            if hasattr(self, 'text_encoder_loras'):
-                for lora in self.text_encoder_loras:
-                    lora.disable_gradient_checkpointing()
+        for module in self.get_all_modules():
+            if self.is_checkpointing:
+                module.enable_gradient_checkpointing()
+            else:
+                module.disable_gradient_checkpointing()
 
     def enable_gradient_checkpointing(self):
         # not supported
@@ -476,3 +515,17 @@ class LoRASpecialNetwork(LoRANetwork):
         # not supported
         self.is_checkpointing = False
         self._update_checkpointing()
+
+    @property
+    def is_normalizing(self) -> bool:
+        return self._is_normalizing
+
+    @is_normalizing.setter
+    def is_normalizing(self, value: bool):
+        self._is_normalizing = value
+        for module in self.get_all_modules():
+            module.is_normalizing = self._is_normalizing
+
+    def apply_stored_normalizer(self, target_normalize_scaler: float = 1.0):
+        for module in self.get_all_modules():
+            module.apply_stored_normalizer(target_normalize_scaler)

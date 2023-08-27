@@ -48,6 +48,7 @@ class NetworkConfig:
         self.alpha: float = kwargs.get('alpha', 1.0)
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
         self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
+        self.normalize = kwargs.get('normalize', False)
 
 
 class EmbeddingConfig:

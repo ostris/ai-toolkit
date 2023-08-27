@@ -95,34 +95,40 @@ class BucketsMixin:
             # the other dimension should be the same ratio it is now (bigger)
             new_width = resolution
             new_height = resolution
-            new_x = file_item.crop_x
-            new_y = file_item.crop_y
             if width > height:
                 # scale width to match new resolution,
                 new_width = int(width * (resolution / height))
+                file_item.crop_width = new_width
+                file_item.scale_to_width = new_width
+                file_item.crop_height = resolution
+                file_item.scale_to_height = resolution
                 # make sure new_width is divisible by bucket_tolerance
                 if new_width % bucket_tolerance != 0:
                     # reduce it to the nearest divisible number
                     reduction = new_width % bucket_tolerance
-                    new_width = new_width - reduction
+                    file_item.crop_width = new_width - reduction
                     # adjust the new x position so we evenly crop
-                    new_x = int(new_x + (reduction / 2))
+                    file_item.crop_x = int(file_item.crop_x + (reduction / 2))
             elif height > width:
                 # scale height to match new resolution
                 new_height = int(height * (resolution / width))
+                file_item.crop_height = new_height
+                file_item.scale_to_height = new_height
+                file_item.scale_to_width = resolution
+                file_item.crop_width = resolution
                 # make sure new_height is divisible by bucket_tolerance
                 if new_height % bucket_tolerance != 0:
                     # reduce it to the nearest divisible number
                     reduction = new_height % bucket_tolerance
-                    new_height = new_height - reduction
+                    file_item.crop_height = new_height - reduction
                     # adjust the new x position so we evenly crop
-                    new_y = int(new_y + (reduction / 2))
-
-            # add info to file
-            file_item.crop_x = new_x
-            file_item.crop_y = new_y
-            file_item.crop_width = new_width
-            file_item.crop_height = new_height
+                    file_item.crop_y = int(file_item.crop_y + (reduction / 2))
+            else:
+                # square image
+                file_item.crop_height = resolution
+                file_item.scale_to_height = resolution
+                file_item.scale_to_width = resolution
+                file_item.crop_width = resolution
 
             # check if bucket exists, if not, create it
             bucket_key = f'{new_width}x{new_height}'
