@@ -312,7 +312,6 @@ class FileItem:
 
 
 class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
-    file_list: List['FileItem'] = []
 
     def __init__(self, dataset_config: 'DatasetConfig', batch_size=1):
         super().__init__()
@@ -326,6 +325,7 @@ class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
         # we always random crop if random scale is enabled
         self.random_crop = self.random_scale if self.random_scale else dataset_config.random_crop
         self.resolution = dataset_config.resolution
+        self.file_list: List['FileItem'] = []
 
         # get the file list
         file_list = [
