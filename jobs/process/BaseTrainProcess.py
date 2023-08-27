@@ -14,11 +14,6 @@ if TYPE_CHECKING:
 
 
 class BaseTrainProcess(BaseProcess):
-    process_id: int
-    config: OrderedDict
-    writer: 'SummaryWriter'
-    job: Union['TrainJob', 'BaseJob', 'ExtensionJob']
-    progress_bar: 'tqdm' = None
 
     def __init__(
             self,
@@ -27,6 +22,12 @@ class BaseTrainProcess(BaseProcess):
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
+        self.process_id: int
+        self.config: OrderedDict
+        self.writer: 'SummaryWriter'
+        self.job: Union['TrainJob', 'BaseJob', 'ExtensionJob']
+        self.progress_bar: 'tqdm' = None
+
         self.progress_bar = None
         self.writer = None
         self.training_folder = self.get_conf('training_folder', self.job.training_folder if hasattr(self.job, 'training_folder') else None)

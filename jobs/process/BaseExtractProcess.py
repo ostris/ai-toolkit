@@ -12,11 +12,6 @@ from toolkit.train_tools import get_torch_dtype
 
 
 class BaseExtractProcess(BaseProcess):
-    process_id: int
-    config: OrderedDict
-    output_folder: str
-    output_filename: str
-    output_path: str
 
     def __init__(
             self,
@@ -25,6 +20,10 @@ class BaseExtractProcess(BaseProcess):
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
+        self.config: OrderedDict
+        self.output_folder: str
+        self.output_filename: str
+        self.output_path: str
         self.process_id = process_id
         self.job = job
         self.config = config

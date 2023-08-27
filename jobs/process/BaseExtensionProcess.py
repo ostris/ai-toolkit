@@ -4,10 +4,6 @@ from jobs.process.BaseProcess import BaseProcess
 
 
 class BaseExtensionProcess(BaseProcess):
-    process_id: int
-    config: OrderedDict
-    progress_bar: ForwardRef('tqdm') = None
-
     def __init__(
             self,
             process_id: int,
@@ -15,6 +11,9 @@ class BaseExtensionProcess(BaseProcess):
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
+        self.process_id: int
+        self.config: OrderedDict
+        self.progress_bar: ForwardRef('tqdm') = None
 
     def run(self):
         super().run()

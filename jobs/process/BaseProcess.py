@@ -4,7 +4,6 @@ from collections import OrderedDict
 
 
 class BaseProcess(object):
-    meta: OrderedDict
 
     def __init__(
             self,
@@ -13,6 +12,7 @@ class BaseProcess(object):
             config: OrderedDict
     ):
         self.process_id = process_id
+        self.meta: OrderedDict
         self.job = job
         self.config = config
         self.raw_process_config = config

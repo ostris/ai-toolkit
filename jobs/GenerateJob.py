@@ -14,7 +14,6 @@ process_dict = {
 
 
 class GenerateJob(BaseJob):
-    process: List[GenerateProcess]
 
     def __init__(self, config: OrderedDict):
         super().__init__(config)

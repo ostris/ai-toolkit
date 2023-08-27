@@ -26,7 +26,6 @@ process_dict = {
 
 
 class TrainJob(BaseJob):
-    process: List[BaseExtractProcess]
 
     def __init__(self, config: OrderedDict):
         super().__init__(config)

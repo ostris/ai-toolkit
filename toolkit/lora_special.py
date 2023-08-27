@@ -91,37 +91,38 @@ class LoRAModule(torch.nn.Module):
     # allowing us to run positive and negative weights in the same batch
     # really only useful for slider training for now
     def get_multiplier(self, lora_up):
-        batch_size = lora_up.size(0)
-        # batch will have all negative prompts first and positive prompts second
-        # our multiplier list is for a prompt pair. So we need to repeat it for positive and negative prompts
-        # if there is more than our multiplier, it is likely a batch size increase, so we need to
-        # interleave the multipliers
-        if isinstance(self.multiplier, list):
-            if len(self.multiplier) == 0:
-                # single item, just return it
-                return self.multiplier[0]
-            elif len(self.multiplier) == batch_size:
-                # not doing CFG
-                multiplier_tensor = torch.tensor(self.multiplier).to(lora_up.device, dtype=lora_up.dtype)
+        with torch.no_grad():
+            batch_size = lora_up.size(0)
+            # batch will have all negative prompts first and positive prompts second
+            # our multiplier list is for a prompt pair. So we need to repeat it for positive and negative prompts
+            # if there is more than our multiplier, it is likely a batch size increase, so we need to
+            # interleave the multipliers
+            if isinstance(self.multiplier, list):
+                if len(self.multiplier) == 0:
+                    # single item, just return it
+                    return self.multiplier[0]
+                elif len(self.multiplier) == batch_size:
+                    # not doing CFG
+                    multiplier_tensor = torch.tensor(self.multiplier).to(lora_up.device, dtype=lora_up.dtype)
+                else:
+
+                    # we have a list of multipliers, so we need to get the multiplier for this batch
+                    multiplier_tensor = torch.tensor(self.multiplier * 2).to(lora_up.device, dtype=lora_up.dtype)
+                    # should be 1 for if total batch size was 1
+                    num_interleaves = (batch_size // 2) // len(self.multiplier)
+                    multiplier_tensor = multiplier_tensor.repeat_interleave(num_interleaves)
+
+                # match lora_up rank
+                if len(lora_up.size()) == 2:
+                    multiplier_tensor = multiplier_tensor.view(-1, 1)
+                elif len(lora_up.size()) == 3:
+                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
+                elif len(lora_up.size()) == 4:
+                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
+                return multiplier_tensor.detach()
+
             else:
-
-                # we have a list of multipliers, so we need to get the multiplier for this batch
-                multiplier_tensor = torch.tensor(self.multiplier * 2).to(lora_up.device, dtype=lora_up.dtype)
-                # should be 1 for if total batch size was 1
-                num_interleaves = (batch_size // 2) // len(self.multiplier)
-                multiplier_tensor = multiplier_tensor.repeat_interleave(num_interleaves)
-
-            # match lora_up rank
-            if len(lora_up.size()) == 2:
-                multiplier_tensor = multiplier_tensor.view(-1, 1)
-            elif len(lora_up.size()) == 3:
-                multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
-            elif len(lora_up.size()) == 4:
-                multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
-            return multiplier_tensor
-
-        else:
-            return self.multiplier
+                return self.multiplier
 
     def _call_forward(self, x):
         # module dropout
@@ -152,35 +153,38 @@ class LoRAModule(torch.nn.Module):
 
         lx = self.lora_up(lx)
 
-        multiplier = self.get_multiplier(lx)
-
-        return lx * multiplier * scale
+        return lx * scale
 
     def forward(self, x):
         org_forwarded = self.org_forward(x)
         lora_output = self._call_forward(x)
 
         if self.is_normalizing:
-            # get a dim array from orig forward that had index of all dimensions except the batch and channel
+            with torch.no_grad():
+                # do this calculation without multiplier
+                # get a dim array from orig forward that had index of all dimensions except the batch and channel
 
-            # Calculate the target magnitude for the combined output
-            orig_max = torch.max(torch.abs(org_forwarded))
+                # Calculate the target magnitude for the combined output
+                orig_max = torch.max(torch.abs(org_forwarded))
 
-            # Calculate the additional increase in magnitude that lora_output would introduce
-            potential_max_increase = torch.max(torch.abs(org_forwarded + lora_output) - torch.abs(org_forwarded))
+                # Calculate the additional increase in magnitude that lora_output would introduce
+                potential_max_increase = torch.max(torch.abs(org_forwarded + lora_output) - torch.abs(org_forwarded))
 
-            epsilon = 1e-6  # Small constant to avoid division by zero
+                epsilon = 1e-6  # Small constant to avoid division by zero
 
-            # Calculate the scaling factor for the lora_output
-            # to ensure that the potential increase in magnitude doesn't change the original max
-            normalize_scaler = orig_max / (orig_max + potential_max_increase + epsilon)
+                # Calculate the scaling factor for the lora_output
+                # to ensure that the potential increase in magnitude doesn't change the original max
+                normalize_scaler = orig_max / (orig_max + potential_max_increase + epsilon)
+                normalize_scaler = normalize_scaler.detach()
 
-            # save the scaler so it can be applied later
-            self.normalize_scaler = normalize_scaler.clone().detach()
+                # save the scaler so it can be applied later
+                self.normalize_scaler = normalize_scaler.clone().detach()
 
             lora_output *= normalize_scaler
 
-        return org_forwarded + lora_output
+        multiplier = self.get_multiplier(lora_output)
+
+        return org_forwarded + (lora_output * multiplier)
 
     def enable_gradient_checkpointing(self):
         self.is_checkpointing = True

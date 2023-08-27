@@ -6,19 +6,16 @@ from jobs.process import BaseProcess
 
 
 class BaseJob:
-    config: OrderedDict
-    job: str
-    name: str
-    meta: OrderedDict
-    process: List[BaseProcess]
 
     def __init__(self, config: OrderedDict):
         if not config:
             raise ValueError('config is required')
+        self.process: List[BaseProcess]
 
         self.config = config['config']
         self.raw_config = config
         self.job = config['job']
+        self.torch_profiler = self.get_conf('torch_profiler', False)
         self.name = self.get_conf('name', required=True)
         if 'meta' in config:
             self.meta = config['meta']

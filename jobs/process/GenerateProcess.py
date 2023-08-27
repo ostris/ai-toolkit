@@ -16,9 +16,9 @@ import random
 
 
 class GenerateConfig:
-    prompts: List[str]
 
     def __init__(self, **kwargs):
+        self.prompts: List[str]
         self.sampler = kwargs.get('sampler', 'ddpm')
         self.width = kwargs.get('width', 512)
         self.height = kwargs.get('height', 512)

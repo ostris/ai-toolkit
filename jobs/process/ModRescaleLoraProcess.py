@@ -24,6 +24,9 @@ class ModRescaleLoraProcess(BaseProcess):
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
+        self.process_id: int
+        self.config: OrderedDict
+        self.progress_bar: ForwardRef('tqdm') = None
         self.input_path = self.get_conf('input_path', required=True)
         self.output_path = self.get_conf('output_path', required=True)
         self.replace_meta = self.get_conf('replace_meta', default=False)

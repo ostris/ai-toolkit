@@ -9,8 +9,6 @@ from toolkit.train_tools import get_torch_dtype
 
 
 class BaseMergeProcess(BaseProcess):
-    process_id: int
-    config: OrderedDict
 
     def __init__(
             self,
@@ -19,6 +17,8 @@ class BaseMergeProcess(BaseProcess):
             config: OrderedDict
     ):
         super().__init__(process_id, job, config)
+        self.process_id: int
+        self.config: OrderedDict
         self.output_path = self.get_conf('output_path', required=True)
         self.dtype = self.get_conf('dtype', self.job.dtype)
         self.torch_dtype = get_torch_dtype(self.dtype)
