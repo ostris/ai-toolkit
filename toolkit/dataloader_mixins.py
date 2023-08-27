@@ -107,6 +107,7 @@ class BucketsMixin:
                     # reduce it to the nearest divisible number
                     reduction = new_width % bucket_tolerance
                     file_item.crop_width = new_width - reduction
+                    new_width = file_item.crop_width
                     # adjust the new x position so we evenly crop
                     file_item.crop_x = int(file_item.crop_x + (reduction / 2))
             elif height > width:
@@ -121,6 +122,7 @@ class BucketsMixin:
                     # reduce it to the nearest divisible number
                     reduction = new_height % bucket_tolerance
                     file_item.crop_height = new_height - reduction
+                    new_height = file_item.crop_height
                     # adjust the new x position so we evenly crop
                     file_item.crop_y = int(file_item.crop_y + (reduction / 2))
             else:
