@@ -312,6 +312,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.trigger_word is not None and not is_reg:
                     prompt = self.sd.inject_trigger_into_prompt(
                         prompt,
+                        trigger=self.trigger_word,
                         add_if_not_present=True,
                     )
                 conditioned_prompts.append(prompt)

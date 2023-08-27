@@ -698,6 +698,7 @@ class StableDiffusion:
             return prompt
         output_prompt = prompt
         default_replacements = ["[name]", "[trigger]"]
+        num_times_trigger_exists = prompt.count(trigger)
 
         replace_with = trigger
         if to_replace_list is None:
@@ -714,7 +715,7 @@ class StableDiffusion:
             output_prompt = output_prompt.replace(to_replace, replace_with)
 
         # see how many times replace_with is in the prompt
-        num_instances = prompt.count(replace_with)
+        num_instances = output_prompt.count(replace_with)
 
         if num_instances == 0 and add_if_not_present:
             # add it to the beginning of the prompt
