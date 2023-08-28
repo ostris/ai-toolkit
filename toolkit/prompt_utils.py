@@ -38,6 +38,12 @@ class PromptEmbeds:
             self.pooled_embeds = self.pooled_embeds.to(*args, **kwargs)
         return self
 
+    def detach(self):
+        self.text_embeds = self.text_embeds.detach()
+        if self.pooled_embeds is not None:
+            self.pooled_embeds = self.pooled_embeds.detach()
+        return self
+
 
 class EncodedPromptPair:
     def __init__(

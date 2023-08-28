@@ -86,13 +86,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if embedding_raw is not None:
             self.embed_config = EmbeddingConfig(**embedding_raw)
 
+        if self.embed_config is None and self.network_config is None:
+            # get the latest checkpoint
+            # check to see if we have a latest save
+            latest_save_path = self.get_latest_save_path()
 
-        # check to see if we have a latest save
-        latest_save_path = self.get_latest_save_path()
-
-        if latest_save_path is not None:
-            print(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
-            self.model_config.name_or_path = latest_save_path
+            if latest_save_path is not None:
+                print(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
+                self.model_config.name_or_path = latest_save_path
 
         self.sd = StableDiffusion(
             device=self.device,

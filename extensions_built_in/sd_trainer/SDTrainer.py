@@ -62,6 +62,11 @@ class SDTrainer(BaseSDTrainProcess):
                     embedding = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=dtype)
                     embedding_list.append(embedding)
                 conditional_embeds = concat_prompt_embeds(embedding_list)
+            if not grad_on_text_encoder:
+                # detach the embeddings
+                conditional_embeds = conditional_embeds.detach()
+                self.optimizer.zero_grad()
+                flush()
 
             noise_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype),
