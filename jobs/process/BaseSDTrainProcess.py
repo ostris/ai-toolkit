@@ -86,6 +86,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if embedding_raw is not None:
             self.embed_config = EmbeddingConfig(**embedding_raw)
 
+
+        # check to see if we have a latest save
+        latest_save_path = self.get_latest_save_path()
+
+        if latest_save_path is not None:
+            print(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
+            self.model_config.name_or_path = latest_save_path
+
         self.sd = StableDiffusion(
             device=self.device,
             model_config=self.model_config,
@@ -113,7 +121,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # zero-pad 9 digits
                 step_num = f"_{str(step).zfill(9)}"
 
-            filename = f"[time]_{step_num}_[count].png"
+            filename = f"[time]_{step_num}_[count].{self.sample_config.ext}"
 
             output_path = os.path.join(sample_folder, filename)
 
@@ -142,6 +150,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 num_inference_steps=sample_config.sample_steps,
                 network_multiplier=sample_config.network_multiplier,
                 output_path=output_path,
+                output_ext=sample_config.ext,
             ))
 
         # send to be generated

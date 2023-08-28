@@ -1,9 +1,19 @@
 import os
+import random
 from typing import TYPE_CHECKING, List, Dict
+
+from toolkit.prompt_utils import inject_trigger_into_prompt
+
+if TYPE_CHECKING:
+    from toolkit.data_loader import AiToolkitDataset
+    from toolkit.data_transfer_object.data_loader import FileItemDTO
+
+
+# def get_associated_caption_from_img_path(img_path):
 
 
 class CaptionMixin:
-    def get_caption_item(self, index):
+    def get_caption_item(self: 'AiToolkitDataset', index):
         if not hasattr(self, 'caption_type'):
             raise Exception('caption_type not found on class instance')
         if not hasattr(self, 'file_list'):
@@ -48,7 +58,7 @@ class CaptionMixin:
 
 if TYPE_CHECKING:
     from toolkit.config_modules import DatasetConfig
-    from toolkit.data_loader import FileItem
+    from toolkit.data_transfer_object.data_loader import FileItemDTO
 
 
 class Bucket:
@@ -63,14 +73,14 @@ class BucketsMixin:
         self.buckets: Dict[str, Bucket] = {}
         self.batch_indices: List[List[int]] = []
 
-    def build_batch_indices(self):
+    def build_batch_indices(self: 'AiToolkitDataset'):
         for key, bucket in self.buckets.items():
             for start_idx in range(0, len(bucket.file_list_idx), self.batch_size):
                 end_idx = min(start_idx + self.batch_size, len(bucket.file_list_idx))
                 batch = bucket.file_list_idx[start_idx:end_idx]
                 self.batch_indices.append(batch)
 
-    def setup_buckets(self):
+    def setup_buckets(self: 'AiToolkitDataset'):
         if not hasattr(self, 'file_list'):
             raise Exception(f'file_list not found on class instance {self.__class__.__name__}')
         if not hasattr(self, 'dataset_config'):
@@ -79,7 +89,7 @@ class BucketsMixin:
         config: 'DatasetConfig' = self.dataset_config
         resolution = config.resolution
         bucket_tolerance = config.bucket_tolerance
-        file_list: List['FileItem'] = self.file_list
+        file_list: List['FileItemDTO'] = self.file_list
 
         # make sure out resolution is divisible by bucket_tolerance
         if resolution % bucket_tolerance != 0:
@@ -146,3 +156,48 @@ class BucketsMixin:
         print(f'{len(self.buckets)} buckets made')
 
         # file buckets made
+
+
+class CaptionProcessingDTOMixin:
+    def get_caption(
+            self: 'FileItemDTO',
+            trigger=None,
+            to_replace_list=None,
+            add_if_not_present=True
+    ):
+        raw_caption = self.raw_caption
+        if raw_caption is None:
+            raw_caption = ''
+        # handle dropout
+        if self.dataset_config.caption_dropout_rate > 0:
+            # get a random float form 0 to 1
+            rand = random.random()
+            if rand < self.dataset_config.caption_dropout_rate:
+                # drop the caption
+                return ''
+
+        # get tokens
+        token_list = raw_caption.split(',')
+        # trim whitespace
+        token_list = [x.strip() for x in token_list]
+        # remove empty strings
+        token_list = [x for x in token_list if x]
+
+        if self.dataset_config.shuffle_tokens:
+            random.shuffle(token_list)
+
+        # handle token dropout
+        if self.dataset_config.token_dropout_rate > 0:
+            new_token_list = []
+            for token in token_list:
+                # get a random float form 0 to 1
+                rand = random.random()
+                if rand > self.dataset_config.token_dropout_rate:
+                    # keep the token
+                    new_token_list.append(token)
+            token_list = new_token_list
+
+        # join back together
+        caption = ', '.join(token_list)
+        caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
+        return caption
