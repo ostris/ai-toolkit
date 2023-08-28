@@ -13,7 +13,7 @@ import json
 
 from toolkit.config_modules import ModelConfig
 from toolkit.paths import KEYMAPS_ROOT
-from toolkit.saving import convert_state_dict_to_ldm_with_mapping
+from toolkit.saving import convert_state_dict_to_ldm_with_mapping, get_ldm_state_dict_from_diffusers
 from toolkit.stable_diffusion_model import StableDiffusion
 
 # this was just used to match the vae keys to the diffusers keys
@@ -39,6 +39,12 @@ parser.add_argument(
     help='Is the model an XL model'
 )
 
+parser.add_argument(
+    '--is_v2',
+    action='store_true',
+    help='Is the model a v2 model'
+)
+
 args = parser.parse_args()
 
 find_matches = False
@@ -58,19 +64,20 @@ sd = StableDiffusion(
 )
 sd.load_model()
 
-if not args.is_xl:
-    # not supported yet
-    raise NotImplementedError("Only SDXL is supported at this time with this method")
 # load our base
 base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_sdxl_ldm_base.safetensors')
 mapping_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_sdxl.json')
 
 print("Converting model back to LDM")
+version_string = '1'
+if args.is_v2:
+    version_string = '2'
+if args.is_xl:
+    version_string = 'sdxl'
 # convert the state dict
-state_dict_file_2 = convert_state_dict_to_ldm_with_mapping(
+state_dict_file_2 = get_ldm_state_dict_from_diffusers(
     sd.state_dict(),
-    mapping_path,
-    base_path,
+    version_string,
     device='cpu',
     dtype=dtype
 )
