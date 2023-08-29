@@ -200,8 +200,6 @@
         "conditioner.embedders.1.model.ln_final.weight": "te1_text_model.final_layer_norm.weight",
         "conditioner.embedders.1.model.positional_embedding": "te1_text_model.embeddings.position_embedding.weight",
         "conditioner.embedders.1.model.token_embedding.weight": "te1_text_model.embeddings.token_embedding.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_bias": "te1_text_model.encoder.layers.0.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_weight": "te1_text_model.encoder.layers.0.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.0.attn.out_proj.bias": "te1_text_model.encoder.layers.0.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.0.attn.out_proj.weight": "te1_text_model.encoder.layers.0.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.0.ln_1.bias": "te1_text_model.encoder.layers.0.layer_norm1.bias",
@@ -212,8 +210,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.0.mlp.c_fc.weight": "te1_text_model.encoder.layers.0.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.0.mlp.c_proj.bias": "te1_text_model.encoder.layers.0.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.0.mlp.c_proj.weight": "te1_text_model.encoder.layers.0.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_bias": "te1_text_model.encoder.layers.1.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_weight": "te1_text_model.encoder.layers.1.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.1.attn.out_proj.bias": "te1_text_model.encoder.layers.1.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.1.attn.out_proj.weight": "te1_text_model.encoder.layers.1.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.1.ln_1.bias": "te1_text_model.encoder.layers.1.layer_norm1.bias",
@@ -224,8 +220,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.1.mlp.c_fc.weight": "te1_text_model.encoder.layers.1.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.1.mlp.c_proj.bias": "te1_text_model.encoder.layers.1.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.1.mlp.c_proj.weight": "te1_text_model.encoder.layers.1.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_bias": "te1_text_model.encoder.layers.10.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_weight": "te1_text_model.encoder.layers.10.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.10.attn.out_proj.bias": "te1_text_model.encoder.layers.10.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.10.attn.out_proj.weight": "te1_text_model.encoder.layers.2.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.10.ln_1.bias": "te1_text_model.encoder.layers.10.layer_norm1.bias",
@@ -236,8 +230,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.10.mlp.c_fc.weight": "te1_text_model.encoder.layers.10.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.10.mlp.c_proj.bias": "te1_text_model.encoder.layers.10.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.10.mlp.c_proj.weight": "te1_text_model.encoder.layers.10.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_bias": "te1_text_model.encoder.layers.11.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_weight": "te1_text_model.encoder.layers.11.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.11.attn.out_proj.bias": "te1_text_model.encoder.layers.11.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.11.attn.out_proj.weight": "te1_text_model.encoder.layers.3.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.11.ln_1.bias": "te1_text_model.encoder.layers.11.layer_norm1.bias",
@@ -248,8 +240,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.11.mlp.c_fc.weight": "te1_text_model.encoder.layers.11.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.11.mlp.c_proj.bias": "te1_text_model.encoder.layers.11.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.11.mlp.c_proj.weight": "te1_text_model.encoder.layers.11.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_bias": "te1_text_model.encoder.layers.12.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_weight": "te1_text_model.encoder.layers.12.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.12.attn.out_proj.bias": "te1_text_model.encoder.layers.12.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.12.attn.out_proj.weight": "te1_text_model.encoder.layers.4.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.12.ln_1.bias": "te1_text_model.encoder.layers.12.layer_norm1.bias",
@@ -260,8 +250,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.12.mlp.c_fc.weight": "te1_text_model.encoder.layers.12.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.12.mlp.c_proj.bias": "te1_text_model.encoder.layers.12.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.12.mlp.c_proj.weight": "te1_text_model.encoder.layers.12.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_bias": "te1_text_model.encoder.layers.13.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_weight": "te1_text_model.encoder.layers.13.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.13.attn.out_proj.bias": "te1_text_model.encoder.layers.13.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.13.attn.out_proj.weight": "te1_text_model.encoder.layers.5.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.13.ln_1.bias": "te1_text_model.encoder.layers.13.layer_norm1.bias",
@@ -272,8 +260,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.13.mlp.c_fc.weight": "te1_text_model.encoder.layers.13.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.13.mlp.c_proj.bias": "te1_text_model.encoder.layers.13.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.13.mlp.c_proj.weight": "te1_text_model.encoder.layers.13.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_bias": "te1_text_model.encoder.layers.14.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_weight": "te1_text_model.encoder.layers.14.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.14.attn.out_proj.bias": "te1_text_model.encoder.layers.14.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.14.attn.out_proj.weight": "te1_text_model.encoder.layers.14.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.14.ln_1.bias": "te1_text_model.encoder.layers.14.layer_norm1.bias",
@@ -284,8 +270,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.14.mlp.c_fc.weight": "te1_text_model.encoder.layers.14.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.14.mlp.c_proj.bias": "te1_text_model.encoder.layers.14.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.14.mlp.c_proj.weight": "te1_text_model.encoder.layers.14.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_bias": "te1_text_model.encoder.layers.15.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_weight": "te1_text_model.encoder.layers.15.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.15.attn.out_proj.bias": "te1_text_model.encoder.layers.15.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.15.attn.out_proj.weight": "te1_text_model.encoder.layers.6.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.15.ln_1.bias": "te1_text_model.encoder.layers.15.layer_norm1.bias",
@@ -296,8 +280,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.15.mlp.c_fc.weight": "te1_text_model.encoder.layers.15.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.15.mlp.c_proj.bias": "te1_text_model.encoder.layers.15.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.15.mlp.c_proj.weight": "te1_text_model.encoder.layers.15.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_bias": "te1_text_model.encoder.layers.16.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_weight": "te1_text_model.encoder.layers.16.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.16.attn.out_proj.bias": "te1_text_model.encoder.layers.16.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.16.attn.out_proj.weight": "te1_text_model.encoder.layers.16.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.16.ln_1.bias": "te1_text_model.encoder.layers.16.layer_norm1.bias",
@@ -308,8 +290,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.16.mlp.c_fc.weight": "te1_text_model.encoder.layers.16.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.16.mlp.c_proj.bias": "te1_text_model.encoder.layers.16.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.16.mlp.c_proj.weight": "te1_text_model.encoder.layers.16.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_bias": "te1_text_model.encoder.layers.17.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_weight": "te1_text_model.encoder.layers.17.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.17.attn.out_proj.bias": "te1_text_model.encoder.layers.17.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.17.attn.out_proj.weight": "te1_text_model.encoder.layers.17.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.17.ln_1.bias": "te1_text_model.encoder.layers.17.layer_norm1.bias",
@@ -320,8 +300,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.17.mlp.c_fc.weight": "te1_text_model.encoder.layers.17.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.17.mlp.c_proj.bias": "te1_text_model.encoder.layers.17.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.17.mlp.c_proj.weight": "te1_text_model.encoder.layers.17.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_bias": "te1_text_model.encoder.layers.18.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_weight": "te1_text_model.encoder.layers.18.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.18.attn.out_proj.bias": "te1_text_model.encoder.layers.18.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.18.attn.out_proj.weight": "te1_text_model.encoder.layers.18.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.18.ln_1.bias": "te1_text_model.encoder.layers.18.layer_norm1.bias",
@@ -332,8 +310,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.18.mlp.c_fc.weight": "te1_text_model.encoder.layers.18.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.18.mlp.c_proj.bias": "te1_text_model.encoder.layers.18.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.18.mlp.c_proj.weight": "te1_text_model.encoder.layers.18.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_bias": "te1_text_model.encoder.layers.19.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_weight": "te1_text_model.encoder.layers.19.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.19.attn.out_proj.bias": "te1_text_model.encoder.layers.19.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.19.attn.out_proj.weight": "te1_text_model.encoder.layers.19.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.19.ln_1.bias": "te1_text_model.encoder.layers.19.layer_norm1.bias",
@@ -344,8 +320,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.19.mlp.c_fc.weight": "te1_text_model.encoder.layers.19.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.19.mlp.c_proj.bias": "te1_text_model.encoder.layers.19.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.19.mlp.c_proj.weight": "te1_text_model.encoder.layers.19.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_bias": "te1_text_model.encoder.layers.2.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_weight": "te1_text_model.encoder.layers.2.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.2.attn.out_proj.bias": "te1_text_model.encoder.layers.2.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.2.attn.out_proj.weight": "te1_text_model.encoder.layers.7.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.2.ln_1.bias": "te1_text_model.encoder.layers.2.layer_norm1.bias",
@@ -356,8 +330,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.2.mlp.c_fc.weight": "te1_text_model.encoder.layers.2.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.2.mlp.c_proj.bias": "te1_text_model.encoder.layers.2.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.2.mlp.c_proj.weight": "te1_text_model.encoder.layers.2.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_bias": "te1_text_model.encoder.layers.20.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_weight": "te1_text_model.encoder.layers.20.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.20.attn.out_proj.bias": "te1_text_model.encoder.layers.20.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.20.attn.out_proj.weight": "te1_text_model.encoder.layers.20.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.20.ln_1.bias": "te1_text_model.encoder.layers.20.layer_norm1.bias",
@@ -368,8 +340,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.20.mlp.c_fc.weight": "te1_text_model.encoder.layers.20.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.20.mlp.c_proj.bias": "te1_text_model.encoder.layers.20.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.20.mlp.c_proj.weight": "te1_text_model.encoder.layers.20.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_bias": "te1_text_model.encoder.layers.21.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_weight": "te1_text_model.encoder.layers.21.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.21.attn.out_proj.bias": "te1_text_model.encoder.layers.21.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.21.attn.out_proj.weight": "te1_text_model.encoder.layers.21.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.21.ln_1.bias": "te1_text_model.encoder.layers.21.layer_norm1.bias",
@@ -380,8 +350,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.21.mlp.c_fc.weight": "te1_text_model.encoder.layers.21.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.21.mlp.c_proj.bias": "te1_text_model.encoder.layers.21.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.21.mlp.c_proj.weight": "te1_text_model.encoder.layers.21.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_bias": "te1_text_model.encoder.layers.22.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_weight": "te1_text_model.encoder.layers.22.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.22.attn.out_proj.bias": "te1_text_model.encoder.layers.22.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.22.attn.out_proj.weight": "te1_text_model.encoder.layers.22.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.22.ln_1.bias": "te1_text_model.encoder.layers.22.layer_norm1.bias",
@@ -392,8 +360,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.22.mlp.c_fc.weight": "te1_text_model.encoder.layers.22.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.22.mlp.c_proj.bias": "te1_text_model.encoder.layers.22.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.22.mlp.c_proj.weight": "te1_text_model.encoder.layers.22.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_bias": "te1_text_model.encoder.layers.23.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_weight": "te1_text_model.encoder.layers.23.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.23.attn.out_proj.bias": "te1_text_model.encoder.layers.23.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.23.attn.out_proj.weight": "te1_text_model.encoder.layers.23.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.23.ln_1.bias": "te1_text_model.encoder.layers.23.layer_norm1.bias",
@@ -404,8 +370,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.23.mlp.c_fc.weight": "te1_text_model.encoder.layers.23.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.23.mlp.c_proj.bias": "te1_text_model.encoder.layers.23.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.23.mlp.c_proj.weight": "te1_text_model.encoder.layers.23.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_bias": "te1_text_model.encoder.layers.24.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_weight": "te1_text_model.encoder.layers.24.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.24.attn.out_proj.bias": "te1_text_model.encoder.layers.24.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.24.attn.out_proj.weight": "te1_text_model.encoder.layers.24.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.24.ln_1.bias": "te1_text_model.encoder.layers.24.layer_norm1.bias",
@@ -416,8 +380,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.24.mlp.c_fc.weight": "te1_text_model.encoder.layers.24.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.24.mlp.c_proj.bias": "te1_text_model.encoder.layers.24.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.24.mlp.c_proj.weight": "te1_text_model.encoder.layers.24.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_bias": "te1_text_model.encoder.layers.25.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_weight": "te1_text_model.encoder.layers.25.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.25.attn.out_proj.bias": "te1_text_model.encoder.layers.25.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.25.attn.out_proj.weight": "te1_text_model.encoder.layers.25.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.25.ln_1.bias": "te1_text_model.encoder.layers.25.layer_norm1.bias",
@@ -428,8 +390,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.25.mlp.c_fc.weight": "te1_text_model.encoder.layers.25.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.25.mlp.c_proj.bias": "te1_text_model.encoder.layers.25.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.25.mlp.c_proj.weight": "te1_text_model.encoder.layers.25.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_bias": "te1_text_model.encoder.layers.26.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_weight": "te1_text_model.encoder.layers.26.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.26.attn.out_proj.bias": "te1_text_model.encoder.layers.26.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.26.attn.out_proj.weight": "te1_text_model.encoder.layers.26.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.26.ln_1.bias": "te1_text_model.encoder.layers.26.layer_norm1.bias",
@@ -440,8 +400,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.26.mlp.c_fc.weight": "te1_text_model.encoder.layers.26.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.26.mlp.c_proj.bias": "te1_text_model.encoder.layers.26.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.26.mlp.c_proj.weight": "te1_text_model.encoder.layers.26.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_bias": "te1_text_model.encoder.layers.27.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_weight": "te1_text_model.encoder.layers.27.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.27.attn.out_proj.bias": "te1_text_model.encoder.layers.27.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.27.attn.out_proj.weight": "te1_text_model.encoder.layers.27.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.27.ln_1.bias": "te1_text_model.encoder.layers.27.layer_norm1.bias",
@@ -452,8 +410,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.27.mlp.c_fc.weight": "te1_text_model.encoder.layers.27.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.27.mlp.c_proj.bias": "te1_text_model.encoder.layers.27.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.27.mlp.c_proj.weight": "te1_text_model.encoder.layers.27.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_bias": "te1_text_model.encoder.layers.28.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_weight": "te1_text_model.encoder.layers.28.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.28.attn.out_proj.bias": "te1_text_model.encoder.layers.28.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.28.attn.out_proj.weight": "te1_text_model.encoder.layers.28.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.28.ln_1.bias": "te1_text_model.encoder.layers.28.layer_norm1.bias",
@@ -464,8 +420,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.28.mlp.c_fc.weight": "te1_text_model.encoder.layers.28.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.28.mlp.c_proj.bias": "te1_text_model.encoder.layers.28.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.28.mlp.c_proj.weight": "te1_text_model.encoder.layers.28.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_bias": "te1_text_model.encoder.layers.29.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_weight": "te1_text_model.encoder.layers.29.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.29.attn.out_proj.bias": "te1_text_model.encoder.layers.29.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.29.attn.out_proj.weight": "te1_text_model.encoder.layers.29.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.29.ln_1.bias": "te1_text_model.encoder.layers.29.layer_norm1.bias",
@@ -476,8 +430,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.29.mlp.c_fc.weight": "te1_text_model.encoder.layers.29.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.29.mlp.c_proj.bias": "te1_text_model.encoder.layers.29.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.29.mlp.c_proj.weight": "te1_text_model.encoder.layers.29.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_bias": "te1_text_model.encoder.layers.3.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_weight": "te1_text_model.encoder.layers.3.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.3.attn.out_proj.bias": "te1_text_model.encoder.layers.3.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.3.attn.out_proj.weight": "te1_text_model.encoder.layers.8.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.3.ln_1.bias": "te1_text_model.encoder.layers.3.layer_norm1.bias",
@@ -488,8 +440,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.3.mlp.c_fc.weight": "te1_text_model.encoder.layers.3.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.3.mlp.c_proj.bias": "te1_text_model.encoder.layers.3.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.3.mlp.c_proj.weight": "te1_text_model.encoder.layers.3.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_bias": "te1_text_model.encoder.layers.30.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_weight": "te1_text_model.encoder.layers.30.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.30.attn.out_proj.bias": "te1_text_model.encoder.layers.30.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.30.attn.out_proj.weight": "te1_text_model.encoder.layers.30.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.30.ln_1.bias": "te1_text_model.encoder.layers.30.layer_norm1.bias",
@@ -500,8 +450,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.30.mlp.c_fc.weight": "te1_text_model.encoder.layers.30.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.30.mlp.c_proj.bias": "te1_text_model.encoder.layers.30.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.30.mlp.c_proj.weight": "te1_text_model.encoder.layers.30.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_bias": "te1_text_model.encoder.layers.31.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_weight": "te1_text_model.encoder.layers.31.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.31.attn.out_proj.bias": "te1_text_model.encoder.layers.31.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.31.attn.out_proj.weight": "te1_text_model.encoder.layers.31.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.31.ln_1.bias": "te1_text_model.encoder.layers.31.layer_norm1.bias",
@@ -512,8 +460,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.31.mlp.c_fc.weight": "te1_text_model.encoder.layers.31.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.31.mlp.c_proj.bias": "te1_text_model.encoder.layers.31.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.31.mlp.c_proj.weight": "te1_text_model.encoder.layers.31.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_bias": "te1_text_model.encoder.layers.4.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_weight": "te1_text_model.encoder.layers.4.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.4.attn.out_proj.bias": "te1_text_model.encoder.layers.4.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.4.attn.out_proj.weight": "te1_text_model.encoder.layers.9.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.4.ln_1.bias": "te1_text_model.encoder.layers.4.layer_norm1.bias",
@@ -524,8 +470,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.4.mlp.c_fc.weight": "te1_text_model.encoder.layers.4.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.4.mlp.c_proj.bias": "te1_text_model.encoder.layers.4.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.4.mlp.c_proj.weight": "te1_text_model.encoder.layers.4.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_bias": "te1_text_model.encoder.layers.5.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_weight": "te1_text_model.encoder.layers.5.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.5.attn.out_proj.bias": "te1_text_model.encoder.layers.5.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.5.attn.out_proj.weight": "te1_text_model.encoder.layers.10.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.5.ln_1.bias": "te1_text_model.encoder.layers.5.layer_norm1.bias",
@@ -536,8 +480,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.5.mlp.c_fc.weight": "te1_text_model.encoder.layers.5.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.5.mlp.c_proj.bias": "te1_text_model.encoder.layers.5.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.5.mlp.c_proj.weight": "te1_text_model.encoder.layers.5.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_bias": "te1_text_model.encoder.layers.6.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_weight": "te1_text_model.encoder.layers.6.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.6.attn.out_proj.bias": "te1_text_model.encoder.layers.6.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.6.attn.out_proj.weight": "te1_text_model.encoder.layers.11.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.6.ln_1.bias": "te1_text_model.encoder.layers.6.layer_norm1.bias",
@@ -548,8 +490,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.6.mlp.c_fc.weight": "te1_text_model.encoder.layers.6.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.6.mlp.c_proj.bias": "te1_text_model.encoder.layers.6.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.6.mlp.c_proj.weight": "te1_text_model.encoder.layers.6.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_bias": "te1_text_model.encoder.layers.7.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_weight": "te1_text_model.encoder.layers.7.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.7.attn.out_proj.bias": "te1_text_model.encoder.layers.7.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.7.attn.out_proj.weight": "te1_text_model.encoder.layers.12.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.7.ln_1.bias": "te1_text_model.encoder.layers.7.layer_norm1.bias",
@@ -560,8 +500,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.7.mlp.c_fc.weight": "te1_text_model.encoder.layers.7.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.7.mlp.c_proj.bias": "te1_text_model.encoder.layers.7.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.7.mlp.c_proj.weight": "te1_text_model.encoder.layers.7.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_bias": "te1_text_model.encoder.layers.8.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_weight": "te1_text_model.encoder.layers.8.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.8.attn.out_proj.bias": "te1_text_model.encoder.layers.8.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.8.attn.out_proj.weight": "te1_text_model.encoder.layers.13.self_attn.out_proj.weight",
         "conditioner.embedders.1.model.transformer.resblocks.8.ln_1.bias": "te1_text_model.encoder.layers.8.layer_norm1.bias",
@@ -572,8 +510,6 @@
         "conditioner.embedders.1.model.transformer.resblocks.8.mlp.c_fc.weight": "te1_text_model.encoder.layers.8.mlp.fc1.weight",
         "conditioner.embedders.1.model.transformer.resblocks.8.mlp.c_proj.bias": "te1_text_model.encoder.layers.8.mlp.fc2.bias",
         "conditioner.embedders.1.model.transformer.resblocks.8.mlp.c_proj.weight": "te1_text_model.encoder.layers.8.mlp.fc2.weight",
-        "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_bias": "te1_text_model.encoder.layers.9.self_attn.MERGED.bias",
-        "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_weight": "te1_text_model.encoder.layers.9.self_attn.MERGED.weight",
         "conditioner.embedders.1.model.transformer.resblocks.9.attn.out_proj.bias": "te1_text_model.encoder.layers.9.self_attn.out_proj.bias",
         "conditioner.embedders.1.model.transformer.resblocks.9.attn.out_proj.weight": "unet_down_blocks.2.attentions.0.transformer_blocks.4.attn2.to_out.0.weight",
         "conditioner.embedders.1.model.transformer.resblocks.9.ln_1.bias": "te1_text_model.encoder.layers.9.layer_norm1.bias",
@@ -2562,62 +2498,6 @@
                 512
             ]
         ],
-        "first_stage_model.decoder.up.0.block.0.nin_shortcut.weight": [
-            [
-                128,
-                256,
-                1,
-                1
-            ],
-            [
-                128,
-                256,
-                1,
-                1
-            ]
-        ],
-        "first_stage_model.decoder.up.1.block.0.nin_shortcut.weight": [
-            [
-                256,
-                512,
-                1,
-                1
-            ],
-            [
-                256,
-                512,
-                1,
-                1
-            ]
-        ],
-        "first_stage_model.encoder.down.1.block.0.nin_shortcut.weight": [
-            [
-                256,
-                128,
-                1,
-                1
-            ],
-            [
-                256,
-                128,
-                1,
-                1
-            ]
-        ],
-        "first_stage_model.encoder.down.2.block.0.nin_shortcut.weight": [
-            [
-                512,
-                256,
-                1,
-                1
-            ],
-            [
-                512,
-                256,
-                1,
-                1
-            ]
-        ],
         "first_stage_model.encoder.mid.attn_1.k.weight": [
             [
                 512,
@@ -2665,188 +2545,6 @@
                 512,
                 512
             ]
-        ],
-        "first_stage_model.post_quant_conv.weight": [
-            [
-                4,
-                4,
-                1,
-                1
-            ],
-            [
-                4,
-                4,
-                1,
-                1
-            ]
-        ],
-        "first_stage_model.quant_conv.weight": [
-            [
-                8,
-                8,
-                1,
-                1
-            ],
-            [
-                8,
-                8,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.input_blocks.4.0.skip_connection.weight": [
-            [
-                640,
-                320,
-                1,
-                1
-            ],
-            [
-                640,
-                320,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.input_blocks.7.0.skip_connection.weight": [
-            [
-                1280,
-                640,
-                1,
-                1
-            ],
-            [
-                1280,
-                640,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.0.0.skip_connection.weight": [
-            [
-                1280,
-                2560,
-                1,
-                1
-            ],
-            [
-                1280,
-                2560,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.1.0.skip_connection.weight": [
-            [
-                1280,
-                2560,
-                1,
-                1
-            ],
-            [
-                1280,
-                2560,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.2.0.skip_connection.weight": [
-            [
-                1280,
-                1920,
-                1,
-                1
-            ],
-            [
-                1280,
-                1920,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.3.0.skip_connection.weight": [
-            [
-                640,
-                1920,
-                1,
-                1
-            ],
-            [
-                640,
-                1920,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.4.0.skip_connection.weight": [
-            [
-                640,
-                1280,
-                1,
-                1
-            ],
-            [
-                640,
-                1280,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.5.0.skip_connection.weight": [
-            [
-                640,
-                960,
-                1,
-                1
-            ],
-            [
-                640,
-                960,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.6.0.skip_connection.weight": [
-            [
-                320,
-                960,
-                1,
-                1
-            ],
-            [
-                320,
-                960,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.7.0.skip_connection.weight": [
-            [
-                320,
-                640,
-                1,
-                1
-            ],
-            [
-                320,
-                640,
-                1,
-                1
-            ]
-        ],
-        "model.diffusion_model.output_blocks.8.0.skip_connection.weight": [
-            [
-                320,
-                640,
-                1,
-                1
-            ],
-            [
-                320,
-                640,
-                1,
-                1
-            ]
         ]
     },
     "ldm_diffusers_operator_map": {
@@ -2855,515 +2553,469 @@
                 "te1_text_model.encoder.layers.0.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.0.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.0.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.0.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.0.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.0.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.0.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.0.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.1.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.1.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.1.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.1.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.1.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.1.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.1.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.1.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.10.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.10.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.10.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.10.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.10.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.10.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.10.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.10.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.11.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.11.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.11.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.11.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.11.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.11.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.11.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.11.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.12.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.12.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.12.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.12.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.12.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.12.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.12.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.12.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.13.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.13.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.13.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.13.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.13.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.13.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.13.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.13.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.14.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.14.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.14.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.14.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.14.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.14.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.14.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.14.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.15.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.15.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.15.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.15.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.15.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.15.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.15.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.15.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.16.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.16.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.16.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.16.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.16.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.16.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.16.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.16.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.17.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.17.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.17.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.17.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.17.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.17.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.17.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.17.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.18.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.18.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.18.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.18.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.18.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.18.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.18.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.18.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.19.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.19.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.19.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.19.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.19.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.19.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.19.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.19.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.2.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.2.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.2.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.2.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.2.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.2.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.2.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.2.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.20.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.20.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.20.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.20.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.20.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.20.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.20.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.20.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.21.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.21.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.21.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.21.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.21.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.21.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.21.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.21.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.22.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.22.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.22.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.22.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.22.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.22.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.22.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.22.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.23.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.23.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.23.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.23.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.23.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.23.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.23.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.23.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.24.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.24.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.24.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.24.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.24.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.24.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.24.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.24.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.25.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.25.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.25.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.25.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.25.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.25.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.25.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.25.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.26.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.26.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.26.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.26.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.26.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.26.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.26.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.26.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.27.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.27.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.27.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.27.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.27.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.27.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.27.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.27.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.28.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.28.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.28.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.28.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.28.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.28.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.28.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.28.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.29.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.29.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.29.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.29.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.29.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.29.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.29.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.29.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.3.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.3.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.3.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.3.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.3.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.3.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.3.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.3.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.30.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.30.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.30.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.30.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.30.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.30.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.30.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.30.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.31.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.31.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.31.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.31.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.31.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.31.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.31.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.31.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.4.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.4.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.4.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.4.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.4.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.4.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.4.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.4.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.5.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.5.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.5.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.5.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.5.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.5.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.5.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.5.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.6.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.6.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.6.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.6.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.6.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.6.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.6.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.6.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.7.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.7.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.7.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.7.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.7.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.7.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.7.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.7.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.8.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.8.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.8.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.8.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.8.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.8.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.8.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.8.self_attn.MERGED.weight"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_bias": {
             "cat": [
                 "te1_text_model.encoder.layers.9.self_attn.q_proj.bias",
                 "te1_text_model.encoder.layers.9.self_attn.k_proj.bias",
                 "te1_text_model.encoder.layers.9.self_attn.v_proj.bias"
-            ],
-            "target": "te1_text_model.encoder.layers.9.self_attn.MERGED.bias"
+            ]
         },
         "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_weight": {
             "cat": [
                 "te1_text_model.encoder.layers.9.self_attn.q_proj.weight",
                 "te1_text_model.encoder.layers.9.self_attn.k_proj.weight",
                 "te1_text_model.encoder.layers.9.self_attn.v_proj.weight"
-            ],
-            "target": "te1_text_model.encoder.layers.9.self_attn.MERGED.weight"
+            ]
         }
     },
     "diffusers_ldm_operator_map": {
+        "te1_text_model.encoder.layers.0.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.0.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.0.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.0.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_weight",
@@ -3379,6 +3031,24 @@
         "te1_text_model.encoder.layers.0.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.0.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.1.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.1.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.1.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.1.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3400,6 +3070,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.10.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.10.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.10.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.10.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_weight",
@@ -3415,6 +3103,24 @@
         "te1_text_model.encoder.layers.10.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.10.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.11.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.11.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.11.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.11.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3436,6 +3142,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.12.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.12.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.12.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.12.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_weight",
@@ -3451,6 +3175,24 @@
         "te1_text_model.encoder.layers.12.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.12.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.13.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.13.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.13.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.13.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3472,6 +3214,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.14.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.14.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.14.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.14.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_weight",
@@ -3487,6 +3247,24 @@
         "te1_text_model.encoder.layers.14.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.14.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.15.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.15.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.15.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.15.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3508,6 +3286,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.16.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.16.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.16.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.16.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_weight",
@@ -3523,6 +3319,24 @@
         "te1_text_model.encoder.layers.16.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.16.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.17.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.17.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.17.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.17.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3544,6 +3358,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.18.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.18.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.18.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.18.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_weight",
@@ -3559,6 +3391,24 @@
         "te1_text_model.encoder.layers.18.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.18.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.19.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.19.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.19.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.19.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3580,6 +3430,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.2.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.2.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.2.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.2.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_weight",
@@ -3595,6 +3463,24 @@
         "te1_text_model.encoder.layers.2.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.2.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.20.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.20.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.20.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.20.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3616,6 +3502,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.21.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.21.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.21.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.21.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_weight",
@@ -3631,6 +3535,24 @@
         "te1_text_model.encoder.layers.21.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.21.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.22.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.22.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.22.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.22.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3652,6 +3574,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.23.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.23.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.23.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.23.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_weight",
@@ -3667,6 +3607,24 @@
         "te1_text_model.encoder.layers.23.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.23.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.24.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.24.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.24.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.24.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3688,6 +3646,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.25.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.25.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.25.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.25.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_weight",
@@ -3703,6 +3679,24 @@
         "te1_text_model.encoder.layers.25.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.25.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.26.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.26.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.26.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.26.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3724,6 +3718,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.27.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.27.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.27.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.27.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_weight",
@@ -3739,6 +3751,24 @@
         "te1_text_model.encoder.layers.27.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.27.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.28.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.28.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.28.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.28.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3760,6 +3790,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.29.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.29.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.29.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.29.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_weight",
@@ -3775,6 +3823,24 @@
         "te1_text_model.encoder.layers.29.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.29.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.3.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.3.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.3.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.3.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3796,6 +3862,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.30.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.30.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.30.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.30.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_weight",
@@ -3811,6 +3895,24 @@
         "te1_text_model.encoder.layers.30.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.30.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.31.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.31.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.31.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.31.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3832,6 +3934,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.4.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.4.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.4.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.4.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_weight",
@@ -3847,6 +3967,24 @@
         "te1_text_model.encoder.layers.4.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.4.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.5.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.5.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.5.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.5.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3868,6 +4006,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.6.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.6.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.6.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.6.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_weight",
@@ -3883,6 +4039,24 @@
         "te1_text_model.encoder.layers.6.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.6.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.7.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.7.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.7.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.7.attn.in_proj_bias",
                 "2560:, :"
             ]
         },
@@ -3904,6 +4078,24 @@
                 "2560:, :"
             ]
         },
+        "te1_text_model.encoder.layers.8.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.8.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.8.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_bias",
+                "2560:, :"
+            ]
+        },
         "te1_text_model.encoder.layers.8.self_attn.q_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_weight",
@@ -3919,6 +4111,24 @@
         "te1_text_model.encoder.layers.8.self_attn.v_proj.weight": {
             "slice": [
                 "conditioner.embedders.1.model.transformer.resblocks.8.attn.in_proj_weight",
+                "2560:, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.9.self_attn.q_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_bias",
+                "0:1280, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.9.self_attn.k_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_bias",
+                "1280:2560, :"
+            ]
+        },
+        "te1_text_model.encoder.layers.9.self_attn.v_proj.bias": {
+            "slice": [
+                "conditioner.embedders.1.model.transformer.resblocks.9.attn.in_proj_bias",
                 "2560:, :"
             ]
         },

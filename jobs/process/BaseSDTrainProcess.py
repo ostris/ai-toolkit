@@ -481,22 +481,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
             params = self.embedding.get_trainable_params()
 
         else:
-            params = []
-            # assume dreambooth/finetune
-            if self.train_config.train_text_encoder:
-                if self.sd.is_xl:
-                    for te in text_encoder:
-                        te.requires_grad_(True)
-                        te.train()
-                        params += te.parameters()
-                else:
-                    text_encoder.requires_grad_(True)
-                    text_encoder.train()
-                    params += text_encoder.parameters()
-            if self.train_config.train_unet:
-                unet.requires_grad_(True)
-                unet.train()
-                params += unet.parameters()
+            params = self.sd.prepare_optimizer_params(
+                vae=False,
+                unet=self.train_config.train_unet,
+                text_encoder=self.train_config.train_text_encoder,
+                text_encoder_lr=self.train_config.lr,
+                unet_lr=self.train_config.lr,
+                default_lr=self.train_config.lr
+            )
 
         ### HOOK ###
         params = self.hook_add_extra_train_params(params)
