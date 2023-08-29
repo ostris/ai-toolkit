@@ -177,6 +177,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
         o_dict['ss_output_name'] = self.job.name
 
+        if self.trigger_word is not None:
+            # just so auto1111 will pick it up
+            o_dict['ss_tag_frequency'] = {
+                'actfig': {
+                    'actfig': 1
+                }
+            }
+
         self.add_meta(o_dict)
 
     def get_training_info(self):

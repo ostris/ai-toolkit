@@ -35,6 +35,8 @@ def get_optimizer(
         if use_lr < 0.1:
             # dadaptation uses different lr that is values of 0.1 to 1.0. default to 1.0
             use_lr = 1.0
+
+        print(f"Using lr {use_lr}")
         # let net be the neural network you want to train
         # you can choose weight decay value based on your problem, 0 by default
         optimizer = Prodigy(params, lr=use_lr, **optimizer_params)
