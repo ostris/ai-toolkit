@@ -93,7 +93,7 @@ total_keys = len(ldm_dict_keys)
 matched_ldm_keys = []
 matched_diffusers_keys = []
 
-error_margin = 1e-4
+error_margin = 1e-6
 
 tmp_merge_key = "TMP___MERGE"
 

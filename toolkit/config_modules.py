@@ -99,6 +99,8 @@ class ModelConfig:
         self.use_text_encoder_1: bool = kwargs.get('use_text_encoder_1', True)
         self.use_text_encoder_2: bool = kwargs.get('use_text_encoder_2', True)
 
+        self.experimental_xl: bool = kwargs.get('experimental_xl', False)
+
         if self.name_or_path is None:
             raise ValueError('name_or_path must be specified')
 

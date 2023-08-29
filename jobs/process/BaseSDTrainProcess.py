@@ -481,8 +481,33 @@ class BaseSDTrainProcess(BaseTrainProcess):
             params = self.embedding.get_trainable_params()
 
         else:
+            # set them to train or not
+            if self.train_config.train_unet:
+                self.sd.unet.requires_grad_(True)
+                self.sd.unet.train()
+            else:
+                self.sd.unet.requires_grad_(False)
+                self.sd.unet.eval()
+
+            if self.train_config.train_text_encoder:
+                if isinstance(self.sd.text_encoder, list):
+                    for te in self.sd.text_encoder:
+                        te.requires_grad_(True)
+                        te.train()
+                else:
+                    self.sd.text_encoder.requires_grad_(True)
+                    self.sd.text_encoder.train()
+            else:
+                if isinstance(self.sd.text_encoder, list):
+                    for te in self.sd.text_encoder:
+                        te.requires_grad_(False)
+                        te.eval()
+                else:
+                    self.sd.text_encoder.requires_grad_(False)
+                    self.sd.text_encoder.eval()
+
+            # will only return savable weights and ones with grad
             params = self.sd.prepare_optimizer_params(
-                vae=False,
                 unet=self.train_config.train_unet,
                 text_encoder=self.train_config.train_text_encoder,
                 text_encoder_lr=self.train_config.lr,
