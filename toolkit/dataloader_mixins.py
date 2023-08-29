@@ -1,8 +1,11 @@
 import os
 import random
-from typing import TYPE_CHECKING, List, Dict
+from typing import TYPE_CHECKING, List, Dict, Union
 
 from toolkit.prompt_utils import inject_trigger_into_prompt
+from torchvision import transforms
+from PIL import Image
+from PIL.ImageOps import exif_transpose
 
 if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
@@ -159,6 +162,38 @@ class BucketsMixin:
 
 
 class CaptionProcessingDTOMixin:
+
+    # todo allow for loading from sd-scripts style dict
+    def load_caption(self: 'FileItemDTO', caption_dict: Union[dict, None]):
+        if self.raw_caption is not None:
+            # we already loaded it
+            pass
+        elif caption_dict is not None and self.path in caption_dict and "caption" in caption_dict[self.path]:
+            self.raw_caption = caption_dict[self.path]["caption"]
+        else:
+            # see if prompt file exists
+            path_no_ext = os.path.splitext(self.path)[0]
+            prompt_ext = self.dataset_config.caption_ext
+            prompt_path = f"{path_no_ext}.{prompt_ext}"
+
+            if os.path.exists(prompt_path):
+                with open(prompt_path, 'r', encoding='utf-8') as f:
+                    prompt = f.read()
+                    # remove any newlines
+                    prompt = prompt.replace('\n', ', ')
+                    # remove new lines for all operating systems
+                    prompt = prompt.replace('\r', ', ')
+                    prompt_split = prompt.split(',')
+                    # remove empty strings
+                    prompt_split = [p.strip() for p in prompt_split if p.strip()]
+                    # join back together
+                    prompt = ', '.join(prompt_split)
+            else:
+                prompt = ''
+                if self.dataset_config.default_caption is not None:
+                    prompt = self.dataset_config.default_caption
+            self.raw_caption = prompt
+
     def get_caption(
             self: 'FileItemDTO',
             trigger=None,
@@ -201,3 +236,51 @@ class CaptionProcessingDTOMixin:
         caption = ', '.join(token_list)
         caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
         return caption
+
+
+class ImageProcessingDTOMixin:
+    def load_and_process_image(
+            self: 'FileItemDTO',
+            transform: Union[None, transforms.Compose]
+    ):
+        # todo make sure this matches
+        img = exif_transpose(Image.open(self.path)).convert('RGB')
+        w, h = img.size
+        if w > h and self.scale_to_width < self.scale_to_height:
+            # throw error, they should match
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+        elif h > w and self.scale_to_height < self.scale_to_width:
+            # throw error, they should match
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+
+        if self.dataset_config.buckets:
+            # todo allow scaling and cropping, will be hard to add
+            # scale and crop based on file item
+            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+        else:
+            # Downscale the source image first
+            img = img.resize(
+                (int(img.size[0] * self.dataset_config.scale), int(img.size[1] * self.dataset_config.scale)),
+                Image.BICUBIC)
+            min_img_size = min(img.size)
+            if self.dataset_config.random_crop:
+                if self.dataset_config.random_scale and min_img_size > self.dataset_config.resolution:
+                    if min_img_size < self.dataset_config.resolution:
+                        print(
+                            f"Unexpected values: min_img_size={min_img_size}, self.resolution={self.dataset_config.resolution}, image file={self.path}")
+                        scale_size = self.dataset_config.resolution
+                    else:
+                        scale_size = random.randint(self.dataset_config.resolution, int(min_img_size))
+                    img = img.resize((scale_size, scale_size), Image.BICUBIC)
+                img = transforms.RandomCrop(self.dataset_config.resolution)(img)
+            else:
+                img = transforms.CenterCrop(min_img_size)(img)
+                img = img.resize((self.dataset_config.resolution, self.dataset_config.resolution), Image.BICUBIC)
+
+        if transform:
+            img = transform(img)
+
+        self.tensor = img

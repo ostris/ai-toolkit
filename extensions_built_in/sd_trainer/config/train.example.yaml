@@ -19,7 +19,7 @@ config:
         max_step_saves_to_keep: 5 # only affects step counts
       datasets:
         - folder_path: "/path/to/dataset"
-          caption_type: "txt"
+          caption_ext: "txt"
           default_caption: "[trigger]"
           buckets: true
           resolution: 512

@@ -35,6 +35,7 @@ class SDTrainer(BaseSDTrainProcess):
     def hook_train_loop(self, batch):
         dtype = get_torch_dtype(self.train_config.dtype)
         noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
+        network_weight_list = batch.get_network_weight_list()
 
         self.optimizer.zero_grad()
         flush()
@@ -52,6 +53,9 @@ class SDTrainer(BaseSDTrainProcess):
             network = self.network
         else:
             network = BlankNetwork()
+
+        # set the weights
+        network.multiplier = network_weight_list
 
         # activate network if it exits
         with network:
@@ -114,5 +118,7 @@ class SDTrainer(BaseSDTrainProcess):
         loss_dict = OrderedDict(
             {'loss': loss.item()}
         )
+        # reset network multiplier
+        network.multiplier = 1.0
 
         return loss_dict
