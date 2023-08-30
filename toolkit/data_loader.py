@@ -326,14 +326,19 @@ class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
         print(f"  -  Preprocessing image dimensions")
         bad_count = 0
         for file in tqdm(file_list):
-            file_item = FileItemDTO(
-                path=file,
-                dataset_config=dataset_config
-            )
-            if file_item.scale_to_width < self.resolution or file_item.scale_to_height < self.resolution:
+            try:
+                file_item = FileItemDTO(
+                    path=file,
+                    dataset_config=dataset_config
+                )
+                if file_item.scale_to_width < self.resolution or file_item.scale_to_height < self.resolution:
+                    bad_count += 1
+                else:
+                    self.file_list.append(file_item)
+            except Exception as e:
+                print(f"Error processing image: {file}")
+                print(e)
                 bad_count += 1
-            else:
-                self.file_list.append(file_item)
 
         print(f"  -  Found {len(self.file_list)} images")
         print(f"  -  Found {bad_count} images that are too small")
@@ -376,7 +381,7 @@ class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
             return self._get_single_item(item)
 
 
-def get_dataloader_from_datasets(dataset_options, batch_size=1):
+def get_dataloader_from_datasets(dataset_options, batch_size=1) -> DataLoader:
     if dataset_options is None or len(dataset_options) == 0:
         return None
 

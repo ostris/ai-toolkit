@@ -60,12 +60,7 @@ class SDTrainer(BaseSDTrainProcess):
         # activate network if it exits
         with network:
             with torch.set_grad_enabled(grad_on_text_encoder):
-                embedding_list = []
-                # embed the prompts
-                for prompt in conditioned_prompts:
-                    embedding = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=dtype)
-                    embedding_list.append(embedding)
-                conditional_embeds = concat_prompt_embeds(embedding_list)
+                conditional_embeds = self.sd.encode_prompt(conditioned_prompts).to(self.device_torch, dtype=dtype)
             if not grad_on_text_encoder:
                 # detach the embeddings
                 conditional_embeds = conditional_embeds.detach()

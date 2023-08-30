@@ -711,7 +711,7 @@ class StableDiffusion:
 
         raise ValueError(f"Unknown weight name: {name}")
 
-    def inject_trigger_into_prompt(self, prompt, trigger=None, to_replace_list=None, add_if_not_present=True):
+    def inject_trigger_into_prompt(self, prompt, trigger=None, to_replace_list=None, add_if_not_present=False):
         return inject_trigger_into_prompt(
             prompt,
             trigger=trigger,
