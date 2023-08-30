@@ -244,7 +244,12 @@ class ImageProcessingDTOMixin:
             transform: Union[None, transforms.Compose]
     ):
         # todo make sure this matches
-        img = exif_transpose(Image.open(self.path)).convert('RGB')
+        img = Image.open(self.path).convert('RGB')
+        try:
+            img = exif_transpose(img)
+        except Exception as e:
+            print(f"Error: {e}")
+            print(f"Error loading image: {self.path}")
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
