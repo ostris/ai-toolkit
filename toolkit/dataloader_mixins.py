@@ -251,8 +251,8 @@ class ImageProcessingDTOMixin:
             transform: Union[None, transforms.Compose]
     ):
         # todo make sure this matches
-        img = Image.open(self.path).convert('RGB')
         try:
+            img = Image.open(self.path).convert('RGB')
             img = exif_transpose(img)
         except Exception as e:
             print(f"Error: {e}")
