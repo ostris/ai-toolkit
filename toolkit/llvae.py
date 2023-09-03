@@ -35,6 +35,10 @@ class LosslessLatentDecoder(nn.Module):
         return kernel
 
     def forward(self, x):
+        dtype = x.dtype
+        if self.kernel.dtype != dtype:
+            self.kernel = self.kernel.to(dtype=dtype)
+
         # Deconvolve input tensor with the kernel
         return nn.functional.conv_transpose2d(x, self.kernel, stride=self.latent_depth, padding=0, groups=1)
 
@@ -70,6 +74,9 @@ class LosslessLatentEncoder(nn.Module):
         return kernel
 
     def forward(self, x):
+        dtype = x.dtype
+        if self.kernel.dtype != dtype:
+            self.kernel = self.kernel.to(dtype=dtype)
         # Convolve input tensor with the kernel
         return nn.functional.conv2d(x, self.kernel, stride=self.latent_depth, padding=0, groups=1)
 

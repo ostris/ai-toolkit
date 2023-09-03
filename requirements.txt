@@ -16,3 +16,4 @@ toml
 albumentations
 pydantic
 omegaconf
+k-diffusion

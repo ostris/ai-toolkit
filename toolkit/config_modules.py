@@ -22,6 +22,7 @@ class LogingConfig:
 
 class SampleConfig:
     def __init__(self, **kwargs):
+        self.sampler: str = kwargs.get('sampler', 'ddpm')
         self.sample_every: int = kwargs.get('sample_every', 100)
         self.width: int = kwargs.get('width', 512)
         self.height: int = kwargs.get('height', 512)

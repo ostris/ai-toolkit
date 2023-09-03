@@ -1,5 +1,6 @@
 import gc
 import json
+import shutil
 import typing
 from typing import Union, List, Tuple, Iterator
 import sys
@@ -19,13 +20,15 @@ from toolkit.config_modules import ModelConfig, GenerateImageConfig
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds
+from toolkit.sampler import get_sampler
 from toolkit.saving import save_ldm_model_from_diffusers
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 import torch
 from library import model_util
 from library.sdxl_model_util import convert_text_encoder_2_state_dict_to_sdxl
 from diffusers.schedulers import DDPMScheduler
-from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffusionPipeline
+from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffusionPipeline, \
+    StableDiffusionKDiffusionXLPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 import diffusers
 
@@ -84,24 +87,14 @@ if typing.TYPE_CHECKING:
 
 
 class StableDiffusion:
-    pipeline: Union[None, 'StableDiffusionPipeline', 'CustomStableDiffusionXLPipeline']
-    vae: Union[None, 'AutoencoderKL']
-    unet: Union[None, 'UNet2DConditionModel']
-    text_encoder: Union[None, 'CLIPTextModel', List[Union['CLIPTextModel', 'CLIPTextModelWithProjection']]]
-    tokenizer: Union[None, 'CLIPTokenizer', List['CLIPTokenizer']]
-    noise_scheduler: Union[None, 'KarrasDiffusionSchedulers', 'DDPMScheduler']
-    device: str
-    dtype: str
-    torch_dtype: torch.dtype
-    device_torch: torch.device
-    model_config: ModelConfig
 
     def __init__(
             self,
             device,
             model_config: ModelConfig,
             dtype='fp16',
-            custom_pipeline=None
+            custom_pipeline=None,
+            noise_scheduler=None,
     ):
         self.custom_pipeline = custom_pipeline
         self.device = device
@@ -110,6 +103,13 @@ class StableDiffusion:
         self.device_torch = torch.device(self.device)
         self.model_config = model_config
         self.prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
+
+        self.pipeline: Union[None, 'StableDiffusionPipeline', 'CustomStableDiffusionXLPipeline']
+        self.vae: Union[None, 'AutoencoderKL']
+        self.unet: Union[None, 'UNet2DConditionModel']
+        self.text_encoder: Union[None, 'CLIPTextModel', List[Union['CLIPTextModel', 'CLIPTextModelWithProjection']]]
+        self.tokenizer: Union[None, 'CLIPTokenizer', List['CLIPTokenizer']]
+        self.noise_scheduler: Union[None, 'KarrasDiffusionSchedulers', 'DDPMScheduler'] = noise_scheduler
 
         # sdxl stuff
         self.logit_scale = None
@@ -124,6 +124,8 @@ class StableDiffusion:
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
 
+        self.config_file = None
+
     def load_model(self):
         if self.is_loaded:
             return
@@ -131,23 +133,25 @@ class StableDiffusion:
 
         # TODO handle other schedulers
         # sch = KDPM2DiscreteScheduler
-        sch = DDPMScheduler
-        # do our own scheduler
-        prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
-        scheduler = sch(
-            num_train_timesteps=1000,
-            beta_start=0.00085,
-            beta_end=0.0120,
-            beta_schedule="scaled_linear",
-            clip_sample=False,
-            prediction_type=prediction_type,
-            steps_offset=1
-        )
+        if self.noise_scheduler is None:
+            sch = DDPMScheduler
+            # do our own scheduler
+            prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
+            scheduler = sch(
+                num_train_timesteps=1000,
+                beta_start=0.00085,
+                beta_end=0.0120,
+                beta_schedule="scaled_linear",
+                clip_sample=False,
+                prediction_type=prediction_type,
+                steps_offset=0
+            )
+            self.noise_scheduler = scheduler
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
-        scheduler.betas = scheduler.betas.to(self.device_torch)
-        scheduler.alphas = scheduler.alphas.to(self.device_torch)
-        scheduler.alphas_cumprod = scheduler.alphas_cumprod.to(self.device_torch)
+        self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
+        self.noise_scheduler.alphas = self.noise_scheduler.alphas.to(self.device_torch)
+        self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.device_torch)
 
         model_path = self.model_config.name_or_path
         if 'civitai.com' in self.model_config.name_or_path:
@@ -159,7 +163,8 @@ class StableDiffusion:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
             else:
-                pipln = CustomStableDiffusionXLPipeline
+                pipln = StableDiffusionXLPipeline
+                # pipln = StableDiffusionKDiffusionXLPipeline
 
             # see if path exists
             if not os.path.exists(model_path):
@@ -204,7 +209,7 @@ class StableDiffusion:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
             else:
-                pipln = CustomStableDiffusionPipeline
+                pipln = StableDiffusionPipeline
 
             # see if path exists
             if not os.path.exists(model_path):
@@ -237,14 +242,13 @@ class StableDiffusion:
             tokenizer = pipe.tokenizer
 
         # scheduler doesn't get set sometimes, so we set it here
-        pipe.scheduler = scheduler
+        pipe.scheduler = self.noise_scheduler
 
         if self.model_config.vae_path is not None:
             external_vae = load_vae(self.model_config.vae_path, dtype)
             pipe.vae = external_vae
 
         self.unet = pipe.unet
-        self.noise_scheduler = pipe.scheduler
         self.vae = pipe.vae.to(self.device_torch, dtype=dtype)
         self.vae.eval()
         self.vae.requires_grad_(False)
@@ -257,7 +261,7 @@ class StableDiffusion:
         self.pipeline = pipe
         self.is_loaded = True
 
-    def generate_images(self, image_configs: List[GenerateImageConfig]):
+    def generate_images(self, image_configs: List[GenerateImageConfig], sampler=None):
         # sample_folder = os.path.join(self.save_root, 'samples')
         if self.network is not None:
             self.network.eval()
@@ -293,16 +297,31 @@ class StableDiffusion:
         self.vae.to(self.device_torch)
         self.unet.to(self.device_torch)
 
+        noise_scheduler = self.noise_scheduler
+        if sampler is not None:
+            if sampler.startswith("sample_"):  # sample_dpmpp_2m
+                # using ksampler
+                noise_scheduler = get_sampler('lms')
+            else:
+                noise_scheduler = get_sampler(sampler)
+
+        if sampler.startswith("sample_") and self.is_xl:
+            # using kdiffusion
+            Pipe = StableDiffusionKDiffusionXLPipeline
+        else:
+            Pipe = StableDiffusionXLPipeline
+
+
         # TODO add clip skip
         if self.is_xl:
-            pipeline = StableDiffusionXLPipeline(
+            pipeline = Pipe(
                 vae=self.vae,
                 unet=self.unet,
                 text_encoder=self.text_encoder[0],
                 text_encoder_2=self.text_encoder[1],
                 tokenizer=self.tokenizer[0],
                 tokenizer_2=self.tokenizer[1],
-                scheduler=self.noise_scheduler,
+                scheduler=noise_scheduler,
                 add_watermarker=False,
             ).to(self.device_torch)
             # force turn that (ruin your images with obvious green and red dots) the #$@@ off!!!
@@ -313,13 +332,16 @@ class StableDiffusion:
                 unet=self.unet,
                 text_encoder=self.text_encoder,
                 tokenizer=self.tokenizer,
-                scheduler=self.noise_scheduler,
+                scheduler=noise_scheduler,
                 safety_checker=None,
                 feature_extractor=None,
                 requires_safety_checker=False,
             ).to(self.device_torch)
         # disable progress bar
         pipeline.set_progress_bar_config(disable=True)
+
+        if sampler.startswith("sample_"):
+            pipeline.set_scheduler(sampler)
 
         start_multiplier = 1.0
         if self.network is not None:
@@ -345,8 +367,14 @@ class StableDiffusion:
                         # was trained on 0.7 (I believe)
 
                         grs = gen_config.guidance_rescale
-                        if grs is None or grs < 0.00001:
-                            grs = 0.7
+                        # if grs is None or grs < 0.00001:
+                            # grs = 0.7
+                        grs = 0.0
+
+                        extra = {}
+                        if sampler.startswith("sample_"):
+                            extra['use_karras_sigmas'] = True
+
 
                         img = pipeline(
                             prompt=gen_config.prompt,
@@ -358,6 +386,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             guidance_rescale=grs,
+                            **extra
                         ).images[0]
                     else:
                         img = pipeline(
@@ -414,11 +443,11 @@ class StableDiffusion:
         noise = torch.randn(
             (
                 batch_size,
-                UNET_IN_CHANNELS,
+                self.unet.config['in_channels'],
                 height,
                 width,
             ),
-            device="cpu",
+            device=self.unet.device,
         )
         noise = apply_noise_offset(noise, noise_offset)
         return noise
@@ -784,6 +813,10 @@ class StableDiffusion:
             save_dtype=save_dtype,
             sd_version=version_string,
         )
+        if self.config_file is not None:
+            output_path_no_ext = os.path.splitext(output_file)[0]
+            output_config_path = f"{output_path_no_ext}.yaml"
+            shutil.copyfile(self.config_file, output_config_path)
 
     def prepare_optimizer_params(
             self,

@@ -98,7 +98,7 @@ class GenerateProcess(BaseProcess):
                 add_prompt_file=self.generate_config.prompt_file
             ))
         # generate images
-        self.sd.generate_images(prompt_image_configs)
+        self.sd.generate_images(prompt_image_configs, sampler=self.generate_config.sampler)
 
         print("Done generating images")
         # cleanup
