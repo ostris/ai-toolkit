@@ -93,6 +93,7 @@ class SDTrainer(BaseSDTrainProcess):
 
         # back propagate loss to free ram
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
         flush()
 
         # apply gradients

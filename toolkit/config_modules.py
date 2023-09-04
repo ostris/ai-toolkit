@@ -37,9 +37,11 @@ class SampleConfig:
         self.ext: ImgExt = kwargs.get('format', 'jpg')
 
 
+NetworkType = Literal['lora', 'locon']
+
 class NetworkConfig:
     def __init__(self, **kwargs):
-        self.type: str = kwargs.get('type', 'lora')
+        self.type: NetworkType = kwargs.get('type', 'lora')
         rank = kwargs.get('rank', None)
         linear = kwargs.get('linear', None)
         if rank is not None:
@@ -86,6 +88,7 @@ class TrainConfig:
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
         self.weight_jitter = kwargs.get('weight_jitter', 0.0)
         self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
+        self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
 
 
 class ModelConfig:

@@ -1,5 +1,6 @@
 import copy
 import glob
+import inspect
 from collections import OrderedDict
 import os
 from typing import Union
@@ -10,6 +11,8 @@ from toolkit.data_loader import get_dataloader_from_datasets
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.embedding import Embedding
 from toolkit.lora_special import LoRASpecialNetwork
+from toolkit.lycoris_special import LycorisSpecialNetwork
+from toolkit.network_mixins import Network
 from toolkit.optimizer import get_optimizer
 from toolkit.paths import CONFIG_ROOT
 from toolkit.sampler import get_sampler
@@ -74,6 +77,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             raw_datasets = preprocess_dataset_raw_config(raw_datasets)
         self.datasets = None
         self.datasets_reg = None
+        self.params = []
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:
                 dataset = DatasetConfig(**raw_dataset)
@@ -120,7 +124,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
 
         # to hold network if there is one
-        self.network = None
+        self.network: Union[Network, None] = None
         self.embedding = None
 
     def sample(self, step=None, is_first=False):
@@ -424,25 +428,54 @@ class BaseSDTrainProcess(BaseTrainProcess):
         noise_scheduler = self.sd.noise_scheduler
 
         if self.train_config.xformers:
-            vae.set_use_memory_efficient_attention_xformers(True)
+            vae.enable_xformers_memory_efficient_attention()
             unet.enable_xformers_memory_efficient_attention()
+            if isinstance(text_encoder, list):
+                for te in text_encoder:
+                    # if it has it
+                    if hasattr(te, 'enable_xformers_memory_efficient_attention'):
+                        te.enable_xformers_memory_efficient_attention()
+
         if self.train_config.gradient_checkpointing:
             unet.enable_gradient_checkpointing()
-            # if isinstance(text_encoder, list):
-            #     for te in text_encoder:
-            #         te.enable_gradient_checkpointing()
-            # else:
-            #     text_encoder.enable_gradient_checkpointing()
+            if isinstance(text_encoder, list):
+                for te in text_encoder:
+                    if hasattr(te, 'enable_gradient_checkpointing'):
+                        te.enable_gradient_checkpointing()
+                    if hasattr(te, "gradient_checkpointing_enable"):
+                        te.gradient_checkpointing_enable()
+            else:
+                if hasattr(text_encoder, 'enable_gradient_checkpointing'):
+                    text_encoder.enable_gradient_checkpointing()
+                if hasattr(text_encoder, "gradient_checkpointing_enable"):
+                    text_encoder.gradient_checkpointing_enable()
 
+        if isinstance(text_encoder, list):
+            for te in text_encoder:
+                te.requires_grad_(False)
+                te.eval()
+        else:
+            text_encoder.requires_grad_(False)
+            text_encoder.eval()
         unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
         vae = vae.to(torch.device('cpu'), dtype=dtype)
         vae.requires_grad_(False)
         vae.eval()
+        flush()
 
         if self.network_config is not None:
-            self.network = LoRASpecialNetwork(
+            # TODO should we completely switch to LycorisSpecialNetwork?
+
+            # default to LoCON if there are any conv layers or if it is named
+            NetworkClass = LoRASpecialNetwork
+            if self.network_config.conv is not None and self.network_config.conv > 0:
+                NetworkClass = LycorisSpecialNetwork
+            if self.network_config.type.lower() == 'locon' or self.network_config.type.lower() == 'lycoris':
+                NetworkClass = LycorisSpecialNetwork
+
+            self.network = NetworkClass(
                 text_encoder=text_encoder,
                 unet=unet,
                 lora_dim=self.network_config.linear,
@@ -468,14 +501,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             )
 
             self.network.prepare_grad_etc(text_encoder, unet)
+            flush()
 
             params = self.get_params()
 
             if not params:
+                # LyCORIS doesnt have default_lr
+                config = {
+                    'text_encoder_lr': self.train_config.lr,
+                    'unet_lr': self.train_config.lr,
+                }
+                sig = inspect.signature(self.network.prepare_optimizer_params)
+                if 'default_lr' in sig.parameters:
+                    config['default_lr'] = self.train_config.lr
                 params = self.network.prepare_optimizer_params(
-                    text_encoder_lr=self.train_config.lr,
-                    unet_lr=self.train_config.lr,
-                    default_lr=self.train_config.lr
+                    **config
                 )
 
             if self.train_config.gradient_checkpointing:
@@ -490,6 +530,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.print(f"Loading from {latest_save_path}")
                 self.load_weights(latest_save_path)
                 self.network.multiplier = 1.0
+
+            flush()
         elif self.embed_config is not None:
             self.embedding = Embedding(
                 sd=self.sd,
@@ -508,7 +550,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if not params:
                 # set trainable params
                 params = self.embedding.get_trainable_params()
-
+            flush()
         else:
             # set them to train or not
             if self.train_config.train_unet:
@@ -546,9 +588,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     unet_lr=self.train_config.lr,
                     default_lr=self.train_config.lr
                 )
-
+        flush()
         ### HOOK ###
         params = self.hook_add_extra_train_params(params)
+        self.params = []
+
+        for param in params:
+            if isinstance(param, dict):
+                self.params += param['params']
+            else:
+                self.params.append(param)
 
         optimizer_type = self.train_config.optimizer.lower()
         optimizer = get_optimizer(params, optimizer_type, learning_rate=self.train_config.lr,
@@ -568,6 +617,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
         self.lr_scheduler = lr_scheduler
 
+        flush()
         ### HOOK ###
         self.hook_before_train_loop()
 
@@ -639,7 +689,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # turn on normalization if we are using it and it is not on
                 if self.network is not None and self.network_config.normalize and not self.network.is_normalizing:
                     self.network.is_normalizing = True
-
+            flush()
             ### HOOK ###
             loss_dict = self.hook_train_loop(batch)
             flush()
