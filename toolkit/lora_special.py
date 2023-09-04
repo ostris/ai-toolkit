@@ -3,15 +3,13 @@ import math
 import os
 import re
 import sys
-from collections import OrderedDict
 from typing import List, Optional, Dict, Type, Union
 
 import torch
 from transformers import CLIPTextModel
 
 from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin
-from .paths import SD_SCRIPTS_ROOT, KEYMAPS_ROOT
-from .train_tools import get_torch_dtype
+from .paths import SD_SCRIPTS_ROOT
 
 sys.path.append(SD_SCRIPTS_ROOT)
 
@@ -21,6 +19,17 @@ from torch.utils.checkpoint import checkpoint
 
 RE_UPDOWN = re.compile(r"(up|down)_blocks_(\d+)_(resnets|upsamplers|downsamplers|attentions)_(\d+)_")
 
+
+# diffusers specific stuff
+LINEAR_MODULES = [
+    'Linear',
+    'LoRACompatibleLinear'
+    # 'GroupNorm',
+]
+CONV_MODULES = [
+    'Conv2d',
+    'LoRACompatibleConv'
+]
 
 class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
     """
@@ -197,8 +206,8 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             for name, module in root_module.named_modules():
                 if module.__class__.__name__ in target_replace_modules:
                     for child_name, child_module in module.named_modules():
-                        is_linear = child_module.__class__.__name__ == "Linear"
-                        is_conv2d = child_module.__class__.__name__ == "Conv2d"
+                        is_linear = child_module.__class__.__name__.in_(LINEAR_MODULES)
+                        is_conv2d = child_module.__class__.__name__.in_(CONV_MODULES)
                         is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
                         if is_linear or is_conv2d:

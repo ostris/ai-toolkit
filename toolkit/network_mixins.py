@@ -21,9 +21,11 @@ class ToolkitModuleMixin:
     def __init__(
             self: Module,
             *args,
+            call_super_init: bool = True,
             **kwargs
     ):
-        super().__init__(*args, **kwargs)
+        if call_super_init:
+            super().__init__(*args, **kwargs)
         self.is_checkpointing = False
         self.is_normalizing = False
         self.normalize_scaler = 1.0
@@ -74,7 +76,10 @@ class ToolkitModuleMixin:
         if hasattr(self, 'lora_mid') and hasattr(self, 'cp') and self.cp:
             lx = self.lora_mid(self.lora_down(x))
         else:
-            lx = self.lora_down(x)
+            try:
+                lx = self.lora_down(x)
+            except RuntimeError as e:
+                print(f"Error in {self.__class__.__name__} lora_down")
 
         if isinstance(self.dropout, nn.Dropout) or isinstance(self.dropout, nn.Identity):
             lx = self.dropout(lx)
@@ -202,7 +207,7 @@ class ToolkitNetworkMixin:
         self._is_normalizing: bool = False
         self.is_sdxl = is_sdxl
         self.is_v2 = is_v2
-        super().__init__(*args, **kwargs)
+        # super().__init__(*args, **kwargs)
 
     def get_keymap(self: Network):
         if self.is_sdxl:
@@ -219,7 +224,7 @@ class ToolkitNetworkMixin:
         # check if file exists
         if os.path.exists(keymap_path):
             with open(keymap_path, 'r') as f:
-                keymap = json.load(f)
+                keymap = json.load(f)['ldm_diffusers_keymap']
 
         return keymap
 

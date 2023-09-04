@@ -5,6 +5,7 @@ from collections import OrderedDict
 import os
 from typing import Union
 
+from lycoris.config import PRESET
 from torch.utils.data import DataLoader
 
 from toolkit.data_loader import get_dataloader_from_datasets
@@ -468,12 +469,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.network_config is not None:
             # TODO should we completely switch to LycorisSpecialNetwork?
 
+            is_lycoris = False
             # default to LoCON if there are any conv layers or if it is named
             NetworkClass = LoRASpecialNetwork
             if self.network_config.conv is not None and self.network_config.conv > 0:
                 NetworkClass = LycorisSpecialNetwork
+                is_lycoris = True
             if self.network_config.type.lower() == 'locon' or self.network_config.type.lower() == 'lycoris':
                 NetworkClass = LycorisSpecialNetwork
+                is_lycoris = True
+
+            if is_lycoris:
+                preset = PRESET['full']
+                # NetworkClass.apply_preset(preset)
 
             self.network = NetworkClass(
                 text_encoder=text_encoder,

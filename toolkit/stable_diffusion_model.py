@@ -367,9 +367,9 @@ class StableDiffusion:
                         # was trained on 0.7 (I believe)
 
                         grs = gen_config.guidance_rescale
-                        # if grs is None or grs < 0.00001:
-                            # grs = 0.7
-                        grs = 0.0
+                        if grs is None or grs < 0.00001:
+                            grs = 0.7
+                        # grs = 0.0
 
                         extra = {}
                         if sampler.startswith("sample_"):
