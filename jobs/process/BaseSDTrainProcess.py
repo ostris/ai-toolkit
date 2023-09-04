@@ -452,6 +452,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 train_text_encoder=self.train_config.train_text_encoder,
                 conv_lora_dim=self.network_config.conv,
                 conv_alpha=self.network_config.conv_alpha,
+                is_sdxl=self.model_config.is_xl,
+                is_v2=self.model_config.is_v2,
             )
 
             self.network.force_to(self.device_torch, dtype=dtype)
