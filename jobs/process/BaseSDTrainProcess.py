@@ -155,11 +155,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # ie test123 will become test123 test123_1 test123_2 etc. Do not add this yourself here
             if self.embedding is not None:
                 prompt = self.embedding.inject_embedding_to_prompt(
-                    prompt,
+                    prompt, add_if_not_present=False
                 )
             if self.trigger_word is not None:
                 prompt = self.sd.inject_trigger_into_prompt(
-                    prompt, self.trigger_word
+                    prompt, self.trigger_word, add_if_not_present=False
                 )
 
             gen_img_config_list.append(GenerateImageConfig(
@@ -363,15 +363,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     prompt = self.embedding.inject_embedding_to_prompt(
                         prompt,
                         expand_token=True,
-                        add_if_not_present=True,
+                        add_if_not_present=not is_reg,
                     )
 
                 # make sure trigger is in the prompts if not a regularization run
-                if self.trigger_word is not None and not is_reg:
+                if self.trigger_word is not None:
                     prompt = self.sd.inject_trigger_into_prompt(
                         prompt,
                         trigger=self.trigger_word,
-                        add_if_not_present=True,
+                        add_if_not_present=not is_reg,
                     )
                 conditioned_prompts.append(prompt)
 

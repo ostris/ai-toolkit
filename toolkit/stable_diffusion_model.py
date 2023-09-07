@@ -614,6 +614,7 @@ class StableDiffusion:
         return latents
 
     def encode_prompt(self, prompt, num_images_per_prompt=1) -> PromptEmbeds:
+        # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt
         # if it is not a list, make it one
         if not isinstance(prompt, list):
