@@ -52,7 +52,7 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
         self.lora_name = lora_name
         self.scalar = torch.tensor(1.0)
 
-        if org_module.__class__.__name__ == "Conv2d":
+        if org_module.__class__.__name__ in CONV_MODULES:
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
         else:
@@ -66,7 +66,7 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
         # else:
         self.lora_dim = lora_dim
 
-        if org_module.__class__.__name__ == "Conv2d":
+        if org_module.__class__.__name__ in CONV_MODULES:
             kernel_size = org_module.kernel_size
             stride = org_module.stride
             padding = org_module.padding

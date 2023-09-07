@@ -134,18 +134,7 @@ class StableDiffusion:
         # TODO handle other schedulers
         # sch = KDPM2DiscreteScheduler
         if self.noise_scheduler is None:
-            sch = DDPMScheduler
-            # do our own scheduler
-            prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
-            scheduler = sch(
-                num_train_timesteps=1000,
-                beta_start=0.00085,
-                beta_end=0.0120,
-                beta_schedule="scaled_linear",
-                clip_sample=False,
-                prediction_type=prediction_type,
-                steps_offset=0
-            )
+            scheduler = get_sampler('ddpm')
             self.noise_scheduler = scheduler
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why

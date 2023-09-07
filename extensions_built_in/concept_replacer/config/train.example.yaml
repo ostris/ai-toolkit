@@ -1,0 +1,91 @@
+---
+job: extension
+config:
+  name: test_v1
+  process:
+    - type: 'textual_inversion_trainer'
+      training_folder: "out/TI"
+      device: cuda:0
+      # for tensorboard logging
+      log_dir: "out/.tensorboard"
+      embedding:
+        trigger: "your_trigger_here"
+        tokens: 12
+        init_words: "man with short brown hair"
+        save_format: "safetensors"  # 'safetensors' or 'pt'
+      save:
+        dtype: float16 # precision to save
+        save_every: 100 # save every this many steps
+        max_step_saves_to_keep: 5 # only affects step counts
+      datasets:
+        - folder_path: "/path/to/dataset"
+          caption_ext: "txt"
+          default_caption: "[trigger]"
+          buckets: true
+          resolution: 512
+      train:
+        noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
+        steps: 3000
+        weight_jitter: 0.0
+        lr: 5e-5
+        train_unet: false
+        gradient_checkpointing: true
+        train_text_encoder: false
+        optimizer: "adamw"
+#        optimizer: "prodigy"
+        optimizer_params:
+          weight_decay: 1e-2
+        lr_scheduler: "constant"
+        max_denoising_steps: 1000
+        batch_size: 4
+        dtype: bf16
+        xformers: true
+        min_snr_gamma: 5.0
+#        skip_first_sample: true
+        noise_offset: 0.0 # not needed for this
+      model:
+        # objective reality v2
+        name_or_path: "https://civitai.com/models/128453?modelVersionId=142465"
+        is_v2: false  # for v2 models
+        is_xl: false  # for SDXL models
+        is_v_pred: false # for v-prediction models (most v2 models)
+      sample:
+        sampler: "ddpm" # must match train.noise_scheduler
+        sample_every: 100 # sample every this many steps
+        width: 512
+        height: 512
+        prompts:
+          - "photo of [trigger] laughing"
+          - "photo of [trigger] smiling"
+          - "[trigger] close up"
+          - "dark scene [trigger] frozen"
+          - "[trigger] nighttime"
+          - "a painting of [trigger]"
+          - "a drawing of [trigger]"
+          - "a cartoon of [trigger]"
+          - "[trigger] pixar style"
+          - "[trigger] costume"
+        neg: ""
+        seed: 42
+        walk_seed: false
+        guidance_scale: 7
+        sample_steps: 20
+        network_multiplier: 1.0
+
+      logging:
+        log_every: 10 # log every this many steps
+        use_wandb: false # not supported yet
+        verbose: false
+
+# You can put any information you want here, and it will be saved in the model.
+# The below is an example, but you can put your grocery list in it if you want.
+# It is saved in the model so be aware of that. The software will include this
+# plus some other information for you automatically
+meta:
+  # [name] gets replaced with the name above
+  name: "[name]"
+#  version: '1.0'
+#  creator:
+#    name: Your Name
+#    email: your@gmail.com
+#    website: https://your.website
