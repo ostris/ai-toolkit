@@ -3,6 +3,7 @@ import os
 import random
 from typing import TYPE_CHECKING, List, Dict, Union
 
+from toolkit.buckets import get_bucket_for_image_size
 from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
 from PIL import Image
@@ -102,54 +103,21 @@ class BucketsMixin:
             width = file_item.crop_width
             height = file_item.crop_height
 
-            # determine new resolution to have the same number of pixels
-            current_pixels = width * height
-            if current_pixels == total_pixels:
-                file_item.scale_to_width = width
-                file_item.scale_to_height = height
-                file_item.crop_width = width
-                file_item.crop_height = height
-                new_width = width
-                new_height = height
+            bucket_resolution = get_bucket_for_image_size(width, height, resolution=resolution)
+
+            # set the scaling height and with to match smallest size, and keep aspect ratio
+            if width > height:
+                file_item.scale_height = bucket_resolution["height"]
+                file_item.scale_width = int(width * (bucket_resolution["height"] / height))
             else:
+                file_item.scale_width = bucket_resolution["width"]
+                file_item.scale_height = int(height * (bucket_resolution["width"] / width))
 
-                aspect_ratio = width / height
-                new_height = int(math.sqrt(total_pixels / aspect_ratio))
-                new_width = int(aspect_ratio * new_height)
+            file_item.crop_height = bucket_resolution["height"]
+            file_item.crop_width = bucket_resolution["width"]
 
-                # increase smallest one to be divisible by bucket_tolerance and increase the other to match
-                if new_width < new_height:
-                    # increase width
-                    if new_width % bucket_tolerance != 0:
-                        crop_amount = new_width % bucket_tolerance
-                        new_width = new_width + (bucket_tolerance - crop_amount)
-                    new_height = int(new_width / aspect_ratio)
-                else:
-                    # increase height
-                    if new_height % bucket_tolerance != 0:
-                        crop_amount = new_height % bucket_tolerance
-                        new_height = new_height + (bucket_tolerance - crop_amount)
-                    new_width = int(aspect_ratio * new_height)
-
-                # Ensure that the total number of pixels remains the same.
-                # assert new_width * new_height == total_pixels
-
-                file_item.scale_to_width = new_width
-                file_item.scale_to_height = new_height
-                file_item.crop_width = new_width
-                file_item.crop_height = new_height
-                # make sure it is divisible by bucket_tolerance, decrease if not
-                if new_width % bucket_tolerance != 0:
-                    crop_amount = new_width % bucket_tolerance
-                    file_item.crop_width = new_width - crop_amount
-                else:
-                    file_item.crop_width = new_width
-
-                if new_height % bucket_tolerance != 0:
-                    crop_amount = new_height % bucket_tolerance
-                    file_item.crop_height = new_height - crop_amount
-                else:
-                    file_item.crop_height = new_height
+            new_width = bucket_resolution["width"]
+            new_height = bucket_resolution["height"]
 
             # check if bucket exists, if not, create it
             bucket_key = f'{new_width}x{new_height}'

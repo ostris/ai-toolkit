@@ -1,6 +1,10 @@
-from typing import Type, List, Union
+from typing import Type, List, Union, TypedDict
 
-BucketResolution = Type[{"width": int, "height": int}]
+
+class BucketResolution(TypedDict):
+    width: int
+    height: int
+
 
 # resolutions SDXL was trained on with a 1024x1024 base resolution
 resolutions_1024: List[BucketResolution] = [

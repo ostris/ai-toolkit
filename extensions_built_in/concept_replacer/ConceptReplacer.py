@@ -36,8 +36,6 @@ class ConceptReplacer(BaseSDTrainProcess):
 
         # textual inversion
         if self.embedding is not None:
-            # keep original embeddings as reference
-            self.orig_embeds_params = self.sd.text_encoder.get_input_embeddings().weight.data.clone()
             # set text encoder to train. Not sure if this is necessary but diffusers example did it
             self.sd.text_encoder.train()
 
@@ -142,13 +140,7 @@ class ConceptReplacer(BaseSDTrainProcess):
 
         if self.embedding is not None:
             # Let's make sure we don't update any embedding weights besides the newly added token
-            index_no_updates = torch.ones((len(self.sd.tokenizer),), dtype=torch.bool)
-            index_no_updates[
-            min(self.embedding.placeholder_token_ids): max(self.embedding.placeholder_token_ids) + 1] = False
-            with torch.no_grad():
-                self.sd.text_encoder.get_input_embeddings().weight[
-                    index_no_updates
-                ] = self.orig_embeds_params[index_no_updates]
+            self.embedding.restore_embeddings()
 
         loss_dict = OrderedDict(
             {'loss': loss.item()}

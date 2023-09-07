@@ -5,7 +5,7 @@ from collections import OrderedDict
 import os
 from typing import Union
 
-from lycoris.config import PRESET
+# from lycoris.config import PRESET
 from torch.utils.data import DataLoader
 
 from toolkit.data_loader import get_dataloader_from_datasets
@@ -126,7 +126,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # to hold network if there is one
         self.network: Union[Network, None] = None
-        self.embedding = None
+        self.embedding: Union[Embedding, None] = None
 
     def sample(self, step=None, is_first=False):
         sample_folder = os.path.join(self.save_root, 'samples')
@@ -261,13 +261,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.network_config.normalize:
                 # apply the normalization
                 self.network.apply_stored_normalizer()
+
+            # if we are doing embedding training as well, add that
+            embedding_dict = self.embedding.state_dict() if self.embedding else None
             self.network.save_weights(
                 file_path,
                 dtype=get_torch_dtype(self.save_config.dtype),
-                metadata=save_meta
+                metadata=save_meta,
+                extra_state_dict=embedding_dict
             )
             self.network.multiplier = prev_multiplier
+            # if we have an embedding as well, pair it with the network
         elif self.embedding is not None:
+            # for combo, above will get it
             # set current step
             self.embedding.step = self.step_num
             # change filename to pt if that is set
@@ -330,16 +336,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
     def load_weights(self, path):
         if self.network is not None:
-            self.network.load_weights(path)
+            extra_weights = self.network.load_weights(path)
             meta = load_metadata_from_safetensors(path)
             # if 'training_info' in Orderdict keys
             if 'training_info' in meta and 'step' in meta['training_info']:
                 self.step_num = meta['training_info']['step']
                 self.start_step = self.step_num
                 print(f"Found step {self.step_num} in metadata, starting from there")
-
+            return extra_weights
         else:
             print("load_weights not implemented for non-network models")
+            return None
 
     def process_general_training_batch(self, batch):
         with torch.no_grad():
@@ -479,9 +486,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 NetworkClass = LycorisSpecialNetwork
                 is_lycoris = True
 
-            if is_lycoris:
-                preset = PRESET['full']
-                # NetworkClass.apply_preset(preset)
+            # if is_lycoris:
+            #     preset = PRESET['full']
+            # NetworkClass.apply_preset(preset)
 
             self.network = NetworkClass(
                 text_encoder=text_encoder,
@@ -533,11 +540,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.network.is_normalizing = self.network_config.normalize
 
             latest_save_path = self.get_latest_save_path()
+            extra_weights = None
             if latest_save_path is not None:
                 self.print(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                 self.print(f"Loading from {latest_save_path}")
-                self.load_weights(latest_save_path)
+                extra_weights = self.load_weights(latest_save_path)
                 self.network.multiplier = 1.0
+
+            if self.embed_config is not None:
+                # we are doing embedding training as well
+                self.embedding = Embedding(
+                    sd=self.sd,
+                    embed_config=self.embed_config,
+                    state_dict=extra_weights
+                )
+                params.append({
+                    'params': self.embedding.get_trainable_params(),
+                    'lr': self.train_config.embedding_lr
+                })
 
             flush()
         elif self.embed_config is not None:
