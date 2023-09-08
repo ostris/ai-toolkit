@@ -719,10 +719,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.network is not None and self.network_config.normalize and not self.network.is_normalizing:
                     self.network.is_normalizing = True
             flush()
-            ### HOOK ###
-            loss_dict = self.hook_train_loop(batch)
-            flush()
-            # setup the networks to gradient checkpointing and everything works
             if self.embedding is not None or self.train_config.train_text_encoder:
                 if isinstance(self.sd.text_encoder, list):
                     for te in self.sd.text_encoder:
@@ -731,6 +727,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.sd.text_encoder.train()
 
                 self.sd.unet.train()
+            ### HOOK ###
+            loss_dict = self.hook_train_loop(batch)
+            flush()
+            # setup the networks to gradient checkpointing and everything works
 
             with torch.no_grad():
                 if self.train_config.optimizer.lower().startswith('dadaptation') or \

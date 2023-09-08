@@ -34,8 +34,6 @@ class SDTrainer(BaseSDTrainProcess):
         dtype = get_torch_dtype(self.train_config.dtype)
         noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
         network_weight_list = batch.get_network_weight_list()
-
-        self.optimizer.zero_grad()
         flush()
 
         # text encoding
@@ -59,11 +57,10 @@ class SDTrainer(BaseSDTrainProcess):
         with network:
             with torch.set_grad_enabled(grad_on_text_encoder):
                 conditional_embeds = self.sd.encode_prompt(conditioned_prompts).to(self.device_torch, dtype=dtype)
-            if not grad_on_text_encoder:
-                # detach the embeddings
-                conditional_embeds = conditional_embeds.detach()
-                self.optimizer.zero_grad()
-            flush()
+            # if not grad_on_text_encoder:
+            #     # detach the embeddings
+            #     conditional_embeds = conditional_embeds.detach()
+            # flush()
 
             noise_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype),
@@ -73,7 +70,7 @@ class SDTrainer(BaseSDTrainProcess):
             )
             flush()
         # 9.18 gb
-        noise = noise.to(self.device_torch, dtype=dtype)
+        noise = noise.to(self.device_torch, dtype=dtype).detach()
 
         if self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
