@@ -63,7 +63,7 @@ class SDTrainer(BaseSDTrainProcess):
                 # detach the embeddings
                 conditional_embeds = conditional_embeds.detach()
                 self.optimizer.zero_grad()
-                flush()
+            flush()
 
             noise_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype),
@@ -71,6 +71,7 @@ class SDTrainer(BaseSDTrainProcess):
                 timestep=timesteps,
                 guidance_scale=1.0,
             )
+            flush()
         # 9.18 gb
         noise = noise.to(self.device_torch, dtype=dtype)
 

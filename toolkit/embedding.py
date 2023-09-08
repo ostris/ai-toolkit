@@ -141,8 +141,8 @@ class Embedding:
     # however, on training we don't use that pipeline, so we have to do it ourselves
     def inject_embedding_to_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
-        embedding_tokens = self.embedding_tokens[0] # shoudl be the same
-        default_replacements = [self.name, self.trigger, "[name]", "[trigger]", embedding_tokens]
+        embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
+        default_replacements = ["[name]", "[trigger]"]
 
         replace_with = embedding_tokens if expand_token else self.trigger
         if to_replace_list is None:
@@ -167,7 +167,7 @@ class Embedding:
 
         if num_instances > 1:
             print(
-                f"Warning: {self.name} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+                f"Warning: {replace_with} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
 
         return output_prompt
 

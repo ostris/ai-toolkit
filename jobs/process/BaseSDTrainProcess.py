@@ -684,6 +684,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # zero any gradients
         optimizer.zero_grad()
+        flush()
 
         self.lr_scheduler.step(self.step_num)
 
@@ -721,6 +722,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
             ### HOOK ###
             loss_dict = self.hook_train_loop(batch)
             flush()
+            # setup the networks to gradient checkpointing and everything works
+            if self.embedding is not None or self.train_config.train_text_encoder:
+                if isinstance(self.sd.text_encoder, list):
+                    for te in self.sd.text_encoder:
+                        te.train()
+                else:
+                    self.sd.text_encoder.train()
+
+                self.sd.unet.train()
 
             with torch.no_grad():
                 if self.train_config.optimizer.lower().startswith('dadaptation') or \

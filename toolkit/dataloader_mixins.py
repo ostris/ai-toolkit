@@ -173,7 +173,7 @@ class CaptionProcessingDTOMixin:
             self: 'FileItemDTO',
             trigger=None,
             to_replace_list=None,
-            add_if_not_present=True
+            add_if_not_present=False
     ):
         raw_caption = self.raw_caption
         if raw_caption is None:
