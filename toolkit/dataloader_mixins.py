@@ -100,6 +100,7 @@ class BucketsMixin:
 
         # for file_item in enumerate(file_list):
         for idx, file_item in enumerate(file_list):
+            file_item: 'FileItemDTO' = file_item
             width = file_item.crop_width
             height = file_item.crop_height
 
@@ -107,11 +108,11 @@ class BucketsMixin:
 
             # set the scaling height and with to match smallest size, and keep aspect ratio
             if width > height:
-                file_item.scale_height = bucket_resolution["height"]
-                file_item.scale_width = int(width * (bucket_resolution["height"] / height))
+                file_item.scale_to_height = bucket_resolution["height"]
+                file_item.scale_to_width = int(width * (bucket_resolution["height"] / height))
             else:
-                file_item.scale_width = bucket_resolution["width"]
-                file_item.scale_height = int(height * (bucket_resolution["width"] / width))
+                file_item.scale_to_width = bucket_resolution["width"]
+                file_item.scale_to_height = int(height * (bucket_resolution["width"] / width))
 
             file_item.crop_height = bucket_resolution["height"]
             file_item.crop_width = bucket_resolution["width"]
