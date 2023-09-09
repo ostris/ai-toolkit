@@ -18,6 +18,30 @@ if TYPE_CHECKING:
 Network = Union['LycorisSpecialNetwork', 'LoRASpecialNetwork']
 Module = Union['LoConSpecialModule', 'LoRAModule']
 
+LINEAR_MODULES = [
+    'Linear',
+    'LoRACompatibleLinear'
+    # 'GroupNorm',
+]
+CONV_MODULES = [
+    'Conv2d',
+    'LoRACompatibleConv'
+]
+
+
+def broadcast_and_multiply(tensor, multiplier):
+    # Determine the number of dimensions required
+    num_extra_dims = tensor.dim() - multiplier.dim()
+
+    # Unsqueezing the tensor to match the dimensionality
+    for _ in range(num_extra_dims):
+        multiplier = multiplier.unsqueeze(-1)
+
+    # Multiplying the broadcasted tensor with the output tensor
+    result = tensor * multiplier
+
+    return result
+
 
 class ToolkitModuleMixin:
     def __init__(
@@ -28,49 +52,41 @@ class ToolkitModuleMixin:
     ):
         if call_super_init:
             super().__init__(*args, **kwargs)
-        self.org_module: torch.nn.Module = kwargs.get('org_module', None)
+        self.tk_orig_module: torch.nn.Module = kwargs.get('org_module', None)
+        self.tk_orig_parent = kwargs.get('parent', None)
         self.is_checkpointing = False
         self.is_normalizing = False
         self.normalize_scaler = 1.0
+        # see if is conv or linear
+        self.is_conv = False
+        self.is_linear = False
+        if self.tk_orig_module.__class__.__name__ in LINEAR_MODULES:
+            self.is_linear = True
+        elif self.tk_orig_module.__class__.__name__ in CONV_MODULES:
+            self.is_conv = True
+        self._multiplier: Union[float, list, torch.Tensor] = 1.0
 
     # this allows us to set different multipliers on a per item in a batch basis
     # allowing us to run positive and negative weights in the same batch
-    # really only useful for slider training for now
-    def get_multiplier(self: Module, lora_up):
+    def set_multiplier(self: Module, multiplier):
+        device = self.lora_down.weight.device
+        dtype = self.lora_down.weight.dtype
         with torch.no_grad():
-            batch_size = lora_up.size(0)
-            # batch will have all negative prompts first and positive prompts second
-            # our multiplier list is for a prompt pair. So we need to repeat it for positive and negative prompts
-            # if there is more than our multiplier, it is likely a batch size increase, so we need to
-            # interleave the multipliers
-            if isinstance(self.multiplier, list):
-                if len(self.multiplier) == 0:
-                    # single item, just return it
-                    return self.multiplier[0]
-                elif len(self.multiplier) == batch_size:
-                    # not doing CFG
-                    multiplier_tensor = torch.tensor(self.multiplier).to(lora_up.device, dtype=lora_up.dtype)
-                else:
+            tensor_multiplier = None
+            if isinstance(multiplier, int) or isinstance(multiplier, float):
+                tensor_multiplier = torch.tensor((multiplier,)).to(device, dtype=dtype)
+            elif isinstance(multiplier, list):
+                tensor_list = []
+                for m in multiplier:
+                    if isinstance(m, int) or isinstance(m, float):
+                        tensor_list.append(torch.tensor((m,)).to(device, dtype=dtype))
+                    elif isinstance(m, torch.Tensor):
+                        tensor_list.append(m.clone().detach().to(device, dtype=dtype))
+                tensor_multiplier = torch.cat(tensor_list)
+            elif isinstance(multiplier, torch.Tensor):
+                tensor_multiplier = multiplier.clone().detach().to(device, dtype=dtype)
 
-                    # we have a list of multipliers, so we need to get the multiplier for this batch
-                    multiplier_tensor = torch.tensor(self.multiplier * 2).to(lora_up.device, dtype=lora_up.dtype)
-                    # should be 1 for if total batch size was 1
-                    num_interleaves = (batch_size // 2) // len(self.multiplier)
-                    multiplier_tensor = multiplier_tensor.repeat_interleave(num_interleaves)
-
-                # match lora_up rank
-                if len(lora_up.size()) == 2:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1)
-                elif len(lora_up.size()) == 3:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
-                elif len(lora_up.size()) == 4:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
-                return multiplier_tensor.detach()
-
-            else:
-                if isinstance(self.multiplier, torch.Tensor):
-                    return self.multiplier.detach()
-                return self.multiplier
+            self._multiplier = tensor_multiplier.clone().detach()
 
     def _call_forward(self: Module, x):
         # module dropout
@@ -111,15 +127,26 @@ class ToolkitModuleMixin:
 
         # handle trainable scaler method locon does
         if hasattr(self, 'scalar'):
-            scale *= self.scalar
+            scale = scale * self.scalar
 
         return lx * scale
 
     def forward(self: Module, x):
-        x = x.detach()
+
         org_forwarded = self.org_forward(x)
         lora_output = self._call_forward(x)
-        multiplier = self.get_multiplier(lora_output)
+        multiplier = self._multiplier.clone().detach()
+
+        lora_output_batch_size = lora_output.size(0)
+        multiplier_batch_size = multiplier.size(0)
+        if lora_output_batch_size != multiplier_batch_size:
+            print(
+                f"Warning: lora_output_batch_size {lora_output_batch_size} != multiplier_batch_size {multiplier_batch_size}")
+            # doing cfg
+            # should be 1 for if total batch size was 1
+            num_interleaves = (lora_output_batch_size // 2) // multiplier_batch_size
+            multiplier = multiplier.repeat_interleave(num_interleaves)
+        # multiplier = 1.0
 
         if self.is_normalizing:
             with torch.no_grad():
@@ -150,9 +177,9 @@ class ToolkitModuleMixin:
                 # save the scaler so it can be applied later
                 self.normalize_scaler = normalize_scaler.clone().detach()
 
-            lora_output *= normalize_scaler
+            lora_output = lora_output * normalize_scaler
 
-        return org_forwarded + (lora_output * multiplier)
+        return org_forwarded + broadcast_and_multiply(lora_output, multiplier)
 
     def enable_gradient_checkpointing(self: Module):
         self.is_checkpointing = True
@@ -320,19 +347,11 @@ class ToolkitNetworkMixin:
 
     def _update_lora_multiplier(self: Network):
         if self.is_active:
-            if hasattr(self, 'unet_loras'):
-                for lora in self.unet_loras:
-                    lora.multiplier = self._multiplier
-            if hasattr(self, 'text_encoder_loras'):
-                for lora in self.text_encoder_loras:
-                    lora.multiplier = self._multiplier
+            for lora in self.get_all_modules():
+                lora.set_multiplier(self._multiplier)
         else:
-            if hasattr(self, 'unet_loras'):
-                for lora in self.unet_loras:
-                    lora.multiplier = 0
-            if hasattr(self, 'text_encoder_loras'):
-                for lora in self.text_encoder_loras:
-                    lora.multiplier = 0
+            for lora in self.get_all_modules():
+                lora.set_multiplier(0)
 
     # called when the context manager is entered
     # ie: with network:
@@ -369,15 +388,15 @@ class ToolkitNetworkMixin:
             else:
                 module.disable_gradient_checkpointing()
 
-    # def enable_gradient_checkpointing(self: Network):
-    #     # not supported
-    #     self.is_checkpointing = True
-    #     self._update_checkpointing()
-    #
-    # def disable_gradient_checkpointing(self: Network):
-    #     # not supported
-    #     self.is_checkpointing = False
-    #     self._update_checkpointing()
+    def enable_gradient_checkpointing(self: Network):
+        # not supported
+        self.is_checkpointing = True
+        self._update_checkpointing()
+
+    def disable_gradient_checkpointing(self: Network):
+        # not supported
+        self.is_checkpointing = False
+        self._update_checkpointing()
 
     @property
     def is_normalizing(self: Network) -> bool:

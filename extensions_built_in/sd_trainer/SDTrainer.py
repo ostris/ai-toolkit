@@ -72,6 +72,7 @@ class SDTrainer(BaseSDTrainProcess):
         # 9.18 gb
         noise = noise.to(self.device_torch, dtype=dtype).detach()
 
+
         if self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(noisy_latents, noise, timesteps)

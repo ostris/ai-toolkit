@@ -479,9 +479,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
             is_lycoris = False
             # default to LoCON if there are any conv layers or if it is named
             NetworkClass = LoRASpecialNetwork
-            if self.network_config.conv is not None and self.network_config.conv > 0:
-                NetworkClass = LycorisSpecialNetwork
-                is_lycoris = True
             if self.network_config.type.lower() == 'locon' or self.network_config.type.lower() == 'lycoris':
                 NetworkClass = LycorisSpecialNetwork
                 is_lycoris = True
