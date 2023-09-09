@@ -733,7 +733,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     self.sd.text_encoder.train()
 
-                self.sd.unet.train()
+            self.sd.unet.train()
             ### HOOK ###
             loss_dict = self.hook_train_loop(batch)
             flush()
