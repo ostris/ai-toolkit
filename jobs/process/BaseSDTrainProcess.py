@@ -284,8 +284,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # change filename to pt if that is set
                 if self.embed_config.save_format == "pt":
                     # replace extension
-                    file_path = os.path.splitext(emb_file_path)[0] + ".pt"
-                self.embedding.save(file_path)
+                    emb_file_path = os.path.splitext(emb_file_path)[0] + ".pt"
+                self.embedding.save(emb_file_path)
         else:
             self.sd.save(
                 file_path,

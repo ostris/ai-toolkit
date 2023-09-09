@@ -30,7 +30,8 @@ class BaseTrainProcess(BaseProcess):
 
         self.progress_bar = None
         self.writer = None
-        self.training_folder = self.get_conf('training_folder', self.job.training_folder if hasattr(self.job, 'training_folder') else None)
+        self.training_folder = self.get_conf('training_folder',
+                                             self.job.training_folder if hasattr(self.job, 'training_folder') else None)
         self.save_root = os.path.join(self.training_folder, self.name)
         self.step = 0
         self.first_step = 0
@@ -62,8 +63,7 @@ class BaseTrainProcess(BaseProcess):
             self.writer = SummaryWriter(summary_dir)
 
     def save_training_config(self):
-        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
         os.makedirs(self.save_root, exist_ok=True)
-        save_dif = os.path.join(self.save_root, f'process_config_{timestamp}.yaml')
+        save_dif = os.path.join(self.save_root, f'config.yaml')
         with open(save_dif, 'w') as f:
-            yaml.dump(self.raw_process_config, f)
+            yaml.dump(self.job.raw_config, f)
