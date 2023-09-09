@@ -69,29 +69,33 @@ class SDTrainer(BaseSDTrainProcess):
                 guidance_scale=1.0,
             )
             flush()
-        # 9.18 gb
-        noise = noise.to(self.device_torch, dtype=dtype).detach()
+            # 9.18 gb
+            noise = noise.to(self.device_torch, dtype=dtype).detach()
 
 
-        if self.sd.prediction_type == 'v_prediction':
-            # v-parameterization training
-            target = self.sd.noise_scheduler.get_velocity(noisy_latents, noise, timesteps)
-        else:
-            target = noise
+            if self.sd.prediction_type == 'v_prediction':
+                # v-parameterization training
+                target = self.sd.noise_scheduler.get_velocity(noisy_latents, noise, timesteps)
+            else:
+                target = noise
 
-        loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-        loss = loss.mean([1, 2, 3])
+            loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
+            loss = loss.mean([1, 2, 3])
 
-        if self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001:
-            # add min_snr_gamma
-            loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
+            if self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001:
+                # add min_snr_gamma
+                loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
 
-        loss = loss.mean()
+            loss = loss.mean()
 
-        # back propagate loss to free ram
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
-        flush()
+            # IMPORTANT if gradient checkpointing do not leave with network when doing backward
+            # it will destroy the gradients. This is because the network is a context manager
+            # and will change the multipliers back to 0.0 when exiting. They will be
+            # 0.0 for the backward pass and the gradients will be 0.0
+            # I spent weeks on fighting this. DON'T DO IT
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
+            flush()
 
         # apply gradients
         self.optimizer.step()

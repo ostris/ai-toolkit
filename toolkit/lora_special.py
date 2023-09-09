@@ -50,10 +50,7 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
             **kwargs
     ):
         """if alpha == 0 or None, alpha is rank (no scaling)."""
-        super().__init__(
-            org_module=org_module,
-            parent=parent
-        )
+        super().__init__()
         self.lora_name = lora_name
         self.scalar = torch.tensor(1.0)
 

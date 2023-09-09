@@ -36,12 +36,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
         # call super of super
         torch.nn.Module.__init__(self)
         # call super of
-        super().__init__(
-            org_module=org_module,
-            call_super_init=False,
-            parent=parent,
-            **kwargs
-        )
+        super().__init__(call_super_init=False)
         self.lora_name = lora_name
         self.lora_dim = lora_dim
         self.cp = False

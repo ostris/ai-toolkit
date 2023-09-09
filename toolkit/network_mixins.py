@@ -52,18 +52,9 @@ class ToolkitModuleMixin:
     ):
         if call_super_init:
             super().__init__(*args, **kwargs)
-        self.tk_orig_module: torch.nn.Module = kwargs.get('org_module', None)
-        self.tk_orig_parent = kwargs.get('parent', None)
         self.is_checkpointing = False
         self.is_normalizing = False
         self.normalize_scaler = 1.0
-        # see if is conv or linear
-        self.is_conv = False
-        self.is_linear = False
-        if self.tk_orig_module.__class__.__name__ in LINEAR_MODULES:
-            self.is_linear = True
-        elif self.tk_orig_module.__class__.__name__ in CONV_MODULES:
-            self.is_conv = True
         self._multiplier: Union[float, list, torch.Tensor] = 1.0
 
     # this allows us to set different multipliers on a per item in a batch basis
@@ -140,10 +131,6 @@ class ToolkitModuleMixin:
         lora_output_batch_size = lora_output.size(0)
         multiplier_batch_size = multiplier.size(0)
         if lora_output_batch_size != multiplier_batch_size:
-            print(
-                f"Warning: lora_output_batch_size {lora_output_batch_size} != multiplier_batch_size {multiplier_batch_size}")
-            # doing cfg
-            # should be 1 for if total batch size was 1
             num_interleaves = (lora_output_batch_size // 2) // multiplier_batch_size
             multiplier = multiplier.repeat_interleave(num_interleaves)
         # multiplier = 1.0
