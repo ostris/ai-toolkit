@@ -16,6 +16,7 @@ from toolkit.lycoris_special import LycorisSpecialNetwork
 from toolkit.network_mixins import Network
 from toolkit.optimizer import get_optimizer
 from toolkit.paths import CONFIG_ROOT
+from toolkit.progress_bar import ToolkitProgressBar
 from toolkit.sampler import get_sampler
 
 from toolkit.scheduler import get_lr_scheduler
@@ -73,6 +74,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.data_loader_reg: Union[DataLoader, None] = None
         self.trigger_word = self.get_conf('trigger_word', None)
 
+        # store is all are cached. Allows us to not load vae if we don't need to
+        self.is_latents_cached = True
         raw_datasets = self.get_conf('datasets', None)
         if raw_datasets is not None and len(raw_datasets) > 0:
             raw_datasets = preprocess_dataset_raw_config(raw_datasets)
@@ -82,6 +85,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:
                 dataset = DatasetConfig(**raw_dataset)
+                is_caching = dataset.cache_latents or dataset.cache_latents_to_disk
+                if not is_caching:
+                    self.is_latents_cached = False
                 if dataset.is_reg:
                     if self.datasets_reg is None:
                         self.datasets_reg = []
@@ -355,9 +361,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             print("load_weights not implemented for non-network models")
             return None
 
-    def process_general_training_batch(self, batch):
+    def process_general_training_batch(self, batch: 'DataLoaderBatchDTO'):
         with torch.no_grad():
-            imgs = batch.tensor
             prompts = batch.get_caption_list()
             is_reg_list = batch.get_is_reg_list()
 
@@ -382,11 +387,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     )
                 conditioned_prompts.append(prompt)
 
-            batch_size = imgs.shape[0]
-
             dtype = get_torch_dtype(self.train_config.dtype)
-            imgs = imgs.to(self.device_torch, dtype=dtype)
-            latents = self.sd.encode_images(imgs)
+            imgs = None
+            if batch.tensor is not None:
+                imgs = batch.tensor
+                imgs = imgs.to(self.device_torch, dtype=dtype)
+            if batch.latents is not None:
+                latents = batch.latents.to(self.device_torch, dtype=dtype)
+            else:
+                latents = self.sd.encode_images(imgs)
+                flush()
+
+            batch_size = latents.shape[0]
 
             self.sd.noise_scheduler.set_timesteps(
                 self.train_config.max_denoising_steps, device=self.device_torch
@@ -397,8 +409,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # get noise
             noise = self.sd.get_latent_noise(
-                pixel_height=imgs.shape[2],
-                pixel_width=imgs.shape[3],
+                height=latents.shape[2],
+                width=latents.shape[3],
                 batch_size=batch_size,
                 noise_offset=self.train_config.noise_offset
             ).to(self.device_torch, dtype=dtype)
@@ -416,22 +428,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def run(self):
         # run base process run
         BaseTrainProcess.run(self)
-        ### HOOk ###
-        self.before_dataset_load()
-        # load datasets if passed in the root process
-        if self.datasets is not None:
-            self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size)
-        if self.datasets_reg is not None:
-            self.data_loader_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size)
 
         ### HOOK ###
         self.hook_before_model_load()
         # run base sd process run
         self.sd.load_model()
-
-        if self.train_config.gradient_checkpointing:
-            # may get disabled elsewhere
-            self.sd.unet.enable_gradient_checkpointing()
 
         dtype = get_torch_dtype(self.train_config.dtype)
 
@@ -479,6 +480,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         vae.requires_grad_(False)
         vae.eval()
         flush()
+
+        ### HOOk ###
+        self.before_dataset_load()
+        # load datasets if passed in the root process
+        if self.datasets is not None:
+            self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd)
+        if self.datasets_reg is not None:
+            self.data_loader_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size, self.sd)
 
         if self.network_config is not None:
             # TODO should we completely switch to LycorisSpecialNetwork?
@@ -667,13 +676,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.print("Generating baseline samples before training")
             self.sample(0)
 
-        self.progress_bar = tqdm(
+        self.progress_bar = ToolkitProgressBar(
             total=self.train_config.steps,
             desc=self.job.name,
             leave=True,
             initial=self.step_num,
             iterable=range(0, self.train_config.steps),
         )
+        self.progress_bar.pause()
 
         if self.data_loader is not None:
             dataloader = self.data_loader
@@ -691,12 +701,30 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # zero any gradients
         optimizer.zero_grad()
-        flush()
+
 
         self.lr_scheduler.step(self.step_num)
 
+        if self.embedding is not None or self.train_config.train_text_encoder:
+            if isinstance(self.sd.text_encoder, list):
+                for te in self.sd.text_encoder:
+                    te.train()
+            else:
+                self.sd.text_encoder.train()
+        else:
+            if isinstance(self.sd.text_encoder, list):
+                for te in self.sd.text_encoder:
+                    te.eval()
+            else:
+                self.sd.text_encoder.eval()
+        if self.train_config.train_unet or self.embedding:
+            self.sd.unet.train()
+        else:
+            self.sd.unet.eval()
+        flush()
         # self.step_num = 0
         for step in range(self.step_num, self.train_config.steps):
+            self.progress_bar.unpause()
             with torch.no_grad():
                 # if is even step and we have a reg dataset, use that
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
@@ -725,21 +753,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # turn on normalization if we are using it and it is not on
                 if self.network is not None and self.network_config.normalize and not self.network.is_normalizing:
                     self.network.is_normalizing = True
-            flush()
-            if self.embedding is not None or self.train_config.train_text_encoder:
-                if isinstance(self.sd.text_encoder, list):
-                    for te in self.sd.text_encoder:
-                        te.train()
-                else:
-                    self.sd.text_encoder.train()
-
-            self.sd.unet.train()
+            # flush()
             ### HOOK ###
             loss_dict = self.hook_train_loop(batch)
-            flush()
+            # flush()
             # setup the networks to gradient checkpointing and everything works
 
             with torch.no_grad():
+                torch.cuda.empty_cache()
                 if self.train_config.optimizer.lower().startswith('dadaptation') or \
                         self.train_config.optimizer.lower().startswith('prodigy'):
                     learning_rate = (
@@ -757,24 +778,27 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 # don't do on first step
                 if self.step_num != self.start_step:
-                    # pause progress bar
-                    self.progress_bar.unpause()  # makes it so doesn't track time
                     if is_sample_step:
+                        self.progress_bar.pause()
                         # print above the progress bar
                         self.sample(self.step_num)
+                        self.progress_bar.unpause()
 
                     if is_save_step:
                         # print above the progress bar
+                        self.progress_bar.pause()
                         self.print(f"Saving at step {self.step_num}")
                         self.save(self.step_num)
+                        self.progress_bar.unpause()
 
                     if self.logging_config.log_every and self.step_num % self.logging_config.log_every == 0:
+                        self.progress_bar.pause()
                         # log to tensorboard
                         if self.writer is not None:
                             for key, value in loss_dict.items():
                                 self.writer.add_scalar(f"{key}", value, self.step_num)
                             self.writer.add_scalar(f"lr", learning_rate, self.step_num)
-                    self.progress_bar.refresh()
+                        self.progress_bar.unpause()
 
                 # sets progress bar to match out step
                 self.progress_bar.update(step - self.progress_bar.n)
@@ -789,6 +813,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if isinstance(batch, DataLoaderBatchDTO):
                     batch.cleanup()
 
+        self.progress_bar.close()
         self.sample(self.step_num + 1)
         print("")
         self.save()

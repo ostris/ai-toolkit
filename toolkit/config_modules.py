@@ -197,6 +197,11 @@ class DatasetConfig:
         self.shuffle_tokens: bool = kwargs.get('shuffle_tokens', False)
         self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
 
+        # cache latents will store them in memory
+        self.cache_latents: bool = kwargs.get('cache_latents', False)
+        # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
+        self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
+
         # legacy compatability
         legacy_caption_type = kwargs.get('caption_type', None)
         if legacy_caption_type:

@@ -495,7 +495,8 @@ def build_latent_image_batch_for_prompt_pair(
 
 def inject_trigger_into_prompt(prompt, trigger=None, to_replace_list=None, add_if_not_present=True):
     if trigger is None:
-        return prompt
+        # process as empty string to remove any [trigger] tokens
+        trigger = ''
     output_prompt = prompt
     default_replacements = ["[name]", "[trigger]"]
 
@@ -513,15 +514,16 @@ def inject_trigger_into_prompt(prompt, trigger=None, to_replace_list=None, add_i
         # replace it
         output_prompt = output_prompt.replace(to_replace, replace_with)
 
-    # see how many times replace_with is in the prompt
-    num_instances = output_prompt.count(replace_with)
+    if trigger.strip() != "":
+        # see how many times replace_with is in the prompt
+        num_instances = output_prompt.count(replace_with)
 
-    if num_instances == 0 and add_if_not_present:
-        # add it to the beginning of the prompt
-        output_prompt = replace_with + " " + output_prompt
+        if num_instances == 0 and add_if_not_present:
+            # add it to the beginning of the prompt
+            output_prompt = replace_with + " " + output_prompt
 
-    if num_instances > 1:
-        print(
-            f"Warning: {trigger} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+        if num_instances > 1:
+            print(
+                f"Warning: {trigger} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
 
     return output_prompt

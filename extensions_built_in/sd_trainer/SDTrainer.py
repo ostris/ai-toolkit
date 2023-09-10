@@ -22,19 +22,21 @@ class SDTrainer(BaseSDTrainProcess):
         pass
 
     def hook_before_train_loop(self):
-        self.sd.vae.eval()
-        self.sd.vae.to(self.device_torch)
-
-        # textual inversion
-        # if self.embedding is not None:
-            # set text encoder to train. Not sure if this is necessary but diffusers example did it
-            # self.sd.text_encoder.train()
+        # move vae to device if we did not cache latents
+        if not self.is_latents_cached:
+            self.sd.vae.eval()
+            self.sd.vae.to(self.device_torch)
+        else:
+            # offload it. Already cached
+            self.sd.vae.to('cpu')
 
     def hook_train_loop(self, batch):
+
         dtype = get_torch_dtype(self.train_config.dtype)
         noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
         network_weight_list = batch.get_network_weight_list()
-        flush()
+        # flush()
+        self.optimizer.zero_grad()
 
         # text encoding
         grad_on_text_encoder = False
@@ -57,9 +59,9 @@ class SDTrainer(BaseSDTrainProcess):
         with network:
             with torch.set_grad_enabled(grad_on_text_encoder):
                 conditional_embeds = self.sd.encode_prompt(conditioned_prompts).to(self.device_torch, dtype=dtype)
-            # if not grad_on_text_encoder:
-            #     # detach the embeddings
-            #     conditional_embeds = conditional_embeds.detach()
+            if not grad_on_text_encoder:
+                # detach the embeddings
+                conditional_embeds = conditional_embeds.detach()
             # flush()
 
             noise_pred = self.sd.predict_noise(
@@ -68,7 +70,7 @@ class SDTrainer(BaseSDTrainProcess):
                 timestep=timesteps,
                 guidance_scale=1.0,
             )
-            flush()
+            # flush()
             # 9.18 gb
             noise = noise.to(self.device_torch, dtype=dtype).detach()
 
@@ -95,11 +97,10 @@ class SDTrainer(BaseSDTrainProcess):
             # I spent weeks on fighting this. DON'T DO IT
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
-            flush()
+            # flush()
 
         # apply gradients
         self.optimizer.step()
-        self.optimizer.zero_grad()
         self.lr_scheduler.step()
 
         if self.embedding is not None:
