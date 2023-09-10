@@ -408,7 +408,7 @@ class LatentCachingMixin:
 
                 if to_memory:
                     # keep it in memory
-                    file_item._encoded_latent = latent.to('cpu', dtype=self.sd.dtype)
+                    file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
 
                 flush(garbage_collect=False)
             file_item.is_latent_cached = True
