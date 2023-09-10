@@ -72,15 +72,27 @@ def get_bucket_sizes(resolution: int = 512, divisibility: int = 8) -> List[Bucke
     return bucket_size_list
 
 
+def get_resolution(width, height):
+    num_pixels = width * height
+    # determine same number of pixels for square image
+    square_resolution = int(num_pixels ** 0.5)
+    return square_resolution
+
+
 def get_bucket_for_image_size(
         width: int,
         height: int,
         bucket_size_list: List[BucketResolution] = None,
         resolution: Union[int, None] = None
 ) -> BucketResolution:
+
     if bucket_size_list is None and resolution is None:
-        raise ValueError("Must provide either bucket_size_list or resolution")
+        # get resolution from width and height
+        resolution = get_resolution(width, height)
     if bucket_size_list is None:
+        # if real resolution is smaller, use that instead
+        real_resolution = get_resolution(width, height)
+        resolution = min(resolution, real_resolution)
         bucket_size_list = get_bucket_sizes(resolution=resolution)
 
     # Check for exact match first

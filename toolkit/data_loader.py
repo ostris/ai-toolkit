@@ -331,17 +331,17 @@ class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
                     path=file,
                     dataset_config=dataset_config
                 )
-                if file_item.scale_to_width < self.resolution or file_item.scale_to_height < self.resolution:
-                    bad_count += 1
-                else:
-                    self.file_list.append(file_item)
+                # if file_item.scale_to_width < self.resolution or file_item.scale_to_height < self.resolution:
+                #     bad_count += 1
+                # else:
+                self.file_list.append(file_item)
             except Exception as e:
                 print(f"Error processing image: {file}")
                 print(e)
                 bad_count += 1
 
         print(f"  -  Found {len(self.file_list)} images")
-        print(f"  -  Found {bad_count} images that are too small")
+        # print(f"  -  Found {bad_count} images that are too small")
         assert len(self.file_list) > 0, f"no images found in {self.dataset_path}"
 
         self.setup_epoch()
