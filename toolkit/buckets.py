@@ -35,7 +35,7 @@ resolutions_1024: List[BucketResolution] = [
     {"width": 960, "height": 1024},
     {"width": 960, "height": 1088},
     {"width": 896, "height": 1088},
-    {"width": 896, "height": 1152},
+    {"width": 896, "height": 1152},  # 2:3
     {"width": 832, "height": 1152},
     {"width": 832, "height": 1216},
     {"width": 768, "height": 1280},
