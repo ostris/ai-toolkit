@@ -212,7 +212,7 @@ class StableDiffusion:
                     device=self.device_torch,
                     load_safety_checker=False,
                     requires_safety_checker=False,
-                    safety_checker=False
+                    safety_checker=None
                 ).to(self.device_torch)
             else:
                 pipe = pipln.from_single_file(
