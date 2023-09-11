@@ -55,7 +55,7 @@ class ToolkitModuleMixin:
         self.is_checkpointing = False
         self.is_normalizing = False
         self.normalize_scaler = 1.0
-        self._multiplier: Union[float, list, torch.Tensor] = 1.0
+        self._multiplier: Union[float, list, torch.Tensor] = None
 
     # this allows us to set different multipliers on a per item in a batch basis
     # allowing us to run positive and negative weights in the same batch
@@ -123,6 +123,8 @@ class ToolkitModuleMixin:
         return lx * scale
 
     def forward(self: Module, x):
+        if self._multiplier is None:
+            self.set_multiplier(0.0)
 
         org_forwarded = self.org_forward(x)
         lora_output = self._call_forward(x)
