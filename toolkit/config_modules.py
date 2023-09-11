@@ -77,7 +77,7 @@ class TrainConfig:
         self.optimizer_params = kwargs.get('optimizer_params', {})
         self.lr_scheduler = kwargs.get('lr_scheduler', 'constant')
         self.lr_scheduler_params = kwargs.get('lr_scheduler_params', {})
-        self.max_denoising_steps: int = kwargs.get('max_denoising_steps', 50)
+        self.max_denoising_steps: int = kwargs.get('max_denoising_steps', 1000)
         self.batch_size: int = kwargs.get('batch_size', 1)
         self.dtype: str = kwargs.get('dtype', 'fp32')
         self.xformers = kwargs.get('xformers', False)

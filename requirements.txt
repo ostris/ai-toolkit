@@ -1,7 +1,7 @@
 torch
 torchvision
 safetensors
-diffusers
+git+https://github.com/huggingface/diffusers.git
 transformers
 lycoris_lora
 flatten_json
@@ -20,3 +20,4 @@ k-diffusion
 open_clip_torch
 timm
 prodigyopt
+controlnet_aux==0.0.7

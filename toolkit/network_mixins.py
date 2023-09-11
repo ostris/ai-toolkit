@@ -122,11 +122,14 @@ class ToolkitModuleMixin:
 
         return lx * scale
 
-    def forward(self: Module, x):
+    # this may get an additional positional arg or not
+
+    def forward(self: Module, x, *args, **kwargs):
+        # diffusers added scale to resnet.. not sure what it does
         if self._multiplier is None:
             self.set_multiplier(0.0)
 
-        org_forwarded = self.org_forward(x)
+        org_forwarded = self.org_forward(x, *args, **kwargs)
         lora_output = self._call_forward(x)
         multiplier = self._multiplier.clone().detach()
 
