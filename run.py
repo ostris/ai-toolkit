@@ -3,6 +3,8 @@ import sys
 from typing import Union, OrderedDict
 
 sys.path.insert(0, os.getcwd())
+# must come before ANY torch or fastai imports
+import toolkit.cuda_malloc
 import argparse
 from toolkit.job import get_job
 

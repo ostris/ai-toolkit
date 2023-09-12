@@ -813,6 +813,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if isinstance(batch, DataLoaderBatchDTO):
                     batch.cleanup()
 
+                # flush every 10 steps
+                if self.step_num % 10 == 0:
+                    flush()
+
         self.progress_bar.close()
         self.sample(self.step_num + 1)
         print("")

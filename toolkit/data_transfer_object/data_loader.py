@@ -53,7 +53,7 @@ class FileItemDTO(LatentCachingFileItemDTOMixin, CaptionProcessingDTOMixin, Imag
         self.tensor: Union[torch.Tensor, None] = None
 
     def cleanup(self):
-        self.tensor = None
+        del self.tensor
         self.cleanup_latent()
 
 
@@ -90,7 +90,7 @@ class DataLoaderBatchDTO:
         ) for x in self.file_items]
 
     def cleanup(self):
-        self.tensor = None
+        del self.latents
+        del self.tensor
         for file_item in self.file_items:
             file_item.cleanup()
-        del self.tensor

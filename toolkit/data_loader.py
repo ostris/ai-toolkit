@@ -484,14 +484,14 @@ def get_dataloader_from_datasets(
             drop_last=False,
             shuffle=True,
             collate_fn=dto_collation,  # Use the custom collate function
-            num_workers=1
+            num_workers=0
         )
     else:
         data_loader = DataLoader(
             concatenated_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=1,
+            num_workers=0,
             collate_fn=dto_collation
         )
     return data_loader
