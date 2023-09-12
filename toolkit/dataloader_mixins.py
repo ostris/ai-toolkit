@@ -370,7 +370,7 @@ class LatentCachingMixin:
         self.sd.set_device_state_preset('cache_latents')
 
         # use tqdm to show progress
-        for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
+        for i, file_item in tqdm(enumerate(self.file_list), desc=f'Caching latents{" to disk" if to_disk else ""}'):
             # set latent space version
             if self.sd.is_xl:
                 file_item.latent_space_version = 'sdxl'
@@ -410,8 +410,15 @@ class LatentCachingMixin:
                     # keep it in memory
                     file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
 
+                del imgs
+                del latent
+                del file_item.tensor
+
                 flush(garbage_collect=False)
             file_item.is_latent_cached = True
+            # flush every 100
+            # if i % 100 == 0:
+            #     flush()
 
         # restore device state
         self.sd.restore_device_state()
