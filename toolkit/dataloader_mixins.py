@@ -234,6 +234,7 @@ class ImageProcessingDTOMixin:
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
+            return
         try:
             img = Image.open(self.path).convert('RGB')
             img = exif_transpose(img)
