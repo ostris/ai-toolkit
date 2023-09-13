@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Union
 import random
 
 ImgExt = Literal['jpg', 'png', 'webp']
@@ -55,6 +55,7 @@ class NetworkConfig:
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
         self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
         self.normalize = kwargs.get('normalize', False)
+        self.dropout: Union[float, None] = kwargs.get('dropout', None)
 
 
 class EmbeddingConfig:
