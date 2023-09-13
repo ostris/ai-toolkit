@@ -334,6 +334,9 @@ class ToolkitNetworkMixin:
 
     @multiplier.setter
     def multiplier(self, value: Union[float, List[float]]):
+        # only update if the value has changed
+        if self._multiplier == value:
+            return
         self._multiplier = value
         self._update_lora_multiplier()
 

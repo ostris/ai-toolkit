@@ -418,7 +418,6 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
         file_item.load_caption(self.caption_dict)
         return file_item
 
-    @lru_cache(maxsize=300)
     def __getitem__(self, item):
         if self.dataset_config.buckets:
             # for buckets we collate ourselves for now

@@ -138,9 +138,9 @@ class StableDiffusion:
             self.noise_scheduler = scheduler
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
-        self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
-        self.noise_scheduler.alphas = self.noise_scheduler.alphas.to(self.device_torch)
-        self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.device_torch)
+        # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
+        # self.noise_scheduler.alphas = self.noise_scheduler.alphas.to(self.device_torch)
+        # self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.device_torch)
 
         model_path = self.model_config.name_or_path
         if 'civitai.com' in self.model_config.name_or_path:
