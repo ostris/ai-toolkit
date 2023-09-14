@@ -437,6 +437,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
             else:
                 min_timestep = self.train_config.min_denoising_steps
 
+            # todo improve this, but is skews odds for higher timesteps
+            # 50% chance to use midpoint as the min_time_step
+            mid_point = (self.train_config.max_denoising_steps + min_timestep) / 2
+            if torch.rand(1) > 0.5:
+                min_timestep = mid_point
+
+            # 50% chance to use midpoint as the min_time_step
+            mid_point = (self.train_config.max_denoising_steps + min_timestep) / 2
+            if torch.rand(1) > 0.5:
+                min_timestep = mid_point
+
+            min_timestep = int(min_timestep)
+
             timesteps = torch.randint(
                 min_timestep,
                 self.train_config.max_denoising_steps,
