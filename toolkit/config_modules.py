@@ -85,6 +85,7 @@ class TrainConfig:
         self.batch_size: int = kwargs.get('batch_size', 1)
         self.dtype: str = kwargs.get('dtype', 'fp32')
         self.xformers = kwargs.get('xformers', False)
+        self.sdp = kwargs.get('sdp', False)
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
         self.min_snr_gamma = kwargs.get('min_snr_gamma', None)

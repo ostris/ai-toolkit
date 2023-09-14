@@ -29,6 +29,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
             lora_dim=4, alpha=1,
             dropout=0., rank_dropout=0., module_dropout=0.,
             use_cp=False,
+            network: 'LycorisSpecialNetwork' = None,
             parent=None,
             **kwargs,
     ):
@@ -36,7 +37,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
         # call super of super
         torch.nn.Module.__init__(self)
         # call super of
-        super().__init__(call_super_init=False)
+        super().__init__(call_super_init=False, network=network)
         self.lora_name = lora_name
         self.lora_dim = lora_dim
         self.cp = False
@@ -170,6 +171,8 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         if module_dropout is None:
             module_dropout = 0
 
+        self.torch_multiplier = None
+        # triggers a tensor update
         self.multiplier = multiplier
         self.lora_dim = lora_dim
 
@@ -229,6 +232,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 self.lora_dim, self.alpha,
                                 self.dropout, self.rank_dropout, self.module_dropout,
                                 use_cp,
+                                network=self,
                                 parent=module,
                                 **kwargs
                             )
@@ -240,6 +244,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                     self.lora_dim, self.alpha,
                                     self.dropout, self.rank_dropout, self.module_dropout,
                                     use_cp,
+                                    network=self,
                                     parent=module,
                                     **kwargs
                                 )
@@ -249,6 +254,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                     self.conv_lora_dim, self.conv_alpha,
                                     self.dropout, self.rank_dropout, self.module_dropout,
                                     use_cp,
+                                    network=self,
                                     parent=module,
                                     **kwargs
                                 )
@@ -271,6 +277,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                             self.dropout, self.rank_dropout, self.module_dropout,
                             use_cp,
                             parent=module,
+                            network=self,
                             **kwargs
                         )
                     elif module.__class__.__name__ == 'Conv2d':
@@ -281,6 +288,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 self.lora_dim, self.alpha,
                                 self.dropout, self.rank_dropout, self.module_dropout,
                                 use_cp,
+                                network=self,
                                 parent=module,
                                 **kwargs
                             )
@@ -290,6 +298,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 self.conv_lora_dim, self.conv_alpha,
                                 self.dropout, self.rank_dropout, self.module_dropout,
                                 use_cp,
+                                network=self,
                                 parent=module,
                                 **kwargs
                             )

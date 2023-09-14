@@ -24,7 +24,6 @@ from toolkit.sampler import get_sampler
 from toolkit.saving import save_ldm_model_from_diffusers
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 import torch
-from diffusers.schedulers import DDPMScheduler
 from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffusionPipeline, \
     StableDiffusionKDiffusionXLPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
@@ -48,7 +47,7 @@ DO_NOT_TRAIN_WEIGHTS = [
     "unet_time_embedding.linear_2.weight",
 ]
 
-DeviceStatePreset = Literal['cache_latents']
+DeviceStatePreset = Literal['cache_latents', 'generate']
 
 
 class BlankNetwork:
@@ -111,7 +110,7 @@ class StableDiffusion:
         self.unet: Union[None, 'UNet2DConditionModel']
         self.text_encoder: Union[None, 'CLIPTextModel', List[Union['CLIPTextModel', 'CLIPTextModelWithProjection']]]
         self.tokenizer: Union[None, 'CLIPTokenizer', List['CLIPTokenizer']]
-        self.noise_scheduler: Union[None, 'KarrasDiffusionSchedulers', 'DDPMScheduler'] = noise_scheduler
+        self.noise_scheduler: Union[None, 'KarrasDiffusionSchedulers'] = noise_scheduler
 
         # sdxl stuff
         self.logit_scale = None
@@ -247,7 +246,7 @@ class StableDiffusion:
         # pipe.unet = prepare_unet_for_training(pipe.unet)
 
         self.unet = pipe.unet
-        self.vae = pipe.vae.to(self.device_torch, dtype=dtype)
+        self.vae: 'AutoencoderKL' = pipe.vae.to(self.device_torch, dtype=dtype)
         self.vae.eval()
         self.vae.requires_grad_(False)
         self.unet.to(self.device_torch, dtype=dtype)
@@ -275,25 +274,11 @@ class StableDiffusion:
             network.is_normalizing = False
 
         self.save_device_state()
+        self.set_device_state_preset('generate')
 
         # save current seed state for training
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
-
-        # handle sdxl text encoder
-        if isinstance(self.text_encoder, list):
-            for encoder, i in zip(self.text_encoder, range(len(self.text_encoder))):
-                encoder.to(self.device_torch)
-                encoder.eval()
-        else:
-            self.text_encoder.to(self.device_torch)
-            self.text_encoder.eval()
-
-        self.vae.to(self.device_torch)
-        self.vae.eval()
-        self.unet.to(self.device_torch)
-        self.unet.eval()
-        flush()
 
         noise_scheduler = self.noise_scheduler
         if sampler is not None:
@@ -346,6 +331,7 @@ class StableDiffusion:
             start_multiplier = self.network.multiplier
 
         pipeline.to(self.device_torch)
+
         with network:
             with torch.no_grad():
                 if self.network is not None:
@@ -876,6 +862,7 @@ class StableDiffusion:
             'unet': {
                 'training': self.unet.training,
                 'device': self.unet.device,
+                'requires_grad': self.unet.conv_in.weight.requires_grad,
             },
         }
         if isinstance(self.text_encoder, list):
@@ -884,11 +871,14 @@ class StableDiffusion:
                 self.device_state['text_encoder'].append({
                     'training': encoder.training,
                     'device': encoder.device,
+                    # todo there has to be a better way to do this
+                    'requires_grad': encoder.text_model.final_layer_norm.weight.requires_grad
                 })
         else:
             self.device_state['text_encoder'] = {
                 'training': self.text_encoder.training,
                 'device': self.text_encoder.device,
+                'requires_grad': self.text_encoder.text_model.final_layer_norm.weight.requires_grad
             }
 
     def restore_device_state(self):
@@ -910,19 +900,33 @@ class StableDiffusion:
         else:
             self.unet.eval()
         self.unet.to(state['unet']['device'])
+        if state['unet']['requires_grad']:
+            self.unet.requires_grad_(True)
+        else:
+            self.unet.requires_grad_(False)
         if isinstance(self.text_encoder, list):
             for i, encoder in enumerate(self.text_encoder):
-                if state['text_encoder'][i]['training']:
-                    encoder.train()
+                if isinstance(state['text_encoder'], list):
+                    if state['text_encoder'][i]['training']:
+                        encoder.train()
+                    else:
+                        encoder.eval()
+                    encoder.to(state['text_encoder'][i]['device'])
+                    encoder.requires_grad_(state['text_encoder'][i]['requires_grad'])
                 else:
-                    encoder.eval()
-                encoder.to(state['text_encoder'][i]['device'])
+                    if state['text_encoder']['training']:
+                        encoder.train()
+                    else:
+                        encoder.eval()
+                    encoder.to(state['text_encoder']['device'])
+                    encoder.requires_grad_(state['text_encoder']['requires_grad'])
         else:
             if state['text_encoder']['training']:
                 self.text_encoder.train()
             else:
                 self.text_encoder.eval()
             self.text_encoder.to(state['text_encoder']['device'])
+            self.text_encoder.requires_grad_(state['text_encoder']['requires_grad'])
         flush()
 
     def set_device_state_preset(self, device_state_preset: DeviceStatePreset):
@@ -935,18 +939,22 @@ class StableDiffusion:
         training_modules = []
         if device_state_preset in ['cache_latents']:
             active_modules = ['vae']
+        if device_state_preset in ['generate']:
+            active_modules = ['vae', 'unet', 'text_encoder']
 
         state = {}
         # vae
         state['vae'] = {
             'training': 'vae' in training_modules,
             'device': self.device_torch if 'vae' in active_modules else 'cpu',
+            'requires_grad': 'vae' in training_modules,
         }
 
         # unet
         state['unet'] = {
             'training': 'unet' in training_modules,
             'device': self.device_torch if 'unet' in active_modules else 'cpu',
+            'requires_grad': 'unet' in training_modules,
         }
 
         # text encoder
@@ -956,11 +964,13 @@ class StableDiffusion:
                 state['text_encoder'].append({
                     'training': 'text_encoder' in training_modules,
                     'device': self.device_torch if 'text_encoder' in active_modules else 'cpu',
+                    'requires_grad': 'text_encoder' in training_modules,
                 })
         else:
             state['text_encoder'] = {
                 'training': 'text_encoder' in training_modules,
                 'device': self.device_torch if 'text_encoder' in active_modules else 'cpu',
+                'requires_grad': 'text_encoder' in training_modules,
             }
 
         self.set_device_state(state)

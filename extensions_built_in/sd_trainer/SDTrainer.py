@@ -29,6 +29,7 @@ class SDTrainer(BaseSDTrainProcess):
         else:
             # offload it. Already cached
             self.sd.vae.to('cpu')
+            flush()
 
     def hook_train_loop(self, batch):
 
@@ -110,7 +111,5 @@ class SDTrainer(BaseSDTrainProcess):
         loss_dict = OrderedDict(
             {'loss': loss.item()}
         )
-        # reset network multiplier
-        network.multiplier = 1.0
 
         return loss_dict
