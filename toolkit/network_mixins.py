@@ -341,13 +341,7 @@ class ToolkitNetworkMixin:
             if isinstance(multiplier, int) or isinstance(multiplier, float):
                 tensor_multiplier = torch.tensor((multiplier,)).to(device, dtype=dtype)
             elif isinstance(multiplier, list):
-                tensor_list = []
-                for m in multiplier:
-                    if isinstance(m, int) or isinstance(m, float):
-                        tensor_list.append(torch.tensor((m,)).to(device, dtype=dtype))
-                    elif isinstance(m, torch.Tensor):
-                        tensor_list.append(m.clone().detach().to(device, dtype=dtype))
-                tensor_multiplier = torch.cat(tensor_list)
+                tensor_multiplier = torch.tensor(multiplier).to(device, dtype=dtype)
             elif isinstance(multiplier, torch.Tensor):
                 tensor_multiplier = multiplier.clone().detach().to(device, dtype=dtype)
 

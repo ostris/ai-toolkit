@@ -161,10 +161,35 @@ def save_lora_from_diffusers(
         else:
             converted_key = key
 
+    # make sure parent folder exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    save_file(converted_state_dict, output_file, metadata=meta)
 
 
+def save_t2i_from_diffusers(
+        t2i_state_dict: 'OrderedDict',
+        output_file: str,
+        meta: 'OrderedDict',
+        dtype=get_torch_dtype('fp16'),
+):
+    # todo: test compatibility with non diffusers
+    converted_state_dict = OrderedDict()
+    for key, value in t2i_state_dict.items():
+        converted_state_dict[key] = value.detach().to('cpu', dtype=dtype)
 
     # make sure parent folder exists
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
-    save_file(converted_state_dict, output_file, metadata=meta
-)
+    save_file(converted_state_dict, output_file, metadata=meta)
+
+
+def load_t2i_model(
+        path_to_file,
+        device: Union[str, torch.device] = 'cpu',
+        dtype: torch.dtype = torch.float32
+):
+    raw_state_dict = load_file(path_to_file, device)
+    converted_state_dict = OrderedDict()
+    for key, value in raw_state_dict.items():
+        # todo see if we need to convert dict
+        converted_state_dict[key] = value.detach().to(device, dtype=dtype)
+    return converted_state_dict
