@@ -5,6 +5,12 @@ from typing import Union, OrderedDict
 sys.path.insert(0, os.getcwd())
 # must come before ANY torch or fastai imports
 # import toolkit.cuda_malloc
+
+# check if we have DEBUG_TOOLKIT in env
+if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
+    # set torch to trace mode
+    import torch
+    torch.autograd.set_detect_anomaly(True)
 import argparse
 from toolkit.job import get_job
 

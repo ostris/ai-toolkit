@@ -3,10 +3,12 @@ import glob
 import os
 import time
 from collections import OrderedDict
+from typing import List, Optional
 
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-# from basicsr.archs.rrdbnet_arch import RRDBNet
+
+from toolkit.basic import flush
 from toolkit.models.RRDB import RRDBNet as ESRGAN, esrgan_safetensors_keys
 from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader, ConcatDataset
@@ -67,9 +69,10 @@ class TrainESRGANProcess(BaseTrainProcess):
         self.augmentations = self.get_conf('augmentations', {})
         self.torch_dtype = get_torch_dtype(self.dtype)
         if self.torch_dtype == torch.bfloat16:
-            self.esrgan_dtype = torch.float16
+            self.esrgan_dtype = torch.float32
         else:
             self.esrgan_dtype = torch.float32
+
         self.vgg_19 = None
         self.style_weight_scalers = []
         self.content_weight_scalers = []
@@ -232,6 +235,7 @@ class TrainESRGANProcess(BaseTrainProcess):
                 pattern_size=self.zoom,
                 dtype=self.torch_dtype
             ).to(self.device, dtype=self.torch_dtype)
+            self._pattern_loss = self._pattern_loss.to(self.device, dtype=self.torch_dtype)
         loss = torch.mean(self._pattern_loss(pred, target))
         return loss
 
@@ -269,12 +273,51 @@ class TrainESRGANProcess(BaseTrainProcess):
         if self.use_critic:
             self.critic.save(step)
 
-    def sample(self, step=None):
+    def sample(self, step=None, batch: Optional[List[torch.Tensor]] = None):
         sample_folder = os.path.join(self.save_root, 'samples')
         if not os.path.exists(sample_folder):
             os.makedirs(sample_folder, exist_ok=True)
+        batch_sample_folder = os.path.join(self.save_root, 'samples_batch')
+
+        batch_targets = None
+        batch_inputs = None
+        if batch is not None and not os.path.exists(batch_sample_folder):
+            os.makedirs(batch_sample_folder, exist_ok=True)
 
         self.model.eval()
+
+        def process_and_save(img, target_img, save_path):
+            output = self.model(img.to(self.device, dtype=self.esrgan_dtype))
+            # output = (output / 2 + 0.5).clamp(0, 1)
+            output = output.clamp(0, 1)
+            # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
+            output = output.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
+
+            # convert to pillow image
+            output = Image.fromarray((output * 255).astype(np.uint8))
+
+            if isinstance(target_img, torch.Tensor):
+                # convert to pil
+                target_img = target_img.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
+                target_img = Image.fromarray((target_img * 255).astype(np.uint8))
+
+            # upscale to size * self.upscale_sample while maintaining pixels
+            output = output.resize(
+                (self.resolution * self.upscale_sample, self.resolution * self.upscale_sample),
+                resample=Image.NEAREST
+            )
+
+            width, height = output.size
+
+            # stack input image and decoded image
+            target_image = target_img.resize((width, height))
+            output = output.resize((width, height))
+
+            output_img = Image.new('RGB', (width * 2, height))
+            output_img.paste(target_image, (0, 0))
+            output_img.paste(output, (width, 0))
+
+            output_img.save(save_path)
 
         with torch.no_grad():
             for i, img_url in enumerate(self.sample_sources):
@@ -295,30 +338,6 @@ class TrainESRGANProcess(BaseTrainProcess):
 
                 img = IMAGE_TRANSFORMS(img).unsqueeze(0).to(self.device, dtype=self.esrgan_dtype)
                 img = img
-                output = self.model(img)
-                # output = (output / 2 + 0.5).clamp(0, 1)
-                output = output.clamp(0, 1)
-                # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
-                output = output.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
-
-                # convert to pillow image
-                output = Image.fromarray((output * 255).astype(np.uint8))
-
-                # upscale to size * self.upscale_sample while maintaining pixels
-                output = output.resize(
-                    (self.resolution * self.upscale_sample, self.resolution * self.upscale_sample),
-                    resample=Image.NEAREST
-                )
-
-                width, height = output.size
-
-                # stack input image and decoded image
-                target_image = target_image.resize((width, height))
-                output = output.resize((width, height))
-
-                output_img = Image.new('RGB', (width * 2, height))
-                output_img.paste(target_image, (0, 0))
-                output_img.paste(output, (width, 0))
 
                 step_num = ''
                 if step is not None:
@@ -328,7 +347,23 @@ class TrainESRGANProcess(BaseTrainProcess):
                 # zero-pad 2 digits
                 i_str = str(i).zfill(2)
                 filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
-                output_img.save(os.path.join(sample_folder, filename))
+                process_and_save(img, target_image, os.path.join(sample_folder, filename))
+
+            if batch is not None:
+                batch_targets = batch[0].detach()
+                batch_inputs = batch[1].detach()
+                batch_targets = torch.chunk(batch_targets, batch_targets.shape[0], dim=0)
+                batch_inputs = torch.chunk(batch_inputs, batch_inputs.shape[0], dim=0)
+
+                for i in range(len(batch_inputs)):
+                    if step is not None:
+                        # zero-pad 9 digits
+                        step_num = f"_{str(step).zfill(9)}"
+                    seconds_since_epoch = int(time.time())
+                    # zero-pad 2 digits
+                    i_str = str(i).zfill(2)
+                    filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
+                    process_and_save(batch_inputs[i], batch_targets[i], os.path.join(batch_sample_folder, filename))
 
         self.model.train()
 
@@ -445,35 +480,60 @@ class TrainESRGANProcess(BaseTrainProcess):
         print("Generating baseline samples")
         self.sample(step=0)
         # range start at self.epoch_num go to self.epochs
+        critic_losses = []
         for epoch in range(self.epoch_num, self.epochs, 1):
             if self.step_num >= self.max_steps:
                 break
+            flush()
             for targets, inputs in self.data_loader:
                 if self.step_num >= self.max_steps:
                     break
                 with torch.no_grad():
-                    targets = targets.to(self.device, dtype=self.esrgan_dtype).clamp(0, 1)
-                    inputs = inputs.to(self.device, dtype=self.esrgan_dtype).clamp(0, 1)
+                    is_critic_only_step = False
+                    if self.use_critic and 1 / (self.critic.num_critic_per_gen + 1) < np.random.uniform():
+                        is_critic_only_step = True
 
-                pred = self.model(inputs)
+                    targets = targets.to(self.device, dtype=self.esrgan_dtype).clamp(0, 1).detach()
+                    inputs = inputs.to(self.device, dtype=self.esrgan_dtype).clamp(0, 1).detach()
 
-                pred = pred.to(self.device, dtype=self.torch_dtype).clamp(0, 1)
-                targets = targets.to(self.device, dtype=self.torch_dtype).clamp(0, 1)
+                optimizer.zero_grad()
+                # dont do grads here for critic step
+                do_grad = not is_critic_only_step
+                with torch.set_grad_enabled(do_grad):
+                    pred = self.model(inputs)
 
-                # Run through VGG19
-                if self.style_weight > 0 or self.content_weight > 0 or self.use_critic:
-                    stacked = torch.cat([pred, targets], dim=0)
-                    # stacked = (stacked / 2 + 0.5).clamp(0, 1)
-                    stacked = stacked.clamp(0, 1)
-                    self.vgg_19(stacked)
+                    pred = pred.to(self.device, dtype=self.torch_dtype).clamp(0, 1)
+                    targets = targets.to(self.device, dtype=self.torch_dtype).clamp(0, 1)
+                    if torch.isnan(pred).any():
+                        raise ValueError('pred has nan values')
+                    if torch.isnan(targets).any():
+                        raise ValueError('targets has nan values')
 
-                if self.use_critic:
+                    # Run through VGG19
+                    if self.style_weight > 0 or self.content_weight > 0 or self.use_critic:
+                        stacked = torch.cat([pred, targets], dim=0)
+                        # stacked = (stacked / 2 + 0.5).clamp(0, 1)
+                        stacked = stacked.clamp(0, 1)
+                        self.vgg_19(stacked)
+                        # make sure we dont have nans
+                        if torch.isnan(self.vgg19_pool_4.tensor).any():
+                            raise ValueError('vgg19_pool_4 has nan values')
+
+                if is_critic_only_step:
                     critic_d_loss = self.critic.step(self.vgg19_pool_4.tensor.detach())
+                    critic_losses.append(critic_d_loss)
+                    # don't do generator step
+                    continue
                 else:
-                    critic_d_loss = 0.0
+                    # doing a regular step
+                    if len(critic_losses) == 0:
+                        critic_d_loss = 0
+                    else:
+                        critic_d_loss = sum(critic_losses) / len(critic_losses)
 
                 style_loss = self.get_style_loss() * self.style_weight
                 content_loss = self.get_content_loss() * self.content_weight
+
                 mse_loss = self.get_mse_loss(pred, targets) * self.mse_weight
                 tv_loss = self.get_tv_loss(pred, targets) * self.tv_weight
                 pattern_loss = self.get_pattern_loss(pred, targets) * self.pattern_weight
@@ -483,10 +543,13 @@ class TrainESRGANProcess(BaseTrainProcess):
                     critic_gen_loss = torch.tensor(0.0, device=self.device, dtype=self.torch_dtype)
 
                 loss = style_loss + content_loss + mse_loss + tv_loss + critic_gen_loss + pattern_loss
+                # make sure non nan
+                if torch.isnan(loss):
+                    raise ValueError('loss is nan')
 
                 # Backward pass and optimization
-                optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                 optimizer.step()
                 scheduler.step()
 
@@ -549,7 +612,7 @@ class TrainESRGANProcess(BaseTrainProcess):
                     if self.sample_every and self.step_num % self.sample_every == 0:
                         # print above the progress bar
                         self.print(f"Sampling at step {self.step_num}")
-                        self.sample(self.step_num)
+                        self.sample(self.step_num, batch=[targets, inputs])
 
                     if self.save_every and self.step_num % self.save_every == 0:
                         # print above the progress bar

@@ -479,6 +479,7 @@ def encode_prompts_xl(
         tokenizers: list['CLIPTokenizer'],
         text_encoders: list[Union['CLIPTextModel', 'CLIPTextModelWithProjection']],
         prompts: list[str],
+        prompts2: Union[list[str], None],
         num_images_per_prompt: int = 1,
         use_text_encoder_1: bool = True,  # sdxl
         use_text_encoder_2: bool = True  # sdxl
@@ -486,11 +487,13 @@ def encode_prompts_xl(
     # text_encoder and text_encoder_2's penuultimate layer's output
     text_embeds_list = []
     pooled_text_embeds = None  # always text_encoder_2's pool
+    if prompts2 is None:
+        prompts2 = prompts
 
     for idx, (tokenizer, text_encoder) in enumerate(zip(tokenizers, text_encoders)):
         # todo, we are using a blank string to ignore that encoder for now.
         # find a better way to do this (zeroing?, removing it from the unet?)
-        prompt_list_to_use = prompts
+        prompt_list_to_use = prompts if idx == 0 else prompts2
         if idx == 0 and not use_text_encoder_1:
             prompt_list_to_use = ["" for _ in prompts]
         if idx == 1 and not use_text_encoder_2:
@@ -513,6 +516,7 @@ def encode_prompts_xl(
 
 def text_encode(text_encoder: 'CLIPTextModel', tokens):
     return text_encoder(tokens.to(text_encoder.device))[0]
+
 
 
 def encode_prompts(

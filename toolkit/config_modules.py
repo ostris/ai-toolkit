@@ -3,6 +3,8 @@ import time
 from typing import List, Optional, Literal, Union
 import random
 
+from toolkit.prompt_utils import PromptEmbeds
+
 ImgExt = Literal['jpg', 'png', 'webp']
 
 
@@ -447,3 +449,11 @@ class GenerateImageConfig:
                         self.network_multiplier = float(content)
                     elif flag == 'gr':
                         self.guidance_rescale = float(content)
+
+    def post_process_embeddings(
+            self,
+            conditional_prompt_embeds: PromptEmbeds,
+            unconditional_prompt_embeds: Optional[PromptEmbeds] = None,
+    ):
+        # this is called after prompt embeds are encoded. We can override them in the future here
+        pass

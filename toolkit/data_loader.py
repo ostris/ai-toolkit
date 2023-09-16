@@ -53,6 +53,8 @@ class ImageDataset(Dataset, CaptionMixin):
             else:
                 bad_count += 1
 
+        self.file_list = new_file_list
+
         print(f"  -  Found {len(self.file_list)} images")
         print(f"  -  Found {bad_count} images that are too small")
         assert len(self.file_list) > 0, f"no images found in {self.path}"
@@ -90,7 +92,10 @@ class ImageDataset(Dataset, CaptionMixin):
                     scale_size = self.resolution
                 else:
                     scale_size = random.randint(self.resolution, int(min_img_size))
-                img = img.resize((scale_size, scale_size), Image.BICUBIC)
+                scaler = scale_size / min_img_size
+                scale_width = int((img.width + 5) * scaler)
+                scale_height = int((img.height + 5) * scaler)
+                img = img.resize((scale_width, scale_height), Image.BICUBIC)
             img = transforms.RandomCrop(self.resolution)(img)
         else:
             img = transforms.CenterCrop(min_img_size)(img)

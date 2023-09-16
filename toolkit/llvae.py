@@ -7,7 +7,7 @@ import itertools
 class LosslessLatentDecoder(nn.Module):
     def __init__(self, in_channels, latent_depth, dtype=torch.float32):
         super(LosslessLatentDecoder, self).__init__()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.latent_depth = latent_depth
         self.in_channels = in_channels
         self.out_channels = int(in_channels // (latent_depth * latent_depth))
@@ -46,7 +46,7 @@ class LosslessLatentDecoder(nn.Module):
 class LosslessLatentEncoder(nn.Module):
     def __init__(self, in_channels, latent_depth, dtype=torch.float32):
         super(LosslessLatentEncoder, self).__init__()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.latent_depth = latent_depth
         self.in_channels = in_channels
         self.out_channels = int(in_channels * (latent_depth * latent_depth))
@@ -108,7 +108,7 @@ if __name__ == '__main__':
     from PIL import Image
     import torchvision.transforms as transforms
     user_path = os.path.expanduser('~')
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.float32
 
     input_path = os.path.join(user_path, "Pictures/sample_2_512.png")

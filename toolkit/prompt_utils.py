@@ -44,6 +44,12 @@ class PromptEmbeds:
             self.pooled_embeds = self.pooled_embeds.detach()
         return self
 
+    def clone(self):
+        if self.pooled_embeds is not None:
+            return PromptEmbeds([self.text_embeds.clone(), self.pooled_embeds.clone()])
+        else:
+            return PromptEmbeds(self.text_embeds.clone())
+
 
 class EncodedPromptPair:
     def __init__(
