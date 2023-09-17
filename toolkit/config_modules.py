@@ -92,6 +92,7 @@ class TrainConfig:
         self.unet_lr = kwargs.get('unet_lr', self.lr)
         self.text_encoder_lr = kwargs.get('text_encoder_lr', self.lr)
         self.embedding_lr = kwargs.get('embedding_lr', self.lr)
+        self.adapter_lr = kwargs.get('adapter_lr', self.lr)
         self.optimizer = kwargs.get('optimizer', 'adamw')
         self.optimizer_params = kwargs.get('optimizer_params', {})
         self.lr_scheduler = kwargs.get('lr_scheduler', 'constant')

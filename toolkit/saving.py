@@ -184,7 +184,7 @@ def save_t2i_from_diffusers(
 
 def load_t2i_model(
         path_to_file,
-        device: Union[str, torch.device] = 'cpu',
+        device: Union[str] = 'cpu',
         dtype: torch.dtype = torch.float32
 ):
     raw_state_dict = load_file(path_to_file, device)
