@@ -251,6 +251,13 @@ class ImageProcessingDTOMixin:
             raise ValueError(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
 
+        if self.flip_x:
+            # do a flip
+            img.transpose(Image.FLIP_LEFT_RIGHT)
+        if self.flip_y:
+            # do a flip
+            img.transpose(Image.FLIP_TOP_BOTTOM)
+
         if self.dataset_config.buckets:
             # todo allow scaling and cropping, will be hard to add
             # scale and crop based on file item
@@ -258,6 +265,7 @@ class ImageProcessingDTOMixin:
             img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
         else:
             # Downscale the source image first
+            # TODO this is nto right
             img = img.resize(
                 (int(img.size[0] * self.dataset_config.scale), int(img.size[1] * self.dataset_config.scale)),
                 Image.BICUBIC)
@@ -270,7 +278,10 @@ class ImageProcessingDTOMixin:
                         scale_size = self.dataset_config.resolution
                     else:
                         scale_size = random.randint(self.dataset_config.resolution, int(min_img_size))
-                    img = img.resize((scale_size, scale_size), Image.BICUBIC)
+                    scaler = scale_size / min_img_size
+                    scale_width = int((img.width + 5) * scaler)
+                    scale_height = int((img.height + 5) * scaler)
+                    img = img.resize((scale_width, scale_height), Image.BICUBIC)
                 img = transforms.RandomCrop(self.dataset_config.resolution)(img)
             else:
                 img = transforms.CenterCrop(min_img_size)(img)
@@ -299,7 +310,7 @@ class LatentCachingFileItemDTOMixin:
         self.latent_version = 1
 
     def get_latent_info_dict(self: 'FileItemDTO'):
-        return OrderedDict([
+        item = OrderedDict([
             ("filename", os.path.basename(self.path)),
             ("scale_to_width", self.scale_to_width),
             ("scale_to_height", self.scale_to_height),
@@ -310,6 +321,12 @@ class LatentCachingFileItemDTOMixin:
             ("latent_space_version", self.latent_space_version),
             ("latent_version", self.latent_version),
         ])
+        # when adding items, do it after so we dont change old latents
+        if self.flip_x:
+            item["flip_x"] = True
+        if self.flip_y:
+            item["flip_y"] = True
+        return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
         if self._latent_path is not None and not recalculate:

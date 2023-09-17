@@ -217,6 +217,9 @@ class DatasetConfig:
         self.token_dropout_rate: float = float(kwargs.get('token_dropout_rate', 0.0))
         self.shuffle_tokens: bool = kwargs.get('shuffle_tokens', False)
         self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
+        self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
+        self.flip_x: bool = kwargs.get('flip_x', False)
+        self.flip_y: bool = kwargs.get('flip_y', False)
 
         # cache latents will store them in memory
         self.cache_latents: bool = kwargs.get('cache_latents', False)

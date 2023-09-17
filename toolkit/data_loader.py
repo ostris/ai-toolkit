@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import random
@@ -383,9 +384,6 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
                     path=file,
                     dataset_config=dataset_config
                 )
-                # if file_item.scale_to_width < self.resolution or file_item.scale_to_height < self.resolution:
-                #     bad_count += 1
-                # else:
                 self.file_list.append(file_item)
             except Exception as e:
                 print(f"Error processing image: {file}")
@@ -395,6 +393,29 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
         print(f"  -  Found {len(self.file_list)} images")
         # print(f"  -  Found {bad_count} images that are too small")
         assert len(self.file_list) > 0, f"no images found in {self.dataset_path}"
+
+        # handle x axis flips
+        if self.dataset_config.flip_x:
+            print("  -  adding x axis flips")
+            current_file_list = [x for x in self.file_list]
+            for file_item in current_file_list:
+                # create a copy that is flipped on the x axis
+                new_file_item = copy.deepcopy(file_item)
+                new_file_item.flip_x = True
+                self.file_list.append(new_file_item)
+
+        # handle y axis flips
+        if self.dataset_config.flip_y:
+            print("  -  adding y axis flips")
+            current_file_list = [x for x in self.file_list]
+            for file_item in current_file_list:
+                # create a copy that is flipped on the y axis
+                new_file_item = copy.deepcopy(file_item)
+                new_file_item.flip_y = True
+                self.file_list.append(new_file_item)
+
+        if self.dataset_config.flip_x or self.dataset_config.flip_y:
+            print(f"  -  Found {len(self.file_list)} images after adding flips")
 
         self.transform = transforms.Compose([
             transforms.ToTensor(),

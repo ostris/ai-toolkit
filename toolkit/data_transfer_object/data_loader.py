@@ -47,6 +47,8 @@ class FileItemDTO(LatentCachingFileItemDTOMixin, CaptionProcessingDTOMixin, Imag
         self.crop_y: int = kwargs.get('crop_y', 0)
         self.crop_width: int = kwargs.get('crop_width', self.scale_to_width)
         self.crop_height: int = kwargs.get('crop_height', self.scale_to_height)
+        self.flip_x: bool = kwargs.get('flip_x', False)
+        self.flip_y: bool = kwargs.get('flip_x', False)
 
         self.network_weight: float = self.dataset_config.network_weight
         self.is_reg = self.dataset_config.is_reg
