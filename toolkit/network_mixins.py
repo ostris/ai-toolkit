@@ -57,35 +57,13 @@ class ToolkitModuleMixin:
         self.normalize_scaler = 1.0
         self._multiplier: Union[float, list, torch.Tensor] = None
 
-    # this allows us to set different multipliers on a per item in a batch basis
-    # allowing us to run positive and negative weights in the same batch
-    def set_multiplier(self: Module, multiplier):
-        device = self.lora_down.weight.device
-        dtype = self.lora_down.weight.dtype
-        with torch.no_grad():
-            tensor_multiplier = None
-            if isinstance(multiplier, int) or isinstance(multiplier, float):
-                tensor_multiplier = torch.tensor((multiplier,)).to(device, dtype=dtype)
-            elif isinstance(multiplier, list):
-                tensor_list = []
-                for m in multiplier:
-                    if isinstance(m, int) or isinstance(m, float):
-                        tensor_list.append(torch.tensor((m,)).to(device, dtype=dtype))
-                    elif isinstance(m, torch.Tensor):
-                        tensor_list.append(m.clone().detach().to(device, dtype=dtype))
-                tensor_multiplier = torch.cat(tensor_list)
-            elif isinstance(multiplier, torch.Tensor):
-                tensor_multiplier = multiplier.clone().detach().to(device, dtype=dtype)
-
-            self._multiplier = tensor_multiplier.clone().detach()
-
     def _call_forward(self: Module, x):
         # module dropout
         if self.module_dropout is not None and self.training:
             if torch.rand(1) < self.module_dropout:
                 return 0.0  # added to original forward
 
-        if hasattr(self, 'lora_mid') and hasattr(self, 'cp') and self.cp:
+        if hasattr(self, 'lora_mid') and self.lora_mid is not None:
             lx = self.lora_mid(self.lora_down(x))
         else:
             try:
@@ -379,7 +357,7 @@ class ToolkitNetworkMixin:
         for lora in loras:
             lora.to(device, dtype)
 
-    def get_all_modules(self: Network):
+    def get_all_modules(self: Network) -> List[Module]:
         loras = []
         if hasattr(self, 'unet_loras'):
             loras += self.unet_loras

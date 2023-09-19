@@ -66,7 +66,7 @@ class AdapterConfig:
         self.in_channels: int = kwargs.get('in_channels', 3)
         self.channels: List[int] = kwargs.get('channels', [320, 640, 1280, 1280])
         self.num_res_blocks: int = kwargs.get('num_res_blocks', 2)
-        self.downscale_factor: int = kwargs.get('downscale_factor', 16)
+        self.downscale_factor: int = kwargs.get('downscale_factor', 8)
         self.adapter_type: str = kwargs.get('adapter_type', 'full_adapter')
         self.image_dir: str = kwargs.get('image_dir', None)
         self.test_img_path: str = kwargs.get('test_img_path', None)

@@ -119,13 +119,13 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         # 'SiLU',
         # 'ModuleList',
         # 'DownBlock2D',
-        'ResnetBlock2D',  # need
+        # 'ResnetBlock2D',  # need
         # 'GroupNorm',
         # 'LoRACompatibleConv',
         # 'LoRACompatibleLinear',
         # 'Dropout',
         # 'CrossAttnDownBlock2D', # needed
-        'Transformer2DModel',  # maybe not, has duplicates
+        # 'Transformer2DModel',  # maybe not, has duplicates
         # 'BasicTransformerBlock', # duplicates
         # 'LayerNorm',
         # 'Attention',

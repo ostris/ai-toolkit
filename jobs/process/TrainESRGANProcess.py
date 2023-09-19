@@ -287,14 +287,18 @@ class TrainESRGANProcess(BaseTrainProcess):
         self.model.eval()
 
         def process_and_save(img, target_img, save_path):
-            output = self.model(img.to(self.device, dtype=self.esrgan_dtype))
+            img = img.to(self.device, dtype=self.esrgan_dtype)
+            output = self.model(img)
             # output = (output / 2 + 0.5).clamp(0, 1)
             output = output.clamp(0, 1)
+            img = img.clamp(0, 1)
             # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
             output = output.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
+            img = img.cpu().permute(0, 2, 3, 1).squeeze(0).float().numpy()
 
             # convert to pillow image
             output = Image.fromarray((output * 255).astype(np.uint8))
+            img = Image.fromarray((img * 255).astype(np.uint8))
 
             if isinstance(target_img, torch.Tensor):
                 # convert to pil
@@ -306,16 +310,23 @@ class TrainESRGANProcess(BaseTrainProcess):
                 (self.resolution * self.upscale_sample, self.resolution * self.upscale_sample),
                 resample=Image.NEAREST
             )
+            img = img.resize(
+                (self.resolution * self.upscale_sample, self.resolution * self.upscale_sample),
+                resample=Image.NEAREST
+            )
 
             width, height = output.size
 
             # stack input image and decoded image
             target_image = target_img.resize((width, height))
             output = output.resize((width, height))
+            img = img.resize((width, height))
 
-            output_img = Image.new('RGB', (width * 2, height))
-            output_img.paste(target_image, (0, 0))
+            output_img = Image.new('RGB', (width * 3, height))
+
+            output_img.paste(img, (0, 0))
             output_img.paste(output, (width, 0))
+            output_img.paste(target_image, (width * 2, 0))
 
             output_img.save(save_path)
 
@@ -346,7 +357,7 @@ class TrainESRGANProcess(BaseTrainProcess):
                 seconds_since_epoch = int(time.time())
                 # zero-pad 2 digits
                 i_str = str(i).zfill(2)
-                filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
+                filename = f"{seconds_since_epoch}{step_num}_{i_str}.jpg"
                 process_and_save(img, target_image, os.path.join(sample_folder, filename))
 
             if batch is not None:
@@ -362,7 +373,7 @@ class TrainESRGANProcess(BaseTrainProcess):
                     seconds_since_epoch = int(time.time())
                     # zero-pad 2 digits
                     i_str = str(i).zfill(2)
-                    filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
+                    filename = f"{seconds_since_epoch}{step_num}_{i_str}.jpg"
                     process_and_save(batch_inputs[i], batch_targets[i], os.path.join(batch_sample_folder, filename))
 
         self.model.train()
