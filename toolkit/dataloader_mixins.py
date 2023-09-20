@@ -25,8 +25,13 @@ if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
     from toolkit.data_transfer_object.data_loader import FileItemDTO
 
-
 # def get_associated_caption_from_img_path(img_path):
+
+
+transforms_dict = {
+    'ColorJitter': transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.01),
+    'RandomEqualize': transforms.RandomEqualize(p=0.2),
+}
 
 
 class CaptionMixin:
@@ -286,6 +291,12 @@ class ImageProcessingDTOMixin:
             else:
                 img = transforms.CenterCrop(min_img_size)(img)
                 img = img.resize((self.dataset_config.resolution, self.dataset_config.resolution), Image.BICUBIC)
+
+        if self.augments is not None and len(self.augments) > 0:
+            # do augmentations
+            for augment in self.augments:
+                if augment in transforms_dict:
+                    img = transforms_dict[augment](img)
 
         if transform:
             img = transform(img)

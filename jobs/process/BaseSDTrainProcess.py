@@ -392,7 +392,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def load_training_state_from_metadata(self, path):
         meta = load_metadata_from_safetensors(path)
         # if 'training_info' in Orderdict keys
-        if 'training_info' in meta and 'step' in meta['training_info']:
+        if 'training_info' in meta and 'step' in meta['training_info'] and self.train_config.start_step is None:
             self.step_num = meta['training_info']['step']
             self.start_step = self.step_num
             print(f"Found step {self.step_num} in metadata, starting from there")
@@ -795,6 +795,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.params += param['params']
             else:
                 self.params.append(param)
+
+        if self.train_config.start_step is not None:
+            self.step_num = self.train_config.start_step
+            self.start_step = self.step_num
 
         optimizer_type = self.train_config.optimizer.lower()
         optimizer = get_optimizer(self.params, optimizer_type, learning_rate=self.train_config.lr,

@@ -112,6 +112,7 @@ class TrainConfig:
         self.weight_jitter = kwargs.get('weight_jitter', 0.0)
         self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
         self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
+        self.start_step = kwargs.get('start_step', None)
 
 
 class ModelConfig:
@@ -221,11 +222,17 @@ class DatasetConfig:
         self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_y', False)
+        self.augments: List[str] = kwargs.get('augments', [])
 
         # cache latents will store them in memory
         self.cache_latents: bool = kwargs.get('cache_latents', False)
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
+
+        if len(self.augments) > 0 and (self.cache_latents or self.cache_latents_to_disk):
+            print(f"WARNING: Augments are not supported with caching latents. Setting cache_latents to False")
+            self.cache_latents = False
+            self.cache_latents_to_disk = False
 
         # legacy compatability
         legacy_caption_type = kwargs.get('caption_type', None)

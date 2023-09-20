@@ -38,6 +38,8 @@ dataset_config = DatasetConfig(
     default_caption='default',
     buckets=True,
     bucket_tolerance=bucket_tolerance,
+    augments=['ColorJitter', 'RandomEqualize'],
+
 )
 
 dataloader = get_dataloader_from_datasets([dataset_config], batch_size=batch_size)
@@ -48,22 +50,22 @@ for batch in dataloader:
     batch: 'DataLoaderBatchDTO'
     img_batch = batch.tensor
 
-    # chunks = torch.chunk(img_batch, batch_size, dim=0)
-    # # put them so they are size by side
-    # big_img = torch.cat(chunks, dim=3)
-    # big_img = big_img.squeeze(0)
-    #
-    # min_val = big_img.min()
-    # max_val = big_img.max()
-    #
-    # big_img = (big_img / 2 + 0.5).clamp(0, 1)
-    #
-    # # convert to image
-    # img = transforms.ToPILImage()(big_img)
-    #
-    # show_img(img)
-    #
-    # time.sleep(1.0)
+    chunks = torch.chunk(img_batch, batch_size, dim=0)
+    # put them so they are size by side
+    big_img = torch.cat(chunks, dim=3)
+    big_img = big_img.squeeze(0)
+
+    min_val = big_img.min()
+    max_val = big_img.max()
+
+    big_img = (big_img / 2 + 0.5).clamp(0, 1)
+
+    # convert to image
+    img = transforms.ToPILImage()(big_img)
+
+    show_img(img)
+
+    time.sleep(1.0)
 
 cv2.destroyAllWindows()
 
