@@ -281,7 +281,8 @@ class PairedImageDataset(Dataset):
             bucket_resolution = get_bucket_for_image_size(
                 width=img2.width,
                 height=img2.height,
-                resolution=self.size
+                resolution=self.size,
+                # divisibility=self.
             )
 
             # images will be same base dimension, but may be trimmed. We need to shrink and then central crop

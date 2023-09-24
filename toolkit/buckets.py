@@ -83,7 +83,8 @@ def get_bucket_for_image_size(
         width: int,
         height: int,
         bucket_size_list: List[BucketResolution] = None,
-        resolution: Union[int, None] = None
+        resolution: Union[int, None] = None,
+        divisibility: int = 8
 ) -> BucketResolution:
 
     if bucket_size_list is None and resolution is None:
@@ -93,7 +94,7 @@ def get_bucket_for_image_size(
         # if real resolution is smaller, use that instead
         real_resolution = get_resolution(width, height)
         resolution = min(resolution, real_resolution)
-        bucket_size_list = get_bucket_sizes(resolution=resolution)
+        bucket_size_list = get_bucket_sizes(resolution=resolution, divisibility=divisibility)
 
     # Check for exact match first
     for bucket in bucket_size_list:

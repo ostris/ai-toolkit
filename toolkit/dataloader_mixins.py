@@ -121,7 +121,7 @@ class BucketsMixin:
             width = file_item.crop_width
             height = file_item.crop_height
 
-            bucket_resolution = get_bucket_for_image_size(width, height, resolution=resolution)
+            bucket_resolution = get_bucket_for_image_size(width, height, resolution=resolution, divisibility=bucket_tolerance)
 
             # set the scaling height and with to match smallest size, and keep aspect ratio
             if width > height:
