@@ -198,6 +198,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 network_multiplier=sample_config.network_multiplier,
                 output_path=output_path,
                 output_ext=sample_config.ext,
+                adapter_conditioning_scale=sample_config.adapter_conditioning_scale,
                 **extra_args
             ))
 

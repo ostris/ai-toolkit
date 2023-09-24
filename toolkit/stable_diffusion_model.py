@@ -366,7 +366,7 @@ class StableDiffusion:
                             # not sure why this is double??
                             validation_image = validation_image.resize((gen_config.width * 2, gen_config.height * 2))
                             extra['image'] = validation_image
-                            extra['adapter_conditioning_scale'] = 1.0
+                            extra['adapter_conditioning_scale'] = gen_config.adapter_conditioning_scale
                         if isinstance(self.adapter, IPAdapter):
                             transform = transforms.Compose([
                                 transforms.Resize(gen_config.width, interpolation=transforms.InterpolationMode.BILINEAR),

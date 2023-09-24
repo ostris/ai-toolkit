@@ -37,6 +37,7 @@ class SampleConfig:
         self.network_multiplier = kwargs.get('network_multiplier', 1)
         self.guidance_rescale = kwargs.get('guidance_rescale', 0.0)
         self.ext: ImgExt = kwargs.get('format', 'jpg')
+        self.adapter_conditioning_scale = kwargs.get('adapter_conditioning_scale', 1.0)
 
 
 NetworkType = Literal['lora', 'locon']
@@ -289,6 +290,7 @@ class GenerateImageConfig:
             output_tail: str = '',  # tail to add to output filename
             add_prompt_file: bool = False,  # add a prompt file with generated image
             adapter_image_path: str = None,  # path to adapter image
+            adapter_conditioning_scale: float = 1.0,  # scale for adapter conditioning
     ):
         self.width: int = width
         self.height: int = height
@@ -312,6 +314,7 @@ class GenerateImageConfig:
         self.output_tail: str = output_tail
         self.gen_time: int = int(time.time() * 1000)
         self.adapter_image_path: str = adapter_image_path
+        self.adapter_conditioning_scale: float = adapter_conditioning_scale
 
         # prompt string will override any settings above
         self._process_prompt_string()
@@ -466,6 +469,8 @@ class GenerateImageConfig:
                         self.network_multiplier = float(content)
                     elif flag == 'gr':
                         self.guidance_rescale = float(content)
+                    elif flag == 'a':
+                        self.adapter_conditioning_scale = float(content)
 
     def post_process_embeddings(
             self,
