@@ -310,6 +310,9 @@ class StableDiffusion:
                 else:
                     Pipe = StableDiffusionAdapterPipeline
                 extra_args['adapter'] = self.adapter
+            else:
+                if self.is_xl:
+                    extra_args['add_watermarker'] = False
 
         # TODO add clip skip
         if self.is_xl:
@@ -321,7 +324,6 @@ class StableDiffusion:
                 tokenizer=self.tokenizer[0],
                 tokenizer_2=self.tokenizer[1],
                 scheduler=noise_scheduler,
-                add_watermarker=False,
                 **extra_args
             ).to(self.device_torch)
             # force turn that (ruin your images with obvious green and red dots) the #$@@ off!!!
