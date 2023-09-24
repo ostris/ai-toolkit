@@ -2,9 +2,11 @@ import os.path
 from collections import OrderedDict
 
 from PIL import Image
+from diffusers import T2IAdapter
 from torch.utils.data import DataLoader
 
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
+from toolkit.ip_adapter import IPAdapter
 from toolkit.prompt_utils import concat_prompt_embeds, split_prompt_embeds
 from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
 from toolkit.train_tools import get_torch_dtype, apply_snr_weight
@@ -115,12 +117,18 @@ class SDTrainer(BaseSDTrainProcess):
                 conditional_embeds = conditional_embeds.detach()
             # flush()
             pred_kwargs = {}
-            if self.adapter:
+            if self.adapter and isinstance(self.adapter, T2IAdapter):
                 down_block_additional_residuals = self.adapter(adapter_images)
                 down_block_additional_residuals = [
                     sample.to(dtype=dtype) for sample in down_block_additional_residuals
                 ]
                 pred_kwargs['down_block_additional_residuals'] = down_block_additional_residuals
+
+            if self.adapter and isinstance(self.adapter, IPAdapter):
+                with torch.no_grad():
+                    conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(adapter_images)
+                conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds)
+
 
             noise_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype),
@@ -164,6 +172,9 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
 
             loss = loss.mean()
+            # check if nan
+            if torch.isnan(loss):
+                raise ValueError("loss is nan")
 
             # IMPORTANT if gradient checkpointing do not leave with network when doing backward
             # it will destroy the gradients. This is because the network is a context manager

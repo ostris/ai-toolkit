@@ -7,3 +7,6 @@
 [submodule "repositories/batch_annotator"]
 	path = repositories/batch_annotator
 	url = https://github.com/ostris/batch-annotator
+[submodule "repositories/ipadapter"]
+	path = repositories/ipadapter
+	url = https://github.com/tencent-ailab/IP-Adapter.git

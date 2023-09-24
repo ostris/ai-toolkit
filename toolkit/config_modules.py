@@ -61,8 +61,11 @@ class NetworkConfig:
         self.dropout: Union[float, None] = kwargs.get('dropout', None)
 
 
+AdapterTypes = Literal['t2i', 'ip', 'ip+']
+
 class AdapterConfig:
     def __init__(self, **kwargs):
+        self.type: AdapterTypes = kwargs.get('type', 't2i')  # t2i, ip
         self.in_channels: int = kwargs.get('in_channels', 3)
         self.channels: List[int] = kwargs.get('channels', [320, 640, 1280, 1280])
         self.num_res_blocks: int = kwargs.get('num_res_blocks', 2)
@@ -70,6 +73,9 @@ class AdapterConfig:
         self.adapter_type: str = kwargs.get('adapter_type', 'full_adapter')
         self.image_dir: str = kwargs.get('image_dir', None)
         self.test_img_path: str = kwargs.get('test_img_path', None)
+        self.train: str = kwargs.get('train', False)
+        self.image_encoder_path: str = kwargs.get('image_encoder_path', None)
+        self.name_or_path = kwargs.get('name_or_path', None)
 
 
 class EmbeddingConfig:

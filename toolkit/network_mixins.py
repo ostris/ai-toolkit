@@ -306,6 +306,7 @@ class ToolkitNetworkMixin:
             extra_dict = None
         return extra_dict
 
+    @torch.no_grad()
     def _update_torch_multiplier(self: Network):
         # builds a tensor for fast usage in the forward pass of the network modules
         # without having to set it in every single module every time it changes
