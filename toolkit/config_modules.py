@@ -186,18 +186,23 @@ class SliderConfig:
         self.prompt_file: str = kwargs.get('prompt_file', None)
         self.prompt_tensors: str = kwargs.get('prompt_tensors', None)
         self.batch_full_slide: bool = kwargs.get('batch_full_slide', True)
+        self.use_adapter: bool = kwargs.get('use_adapter', None) # depth
+        self.adapter_img_dir = kwargs.get('adapter_img_dir', None)
+        self.high_ram = kwargs.get('high_ram', False)
 
         # expand targets if shuffling
         from toolkit.prompt_utils import get_slider_target_permutations
         self.targets: List[SliderTargetConfig] = []
         targets = [SliderTargetConfig(**target) for target in targets]
         # do permutations if shuffle is true
+        print(f"Building slider targets")
         for target in targets:
             if target.shuffle:
-                target_permutations = get_slider_target_permutations(target)
+                target_permutations = get_slider_target_permutations(target, max_permutations=100)
                 self.targets = self.targets + target_permutations
             else:
                 self.targets.append(target)
+        print(f"Built {len(self.targets)} slider targets (with permutations)")
 
 
 class DatasetConfig:
