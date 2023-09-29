@@ -216,8 +216,10 @@ class TrainSliderProcess(BaseSDTrainProcess):
             # called before LoRA network is loaded but after model is loaded
             # attach the adapter here so it is there before we load the network
             adapter_path = 'TencentARC/t2iadapter_depth_sd15v2'
-            if self.sd.is_xl:
+            if self.model_config.is_xl:
                 adapter_path = 'TencentARC/t2i-adapter-depth-midas-sdxl-1.0'
+
+            print(f"Loading T2I Adapter from {adapter_path}")
 
             # dont name this adapter since we are not training it
             self.t2i_adapter = T2IAdapter.from_pretrained(

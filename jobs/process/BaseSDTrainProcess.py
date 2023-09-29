@@ -748,6 +748,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 sig = inspect.signature(self.network.prepare_optimizer_params)
                 if 'default_lr' in sig.parameters:
                     config['default_lr'] = self.train_config.lr
+                if 'learning_rate' in sig.parameters:
+                    config['learning_rate'] = self.train_config.lr
                 params_net = self.network.prepare_optimizer_params(
                     **config
                 )
