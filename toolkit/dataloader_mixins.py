@@ -121,7 +121,8 @@ class BucketsMixin:
             width = file_item.crop_width
             height = file_item.crop_height
 
-            bucket_resolution = get_bucket_for_image_size(width, height, resolution=resolution, divisibility=bucket_tolerance)
+            bucket_resolution = get_bucket_for_image_size(width, height, resolution=resolution,
+                                                          divisibility=bucket_tolerance)
 
             # set the scaling height and with to match smallest size, and keep aspect ratio
             if width > height:
@@ -239,6 +240,8 @@ class ImageProcessingDTOMixin:
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
+            if self.has_control_image:
+                self.load_control_image()
             return
         try:
             img = Image.open(self.path).convert('RGB')
@@ -302,13 +305,79 @@ class ImageProcessingDTOMixin:
             img = transform(img)
 
         self.tensor = img
+        if self.has_control_image:
+            self.load_control_image()
+
+
+class ControlFileItemDTOMixin:
+    def __init__(self: 'FileItemDTO', *args, **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(*args, **kwargs)
+        self.has_control_image = False
+        self.control_path: Union[str, None] = None
+        self.control_tensor: Union[torch.Tensor, None] = None
+        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        if dataset_config.control_path is not None:
+            # find the control image path
+            control_path = dataset_config.control_path
+            # we are using control images
+            img_path = kwargs.get('path', None)
+            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+            file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
+            for ext in img_ext_list:
+                if os.path.exists(os.path.join(control_path, file_name_no_ext + ext)):
+                    self.control_path = os.path.join(control_path, file_name_no_ext + ext)
+                    self.has_control_image = True
+                    break
+
+    def load_control_image(self: 'FileItemDTO'):
+        try:
+            img = Image.open(self.control_path).convert('RGB')
+            img = exif_transpose(img)
+        except Exception as e:
+            print(f"Error: {e}")
+            print(f"Error loading image: {self.control_path}")
+        w, h = img.size
+        if w > h and self.scale_to_width < self.scale_to_height:
+            # throw error, they should match
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+        elif h > w and self.scale_to_height < self.scale_to_width:
+            # throw error, they should match
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+
+        if self.flip_x:
+            # do a flip
+            img.transpose(Image.FLIP_LEFT_RIGHT)
+        if self.flip_y:
+            # do a flip
+            img.transpose(Image.FLIP_TOP_BOTTOM)
+
+        if self.dataset_config.buckets:
+            # scale and crop based on file item
+            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+        else:
+            raise Exception("Control images not supported for non-bucket datasets")
+
+        self.control_tensor = transforms.ToTensor()(img)
+
+    def cleanup_control(self: 'FileItemDTO'):
+        self.control_tensor = None
+
+
+class ArgBreakMixin:
+    # just stops super calls form hitting object
+    def __init__(self, *args, **kwargs):
+        pass
 
 
 class LatentCachingFileItemDTOMixin:
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         # if we have super, call it
         if hasattr(super(), '__init__'):
-            super().__init__()
+            super().__init__(*args, **kwargs)
         self._encoded_latent: Union[torch.Tensor, None] = None
         self._latent_path: Union[str, None] = None
         self.is_latent_cached = False
