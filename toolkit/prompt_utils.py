@@ -542,8 +542,8 @@ def inject_trigger_into_prompt(prompt, trigger=None, to_replace_list=None, add_i
             # add it to the beginning of the prompt
             output_prompt = replace_with + " " + output_prompt
 
-        if num_instances > 1:
-            print(
-                f"Warning: {trigger} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+        # if num_instances > 1:
+        #     print(
+        #         f"Warning: {trigger} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
 
     return output_prompt
