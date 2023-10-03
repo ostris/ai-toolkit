@@ -234,7 +234,8 @@ class DatasetConfig:
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])
-        self.control_path: str = kwargs.get('control_path', None) # depth maps, etc
+        self.control_path: str = kwargs.get('control_path', None)  # depth maps, etc
+        self.poi: Union[str, None] = kwargs.get('poi', None) # if one is set and in json data, will be used as auto crop scale point of interes
 
         # cache latents will store them in memory
         self.cache_latents: bool = kwargs.get('cache_latents', False)
