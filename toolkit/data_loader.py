@@ -478,6 +478,7 @@ def get_dataloader_from_datasets(
 
     datasets = []
     has_buckets = False
+    is_caching_latents = False
 
     dataset_config_list = []
     # preprocess them all
@@ -497,6 +498,8 @@ def get_dataloader_from_datasets(
             datasets.append(dataset)
             if config.buckets:
                 has_buckets = True
+            if config.cache_latents or config.cache_latents_to_disk:
+                is_caching_latents = True
         else:
             raise ValueError(f"invalid dataset type: {config.type}")
 
@@ -511,6 +514,9 @@ def get_dataloader_from_datasets(
             file_items=batch
         )
         return batch
+
+    # check if is caching latents
+
 
     if has_buckets:
         # make sure they all have buckets

@@ -317,6 +317,7 @@ class ImageProcessingDTOMixin:
             img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
             # crop to x_crop, y_crop, x_crop + crop_width, y_crop + crop_height
             if img.width < self.crop_x + self.crop_width or img.height < self.crop_y + self.crop_height:
+                # todo look into this. This still happens sometimes
                 print('size mismatch')
             img = img.crop((
                 self.crop_x,
