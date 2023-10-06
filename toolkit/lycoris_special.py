@@ -156,6 +156,8 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             network_module: Type[object] = LoConSpecialModule,
             train_unet: bool = True,
             train_text_encoder: bool = True,
+            use_text_encoder_1: bool = True,
+            use_text_encoder_2: bool = True,
             **kwargs,
     ) -> None:
         # call ToolkitNetworkMixin super
@@ -332,6 +334,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         self.text_encoder_loras = []
         if self.train_text_encoder:
             for i, te in enumerate(text_encoders):
+                if not use_text_encoder_1 and i == 0:
+                    continue
+                if not use_text_encoder_2 and i == 1:
+                    continue
                 self.text_encoder_loras.extend(create_modules(
                     LycorisSpecialNetwork.LORA_PREFIX_TEXT_ENCODER + (f'{i + 1}' if use_index else ''),
                     te,

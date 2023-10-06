@@ -722,7 +722,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     conv_alpha=self.network_config.conv_alpha,
                     is_sdxl=self.model_config.is_xl,
                     is_v2=self.model_config.is_v2,
-                    dropout=self.network_config.dropout
+                    dropout=self.network_config.dropout,
+                    use_text_encoder_1=self.model_config.use_text_encoder_1,
+                    use_text_encoder_2=self.model_config.use_text_encoder_2,
                 )
 
                 self.network.force_to(self.device_torch, dtype=dtype)

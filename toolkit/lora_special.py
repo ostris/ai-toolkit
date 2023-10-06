@@ -137,6 +137,8 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             module_class: Type[object] = LoRAModule,
             varbose: Optional[bool] = False,
             train_text_encoder: Optional[bool] = True,
+            use_text_encoder_1: bool = True,
+            use_text_encoder_2: bool = True,
             train_unet: Optional[bool] = True,
             is_sdxl=False,
             is_v2=False,
@@ -273,6 +275,10 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         skipped_te = []
         if train_text_encoder:
             for i, text_encoder in enumerate(text_encoders):
+                if not use_text_encoder_1 and i == 0:
+                    continue
+                if not use_text_encoder_2 and i == 1:
+                    continue
                 if len(text_encoders) > 1:
                     index = i + 1
                     print(f"create LoRA for Text Encoder {index}:")

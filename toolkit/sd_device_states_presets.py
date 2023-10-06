@@ -60,7 +60,7 @@ def get_train_sd_device_state_preset(
         preset['unet']['training'] = True
 
     if train_lora:
-        preset['text_encoder']['requires_grad'] = False
+        # preset['text_encoder']['requires_grad'] = False
         preset['unet']['requires_grad'] = False
 
     if train_adapter:
