@@ -681,10 +681,10 @@ class StableDiffusion:
             # todo make this a config
             # 50% chance to use an encoder anyway even if it is disabled
             # allows the other TE to compensate for the disabled one
-            use_encoder_1 = self.use_text_encoder_1 or force_all or random.random() > 0.5
-            use_encoder_2 = self.use_text_encoder_2 or force_all or random.random() > 0.5
-            # use_encoder_1 = True
-            # use_encoder_2 = True
+            # use_encoder_1 = self.use_text_encoder_1 or force_all or random.random() > 0.5
+            # use_encoder_2 = self.use_text_encoder_2 or force_all or random.random() > 0.5
+            use_encoder_1 = True
+            use_encoder_2 = True
 
             return PromptEmbeds(
                 train_tools.encode_prompts_xl(
