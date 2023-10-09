@@ -231,8 +231,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.trigger_word is not None:
             # just so auto1111 will pick it up
             o_dict['ss_tag_frequency'] = {
-                [self.trigger_word ]: {
-                    [self.trigger_word ]: 1
+                f"1_{self.trigger_word}": {
+                    f"{self.trigger_word}": 1
                 }
             }
 

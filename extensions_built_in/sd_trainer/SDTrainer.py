@@ -102,7 +102,10 @@ class SDTrainer(BaseSDTrainProcess):
         sigmas = None
         if self.adapter:
             # todo move this to data loader
-            adapter_images = self.get_adapter_images(batch)
+            if batch.control_tensor is not None:
+                adapter_images = batch.control_tensor.to(self.device_torch, dtype=dtype).detach()
+            else:
+                adapter_images = self.get_adapter_images(batch)
             # not 100% sure what this does. But they do it here
             # https://github.com/huggingface/diffusers/blob/38a664a3d61e27ab18cd698231422b3c38d6eebf/examples/t2i_adapter/train_t2i_adapter_sdxl.py#L1170
             # sigmas = self.get_sigmas(timesteps, len(noisy_latents.shape), noisy_latents.dtype)
