@@ -236,6 +236,7 @@ class DatasetConfig:
         self.augments: List[str] = kwargs.get('augments', [])
         self.control_path: str = kwargs.get('control_path', None)  # depth maps, etc
         self.mask_path: str = kwargs.get('mask_path', None)  # focus mask (black and white. White has higher loss than black)
+        self.mask_min_value: float = kwargs.get('mask_min_value', 0.01)  # min value for . 0 - 1
         self.poi: Union[str, None] = kwargs.get('poi', None) # if one is set and in json data, will be used as auto crop scale point of interes
 
         # cache latents will store them in memory

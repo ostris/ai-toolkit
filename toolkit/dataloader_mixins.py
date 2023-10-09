@@ -11,7 +11,7 @@ import torch
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 
-from toolkit.basic import flush
+from toolkit.basic import flush, value_map
 from toolkit.buckets import get_bucket_for_image_size
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.prompt_utils import inject_trigger_into_prompt
@@ -442,6 +442,7 @@ class MaskFileItemDTOMixin:
         self.mask_path: Union[str, None] = None
         self.mask_tensor: Union[torch.Tensor, None] = None
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        self.mask_min_value = dataset_config.mask_min_value
         if dataset_config.mask_path is not None:
             # find the control image path
             mask_path = dataset_config.mask_path
@@ -502,6 +503,7 @@ class MaskFileItemDTOMixin:
             raise Exception("Mask images not supported for non-bucket datasets")
 
         self.mask_tensor = transforms.ToTensor()(img)
+        self.mask_tensor = value_map(self.mask_tensor, 0, 1.0, self.mask_min_value, 1.0)
         # convert to grayscale
 
     def cleanup_mask(self: 'FileItemDTO'):
