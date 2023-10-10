@@ -53,7 +53,7 @@ class ToolkitModuleMixin:
             super().__init__(*args, **kwargs)
         self.network_ref: weakref.ref = weakref.ref(network)
         self.is_checkpointing = False
-        self.is_normalizing = False
+        # self.is_normalizing = False
         self.normalize_scaler = 1.0
         self._multiplier: Union[float, list, torch.Tensor] = None
 
@@ -118,7 +118,7 @@ class ToolkitModuleMixin:
             multiplier = multiplier.repeat_interleave(num_interleaves)
         # multiplier = 1.0
 
-        if self.is_normalizing:
+        if self.network_ref().is_normalizing:
             with torch.no_grad():
 
                 # do this calculation without set multiplier and instead use same polarity, but with 1.0 multiplier
@@ -390,8 +390,8 @@ class ToolkitNetworkMixin:
     @is_normalizing.setter
     def is_normalizing(self: Network, value: bool):
         self._is_normalizing = value
-        for module in self.get_all_modules():
-            module.is_normalizing = self._is_normalizing
+        # for module in self.get_all_modules():
+        #     module.is_normalizing = self._is_normalizing
 
     def apply_stored_normalizer(self: Network, target_normalize_scaler: float = 1.0):
         for module in self.get_all_modules():

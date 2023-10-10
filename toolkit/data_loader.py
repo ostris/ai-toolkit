@@ -448,7 +448,7 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
         return len(self.file_list)
 
     def _get_single_item(self, index) -> 'FileItemDTO':
-        file_item = self.file_list[index]
+        file_item = copy.deepcopy(self.file_list[index])
         file_item.load_and_process_image(self.transform)
         file_item.load_caption(self.caption_dict)
         return file_item
@@ -529,14 +529,14 @@ def get_dataloader_from_datasets(
             drop_last=False,
             shuffle=True,
             collate_fn=dto_collation,  # Use the custom collate function
-            num_workers=0
+            num_workers=4
         )
     else:
         data_loader = DataLoader(
             concatenated_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0,
+            num_workers=4,
             collate_fn=dto_collation
         )
     return data_loader

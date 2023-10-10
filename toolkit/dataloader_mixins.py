@@ -670,7 +670,8 @@ class LatentCachingFileItemDTOMixin:
             # load it from disk
             state_dict = load_file(
                 self.get_latent_path(),
-                device=device if device is not None else self.latent_load_device
+                # device=device if device is not None else self.latent_load_device
+                device='cpu'
             )
             self._encoded_latent = state_dict['latent']
         return self._encoded_latent
