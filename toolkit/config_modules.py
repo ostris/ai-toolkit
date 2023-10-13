@@ -120,6 +120,7 @@ class TrainConfig:
         self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
         self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
         self.start_step = kwargs.get('start_step', None)
+        self.free_u = kwargs.get('free_u', False)
 
 
 class ModelConfig:
@@ -239,7 +240,7 @@ class DatasetConfig:
         self.mask_path: str = kwargs.get('mask_path', None)  # focus mask (black and white. White has higher loss than black)
         self.mask_min_value: float = kwargs.get('mask_min_value', 0.01)  # min value for . 0 - 1
         self.poi: Union[str, None] = kwargs.get('poi', None) # if one is set and in json data, will be used as auto crop scale point of interes
-
+        self.num_repeats: int = kwargs.get('num_repeats', 1)  # number of times to repeat dataset
         # cache latents will store them in memory
         self.cache_latents: bool = kwargs.get('cache_latents', False)
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory

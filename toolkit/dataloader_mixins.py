@@ -156,8 +156,9 @@ class BucketsMixin:
                 # Use the maximum of the scale factors to ensure both dimensions are scaled above the bucket resolution
                 max_scale_factor = max(width_scale_factor, height_scale_factor)
 
-                file_item.scale_to_width = int(width * max_scale_factor)
-                file_item.scale_to_height = int(height * max_scale_factor)
+                # round up
+                file_item.scale_to_width = int(math.ceil(width * max_scale_factor))
+                file_item.scale_to_height = int(math.ceil(height * max_scale_factor))
 
                 file_item.crop_height = bucket_resolution["height"]
                 file_item.crop_width = bucket_resolution["width"]
@@ -294,7 +295,7 @@ class ImageProcessingDTOMixin:
                 self.load_mask_image()
             return
         try:
-            img = Image.open(self.mask_path)
+            img = Image.open(self.path)
             img = exif_transpose(img)
         except Exception as e:
             print(f"Error: {e}")
@@ -582,6 +583,14 @@ class PoiFileItemDTOMixin:
             self.poi_y = int(poi['y'])
             self.poi_width = int(poi['width'])
             self.poi_height = int(poi['height'])
+
+            # handle flipping
+            if kwargs.get('flip_x', False):
+                # flip the poi
+                self.poi_x = self.width - self.poi_x - self.poi_width
+            if kwargs.get('flip_y', False):
+                # flip the poi
+                self.poi_y = self.height - self.poi_y - self.poi_height
 
     def setup_poi_bucket(self: 'FileItemDTO'):
         # we are using poi, so we need to calculate the bucket based on the poi

@@ -928,6 +928,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         flush()
         # self.step_num = 0
         for step in range(self.step_num, self.train_config.steps):
+            if self.train_config.free_u:
+                self.sd.pipeline.enable_freeu(s1=0.9, s2=0.2, b1=1.1, b2=1.2)
             self.progress_bar.unpause()
             with torch.no_grad():
                 # if is even step and we have a reg dataset, use that
@@ -1000,6 +1002,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     if is_sample_step:
                         self.progress_bar.pause()
                         # print above the progress bar
+                        if self.train_config.free_u:
+                            self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
                         self.progress_bar.unpause()
 
@@ -1047,6 +1051,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 #     flush()
 
         self.progress_bar.close()
+        if self.train_config.free_u:
+            self.sd.pipeline.disable_freeu()
         self.sample(self.step_num + 1)
         print("")
         self.save()

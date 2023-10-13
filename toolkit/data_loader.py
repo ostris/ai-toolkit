@@ -377,6 +377,10 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
                 # keys are file paths
                 file_list = list(self.caption_dict.keys())
 
+        if self.dataset_config.num_repeats > 1:
+            # repeat the list
+            file_list = file_list * self.dataset_config.num_repeats
+
         # this might take a while
         print(f"  -  Preprocessing image dimensions")
         bad_count = 0
