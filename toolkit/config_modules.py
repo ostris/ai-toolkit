@@ -121,6 +121,9 @@ class TrainConfig:
         self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
+        self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
+        self.match_adapter_assist = kwargs.get('match_adapter_assist', False)
+
 
 
 class ModelConfig:
