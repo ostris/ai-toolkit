@@ -122,7 +122,13 @@ class TrainConfig:
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
         self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
-        self.match_adapter_assist = kwargs.get('match_adapter_assist', False)
+
+        match_adapter_assist = kwargs.get('match_adapter_assist', False)
+        self.match_adapter_chance = kwargs.get('match_adapter_chance', 0.0)
+
+        # legacy
+        if match_adapter_assist and self.match_adapter_chance == 0.0:
+            self.match_adapter_chance = 1.0
 
 
 
