@@ -223,6 +223,7 @@ class DatasetConfig:
         self.dataset_path: str = kwargs.get('dataset_path', None)
 
         self.default_caption: str = kwargs.get('default_caption', None)
+        self.random_triggers: List[str] = kwargs.get('random_triggers', [])
         self.caption_ext: str = kwargs.get('caption_ext', None)
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
