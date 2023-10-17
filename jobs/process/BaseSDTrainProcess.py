@@ -5,6 +5,7 @@ from collections import OrderedDict
 import os
 from typing import Union, List
 
+import numpy as np
 from diffusers import T2IAdapter
 # from lycoris.config import PRESET
 from torch.utils.data import DataLoader
@@ -538,6 +539,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     noise_offset=self.train_config.noise_offset
                 ).to(self.device_torch, dtype=dtype)
 
+                noise_multiplier = self.train_config.noise_multiplier
+
+                noise = noise * noise_multiplier
+
+                img_multiplier = self.train_config.img_multiplier
+
+                latents = latents * img_multiplier
+
                 noisy_latents = self.sd.noise_scheduler.add_noise(latents, noise, timesteps)
 
             # remove grads for these
@@ -997,10 +1006,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 self.progress_bar.set_postfix_str(prog_bar_string)
 
+                # apply network normalizer if we are using it, not on regularization steps
+                if self.network is not None and self.network.is_normalizing and not is_reg_step:
+                    with self.timer('apply_normalizer'):
+                        self.network.apply_stored_normalizer()
+
+                # if the batch is a DataLoaderBatchDTO, then we need to clean it up
+                if isinstance(batch, DataLoaderBatchDTO):
+                    with self.timer('batch_cleanup'):
+                        batch.cleanup()
+
                 # don't do on first step
                 if self.step_num != self.start_step:
                     if is_sample_step:
                         self.progress_bar.pause()
+                        flush()
                         # print above the progress bar
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
@@ -1035,16 +1055,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.progress_bar.update(step - self.progress_bar.n)
                 # end of step
                 self.step_num = step
-
-                # apply network normalizer if we are using it, not on regularization steps
-                if self.network is not None and self.network.is_normalizing and not is_reg_step:
-                    with self.timer('apply_normalizer'):
-                        self.network.apply_stored_normalizer()
-
-                # if the batch is a DataLoaderBatchDTO, then we need to clean it up
-                if isinstance(batch, DataLoaderBatchDTO):
-                    with self.timer('batch_cleanup'):
-                        batch.cleanup()
 
                 # flush every 10 steps
                 # if self.step_num % 10 == 0:

@@ -122,6 +122,8 @@ class TrainConfig:
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
         self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
+        self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
+        self.img_multiplier = kwargs.get('img_multiplier', 1.0)
 
         match_adapter_assist = kwargs.get('match_adapter_assist', False)
         self.match_adapter_chance = kwargs.get('match_adapter_chance', 0.0)
