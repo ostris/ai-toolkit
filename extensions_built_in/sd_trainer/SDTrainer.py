@@ -1,15 +1,9 @@
-import os.path
 from collections import OrderedDict
 from typing import Union
-
-from PIL import Image
 from diffusers import T2IAdapter
-from torch.utils.data import DataLoader
-
 from toolkit.basic import value_map
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.ip_adapter import IPAdapter
-from toolkit.prompt_utils import concat_prompt_embeds, split_prompt_embeds
 from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
 from toolkit.train_tools import get_torch_dtype, apply_snr_weight
 import gc
@@ -24,7 +18,6 @@ def flush():
 
 
 adapter_transforms = transforms.Compose([
-    # transforms.PILToTensor(),
     transforms.ToTensor(),
 ])
 
@@ -61,6 +54,77 @@ class SDTrainer(BaseSDTrainProcess):
             # offload it. Already cached
             self.sd.vae.to('cpu')
             flush()
+
+    # you can expand these in a child class to make customization easier
+    def calculate_loss(
+            self,
+            noise_pred: torch.Tensor,
+            noise: torch.Tensor,
+            noisy_latents: torch.Tensor,
+            timesteps: torch.Tensor,
+            batch: 'DataLoaderBatchDTO',
+            mask_multiplier: Union[torch.Tensor, float] = 1.0,
+            control_pred: Union[torch.Tensor, None] = None,
+            **kwargs
+    ):
+        loss_target = self.train_config.loss_target
+        # add latents and unaug latents
+        if control_pred is not None:
+            # matching adapter prediction
+            target = control_pred
+        elif self.sd.prediction_type == 'v_prediction':
+            # v-parameterization training
+            target = self.sd.noise_scheduler.get_velocity(noisy_latents, noise, timesteps)
+        else:
+            target = noise
+
+        pred = noise_pred
+
+        ignore_snr = False
+
+        if loss_target == 'source' or loss_target == 'unaugmented':
+            # ignore_snr = True
+            if batch.sigmas is None:
+                raise ValueError("Batch sigmas is None. This should not happen")
+
+            # src https://github.com/huggingface/diffusers/blob/324d18fba23f6c9d7475b0ff7c777685f7128d40/examples/t2i_adapter/train_t2i_adapter_sdxl.py#L1190
+            denoised_latents = noise_pred * (-batch.sigmas) + noisy_latents
+            weighing = batch.sigmas ** -2.0
+            if loss_target == 'source':
+                # denoise the latent and compare to the latent in the batch
+                target = batch.latents
+            elif loss_target == 'unaugmented':
+                # we have to encode images into latents for now
+                # we also denoise as the unaugmented tensor is not a noisy diffirental
+                with torch.no_grad():
+                    unaugmented_latents = self.sd.encode_images(batch.unaugmented_tensor)
+                    target = unaugmented_latents.detach()
+
+                # Get the target for loss depending on the prediction type
+                if self.sd.noise_scheduler.config.prediction_type == "epsilon":
+                    target = target  # we are computing loss against denoise latents
+                elif self.sd.noise_scheduler.config.prediction_type == "v_prediction":
+                    target = self.sd.noise_scheduler.get_velocity(target, noise, timesteps)
+                else:
+                    raise ValueError(f"Unknown prediction type {self.sd.noise_scheduler.config.prediction_type}")
+
+            # mse loss without reduction
+            loss_per_element = (weighing.float() * (denoised_latents.float() - target.float()) ** 2)
+            loss = loss_per_element
+        else:
+            loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
+
+        # multiply by our mask
+        loss = loss * mask_multiplier
+
+        loss = loss.mean([1, 2, 3])
+
+        if self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001 and not ignore_snr:
+            # add min_snr_gamma
+            loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
+
+        loss = loss.mean()
+        return loss
 
     def hook_train_loop(self, batch):
 
@@ -251,26 +315,15 @@ class SDTrainer(BaseSDTrainProcess):
 
             with self.timer('calculate_loss'):
                 noise = noise.to(self.device_torch, dtype=dtype).detach()
-
-                if control_pred is not None:
-                    # matching adapter prediction
-                    target = control_pred
-                elif self.sd.prediction_type == 'v_prediction':
-                    # v-parameterization training
-                    target = self.sd.noise_scheduler.get_velocity(noisy_latents, noise, timesteps)
-                else:
-                    target = noise
-                loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-                # multiply by our mask
-                loss = loss * mask_multiplier
-
-                loss = loss.mean([1, 2, 3])
-
-                if self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001:
-                    # add min_snr_gamma
-                    loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
-
-                loss = loss.mean()
+                loss = self.calculate_loss(
+                    noise_pred=noise_pred,
+                    noise=noise,
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    batch=batch,
+                    mask_multiplier=mask_multiplier,
+                    control_pred=control_pred,
+                )
             # check if nan
             if torch.isnan(loss):
                 raise ValueError("loss is nan")

@@ -7,6 +7,7 @@ import random
 from collections import OrderedDict
 from typing import TYPE_CHECKING, List, Dict, Union
 
+import cv2
 import numpy as np
 import torch
 from safetensors.torch import load_file, save_file
@@ -19,6 +20,7 @@ from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
 from PIL import Image, ImageFilter
 from PIL.ImageOps import exif_transpose
+import albumentations as A
 
 from toolkit.train_tools import get_torch_dtype
 
@@ -26,7 +28,24 @@ if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
     from toolkit.data_transfer_object.data_loader import FileItemDTO
 
+
 # def get_associated_caption_from_img_path(img_path):
+
+class Augments:
+    def __init__(self, **kwargs):
+        self.method_name = kwargs.get('method', None)
+        self.params = kwargs.get('params', {})
+
+        # convert kwargs enums for cv2
+        for key, value in self.params.items():
+            if isinstance(value, str):
+                # split the string
+                split_string = value.split('.')
+                if len(split_string) == 2 and split_string[0] == 'cv2':
+                    if hasattr(cv2, split_string[1]):
+                        self.params[key] = getattr(cv2, split_string[1].upper())
+                    else:
+                        raise ValueError(f"invalid cv2 enum: {split_string[1]}")
 
 
 transforms_dict = {
@@ -193,7 +212,6 @@ class BucketsMixin:
             for key, bucket in self.buckets.items():
                 print(f'{key}: {len(bucket.file_list_idx)} files')
             print(f'{len(self.buckets)} buckets made')
-
 
 
 class CaptionProcessingDTOMixin:
@@ -392,7 +410,10 @@ class ImageProcessingDTOMixin:
                 if augment in transforms_dict:
                     img = transforms_dict[augment](img)
 
-        if transform:
+        if self.has_augmentations:
+            # augmentations handles transforms
+            img = self.augment_image(img, transform=transform)
+        elif transform:
             img = transform(img)
 
         self.tensor = img
@@ -466,6 +487,54 @@ class ControlFileItemDTOMixin:
 
     def cleanup_control(self: 'FileItemDTO'):
         self.control_tensor = None
+
+
+class AugmentationFileItemDTOMixin:
+    def __init__(self: 'FileItemDTO', *args, **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(*args, **kwargs)
+        self.has_augmentations = False
+        self.unaugmented_tensor: Union[torch.Tensor, None] = None
+        # self.augmentations: Union[None, List[Augments]] = None
+        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        if dataset_config.augmentations is not None and len(dataset_config.augmentations) > 0:
+            self.has_augmentations = True
+            augmentations = [Augments(**aug) for aug in dataset_config.augmentations]
+            augmentation_list = []
+            for aug in augmentations:
+                # make sure method name is valid
+                assert hasattr(A, aug.method_name), f"invalid augmentation method: {aug.method_name}"
+                # get the method
+                method = getattr(A, aug.method_name)
+                # add the method to the list
+                augmentation_list.append(method(**aug.params))
+
+            self.aug_transform = A.Compose(augmentation_list)
+
+    def augment_image(self: 'FileItemDTO', img: Image, transform: Union[None, transforms.Compose], ):
+
+        # save the original tensor
+        self.unaugmented_tensor = transforms.ToTensor()(img) if transform is None else transform(img)
+
+        open_cv_image = np.array(img)
+        # Convert RGB to BGR
+        open_cv_image = open_cv_image[:, :, ::-1].copy()
+
+        # apply augmentations
+        augmented = self.aug_transform(image=open_cv_image)["image"]
+
+        # convert back to RGB tensor
+        augmented = cv2.cvtColor(augmented, cv2.COLOR_BGR2RGB)
+
+        # convert to PIL image
+        augmented = Image.fromarray(augmented)
+
+        augmented_tensor = transforms.ToTensor()(augmented) if transform is None else transform(augmented)
+
+        return augmented_tensor
+
+    def cleanup_control(self: 'FileItemDTO'):
+        self.unaugmented_tensor = None
 
 
 class MaskFileItemDTOMixin:
@@ -557,6 +626,7 @@ class MaskFileItemDTOMixin:
 
     def cleanup_mask(self: 'FileItemDTO'):
         self.mask_tensor = None
+
 
 class PoiFileItemDTOMixin:
     # Point of interest bounding box. Allows for dynamic cropping without cropping out the main subject
@@ -798,7 +868,6 @@ class LatentCachingMixin:
                 del imgs
                 del latent
                 del file_item.tensor
-
 
                 flush(garbage_collect=False)
             file_item.is_latent_cached = True

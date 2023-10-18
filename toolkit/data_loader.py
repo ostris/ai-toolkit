@@ -16,7 +16,7 @@ import albumentations as A
 
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 
 if TYPE_CHECKING:
@@ -111,21 +111,7 @@ class ImageDataset(Dataset, CaptionMixin):
             return img
 
 
-class Augments:
-    def __init__(self, **kwargs):
-        self.method_name = kwargs.get('method', None)
-        self.params = kwargs.get('params', {})
 
-        # convert kwargs enums for cv2
-        for key, value in self.params.items():
-            if isinstance(value, str):
-                # split the string
-                split_string = value.split('.')
-                if len(split_string) == 2 and split_string[0] == 'cv2':
-                    if hasattr(cv2, split_string[1]):
-                        self.params[key] = getattr(cv2, split_string[1].upper())
-                    else:
-                        raise ValueError(f"invalid cv2 enum: {split_string[1]}")
 
 
 class AugmentedImageDataset(ImageDataset):

@@ -442,6 +442,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return params
 
+    def get_sigmas(self, timesteps, n_dim=4, dtype=torch.float32):
+        sigmas = self.sd.noise_scheduler.sigmas.to(device=self.device, dtype=dtype)
+        schedule_timesteps = self.sd.noise_scheduler.timesteps.to(self.device)
+        timesteps = timesteps.to(self.device)
+
+        step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+
+        sigma = sigmas[step_indices].flatten()
+        while len(sigma.shape) < n_dim:
+            sigma = sigma.unsqueeze(-1)
+        return sigma
+
     def process_general_training_batch(self, batch: 'DataLoaderBatchDTO'):
         with torch.no_grad():
             with self.timer('prepare_prompt'):
@@ -483,6 +495,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     batch.latents = latents
                     # flush()  # todo check performance removing this
 
+                unaugmented_latents = None
+                if self.train_config.loss_target == 'differential_noise':
+                    # we determine noise from the differential of the latents
+                    unaugmented_latents = self.sd.encode_images(batch.unaugmented_tensor)
+
             batch_size = latents.shape[0]
 
             with self.timer('prepare_noise'):
@@ -516,7 +533,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.max_denoising_steps
                     )
                     timesteps = timesteps.long().clamp(
-                        self.train_config.min_denoising_steps,
+                        self.train_config.min_denoising_steps + 1,
                         self.train_config.max_denoising_steps - 1
                     )
 
@@ -539,6 +556,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     noise_offset=self.train_config.noise_offset
                 ).to(self.device_torch, dtype=dtype)
 
+                if self.train_config.loss_target == 'differential_noise':
+                    differential = latents - unaugmented_latents
+                    # add noise to differential
+                    # noise = noise + differential
+                    noise = noise + (differential * 0.5)
+                    # noise = value_map(differential, 0, torch.abs(differential).max(), 0, torch.abs(noise).max())
+                    latents = unaugmented_latents
+
                 noise_multiplier = self.train_config.noise_multiplier
 
                 noise = noise * noise_multiplier
@@ -548,6 +573,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 latents = latents * img_multiplier
 
                 noisy_latents = self.sd.noise_scheduler.add_noise(latents, noise, timesteps)
+
+                # https://github.com/huggingface/diffusers/blob/324d18fba23f6c9d7475b0ff7c777685f7128d40/examples/t2i_adapter/train_t2i_adapter_sdxl.py#L1170C17-L1171C77
+                if self.train_config.loss_target == 'source' or self.train_config.loss_target == 'unaugmented':
+                    sigmas = self.get_sigmas(timesteps, len(noisy_latents.shape), noisy_latents.dtype)
+                    # add it to the batch
+                    batch.sigmas = sigmas
+                    # todo is this for sdxl? find out where this came from originally
+                    # noisy_latents = noisy_latents / ((sigmas ** 2 + 1) ** 0.5)
 
             # remove grads for these
             noisy_latents.requires_grad = False
