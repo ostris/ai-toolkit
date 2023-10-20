@@ -126,9 +126,13 @@ class SDTrainer(BaseSDTrainProcess):
         loss = loss.mean()
         return loss
 
-    def hook_train_loop(self, batch):
+    def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
+        return batch
+
+    def hook_train_loop(self, batch: 'DataLoaderBatchDTO'):
 
         self.timer.start('preprocess_batch')
+        batch = self.preprocess_batch(batch)
         dtype = get_torch_dtype(self.train_config.dtype)
         noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
         network_weight_list = batch.get_network_weight_list()

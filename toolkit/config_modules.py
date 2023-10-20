@@ -127,7 +127,7 @@ class TrainConfig:
 
         match_adapter_assist = kwargs.get('match_adapter_assist', False)
         self.match_adapter_chance = kwargs.get('match_adapter_chance', 0.0)
-        self.loss_target: LossTarget = kwargs.get('loss_target', 'noise')  # noise, source, unaugmented,
+        self.loss_target: LossTarget = kwargs.get('loss_target', 'noise')  # noise, source, unaugmented, differential_noise
 
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
@@ -262,6 +262,7 @@ class DatasetConfig:
         # https://albumentations.ai/docs/api_reference/augmentations/transforms
         # augmentations are returned as a separate image and cannot currently be cached
         self.augmentations: List[dict] = kwargs.get('augmentations', None)
+        self.shuffle_augmentations: bool = kwargs.get('shuffle_augmentations', False)
 
         has_augmentations = self.augmentations is not None and len(self.augmentations) > 0
 

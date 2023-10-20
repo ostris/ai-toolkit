@@ -496,10 +496,17 @@ class AugmentationFileItemDTOMixin:
         self.has_augmentations = False
         self.unaugmented_tensor: Union[torch.Tensor, None] = None
         # self.augmentations: Union[None, List[Augments]] = None
-        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
-        if dataset_config.augmentations is not None and len(dataset_config.augmentations) > 0:
+        self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        self.build_augmentation_transform()
+
+    def build_augmentation_transform(self: 'FileItemDTO'):
+        if self.dataset_config.augmentations is not None and len(self.dataset_config.augmentations) > 0:
             self.has_augmentations = True
-            augmentations = [Augments(**aug) for aug in dataset_config.augmentations]
+            augmentations = [Augments(**aug) for aug in self.dataset_config.augmentations]
+
+            if self.dataset_config.shuffle_augmentations:
+                random.shuffle(augmentations)
+
             augmentation_list = []
             for aug in augmentations:
                 # make sure method name is valid
@@ -512,6 +519,10 @@ class AugmentationFileItemDTOMixin:
             self.aug_transform = A.Compose(augmentation_list)
 
     def augment_image(self: 'FileItemDTO', img: Image, transform: Union[None, transforms.Compose], ):
+
+        # rebuild each time if shuffle
+        if self.dataset_config.shuffle_augmentations:
+            self.build_augmentation_transform()
 
         # save the original tensor
         self.unaugmented_tensor = transforms.ToTensor()(img) if transform is None else transform(img)
