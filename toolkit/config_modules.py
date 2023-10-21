@@ -129,6 +129,11 @@ class TrainConfig:
         self.match_adapter_chance = kwargs.get('match_adapter_chance', 0.0)
         self.loss_target: LossTarget = kwargs.get('loss_target', 'noise')  # noise, source, unaugmented, differential_noise
 
+        # When a mask is passed in a dataset, and this is true,
+        # we will predict noise without a the LoRa network and use the prediction as a target for
+        # unmasked reign. It is unmasked regularization basically
+        self.inverted_mask_prior = kwargs.get('inverted_mask_prior', False)
+
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
             self.match_adapter_chance = 1.0
