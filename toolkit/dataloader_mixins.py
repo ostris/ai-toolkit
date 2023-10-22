@@ -55,6 +55,18 @@ transforms_dict = {
 
 caption_ext_list = ['txt', 'json', 'caption']
 
+def clean_caption(caption):
+    # remove any newlines
+    caption = caption.replace('\n', ', ')
+    # remove new lines for all operating systems
+    caption = caption.replace('\r', ', ')
+    caption_split = caption.split(',')
+    # remove empty strings
+    caption_split = [p.strip() for p in caption_split if p.strip()]
+    # join back together
+    caption = ', '.join(caption_split)
+    return caption
+
 
 class CaptionMixin:
     def get_caption_item(self: 'AiToolkitDataset', index):
@@ -91,15 +103,7 @@ class CaptionMixin:
                     if 'caption' in prompt:
                         prompt = prompt['caption']
 
-                # remove any newlines
-                prompt = prompt.replace('\n', ', ')
-                # remove new lines for all operating systems
-                prompt = prompt.replace('\r', ', ')
-                prompt_split = prompt.split(',')
-                # remove empty strings
-                prompt_split = [p.strip() for p in prompt_split if p.strip()]
-                # join back together
-                prompt = ', '.join(prompt_split)
+                prompt = clean_caption(prompt)
         else:
             prompt = ''
             # get default_prompt if it exists on the class instance
@@ -134,6 +138,10 @@ class BucketsMixin:
                 end_idx = min(start_idx + self.batch_size, len(bucket.file_list_idx))
                 batch = bucket.file_list_idx[start_idx:end_idx]
                 self.batch_indices.append(batch)
+
+    def shuffle_buckets(self: 'AiToolkitDataset'):
+        for key, bucket in self.buckets.items():
+            random.shuffle(bucket.file_list_idx)
 
     def setup_buckets(self: 'AiToolkitDataset', quiet=False):
         if not hasattr(self, 'file_list'):
@@ -206,6 +214,7 @@ class BucketsMixin:
             self.buckets[bucket_key].file_list_idx.append(idx)
 
         # print the buckets
+        self.shuffle_buckets()
         self.build_batch_indices()
         if not quiet:
             print(f'Bucket sizes for {self.dataset_path}:')

@@ -327,7 +327,6 @@ class StableDiffusion:
                 scheduler=noise_scheduler,
                 **extra_args
             ).to(self.device_torch)
-            # force turn that (ruin your images with obvious green and red dots) the #$@@ off!!!
             pipeline.watermark = None
         else:
             pipeline = Pipe(
@@ -372,7 +371,8 @@ class StableDiffusion:
                             extra['adapter_conditioning_scale'] = gen_config.adapter_conditioning_scale
                         if isinstance(self.adapter, IPAdapter):
                             transform = transforms.Compose([
-                                transforms.Resize(gen_config.width, interpolation=transforms.InterpolationMode.BILINEAR),
+                                transforms.Resize(gen_config.width,
+                                                  interpolation=transforms.InterpolationMode.BILINEAR),
                                 transforms.PILToTensor(),
                             ])
                             validation_image = transform(validation_image)
@@ -395,13 +395,14 @@ class StableDiffusion:
                         unconditional_embeds,
                     )
 
-                    if self.adapter is not None and isinstance(self.adapter, IPAdapter) and gen_config.adapter_image_path is not None:
+                    if self.adapter is not None and isinstance(self.adapter,
+                                                               IPAdapter) and gen_config.adapter_image_path is not None:
                         # apply the image projection
                         conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image)
-                        unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image, True)
+                        unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image,
+                                                                                                    True)
                         conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds)
                         unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds)
-
 
                     # todo do we disable text encoder here as well if disabled for model, or only do that for training?
                     if self.is_xl:
@@ -668,7 +669,15 @@ class StableDiffusion:
         # return latents_steps
         return latents
 
-    def encode_prompt(self, prompt, prompt2=None, num_images_per_prompt=1, force_all=False) -> PromptEmbeds:
+    def encode_prompt(
+            self,
+            prompt,
+            prompt2=None,
+            num_images_per_prompt=1,
+            force_all=False,
+            long_prompts=False,
+            max_length=None
+    ) -> PromptEmbeds:
         # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt
         # if it is not a list, make it one
@@ -695,12 +704,14 @@ class StableDiffusion:
                     num_images_per_prompt=num_images_per_prompt,
                     use_text_encoder_1=use_encoder_1,
                     use_text_encoder_2=use_encoder_2,
+                    truncate=not long_prompts,
+                    max_length=max_length,
                 )
             )
         else:
             return PromptEmbeds(
                 train_tools.encode_prompts(
-                    self.tokenizer, self.text_encoder, prompt
+                    self.tokenizer, self.text_encoder, prompt, truncate=not long_prompts, max_length=max_length
                 )
             )
 
