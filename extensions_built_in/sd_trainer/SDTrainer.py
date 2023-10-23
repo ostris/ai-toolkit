@@ -285,7 +285,7 @@ class SDTrainer(BaseSDTrainProcess):
             with self.timer('encode_prompt'):
                 if grad_on_text_encoder:
                     with torch.set_grad_enabled(True):
-                        conditional_embeds = self.sd.encode_prompt(conditioned_prompts).to(
+                        conditional_embeds = self.sd.encode_prompt(conditioned_prompts, long_prompts=True).to(
                             self.device_torch,
                             dtype=dtype)
                 else:
@@ -296,7 +296,7 @@ class SDTrainer(BaseSDTrainProcess):
                                 te.eval()
                         else:
                             self.sd.text_encoder.eval()
-                        conditional_embeds = self.sd.encode_prompt(conditioned_prompts).to(
+                        conditional_embeds = self.sd.encode_prompt(conditioned_prompts, long_prompts=True).to(
                             self.device_torch,
                             dtype=dtype)
 
