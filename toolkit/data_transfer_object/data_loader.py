@@ -170,7 +170,7 @@ class DataLoaderBatchDTO:
             trigger=trigger,
             to_replace_list=to_replace_list,
             add_if_not_present=add_if_not_present,
-            short_caption=False
+            short_caption=True
         ) for x in self.file_items]
 
     def cleanup(self):
