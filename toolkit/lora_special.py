@@ -89,7 +89,8 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
         torch.nn.init.zeros_(self.lora_up.weight)
 
         self.multiplier: Union[float, List[float]] = multiplier
-        self.org_module = org_module  # remove in applying
+        # wrap the original module so it doesn't get weights updated
+        self.org_module = [org_module]
         self.dropout = dropout
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
@@ -98,9 +99,9 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
         self.normalize_scaler = 1.0
 
     def apply_to(self):
-        self.org_forward = self.org_module.forward
-        self.org_module.forward = self.forward
-        del self.org_module
+        self.org_forward = self.org_module[0].forward
+        self.org_module[0].forward = self.forward
+        # del self.org_module
 
 
 class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
@@ -170,6 +171,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.multiplier = multiplier
         self.is_sdxl = is_sdxl
         self.is_v2 = is_v2
+        self.is_merged_in = False
 
         if modules_dim is not None:
             print(f"create LoRA network from weights")

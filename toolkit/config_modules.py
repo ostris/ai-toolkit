@@ -125,6 +125,17 @@ class TrainConfig:
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
 
+        # short long captions will double your batch size. This only works when a dataset is
+        # prepared with a json caption file that has both short and long captions in it. It will
+        # Double up every image and run it through with both short and long captions. The idea
+        # is that the network will learn how to generate good images with both short and long captions
+        self.short_and_long_captions = kwargs.get('short_and_long_captions', False)
+
+        # basically gradient accumulation but we run just 1 item through the network
+        # and accumulate gradients. This can be used as basic gradient accumulation but is very helpful
+        # for training tricks that increase batch size but need a single gradient step
+        self.single_item_batching = kwargs.get('single_item_batching', False)
+
         match_adapter_assist = kwargs.get('match_adapter_assist', False)
         self.match_adapter_chance = kwargs.get('match_adapter_chance', 0.0)
         self.loss_target: LossTarget = kwargs.get('loss_target', 'noise')  # noise, source, unaugmented, differential_noise

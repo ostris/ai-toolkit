@@ -55,6 +55,7 @@ transforms_dict = {
 
 caption_ext_list = ['txt', 'json', 'caption']
 
+
 def clean_caption(caption):
     # remove any newlines
     caption = caption.replace('\n', ', ')
@@ -227,6 +228,8 @@ class CaptionProcessingDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):
         if hasattr(super(), '__init__'):
             super().__init__(*args, **kwargs)
+            self.raw_caption: str = None
+            self.raw_caption_short: str = None
 
     # todo allow for loading from sd-scripts style dict
     def load_caption(self: 'FileItemDTO', caption_dict: Union[dict, None]):
@@ -235,15 +238,19 @@ class CaptionProcessingDTOMixin:
             pass
         elif caption_dict is not None and self.path in caption_dict and "caption" in caption_dict[self.path]:
             self.raw_caption = caption_dict[self.path]["caption"]
+            if 'caption_short' in caption_dict[self.path]:
+                self.raw_caption_short = caption_dict[self.path]["caption_short"]
         else:
             # see if prompt file exists
             path_no_ext = os.path.splitext(self.path)[0]
             prompt_ext = self.dataset_config.caption_ext
             prompt_path = f"{path_no_ext}.{prompt_ext}"
+            short_caption = None
 
             if os.path.exists(prompt_path):
                 with open(prompt_path, 'r', encoding='utf-8') as f:
                     prompt = f.read()
+                    short_caption = None
                     if prompt_path.endswith('.json'):
                         # replace any line endings with commas for \n \r \r\n
                         prompt = prompt.replace('\r\n', ' ')
@@ -253,32 +260,36 @@ class CaptionProcessingDTOMixin:
                         prompt = json.loads(prompt)
                         if 'caption' in prompt:
                             prompt = prompt['caption']
-                    # remove any newlines
-                    prompt = prompt.replace('\n', ', ')
-                    # remove new lines for all operating systems
-                    prompt = prompt.replace('\r', ', ')
-                    prompt_split = prompt.split(',')
-                    # remove empty strings
-                    prompt_split = [p.strip() for p in prompt_split if p.strip()]
-                    # join back together
-                    prompt = ', '.join(prompt_split)
+                        if 'caption_short' in prompt:
+                            short_caption = prompt['caption_short']
+                    prompt = clean_caption(prompt)
+                    if short_caption is not None:
+                        short_caption = clean_caption(short_caption)
             else:
                 prompt = ''
                 if self.dataset_config.default_caption is not None:
                     prompt = self.dataset_config.default_caption
+
+            if short_caption is None:
+                short_caption = self.dataset_config.default_caption
             self.raw_caption = prompt
+            self.raw_caption_short = short_caption
 
     def get_caption(
             self: 'FileItemDTO',
             trigger=None,
             to_replace_list=None,
-            add_if_not_present=False
+            add_if_not_present=False,
+            short_caption=False
     ):
-        raw_caption = self.raw_caption
+        if short_caption:
+            raw_caption = self.raw_caption_short
+        else:
+            raw_caption = self.raw_caption
         if raw_caption is None:
             raw_caption = ''
         # handle dropout
-        if self.dataset_config.caption_dropout_rate > 0:
+        if self.dataset_config.caption_dropout_rate > 0 and not short_caption:
             # get a random float form 0 to 1
             rand = random.random()
             if rand < self.dataset_config.caption_dropout_rate:
@@ -296,7 +307,7 @@ class CaptionProcessingDTOMixin:
             random.shuffle(token_list)
 
         # handle token dropout
-        if self.dataset_config.token_dropout_rate > 0:
+        if self.dataset_config.token_dropout_rate > 0 and not short_caption:
             new_token_list = []
             for token in token_list:
                 # get a random float form 0 to 1
@@ -845,7 +856,8 @@ class LatentCachingMixin:
         self.sd.set_device_state_preset('cache_latents')
 
         # use tqdm to show progress
-        for i, file_item in tqdm(enumerate(self.file_list), desc=f'Caching latents{" to disk" if to_disk else ""}'):
+        i = 0
+        for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
             # set latent space version
             if self.sd.is_xl:
                 file_item.latent_space_version = 'sdxl'
@@ -891,6 +903,7 @@ class LatentCachingMixin:
 
                 flush(garbage_collect=False)
             file_item.is_latent_cached = True
+            i += 1
             # flush every 100
             # if i % 100 == 0:
             #     flush()

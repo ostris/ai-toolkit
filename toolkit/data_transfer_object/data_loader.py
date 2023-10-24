@@ -82,7 +82,7 @@ class DataLoaderBatchDTO:
             self.control_tensor: Union[torch.Tensor, None] = None
             self.mask_tensor: Union[torch.Tensor, None] = None
             self.unaugmented_tensor: Union[torch.Tensor, None] = None
-            self.sigmas: Union[torch.Tensor, None] = None # can be added elseware and passed along training code
+            self.sigmas: Union[torch.Tensor, None] = None  # can be added elseware and passed along training code
             if not is_latents_cached:
                 # only return a tensor if latents are not cached
                 self.tensor: torch.Tensor = torch.cat([x.tensor.unsqueeze(0) for x in self.file_items])
@@ -158,6 +158,19 @@ class DataLoaderBatchDTO:
             trigger=trigger,
             to_replace_list=to_replace_list,
             add_if_not_present=add_if_not_present
+        ) for x in self.file_items]
+
+    def get_caption_short_list(
+            self,
+            trigger=None,
+            to_replace_list=None,
+            add_if_not_present=True
+    ):
+        return [x.get_caption(
+            trigger=trigger,
+            to_replace_list=to_replace_list,
+            add_if_not_present=add_if_not_present,
+            short_caption=False
         ) for x in self.file_items]
 
     def cleanup(self):

@@ -42,6 +42,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
         self.lora_dim = lora_dim
         self.cp = False
 
+
         self.scalar = nn.Parameter(torch.tensor(0.0))
         orig_module_name = org_module.__class__.__name__
         if orig_module_name in CONV_MODULES:

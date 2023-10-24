@@ -62,6 +62,7 @@ class BlankNetwork:
         self.multiplier = 1.0
         self.is_active = True
         self.is_normalizing = False
+        self.is_merged_in = False
 
     def apply_stored_normalizer(self, target_normalize_scaler: float = 1.0):
         pass
@@ -267,10 +268,18 @@ class StableDiffusion:
 
     @torch.no_grad()
     def generate_images(self, image_configs: List[GenerateImageConfig], sampler=None):
+        merge_multiplier = 1.0
         # sample_folder = os.path.join(self.save_root, 'samples')
         if self.network is not None:
             self.network.eval()
             network = self.network
+            # check if we have the same network weight for all samples. If we do, we can merge in th
+            # the network to drastically speed up inference
+            unique_network_weights = set([x.network_multiplier for x in image_configs])
+            if len(unique_network_weights) == 1:
+                can_merge_in = True
+                merge_multiplier = unique_network_weights.pop()
+                network.merge_in(merge_weight=merge_multiplier)
         else:
             network = BlankNetwork()
 
@@ -462,6 +471,9 @@ class StableDiffusion:
             self.network.train()
             self.network.multiplier = start_multiplier
             self.network.is_normalizing = was_network_normalizing
+
+        if network.is_merged_in:
+            network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])
 
     def get_latent_noise(
