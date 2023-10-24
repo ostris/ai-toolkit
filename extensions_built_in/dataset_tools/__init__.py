@@ -1,10 +1,7 @@
-# This is an example extension for custom training. It is great for experimenting with new ideas.
 from toolkit.extension import Extension
 
 
-# This is for generic training (LoRA, Dreambooth, FineTuning)
 class DatasetToolsExtension(Extension):
-    # uid must be unique, it is how the extension is identified
     uid = "dataset_tools"
 
     # name is the name of the extension for printing
@@ -19,7 +16,28 @@ class DatasetToolsExtension(Extension):
         return DatasetTools
 
 
+class SyncFromCollectionExtension(Extension):
+    uid = "sync_from_collection"
+    name = "Sync from Collection"
+
+    @classmethod
+    def get_process(cls):
+        # import your process class here so it is only loaded when needed and return it
+        from .SyncFromCollection import SyncFromCollection
+        return SyncFromCollection
+    
+    
+class SuperTaggerExtension(Extension):
+    uid = "super_tagger"
+    name = "Super Tagger"
+
+    @classmethod
+    def get_process(cls):
+        # import your process class here so it is only loaded when needed and return it
+        from .SuperTagger import SuperTagger
+        return SuperTagger
+
+
 AI_TOOLKIT_EXTENSIONS = [
-    # you can put a list of extensions here
-    DatasetToolsExtension,
+    SyncFromCollectionExtension, DatasetToolsExtension, SuperTaggerExtension
 ]

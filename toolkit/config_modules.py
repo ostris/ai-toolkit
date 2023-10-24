@@ -133,6 +133,7 @@ class TrainConfig:
         # we will predict noise without a the LoRa network and use the prediction as a target for
         # unmasked reign. It is unmasked regularization basically
         self.inverted_mask_prior = kwargs.get('inverted_mask_prior', False)
+        self.inverted_mask_prior_multiplier = kwargs.get('inverted_mask_prior_multiplier', 0.5)
 
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:

@@ -21,3 +21,4 @@ open_clip_torch
 timm
 prodigyopt
 controlnet_aux==0.0.7
+python-dotenv

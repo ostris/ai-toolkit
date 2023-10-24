@@ -74,12 +74,18 @@ class SDTrainer(BaseSDTrainProcess):
     ):
         loss_target = self.train_config.loss_target
 
+        prior_mask_multiplier = None
+        target_mask_multiplier = None
+
         if self.train_config.inverted_mask_prior:
             # we need to make the noise prediction be a masked blending of noise and prior_pred
-            prior_multiplier = 1.0 - mask_multiplier
-            target = (noise * mask_multiplier) + (prior_pred * prior_multiplier)
+            prior_mask_multiplier = 1.0 - mask_multiplier
+            # target_mask_multiplier = mask_multiplier
+            # mask_multiplier = 1.0
+            target = noise
+            # target = (noise * mask_multiplier) + (prior_pred * prior_mask_multiplier)
             # set masked multiplier to 1.0 so we dont double apply it
-            mask_multiplier = 1.0
+            # mask_multiplier = 1.0
         elif prior_pred is not None:
             # matching adapter prediction
             target = prior_pred
@@ -127,6 +133,16 @@ class SDTrainer(BaseSDTrainProcess):
 
         # multiply by our mask
         loss = loss * mask_multiplier
+
+        if self.train_config.inverted_mask_prior:
+            # to a loss to unmasked areas of the prior for unmasked regularization
+            prior_loss = torch.nn.functional.mse_loss(
+                prior_pred.float(),
+                pred.float(),
+                reduction="none"
+            )
+            prior_loss = prior_loss * prior_mask_multiplier * self.train_config.inverted_mask_prior_multiplier
+            loss = loss + prior_loss
 
         loss = loss.mean([1, 2, 3])
 
