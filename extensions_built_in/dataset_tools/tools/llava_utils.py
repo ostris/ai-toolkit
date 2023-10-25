@@ -5,20 +5,7 @@ except ImportError:
     print("You need to manually install llava -> pip install --no-deps  git+https://github.com/haotian-liu/LLaVA.git")
     raise
 
-long_prompt = 'caption this image. describe every single thing in the image in detail. Do not include any unnecessary words in your description for the sake of good grammar. I want many short statements that serve the single purpose of giving the most thorough description if items as possible in the smallest, comma separated way possible. be sure to describe people\'s moods, clothing, the environment, lighting, colors, and everything.'
-short_prompt = 'caption this image in less than ten words'
-
-prompts = [
-    long_prompt,
-    short_prompt,
-]
-
-replacements = [
-    ("the image features", ""),
-    ("the image shows", ""),
-    ("the image depicts", ""),
-    ("the image is", ""),
-]
+from .caption import default_long_prompt, default_short_prompt, default_replacements, clean_caption
 
 import torch
 from PIL import Image, ImageOps
@@ -61,36 +48,12 @@ class LLaVAImageProcessor:
         self.image_processor = vision_tower.image_processor
         self.is_loaded = True
 
-    def clean_caption(self, cap):
-        # remove any newlines
-        cap = cap.replace("\n", ", ")
-        cap = cap.replace("\r", ", ")
-        cap = cap.replace(".", ",")
-        cap = cap.replace("\"", "")
-
-        # remove unicode characters
-        cap = cap.encode('ascii', 'ignore').decode('ascii')
-
-        # make lowercase
-        cap = cap.lower()
-        # remove any extra spaces
-        cap = " ".join(cap.split())
-
-        for replacement in replacements:
-            cap = cap.replace(replacement[0], replacement[1])
-
-        cap_list = cap.split(",")
-        # trim whitespace
-        cap_list = [c.strip() for c in cap_list]
-        # remove empty strings
-        cap_list = [c for c in cap_list if c != ""]
-        # remove duplicates
-        cap_list = list(dict.fromkeys(cap_list))
-        # join back together
-        cap = ", ".join(cap_list)
-        return cap
-
-    def generate_caption(self, image: Image, prompt: str = long_prompt):
+    def generate_caption(
+            self, image:
+            Image, prompt: str = default_long_prompt,
+            replacements=default_replacements,
+            max_new_tokens=512
+    ):
         # question = "how many dogs are in the picture?"
         disable_torch_init()
         conv_mode = "llava_v0"
@@ -111,19 +74,10 @@ class LLaVAImageProcessor:
         with torch.inference_mode():
             output_ids = self.model.generate(
                 input_ids, images=image_tensor, do_sample=True, temperature=0.1,
-                max_new_tokens=1024, use_cache=True, stopping_criteria=[stopping_criteria],
+                max_new_tokens=max_new_tokens, use_cache=True, stopping_criteria=[stopping_criteria],
                 top_p=0.9
             )
         outputs = self.tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
         conv.messages[-1][-1] = outputs
         output = outputs.rsplit('</s>', 1)[0]
-        return self.clean_caption(output)
-
-    def generate_captions(self, image: Image):
-
-        responses = []
-        for prompt in prompts:
-            output = self.generate_caption(image, prompt)
-            responses.append(output)
-        # replace all . with ,
-        return responses
+        return clean_caption(output, replacements=replacements)

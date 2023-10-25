@@ -9,7 +9,7 @@ def img_root_path(img_id: str):
 
 
 if TYPE_CHECKING:
-    from ..dataset_tools_config_modules import DatasetSyncCollectionConfig
+    from .dataset_tools_config_modules import DatasetSyncCollectionConfig
 
 img_exts = ['.jpg', '.jpeg', '.webp', '.png']
 

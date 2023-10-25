@@ -7,7 +7,7 @@ from typing import List
 import torch
 from tqdm import tqdm
 
-from .dataset_tools_config_modules import DatasetSyncCollectionConfig, RAW_DIR, NEW_DIR
+from .tools.dataset_tools_config_modules import DatasetSyncCollectionConfig, RAW_DIR, NEW_DIR
 from .tools.sync_tools import get_unsplash_images, get_pexels_images, get_local_image_file_names, download_image, \
     get_img_paths
 from jobs.process import BaseExtensionProcess

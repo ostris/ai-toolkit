@@ -8,7 +8,8 @@ NEW_DIR = "_tmp"
 TRAIN_DIR = "train"
 DEPTH_DIR = "depth"
 
-from .tools.image_tools import Step, img_manipulation_steps
+from .image_tools import Step, img_manipulation_steps
+from .caption import caption_manipulation_steps
 
 
 class DatasetSyncCollectionConfig:
@@ -64,8 +65,11 @@ class ImgInfo:
         self.caption_short: str = kwargs.get('caption_short', None)
         self.poi = [Rect(**poi) for poi in kwargs.get('poi', [])]
         self.state = ImageState(**kwargs.get('state', {}))
+        self.caption_method = kwargs.get('caption_method', None)
+        self.other_captions = kwargs.get('other_captions', {})
         self._upgrade_state()
         self.force_image_process: bool = False
+        self._requested_steps: list[Step] = []
 
         self.is_dirty: bool = False
 
@@ -77,14 +81,20 @@ class ImgInfo:
         if self.caption_short is not None and 'caption_short' not in self.state.steps_complete:
             self.mark_step_complete('caption_short')
             self.is_dirty = True
+        if self.caption_method is None and self.caption is not None:
+            # added caption method in version 2. Was all llava before that
+            self.caption_method = 'llava:default'
+            self.is_dirty = True
 
     def to_dict(self):
         return {
             'version': self.version,
+            'caption_method': self.caption_method,
             'caption': self.caption,
             'caption_short': self.caption_short,
             'poi': [poi.to_dict() for poi in self.poi],
-            'state': self.state.to_dict()
+            'state': self.state.to_dict(),
+            'other_captions': self.other_captions
         }
 
     def mark_step_complete(self, step: Step):
@@ -98,7 +108,10 @@ class ImgInfo:
         if step not in self.state.steps_to_complete and step not in self.state.steps_complete:
             self.state.steps_to_complete.append(step)
 
-    def trigger_image_reprocess(self, steps):
+    def trigger_image_reprocess(self):
+        if self._requested_steps is None:
+            raise Exception("Must call add_steps before trigger_image_reprocess")
+        steps = self._requested_steps
         # remove all image manipulationf from steps_to_complete
         for step in img_manipulation_steps:
             if step in self.state.steps_to_complete:
@@ -112,14 +125,13 @@ class ImgInfo:
             if step in img_manipulation_steps:
                 self.add_step(step)
 
-
     def add_steps(self, steps: list[Step]):
+        self._requested_steps = [step for step in steps]
         for stage in steps:
             self.add_step(stage)
 
         # update steps if we have any img processes not complete, we have to reprocess them all
         # if any steps_to_complete are in img_manipulation_steps
-        # TODO check if they are in a new order now ands trigger a redo
 
         is_manipulating_image = any([step in img_manipulation_steps for step in self.state.steps_to_complete])
         order_has_changed = False
@@ -133,8 +145,38 @@ class ImgInfo:
                 order_has_changed = True
 
         if is_manipulating_image or order_has_changed:
-            self.trigger_image_reprocess(steps)
+            self.trigger_image_reprocess()
 
+    def set_caption_method(self, method: str):
+        if self._requested_steps is None:
+            raise Exception("Must call add_steps before set_caption_method")
+        if self.caption_method != method:
+            self.is_dirty = True
+            # move previous caption method to other_captions
+            if self.caption_method is not None and self.caption is not None or self.caption_short is not None:
+                self.other_captions[self.caption_method] = {
+                    'caption': self.caption,
+                    'caption_short': self.caption_short,
+                }
+            self.caption_method = method
+            self.caption = None
+            self.caption_short = None
+            # see if we have a caption from the new method
+            if method in self.other_captions:
+                self.caption = self.other_captions[method].get('caption', None)
+                self.caption_short = self.other_captions[method].get('caption_short', None)
+            else:
+                self.trigger_new_caption()
+
+    def trigger_new_caption(self):
+        self.caption = None
+        self.caption_short = None
+        self.is_dirty = True
+        # check to see if we have any steps in the complete list and move them to the to_complete list
+        for step in self.state.steps_complete:
+            if step in caption_manipulation_steps:
+                self.state.steps_complete.remove(step)
+                self.state.steps_to_complete.append(step)
 
     def to_json(self):
         return json.dumps(self.to_dict())

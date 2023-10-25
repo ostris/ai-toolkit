@@ -2,7 +2,7 @@ torch
 torchvision
 safetensors
 diffusers==0.21.3
-transformers
+git+https://github.com/huggingface/transformers.git@master
 lycoris-lora==1.8.3
 flatten_json
 pyyaml

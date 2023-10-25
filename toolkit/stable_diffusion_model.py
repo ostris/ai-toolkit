@@ -176,6 +176,7 @@ class StableDiffusion:
                     dtype=dtype,
                     device=self.device_torch,
                     variant="fp16",
+                    use_safetensors=True,
                     **load_args
                 )
             else:

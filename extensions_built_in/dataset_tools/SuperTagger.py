@@ -3,15 +3,16 @@ import json
 import os
 from collections import OrderedDict
 import gc
-from typing import Type, Literal
-
+import traceback
 import torch
 from PIL import Image, ImageOps
 from tqdm import tqdm
 
-from .dataset_tools_config_modules import RAW_DIR, TRAIN_DIR, Step, ImgInfo
-from .tools.image_tools import load_image
-from .tools.llava_utils import LLaVAImageProcessor, long_prompt, short_prompt
+from .tools.dataset_tools_config_modules import RAW_DIR, TRAIN_DIR, Step, ImgInfo
+from .tools.fuyu_utils import FuyuImageProcessor
+from .tools.image_tools import load_image, ImageProcessor, resize_to_max
+from .tools.llava_utils import LLaVAImageProcessor
+from .tools.caption import default_long_prompt, default_short_prompt
 from jobs.process import BaseExtensionProcess
 from .tools.sync_tools import get_img_paths
 
@@ -23,7 +24,7 @@ def flush():
     gc.collect()
 
 
-VERSION = 1
+VERSION = 2
 
 
 class SuperTagger(BaseExtensionProcess):
@@ -34,7 +35,9 @@ class SuperTagger(BaseExtensionProcess):
         self.dataset_paths: list[str] = config.get('dataset_paths', [])
         self.device = config.get('device', 'cuda')
         self.steps: list[Step] = config.get('steps', [])
-        self.caption_method = config.get('caption_method', 'llava')
+        self.caption_method = config.get('caption_method', 'llava:default')
+        self.caption_prompt = config.get('caption_prompt', default_long_prompt)
+        self.caption_short_prompt = config.get('caption_short_prompt', default_short_prompt)
         self.force_reprocess_img = config.get('force_reprocess_img', False)
         self.master_dataset_dict = OrderedDict()
         self.dataset_master_config_file = config.get('dataset_master_config_file', None)
@@ -53,7 +56,15 @@ class SuperTagger(BaseExtensionProcess):
 
         print(f"Found {len(self.dataset_paths)} dataset paths")
 
-        self.image_processor = LLaVAImageProcessor(device=self.device)
+        self.image_processor: ImageProcessor = self.get_image_processor()
+
+    def get_image_processor(self):
+        if self.caption_method.startswith('llava'):
+            return LLaVAImageProcessor(device=self.device)
+        elif self.caption_method.startswith('fuyu'):
+            return FuyuImageProcessor(device=self.device)
+        else:
+            raise ValueError(f"Unknown caption method: {self.caption_method}")
 
     def process_image(self, img_path: str):
         root_img_dir = os.path.dirname(os.path.dirname(img_path))
@@ -70,18 +81,19 @@ class SuperTagger(BaseExtensionProcess):
         else:
             img_info = ImgInfo()
 
-        img_info.set_version(VERSION)
-
-        # send steps to img info so it can store them
+        # always send steps first in case other processes need them
         img_info.add_steps(copy.deepcopy(self.steps))
+        img_info.set_version(VERSION)
+        img_info.set_caption_method(self.caption_method)
 
         image: Image = None
+        caption_image: Image = None
 
         did_update_image = False
 
         # trigger reprocess of steps
         if self.force_reprocess_img:
-            img_info.trigger_image_reprocess(steps=self.steps)
+            img_info.trigger_image_reprocess()
 
         # set the image as updated if it does not exist on disk
         if not os.path.exists(train_img_path):
@@ -91,29 +103,39 @@ class SuperTagger(BaseExtensionProcess):
             did_update_image = True
             image = load_image(img_path)
 
-
         # go through the needed steps
-        for step in img_info.state.steps_to_complete:
+        for step in copy.deepcopy(img_info.state.steps_to_complete):
             if step == 'caption':
                 # load image
                 if image is None:
                     image = load_image(img_path)
+                if caption_image is None:
+                    caption_image = resize_to_max(image, 1024, 1024)
 
                 if not self.image_processor.is_loaded:
                     print('Loading Model. Takes a while, especially the first time')
                     self.image_processor.load_model()
 
-                img_info.caption = self.image_processor.generate_caption(image, prompt=long_prompt)
+                img_info.caption = self.image_processor.generate_caption(
+                    image=caption_image,
+                    prompt=self.caption_prompt
+                )
                 img_info.mark_step_complete(step)
             elif step == 'caption_short':
                 # load image
                 if image is None:
                     image = load_image(img_path)
 
+                if caption_image is None:
+                    caption_image = resize_to_max(image, 1024, 1024)
+
                 if not self.image_processor.is_loaded:
                     print('Loading Model. Takes a while, especially the first time')
                     self.image_processor.load_model()
-                img_info.caption_short = self.image_processor.generate_caption(image, prompt=short_prompt)
+                img_info.caption_short = self.image_processor.generate_caption(
+                    image=caption_image,
+                    prompt=self.caption_short_prompt
+                )
                 img_info.mark_step_complete(step)
             elif step == 'contrast_stretch':
                 # load image
@@ -153,12 +175,13 @@ class SuperTagger(BaseExtensionProcess):
             print(f"Found {len(imgs_to_process)} to process")
 
             for img_path in tqdm(imgs_to_process, desc="Processing images"):
-                # try:
-                #     self.process_image(img_path)
-                # except Exception as e:
-                #     print(f"Error processing {img_path}: {e}")
-                #     continue
-                self.process_image(img_path)
+                try:
+                    self.process_image(img_path)
+                except Exception:
+                    # print full stack trace
+                    print(traceback.format_exc())
+                    continue
+                # self.process_image(img_path)
 
         if self.dataset_master_config_file is not None:
             # save it as json
