@@ -456,7 +456,7 @@ class StableDiffusion:
                             **extra
                         ).images[0]
 
-                    gen_config.save_image(img)
+                    gen_config.save_image(img, i)
 
         # clear pipeline and cache to reduce vram usage
         del pipeline
