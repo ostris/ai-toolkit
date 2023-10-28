@@ -8,20 +8,19 @@ from lycoris.modules.glora import GLoRAModule
 from torch import nn
 from transformers import CLIPTextModel
 from torch.nn import functional as F
-from toolkit.network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin
+from toolkit.network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, ExtractableModuleMixin
 
 # diffusers specific stuff
 LINEAR_MODULES = [
     'Linear',
     'LoRACompatibleLinear'
-    # 'GroupNorm',
 ]
 CONV_MODULES = [
     'Conv2d',
     'LoRACompatibleConv'
 ]
 
-class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
+class LoConSpecialModule(ToolkitModuleMixin, LoConModule, ExtractableModuleMixin):
     def __init__(
             self,
             lora_name, org_module: nn.Module,
@@ -30,18 +29,20 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
             dropout=0., rank_dropout=0., module_dropout=0.,
             use_cp=False,
             network: 'LycorisSpecialNetwork' = None,
-            parent=None,
+            use_bias=False,
             **kwargs,
     ):
         """ if alpha == 0 or None, alpha is rank (no scaling). """
         # call super of super
+        ToolkitModuleMixin.__init__(self, network=network)
         torch.nn.Module.__init__(self)
-        # call super of
-        super().__init__(call_super_init=False, network=network)
         self.lora_name = lora_name
         self.lora_dim = lora_dim
         self.cp = False
 
+        # check if parent has bias. if not force use_bias to False
+        if org_module.bias is None:
+            use_bias = False
 
         self.scalar = nn.Parameter(torch.tensor(0.0))
         orig_module_name = org_module.__class__.__name__
@@ -61,7 +62,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
                 self.cp = True
             else:
                 self.lora_down = nn.Conv2d(in_dim, lora_dim, k_size, stride, padding, bias=False)
-            self.lora_up = nn.Conv2d(lora_dim, out_dim, (1, 1), bias=False)
+            self.lora_up = nn.Conv2d(lora_dim, out_dim, (1, 1), bias=use_bias)
         elif orig_module_name in LINEAR_MODULES:
             self.isconv = False
             self.down_op = F.linear
@@ -74,7 +75,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule):
                 in_dim = org_module.in_features
                 out_dim = org_module.out_features
             self.lora_down = nn.Linear(in_dim, lora_dim, bias=False)
-            self.lora_up = nn.Linear(lora_dim, out_dim, bias=False)
+            self.lora_up = nn.Linear(lora_dim, out_dim, bias=use_bias)
         else:
             raise NotImplementedError
         self.shape = org_module.weight.shape
@@ -159,10 +160,16 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             train_text_encoder: bool = True,
             use_text_encoder_1: bool = True,
             use_text_encoder_2: bool = True,
+            use_bias: bool = False,
+            is_lorm: bool = False,
             **kwargs,
     ) -> None:
         # call ToolkitNetworkMixin super
-        super().__init__(
+        ToolkitNetworkMixin.__init__(
+            self,
+            train_text_encoder=train_text_encoder,
+            train_unet=train_unet,
+            is_lorm=is_lorm,
             **kwargs
         )
         # call the parent of the parent LycorisNetwork
@@ -217,7 +224,6 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             loras = []
             # remove this
             named_modules = root_module.named_modules()
-            modules = root_module.modules()
             # add a few to tthe generator
 
             for name, module in named_modules:
@@ -241,6 +247,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 use_cp,
                                 network=self,
                                 parent=module,
+                                use_bias=use_bias,
                                 **kwargs
                             )
                         elif child_module.__class__.__name__ in CONV_MODULES:
@@ -253,6 +260,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                     use_cp,
                                     network=self,
                                     parent=module,
+                                use_bias=use_bias,
                                     **kwargs
                                 )
                             elif conv_lora_dim > 0:
@@ -263,6 +271,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                     use_cp,
                                     network=self,
                                     parent=module,
+                                    use_bias=use_bias,
                                     **kwargs
                                 )
                             else:
@@ -285,6 +294,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                             use_cp,
                             parent=module,
                             network=self,
+                            use_bias=use_bias,
                             **kwargs
                         )
                     elif module.__class__.__name__ == 'Conv2d':
@@ -297,6 +307,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 use_cp,
                                 network=self,
                                 parent=module,
+                                use_bias=use_bias,
                                 **kwargs
                             )
                         elif conv_lora_dim > 0:
@@ -307,6 +318,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 use_cp,
                                 network=self,
                                 parent=module,
+                                use_bias=use_bias,
                                 **kwargs
                             )
                         else:

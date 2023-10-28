@@ -7,7 +7,9 @@ from typing import List, Optional, Dict, Type, Union
 import torch
 from transformers import CLIPTextModel
 
-from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin
+from .config_modules import NetworkConfig
+from .lorm import count_parameters
+from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, ExtractableModuleMixin
 from .paths import SD_SCRIPTS_ROOT
 
 sys.path.append(SD_SCRIPTS_ROOT)
@@ -30,7 +32,7 @@ CONV_MODULES = [
     'LoRACompatibleConv'
 ]
 
-class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
+class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
     """
     replaces forward method of the original Linear, instead of replacing the original Linear module.
     """
@@ -46,13 +48,17 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
             rank_dropout=None,
             module_dropout=None,
             network: 'LoRASpecialNetwork' = None,
-            parent=None,
+            use_bias: bool = False,
             **kwargs
     ):
         """if alpha == 0 or None, alpha is rank (no scaling)."""
-        super().__init__(network=network)
+        ToolkitModuleMixin.__init__(self, network=network)
+        torch.nn.Module.__init__(self)
         self.lora_name = lora_name
         self.scalar = torch.tensor(1.0)
+        # check if parent has bias. if not force use_bias to False
+        if org_module.bias is None:
+            use_bias = False
 
         if org_module.__class__.__name__ in CONV_MODULES:
             in_dim = org_module.in_channels
@@ -73,10 +79,10 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
             stride = org_module.stride
             padding = org_module.padding
             self.lora_down = torch.nn.Conv2d(in_dim, self.lora_dim, kernel_size, stride, padding, bias=False)
-            self.lora_up = torch.nn.Conv2d(self.lora_dim, out_dim, (1, 1), (1, 1), bias=False)
+            self.lora_up = torch.nn.Conv2d(self.lora_dim, out_dim, (1, 1), (1, 1), bias=use_bias)
         else:
             self.lora_down = torch.nn.Linear(in_dim, self.lora_dim, bias=False)
-            self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=False)
+            self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=use_bias)
 
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
@@ -95,8 +101,6 @@ class LoRAModule(ToolkitModuleMixin, torch.nn.Module):
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
         self.is_checkpointing = False
-        self.is_normalizing = False
-        self.normalize_scaler = 1.0
 
     def apply_to(self):
         self.org_forward = self.org_module[0].forward
@@ -143,6 +147,13 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             train_unet: Optional[bool] = True,
             is_sdxl=False,
             is_v2=False,
+            use_bias: bool = False,
+            is_lorm: bool = False,
+            ignore_if_contains = None,
+            parameter_threshold: float = 0.0,
+            target_lin_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE,
+            target_conv_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE_CONV2D_3X3,
+            **kwargs
     ) -> None:
         """
         LoRA network: すごく引数が多いが、パターンは以下の通り
@@ -154,7 +165,18 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         """
         # call the parent of the parent we are replacing (LoRANetwork) init
         torch.nn.Module.__init__(self)
-
+        ToolkitNetworkMixin.__init__(
+            self,
+            train_text_encoder=train_text_encoder,
+            train_unet=train_unet,
+            is_sdxl=is_sdxl,
+            is_v2=is_v2,
+            is_lorm=is_lorm,
+            **kwargs
+        )
+        if ignore_if_contains is None:
+            ignore_if_contains = []
+        self.ignore_if_contains = ignore_if_contains
         self.lora_dim = lora_dim
         self.alpha = alpha
         self.conv_lora_dim = conv_lora_dim
@@ -165,13 +187,11 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.is_checkpointing = False
         self._multiplier: float = 1.0
         self.is_active: bool = False
-        self._is_normalizing: bool = False
         self.torch_multiplier = None
         # triggers the state updates
         self.multiplier = multiplier
         self.is_sdxl = is_sdxl
         self.is_v2 = is_v2
-        self.is_merged_in = False
 
         if modules_dim is not None:
             print(f"create LoRA network from weights")
@@ -217,7 +237,15 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         is_conv2d = child_module.__class__.__name__ in CONV_MODULES
                         is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
-                        if is_linear or is_conv2d:
+                        skip = False
+                        if any([word in child_name for word in self.ignore_if_contains]):
+                            skip = True
+
+                        # see if it is over threshold
+                        if count_parameters(child_module) < parameter_threshold:
+                            skip = True
+
+                        if (is_linear or is_conv2d) and not skip:
                             lora_name = prefix + "." + name + "." + child_name
                             lora_name = lora_name.replace(".", "_")
 
@@ -265,6 +293,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                 module_dropout=module_dropout,
                                 network=self,
                                 parent=module,
+                                use_bias=use_bias,
                             )
                             loras.append(lora)
             return loras, skipped
@@ -295,9 +324,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
 
         # extend U-Net target modules if conv2d 3x3 is enabled, or load from weights
-        target_modules = LoRANetwork.UNET_TARGET_REPLACE_MODULE
+        target_modules = target_lin_modules
         if modules_dim is not None or self.conv_lora_dim is not None or conv_block_dims is not None:
-            target_modules += LoRANetwork.UNET_TARGET_REPLACE_MODULE_CONV2D_3X3
+            target_modules += target_conv_modules
 
         if train_unet:
             self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)

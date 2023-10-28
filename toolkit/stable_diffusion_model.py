@@ -61,11 +61,7 @@ class BlankNetwork:
     def __init__(self):
         self.multiplier = 1.0
         self.is_active = True
-        self.is_normalizing = False
         self.is_merged_in = False
-
-    def apply_stored_normalizer(self, target_normalize_scaler: float = 1.0):
-        pass
 
     def __enter__(self):
         self.is_active = True
@@ -180,11 +176,19 @@ class StableDiffusion:
                     **load_args
                 )
             else:
-                pipe = pipln.from_single_file(
-                    model_path,
-                    device=self.device_torch,
-                    torch_dtype=self.torch_dtype,
-                )
+                try:
+                    pipe = pipln.from_single_file(
+                        model_path,
+                        device=self.device_torch,
+                        torch_dtype=self.torch_dtype,
+                    )
+                except Exception as e:
+                    print("Error loading model from single file. Trying to load from pretrained")
+                    pipe = pipln.from_pretrained(
+                        model_path,
+                        device=self.device_torch,
+                        torch_dtype=self.torch_dtype,
+                    )
             flush()
 
             text_encoders = [pipe.text_encoder, pipe.text_encoder_2]
@@ -277,18 +281,12 @@ class StableDiffusion:
             # check if we have the same network weight for all samples. If we do, we can merge in th
             # the network to drastically speed up inference
             unique_network_weights = set([x.network_multiplier for x in image_configs])
-            if len(unique_network_weights) == 1:
+            if len(unique_network_weights) == 1 and self.network.can_merge_in:
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
                 network.merge_in(merge_weight=merge_multiplier)
         else:
             network = BlankNetwork()
-
-        was_network_normalizing = network.is_normalizing
-        # apply the normalizer if it is normalizing before inference and disable it
-        if network.is_normalizing:
-            network.apply_stored_normalizer()
-            network.is_normalizing = False
 
         self.save_device_state()
         self.set_device_state_preset('generate')
@@ -471,7 +469,6 @@ class StableDiffusion:
         if self.network is not None:
             self.network.train()
             self.network.multiplier = start_multiplier
-            self.network.is_normalizing = was_network_normalizing
 
         if network.is_merged_in:
             network.merge_out(merge_multiplier)

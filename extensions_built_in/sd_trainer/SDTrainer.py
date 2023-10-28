@@ -32,7 +32,6 @@ class SDTrainer(BaseSDTrainProcess):
         if self.train_config.inverted_mask_prior:
             self.do_prior_prediction = True
 
-
     def before_model_load(self):
         pass
 
@@ -193,6 +192,15 @@ class SDTrainer(BaseSDTrainProcess):
             self.network.is_active = was_network_active
         return prior_pred
 
+    def before_unet_predict(self):
+        pass
+
+    def after_unet_predict(self):
+        pass
+
+    def end_of_training_loop(self):
+        pass
+
     def hook_train_loop(self, batch: 'DataLoaderBatchDTO'):
 
         self.timer.start('preprocess_batch')
@@ -331,7 +339,6 @@ class SDTrainer(BaseSDTrainProcess):
             adapter_images_list = [adapter_images]
             mask_multiplier_list = [mask_multiplier]
 
-
         for noisy_latents, noise, timesteps, conditioned_prompts, imgs, adapter_images, mask_multiplier in zip(
                 noisy_latents_list,
                 noise_list,
@@ -366,7 +373,8 @@ class SDTrainer(BaseSDTrainProcess):
 
                 # flush()
                 pred_kwargs = {}
-                if has_adapter_img and ((self.adapter and isinstance(self.adapter, T2IAdapter)) or self.assistant_adapter):
+                if has_adapter_img and (
+                        (self.adapter and isinstance(self.adapter, T2IAdapter)) or self.assistant_adapter):
                     with torch.set_grad_enabled(self.adapter is not None):
                         adapter = self.adapter if self.adapter else self.assistant_adapter
                         adapter_multiplier = get_adapter_multiplier()
@@ -406,8 +414,7 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(adapter_images)
                         conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds)
 
-
-
+                self.before_unet_predict()
                 with self.timer('predict_unet'):
                     noise_pred = self.sd.predict_noise(
                         latents=noisy_latents.to(self.device_torch, dtype=dtype),
@@ -416,6 +423,7 @@ class SDTrainer(BaseSDTrainProcess):
                         guidance_scale=1.0,
                         **pred_kwargs
                     )
+                self.after_unet_predict()
 
                 with self.timer('calculate_loss'):
                     noise = noise.to(self.device_torch, dtype=dtype).detach()
@@ -442,7 +450,7 @@ class SDTrainer(BaseSDTrainProcess):
                     loss.backward()
 
         torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
-                # flush()
+        # flush()
 
         with self.timer('optimizer_step'):
             # apply gradients
@@ -459,5 +467,7 @@ class SDTrainer(BaseSDTrainProcess):
         loss_dict = OrderedDict(
             {'loss': loss.item()}
         )
+
+        self.end_of_training_loop()
 
         return loss_dict
