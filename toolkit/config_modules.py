@@ -52,6 +52,7 @@ class LormModuleSettingsConfig:
 class LoRMConfig:
     def __init__(self, **kwargs):
         self.extract_mode: str = kwargs.get('extract_mode', 'ratio')
+        self.do_conv: bool = kwargs.get('do_conv', False)
         self.extract_mode_param: dict = kwargs.get('extract_mode_param', 0.25)
         self.parameter_threshold: int = kwargs.get('parameter_threshold', 0)
         module_settings = kwargs.get('module_settings', [])
@@ -110,6 +111,8 @@ class NetworkConfig:
             # set linear to arbitrary values so it makes them
             self.linear = 4
             self.rank = 4
+            if self.lorm_config.do_conv:
+                self.conv = 4
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+']
@@ -176,6 +179,10 @@ class TrainConfig:
         self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
+
+        # set to -1 to accumulate gradients for entire epoch
+        # warning, only do this with a small dataset or you will run out of memory
+        self.gradient_accumulation_steps = kwargs.get('gradient_accumulation_steps', 1)
 
         # short long captions will double your batch size. This only works when a dataset is
         # prepared with a json caption file that has both short and long captions in it. It will

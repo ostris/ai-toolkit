@@ -191,6 +191,8 @@ def extract_conv(
     if lora_rank >= out_ch / 2:
         lora_rank = int(out_ch / 2)
         print(f"rank is higher than it should be")
+        # print(f"Skipping layer as determined rank is too high")
+        # return None, None, None, None
         # return weight, 'full'
 
     U = U[:, :lora_rank]
@@ -243,6 +245,8 @@ def extract_linear(
         # print(f"rank is higher than it should be")
         lora_rank = int(out_ch / 2)
         # return weight, 'full'
+        # print(f"Skipping layer as determined rank is too high")
+        # return None, None, None, None
 
     U = U[:, :lora_rank]
     S = S[:lora_rank]
@@ -358,6 +362,8 @@ def convert_diffusers_unet_to_lorm(
                             mode_param=extract_mode_param,
                             device=child_module.weight.device,
                         )
+                        if down_weight is None:
+                            continue
                         down_weight = down_weight.to(dtype=dtype)
                         up_weight = up_weight.to(dtype=dtype)
                         bias_weight = None
@@ -398,6 +404,8 @@ def convert_diffusers_unet_to_lorm(
                             mode_param=extract_mode_param,
                             device=child_module.weight.device,
                         )
+                        if down_weight is None:
+                            continue
                         down_weight = down_weight.to(dtype=dtype)
                         up_weight = up_weight.to(dtype=dtype)
                         bias_weight = None

@@ -448,16 +448,17 @@ class SDTrainer(BaseSDTrainProcess):
                     # I spent weeks on fighting this. DON'T DO IT
                     # with fsdp_overlap_step_with_backward():
                     loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
         # flush()
 
-        with self.timer('optimizer_step'):
-            # apply gradients
-            self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
-        with self.timer('scheduler_step'):
-            self.lr_scheduler.step()
+        if not self.is_grad_accumulation_step:
+            torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
+            # only step if we are not accumulating
+            with self.timer('optimizer_step'):
+                # apply gradients
+                self.optimizer.step()
+                self.optimizer.zero_grad(set_to_none=True)
+            with self.timer('scheduler_step'):
+                self.lr_scheduler.step()
 
         if self.embedding is not None:
             with self.timer('restore_embeddings'):
