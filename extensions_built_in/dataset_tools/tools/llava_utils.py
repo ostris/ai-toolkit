@@ -3,11 +3,8 @@ from .caption import default_long_prompt, default_short_prompt, default_replacem
 
 import torch
 from PIL import Image, ImageOps
-from llava.conversation import conv_templates, SeparatorStyle
+
 from transformers import AutoTokenizer, BitsAndBytesConfig, CLIPImageProcessor
-from llava.utils import disable_torch_init
-from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
-from llava.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria
 
 img_ext = ['.jpg', '.jpeg', '.png', '.webp']
 
@@ -55,6 +52,10 @@ class LLaVAImageProcessor:
             replacements=default_replacements,
             max_new_tokens=512
     ):
+        from llava.conversation import conv_templates, SeparatorStyle
+        from llava.utils import disable_torch_init
+        from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+        from llava.mm_utils import tokenizer_image_token, KeywordsStoppingCriteria
         # question = "how many dogs are in the picture?"
         disable_torch_init()
         conv_mode = "llava_v0"
