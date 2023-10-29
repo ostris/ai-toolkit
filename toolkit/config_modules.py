@@ -168,6 +168,7 @@ class TrainConfig:
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
         self.min_snr_gamma = kwargs.get('min_snr_gamma', None)
+        self.snr_gamma = kwargs.get('snr_gamma', None)
         self.noise_offset = kwargs.get('noise_offset', 0.0)
         self.skip_first_sample = kwargs.get('skip_first_sample', False)
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
