@@ -33,7 +33,13 @@ def clean_caption(cap, replacements=None):
     cap = " ".join(cap.split())
 
     for replacement in replacements:
-        cap = cap.replace(replacement[0], replacement[1])
+        if replacement[0].startswith('*'):
+            # we are removing all text if it starts with this and the rest matches
+            search_text = replacement[0][1:]
+            if cap.startswith(search_text):
+                cap = ""
+        else:
+            cap = cap.replace(replacement[0].lower(), replacement[1].lower())
 
     cap_list = cap.split(",")
     # trim whitespace

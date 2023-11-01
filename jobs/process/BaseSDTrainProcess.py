@@ -1,6 +1,7 @@
 import copy
 import glob
 import inspect
+import json
 from collections import OrderedDict
 import os
 from typing import Union, List
@@ -36,7 +37,7 @@ from toolkit.stable_diffusion_model import StableDiffusion
 
 from jobs.process import BaseTrainProcess
 from toolkit.metadata import get_meta_for_safetensors, load_metadata_from_safetensors, add_base_model_info_to_meta
-from toolkit.train_tools import get_torch_dtype
+from toolkit.train_tools import get_torch_dtype, LearnableSNRGamma
 import gc
 
 from tqdm import tqdm
@@ -158,6 +159,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.named_lora = False
         if self.embed_config is not None or is_training_adapter:
             self.named_lora = True
+        self.snr_gos: Union[LearnableSNRGamma, None] = None
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -369,6 +371,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 save_meta,
                 get_torch_dtype(self.save_config.dtype)
             )
+
+        # save learnable params as json if we have thim
+        if self.snr_gos:
+            json_data = {
+                'offset': self.snr_gos.offset.item(),
+                'scale': self.snr_gos.scale.item(),
+                'gamma': self.snr_gos.gamma.item(),
+            }
+            path_to_save = file_path = os.path.join(self.save_root, 'learnable_snr.json')
+            with open(path_to_save, 'w') as f:
+                json.dump(json_data, f, indent=4)
 
         self.print(f"Saved to {file_path}")
         self.clean_up_saves()
@@ -789,6 +802,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         vae = vae.to(torch.device('cpu'), dtype=dtype)
         vae.requires_grad_(False)
         vae.eval()
+        if self.train_config.learnable_snr_gos:
+            self.snr_gos = LearnableSNRGamma(
+                self.sd.noise_scheduler, device=self.device_torch
+            )
+            # check to see if previous settings exist
+            path_to_load = os.path.join(self.save_root, 'learnable_snr.json')
+            if os.path.exists(path_to_load):
+                with open(path_to_load, 'r') as f:
+                    json_data = json.load(f)
+                    self.snr_gos.offset.data = torch.tensor(json_data['offset'], device=self.device_torch)
+                    self.snr_gos.scale.data = torch.tensor(json_data['scale'], device=self.device_torch)
+                    self.snr_gos.gamma.data = torch.tensor(json_data['gamma'], device=self.device_torch)
+
         flush()
 
         ### HOOk ###

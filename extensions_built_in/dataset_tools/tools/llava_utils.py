@@ -77,7 +77,7 @@ class LLaVAImageProcessor:
             output_ids = self.model.generate(
                 input_ids, images=image_tensor, do_sample=True, temperature=0.1,
                 max_new_tokens=max_new_tokens, use_cache=True, stopping_criteria=[stopping_criteria],
-                top_p=0.9
+                top_p=0.8
             )
         outputs = self.tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
         conv.messages[-1][-1] = outputs

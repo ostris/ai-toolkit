@@ -169,6 +169,9 @@ class TrainConfig:
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
         self.min_snr_gamma = kwargs.get('min_snr_gamma', None)
         self.snr_gamma = kwargs.get('snr_gamma', None)
+        # trains a gamma, offset, and scale to adjust loss to adapt to timestep differentials
+        # this should balance the learning rate across all timesteps over time
+        self.learnable_snr_gos = kwargs.get('learnable_snr_gos', False)
         self.noise_offset = kwargs.get('noise_offset', 0.0)
         self.skip_first_sample = kwargs.get('skip_first_sample', False)
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
@@ -190,6 +193,8 @@ class TrainConfig:
         # Double up every image and run it through with both short and long captions. The idea
         # is that the network will learn how to generate good images with both short and long captions
         self.short_and_long_captions = kwargs.get('short_and_long_captions', False)
+        # if above is NOT true, this will make it so the long caption foes to te2 and the short caption goes to te1 for sdxl only
+        self.short_and_long_captions_encoder_split = kwargs.get('short_and_long_captions_encoder_split', False)
 
         # basically gradient accumulation but we run just 1 item through the network
         # and accumulate gradients. This can be used as basic gradient accumulation but is very helpful

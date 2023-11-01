@@ -6,7 +6,8 @@ from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.ip_adapter import IPAdapter
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
-from toolkit.train_tools import get_torch_dtype, apply_snr_weight
+from toolkit.train_tools import get_torch_dtype, apply_snr_weight, add_all_snr_to_noise_scheduler, \
+    apply_learnable_snr_gos, LearnableSNRGamma
 import gc
 import torch
 from jobs.process import BaseSDTrainProcess
@@ -58,6 +59,9 @@ class SDTrainer(BaseSDTrainProcess):
             # offload it. Already cached
             self.sd.vae.to('cpu')
             flush()
+
+        self.sd.noise_scheduler.set_timesteps(1000)
+        add_all_snr_to_noise_scheduler(self.sd.noise_scheduler, self.device_torch)
 
     # you can expand these in a child class to make customization easier
     def calculate_loss(
@@ -145,7 +149,9 @@ class SDTrainer(BaseSDTrainProcess):
 
         loss = loss.mean([1, 2, 3])
 
-
+        if self.train_config.learnable_snr_gos:
+            # add snr_gamma
+            loss = apply_learnable_snr_gos(loss, timesteps, self.snr_gos)
         if self.train_config.snr_gamma is not None and self.train_config.snr_gamma > 0.000001 and not ignore_snr:
             # add snr_gamma
             loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.snr_gamma, fixed=True)
@@ -315,14 +321,20 @@ class SDTrainer(BaseSDTrainProcess):
 
         # activate network if it exits
 
-        # make the batch splits
+        prompts_1 = conditioned_prompts
+        prompts_2 = None
+        if self.train_config.short_and_long_captions_encoder_split and self.sd.is_xl:
+            prompts_1 = batch.get_caption_short_list()
+            prompts_2 = conditioned_prompts
+
+            # make the batch splits
         if self.train_config.single_item_batching:
             batch_size = noisy_latents.shape[0]
             # chunk/split everything
             noisy_latents_list = torch.chunk(noisy_latents, batch_size, dim=0)
             noise_list = torch.chunk(noise, batch_size, dim=0)
             timesteps_list = torch.chunk(timesteps, batch_size, dim=0)
-            conditioned_prompts_list = [[prompt] for prompt in conditioned_prompts]
+            conditioned_prompts_list = [[prompt] for prompt in prompts_1]
             if imgs is not None:
                 imgs_list = torch.chunk(imgs, batch_size, dim=0)
             else:
@@ -332,32 +344,44 @@ class SDTrainer(BaseSDTrainProcess):
             else:
                 adapter_images_list = [None for _ in range(batch_size)]
             mask_multiplier_list = torch.chunk(mask_multiplier, batch_size, dim=0)
+            if prompts_2 is None:
+                prompt_2_list = [None for _ in range(batch_size)]
+            else:
+                prompt_2_list = [[prompt] for prompt in prompts_2]
 
         else:
             # but it all in an array
             noisy_latents_list = [noisy_latents]
             noise_list = [noise]
             timesteps_list = [timesteps]
-            conditioned_prompts_list = [conditioned_prompts]
+            conditioned_prompts_list = [prompts_1]
             imgs_list = [imgs]
             adapter_images_list = [adapter_images]
             mask_multiplier_list = [mask_multiplier]
+            if prompts_2 is None:
+                prompt_2_list = [None]
+            else:
+                prompt_2_list = [prompts_2]
 
-        for noisy_latents, noise, timesteps, conditioned_prompts, imgs, adapter_images, mask_multiplier in zip(
+
+
+        for noisy_latents, noise, timesteps, conditioned_prompts, imgs, adapter_images, mask_multiplier, prompt_2 in zip(
                 noisy_latents_list,
                 noise_list,
                 timesteps_list,
                 conditioned_prompts_list,
                 imgs_list,
                 adapter_images_list,
-                mask_multiplier_list
+                mask_multiplier_list,
+                prompt_2_list
         ):
 
             with network:
                 with self.timer('encode_prompt'):
                     if grad_on_text_encoder:
                         with torch.set_grad_enabled(True):
-                            conditional_embeds = self.sd.encode_prompt(conditioned_prompts, long_prompts=True).to(
+                            conditional_embeds = self.sd.encode_prompt(conditioned_prompts, prompt_2, long_prompts=True).to(
+                            # conditional_embeds = self.sd.encode_prompt(conditioned_prompts, prompt_2, long_prompts=False).to(
                                 self.device_torch,
                                 dtype=dtype)
                     else:
@@ -368,7 +392,8 @@ class SDTrainer(BaseSDTrainProcess):
                                     te.eval()
                             else:
                                 self.sd.text_encoder.eval()
-                            conditional_embeds = self.sd.encode_prompt(conditioned_prompts, long_prompts=True).to(
+                            conditional_embeds = self.sd.encode_prompt(conditioned_prompts, prompt_2, long_prompts=True).to(
+                            # conditional_embeds = self.sd.encode_prompt(conditioned_prompts, prompt_2, long_prompts=False).to(
                                 self.device_torch,
                                 dtype=dtype)
 

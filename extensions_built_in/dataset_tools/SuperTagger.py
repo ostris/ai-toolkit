@@ -12,7 +12,7 @@ from .tools.dataset_tools_config_modules import RAW_DIR, TRAIN_DIR, Step, ImgInf
 from .tools.fuyu_utils import FuyuImageProcessor
 from .tools.image_tools import load_image, ImageProcessor, resize_to_max
 from .tools.llava_utils import LLaVAImageProcessor
-from .tools.caption import default_long_prompt, default_short_prompt
+from .tools.caption import default_long_prompt, default_short_prompt, default_replacements
 from jobs.process import BaseExtensionProcess
 from .tools.sync_tools import get_img_paths
 
@@ -39,6 +39,8 @@ class SuperTagger(BaseExtensionProcess):
         self.caption_prompt = config.get('caption_prompt', default_long_prompt)
         self.caption_short_prompt = config.get('caption_short_prompt', default_short_prompt)
         self.force_reprocess_img = config.get('force_reprocess_img', False)
+        self.caption_replacements = config.get('caption_replacements', default_replacements)
+        self.caption_short_replacements = config.get('caption_short_replacements', default_replacements)
         self.master_dataset_dict = OrderedDict()
         self.dataset_master_config_file = config.get('dataset_master_config_file', None)
         if parent_dir is not None and len(self.dataset_paths) == 0:
@@ -118,7 +120,8 @@ class SuperTagger(BaseExtensionProcess):
 
                 img_info.caption = self.image_processor.generate_caption(
                     image=caption_image,
-                    prompt=self.caption_prompt
+                    prompt=self.caption_prompt,
+                    replacements=self.caption_replacements
                 )
                 img_info.mark_step_complete(step)
             elif step == 'caption_short':
@@ -134,7 +137,8 @@ class SuperTagger(BaseExtensionProcess):
                     self.image_processor.load_model()
                 img_info.caption_short = self.image_processor.generate_caption(
                     image=caption_image,
-                    prompt=self.caption_short_prompt
+                    prompt=self.caption_short_prompt,
+                    replacements=self.caption_short_replacements
                 )
                 img_info.mark_step_complete(step)
             elif step == 'contrast_stretch':

@@ -46,6 +46,8 @@ def get_optimizer(
 
         if lower_type == "adam8bit":
             return bitsandbytes.optim.Adam8bit(params, lr=learning_rate, **optimizer_params)
+        elif lower_type == "adamw8bit":
+            return bitsandbytes.optim.AdamW8bit(params, lr=learning_rate, **optimizer_params)
         elif lower_type == "lion8bit":
             return bitsandbytes.optim.Lion8bit(params, lr=learning_rate, **optimizer_params)
         else:
