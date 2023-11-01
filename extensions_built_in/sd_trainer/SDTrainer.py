@@ -152,7 +152,7 @@ class SDTrainer(BaseSDTrainProcess):
         if self.train_config.learnable_snr_gos:
             # add snr_gamma
             loss = apply_learnable_snr_gos(loss, timesteps, self.snr_gos)
-        if self.train_config.snr_gamma is not None and self.train_config.snr_gamma > 0.000001 and not ignore_snr:
+        elif self.train_config.snr_gamma is not None and self.train_config.snr_gamma > 0.000001 and not ignore_snr:
             # add snr_gamma
             loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.snr_gamma, fixed=True)
         elif self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001 and not ignore_snr:

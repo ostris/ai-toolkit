@@ -18,7 +18,7 @@ from toolkit.buckets import get_bucket_for_image_size
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
 from PIL.ImageOps import exif_transpose
 import albumentations as A
 
@@ -612,6 +612,8 @@ class MaskFileItemDTOMixin:
             img = Image.fromarray(np_img)
 
         img = img.convert('RGB')
+        if self.dataset_config.invert_mask:
+            img = ImageOps.invert(img)
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match

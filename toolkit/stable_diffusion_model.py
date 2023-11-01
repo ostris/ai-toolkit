@@ -535,7 +535,7 @@ class StableDiffusion:
             text_embeddings: Union[PromptEmbeds, None] = None,
             timestep: Union[int, torch.Tensor] = 1,
             guidance_scale=7.5,
-            guidance_rescale=0,  # 0.7 sdxl
+            guidance_rescale=0,
             add_time_ids=None,
             conditional_embeddings: Union[PromptEmbeds, None] = None,
             unconditional_embeddings: Union[PromptEmbeds, None] = None,
@@ -674,7 +674,7 @@ class StableDiffusion:
                 add_time_ids=add_time_ids,
                 **kwargs,
             )
-            latents = self.noise_scheduler.step(noise_pred, timestep, latents).prev_sample
+            latents = self.noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
 
         # return latents_steps
         return latents

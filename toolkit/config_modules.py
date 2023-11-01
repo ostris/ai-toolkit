@@ -283,7 +283,7 @@ class SliderConfig:
         self.batch_full_slide: bool = kwargs.get('batch_full_slide', True)
         self.use_adapter: bool = kwargs.get('use_adapter', None)  # depth
         self.adapter_img_dir = kwargs.get('adapter_img_dir', None)
-        self.high_ram = kwargs.get('high_ram', False)
+        self.low_ram = kwargs.get('low_ram', False)
 
         # expand targets if shuffling
         from toolkit.prompt_utils import get_slider_target_permutations
@@ -334,6 +334,7 @@ class DatasetConfig:
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
                                          None)  # focus mask (black and white. White has higher loss than black)
+        self.invert_mask: bool = kwargs.get('invert_mask', False)  # invert mask
         self.mask_min_value: float = kwargs.get('mask_min_value', 0.01)  # min value for . 0 - 1
         self.poi: Union[str, None] = kwargs.get('poi',
                                                 None)  # if one is set and in json data, will be used as auto crop scale point of interes
