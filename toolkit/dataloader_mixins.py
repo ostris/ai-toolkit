@@ -14,7 +14,7 @@ from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 
 from toolkit.basic import flush, value_map
-from toolkit.buckets import get_bucket_for_image_size
+from toolkit.buckets import get_bucket_for_image_size, get_resolution
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
@@ -718,7 +718,17 @@ class PoiFileItemDTOMixin:
     def setup_poi_bucket(self: 'FileItemDTO'):
         # we are using poi, so we need to calculate the bucket based on the poi
 
-        resolution = self.dataset_config.resolution
+        # TODO this will allow poi to be smaller than resolution. Could affect training image size
+        poi_resolution = min(
+            self.dataset_config.resolution,
+            get_resolution(
+                self.poi_width * self.dataset_config.scale,
+                self.poi_height * self.dataset_config.scale
+            )
+        )
+
+        resolution = min(self.dataset_config.resolution, poi_resolution)
+
         bucket_tolerance = self.dataset_config.bucket_tolerance
         initial_width = int(self.width * self.dataset_config.scale)
         initial_height = int(self.height * self.dataset_config.scale)
@@ -727,12 +737,30 @@ class PoiFileItemDTOMixin:
         poi_width = int(self.poi_width * self.dataset_config.scale)
         poi_height = int(self.poi_height * self.dataset_config.scale)
 
-        # todo handle a poi that is smaller than resolution
         # determine new cropping
-        crop_left = random.randint(0, poi_x)
-        crop_right = random.randint(poi_x + poi_width, initial_width)
-        crop_top = random.randint(0, poi_y)
-        crop_bottom = random.randint(poi_y + poi_height, initial_height)
+
+        # crop left
+        if poi_x > 0:
+            crop_left = random.randint(0, poi_x)
+        else:
+            crop_left = 0
+
+        # crop right
+        cr_min = poi_x + poi_width
+        if cr_min < initial_width:
+            crop_right = random.randint(poi_x + poi_width, initial_width)
+        else:
+            crop_right = initial_width
+
+        if poi_y > 0:
+            crop_top = random.randint(0, poi_y)
+        else:
+            crop_top = 0
+
+        if poi_y + poi_height < initial_height:
+            crop_bottom = random.randint(poi_y + poi_height, initial_height)
+        else:
+            crop_bottom = initial_height
 
         new_width = crop_right - crop_left
         new_height = crop_bottom - crop_top

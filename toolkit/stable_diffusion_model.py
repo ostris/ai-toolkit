@@ -424,6 +424,10 @@ class StableDiffusion:
 
                         if sampler.startswith("sample_"):
                             extra['use_karras_sigmas'] = True
+                            extra = {
+                                **extra,
+                                **gen_config.extra_kwargs,
+                            }
 
                         img = pipeline(
                             # prompt=gen_config.prompt,
@@ -439,6 +443,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             guidance_rescale=grs,
+                            latents=gen_config.latents,
                             **extra
                         ).images[0]
                     else:
@@ -451,6 +456,7 @@ class StableDiffusion:
                             width=gen_config.width,
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
+                            latents=gen_config.latents,
                             **extra
                         ).images[0]
 

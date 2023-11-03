@@ -80,6 +80,12 @@ class SDTrainer(BaseSDTrainProcess):
         prior_mask_multiplier = None
         target_mask_multiplier = None
 
+        if self.train_config.match_noise_norm:
+            # match the norm of the noise
+            noise_norm = torch.linalg.vector_norm(noise, ord=2, dim=(1, 2, 3), keepdim=True)
+            noise_pred_norm = torch.linalg.vector_norm(noise_pred, ord=2, dim=(1, 2, 3), keepdim=True)
+            noise_pred = noise_pred * (noise_norm / noise_pred_norm)
+
         if self.train_config.inverted_mask_prior:
             # we need to make the noise prediction be a masked blending of noise and prior_pred
             prior_mask_multiplier = 1.0 - mask_multiplier
@@ -280,10 +286,10 @@ class SDTrainer(BaseSDTrainProcess):
                 adapter_strength_max = 1.0
             else:
                 # training with assistance, we want it low
-                # adapter_strength_min = 0.5
-                # adapter_strength_max = 0.8
-                adapter_strength_min = 0.9
-                adapter_strength_max = 1.1
+                adapter_strength_min = 0.5
+                adapter_strength_max = 0.8
+                # adapter_strength_min = 0.9
+                # adapter_strength_max = 1.1
 
             adapter_conditioning_scale = torch.rand(
                 (1,), device=self.device_torch, dtype=dtype
