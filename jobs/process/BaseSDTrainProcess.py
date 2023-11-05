@@ -574,7 +574,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     latents = self.sd.encode_images(imgs)
                     batch.latents = latents
-                    # flush()  # todo check performance removing this
+
+                if batch.unconditional_tensor is not None and batch.unconditional_latents is None:
+                    unconditional_imgs = batch.unconditional_tensor
+                    unconditional_imgs = unconditional_imgs.to(self.device_torch, dtype=dtype)
+                    unconditional_latents = self.sd.encode_images(unconditional_imgs)
+                    batch.unconditional_latents = unconditional_latents
 
                 unaugmented_latents = None
                 if self.train_config.loss_target == 'differential_noise':
@@ -654,6 +659,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 latents = latents * img_multiplier
 
                 noisy_latents = self.sd.noise_scheduler.add_noise(latents, noise, timesteps)
+
+                # determine scaled noise
+                # todo do we need to scale this or does it always predict full intensity
+                # noise = noisy_latents - latents
 
                 # https://github.com/huggingface/diffusers/blob/324d18fba23f6c9d7475b0ff7c777685f7128d40/examples/t2i_adapter/train_t2i_adapter_sdxl.py#L1170C17-L1171C77
                 if self.train_config.loss_target == 'source' or self.train_config.loss_target == 'unaugmented':

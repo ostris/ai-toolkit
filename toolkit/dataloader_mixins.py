@@ -351,6 +351,8 @@ class ImageProcessingDTOMixin:
                 self.load_control_image()
             if self.has_mask_image:
                 self.load_mask_image()
+            if self.has_unconditional:
+                self.load_unconditional_image()
             return
         try:
             img = Image.open(self.path)
@@ -442,6 +444,8 @@ class ImageProcessingDTOMixin:
                 self.load_control_image()
             if self.has_mask_image:
                 self.load_mask_image()
+            if self.has_unconditional:
+                self.load_unconditional_image()
 
 
 class ControlFileItemDTOMixin:
@@ -659,6 +663,80 @@ class MaskFileItemDTOMixin:
 
     def cleanup_mask(self: 'FileItemDTO'):
         self.mask_tensor = None
+
+
+class UnconditionalFileItemDTOMixin:
+    def __init__(self: 'FileItemDTO', *args, **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(*args, **kwargs)
+        self.has_unconditional = False
+        self.unconditional_path: Union[str, None] = None
+        self.unconditional_tensor: Union[torch.Tensor, None] = None
+        self.unconditional_latent: Union[torch.Tensor, None] = None
+        self.unconditional_transforms = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
+        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+
+        if dataset_config.unconditional_path is not None:
+            # we are using control images
+            img_path = kwargs.get('path', None)
+            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+            file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
+            for ext in img_ext_list:
+                if os.path.exists(os.path.join(dataset_config.unconditional_path, file_name_no_ext + ext)):
+                    self.unconditional_path = os.path.join(dataset_config.unconditional_path, file_name_no_ext + ext)
+                    self.has_unconditional = True
+                    break
+
+    def load_unconditional_image(self: 'FileItemDTO'):
+        try:
+            img = Image.open(self.unconditional_path)
+            img = exif_transpose(img)
+        except Exception as e:
+            print(f"Error: {e}")
+            print(f"Error loading image: {self.mask_path}")
+
+        img = img.convert('RGB')
+        w, h = img.size
+        if w > h and self.scale_to_width < self.scale_to_height:
+            # throw error, they should match
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+        elif h > w and self.scale_to_height < self.scale_to_width:
+            # throw error, they should match
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+
+        if self.flip_x:
+            # do a flip
+            img.transpose(Image.FLIP_LEFT_RIGHT)
+        if self.flip_y:
+            # do a flip
+            img.transpose(Image.FLIP_TOP_BOTTOM)
+
+        if self.dataset_config.buckets:
+            # scale and crop based on file item
+            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+            # crop
+            img = img.crop((
+                self.crop_x,
+                self.crop_y,
+                self.crop_x + self.crop_width,
+                self.crop_y + self.crop_height
+            ))
+        else:
+            raise Exception("Unconditional images are not supported for non-bucket datasets")
+
+        self.unconditional_tensor = self.unconditional_transforms(img)
+
+    def cleanup_unconditional(self: 'FileItemDTO'):
+        self.unconditional_tensor = None
+        self.unconditional_latent = None
 
 
 class PoiFileItemDTOMixin:

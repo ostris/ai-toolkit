@@ -7,7 +7,8 @@ from PIL.ImageOps import exif_transpose
 
 from toolkit import image_utils
 from toolkit.dataloader_mixins import CaptionProcessingDTOMixin, ImageProcessingDTOMixin, LatentCachingFileItemDTOMixin, \
-    ControlFileItemDTOMixin, ArgBreakMixin, PoiFileItemDTOMixin, MaskFileItemDTOMixin, AugmentationFileItemDTOMixin
+    ControlFileItemDTOMixin, ArgBreakMixin, PoiFileItemDTOMixin, MaskFileItemDTOMixin, AugmentationFileItemDTOMixin, \
+    UnconditionalFileItemDTOMixin
 
 if TYPE_CHECKING:
     from toolkit.config_modules import DatasetConfig
@@ -29,6 +30,7 @@ class FileItemDTO(
     ControlFileItemDTOMixin,
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
+    UnconditionalFileItemDTOMixin,
     PoiFileItemDTOMixin,
     ArgBreakMixin,
 ):
@@ -70,6 +72,7 @@ class FileItemDTO(
         self.cleanup_latent()
         self.cleanup_control()
         self.cleanup_mask()
+        self.cleanup_unconditional()
 
 
 class DataLoaderBatchDTO:
@@ -82,6 +85,8 @@ class DataLoaderBatchDTO:
             self.control_tensor: Union[torch.Tensor, None] = None
             self.mask_tensor: Union[torch.Tensor, None] = None
             self.unaugmented_tensor: Union[torch.Tensor, None] = None
+            self.unconditional_tensor: Union[torch.Tensor, None] = None
+            self.unconditional_latents: Union[torch.Tensor, None] = None
             self.sigmas: Union[torch.Tensor, None] = None  # can be added elseware and passed along training code
             if not is_latents_cached:
                 # only return a tensor if latents are not cached
@@ -138,6 +143,22 @@ class DataLoaderBatchDTO:
                     else:
                         unaugmented_tensor.append(x.unaugmented_tensor)
                 self.unaugmented_tensor = torch.cat([x.unsqueeze(0) for x in unaugmented_tensor])
+
+            # add unconditional tensors
+            if any([x.unconditional_tensor is not None for x in self.file_items]):
+                # find one to use as a base
+                base_unconditional_tensor = None
+                for x in self.file_items:
+                    if x.unaugmented_tensor is not None:
+                        base_unconditional_tensor = x.unconditional_tensor
+                        break
+                unconditional_tensor = []
+                for x in self.file_items:
+                    if x.unconditional_tensor is None:
+                        unconditional_tensor.append(torch.zeros_like(base_unconditional_tensor))
+                    else:
+                        unconditional_tensor.append(x.unconditional_tensor)
+                self.unconditional_tensor = torch.cat([x.unsqueeze(0) for x in unconditional_tensor])
         except Exception as e:
             print(e)
             raise e
