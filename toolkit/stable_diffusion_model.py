@@ -472,9 +472,9 @@ class StableDiffusion:
                         conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds)
                         unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds)
 
-                    if self.refiner_unet is not None:
+                    if self.refiner_unet is not None and gen_config.refiner_start_at < 1.0:
                         # if we have a refiner loaded, set the denoising end at the refiner start
-                        extra['denoising_end'] = self.model_config.refiner_start_at
+                        extra['denoising_end'] = gen_config.refiner_start_at
                         extra['output_type'] = 'latent'
                         if not self.is_xl:
                             raise ValueError("Refiner is only supported for XL models")
@@ -526,7 +526,7 @@ class StableDiffusion:
                             **extra
                         ).images[0]
 
-                    if refiner_pipeline is not None:
+                    if self.refiner_unet is not None and gen_config.refiner_start_at < 1.0:
                         # slide off just the last 1280 on the last dim as refiner does not use first text encoder
                         # todo, should we just use the Text encoder for the refiner? Fine tuned versions will differ
                         refiner_text_embeds = conditional_embeds.text_embeds[:, :, -1280:]
@@ -546,7 +546,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             guidance_rescale=grs,
-                            denoising_start=self.model_config.refiner_start_at,
+                            denoising_start=gen_config.refiner_start_at,
                             denoising_end=gen_config.num_inference_steps,
                             image=img.unsqueeze(0)
                         ).images[0]

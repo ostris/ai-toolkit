@@ -69,6 +69,9 @@ def get_train_sd_device_state_preset(
         preset['refiner_unet']['training'] = True
         preset['refiner_unet']['requires_grad'] = True
         preset['refiner_unet']['device'] = device
+        # if not training unet, move that to cpu
+        if not train_unet:
+            preset['unet']['device'] = 'cpu'
 
     if train_lora:
         # preset['text_encoder']['requires_grad'] = False

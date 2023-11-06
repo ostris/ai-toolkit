@@ -45,6 +45,7 @@ class SampleConfig:
         self.guidance_rescale = kwargs.get('guidance_rescale', 0.0)
         self.ext: ImgExt = kwargs.get('format', 'jpg')
         self.adapter_conditioning_scale = kwargs.get('adapter_conditioning_scale', 1.0)
+        self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)  # step to start using refiner on sample if it exists
 
 
 class LormModuleSettingsConfig:
@@ -430,6 +431,7 @@ class GenerateImageConfig:
             adapter_conditioning_scale: float = 1.0,  # scale for adapter conditioning
             latents: Union[torch.Tensor | None] = None,  # input latent to start with,
             extra_kwargs: dict = None,  # extra data to save with prompt file
+            refiner_start_at: float = 0.5,  # start at this percentage of a step. 0.0 to 1.0 . 1.0 is the end
     ):
         self.width: int = width
         self.height: int = height
@@ -456,6 +458,7 @@ class GenerateImageConfig:
         self.adapter_image_path: str = adapter_image_path
         self.adapter_conditioning_scale: float = adapter_conditioning_scale
         self.extra_kwargs = extra_kwargs if extra_kwargs is not None else {}
+        self.refiner_start_at = refiner_start_at
 
         # prompt string will override any settings above
         self._process_prompt_string()
@@ -612,6 +615,8 @@ class GenerateImageConfig:
                         self.guidance_rescale = float(content)
                     elif flag == 'a':
                         self.adapter_conditioning_scale = float(content)
+                    elif flag == 'ref':
+                        self.refiner_start_at = float(content)
 
     def post_process_embeddings(
             self,

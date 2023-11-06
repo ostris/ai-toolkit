@@ -220,6 +220,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 output_path=output_path,
                 output_ext=sample_config.ext,
                 adapter_conditioning_scale=sample_config.adapter_conditioning_scale,
+                refiner_start_at=sample_config.refiner_start_at,
                 **extra_args
             ))
 
