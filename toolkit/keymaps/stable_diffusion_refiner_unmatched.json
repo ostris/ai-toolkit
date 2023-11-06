@@ -1,0 +1,10 @@
+{
+    "ldm": {
+        "conditioner.embedders.0.model.logit_scale": {
+            "shape": [],
+            "min": 4.60546875,
+            "max": 4.60546875
+        }
+    },
+    "diffusers": {}
+}

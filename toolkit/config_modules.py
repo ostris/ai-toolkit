@@ -160,6 +160,7 @@ class TrainConfig:
         self.lr = kwargs.get('lr', 1e-6)
         self.unet_lr = kwargs.get('unet_lr', self.lr)
         self.text_encoder_lr = kwargs.get('text_encoder_lr', self.lr)
+        self.refiner_lr = kwargs.get('refiner_lr', self.lr)
         self.embedding_lr = kwargs.get('embedding_lr', self.lr)
         self.adapter_lr = kwargs.get('adapter_lr', self.lr)
         self.optimizer = kwargs.get('optimizer', 'adamw')
@@ -174,6 +175,7 @@ class TrainConfig:
         self.sdp = kwargs.get('sdp', False)
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
+        self.train_refiner = kwargs.get('train_refiner', True)
         self.min_snr_gamma = kwargs.get('min_snr_gamma', None)
         self.snr_gamma = kwargs.get('snr_gamma', None)
         # trains a gamma, offset, and scale to adjust loss to adapt to timestep differentials
@@ -238,6 +240,8 @@ class ModelConfig:
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.vae_path = kwargs.get('vae_path', None)
+        self.refiner_name_or_path = kwargs.get('refiner_name_or_path', None)
+        self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)
 
         # only for SDXL models for now
         self.use_text_encoder_1: bool = kwargs.get('use_text_encoder_1', True)
