@@ -4,7 +4,24 @@
             "shape": [],
             "min": 4.60546875,
             "max": 4.60546875
+        },
+        "conditioner.embedders.0.model.text_projection": {
+            "shape": [
+                1280,
+                1280
+            ],
+            "min": -0.15966796875,
+            "max": 0.230712890625
         }
     },
-    "diffusers": {}
+    "diffusers": {
+        "te1_text_projection.weight": {
+            "shape": [
+                1280,
+                1280
+            ],
+            "min": -0.15966796875,
+            "max": 0.230712890625
+        }
+    }
 }
