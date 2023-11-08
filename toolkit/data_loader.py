@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import random
+import traceback
 from functools import lru_cache
 from typing import List, TYPE_CHECKING
 
@@ -378,6 +379,7 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
                 )
                 self.file_list.append(file_item)
             except Exception as e:
+                print(traceback.format_exc())
                 print(f"Error processing image: {file}")
                 print(e)
                 bad_count += 1

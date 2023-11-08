@@ -40,13 +40,13 @@ from toolkit.stable_diffusion_model import StableDiffusion
 from jobs.process import BaseTrainProcess
 from toolkit.metadata import get_meta_for_safetensors, load_metadata_from_safetensors, add_base_model_info_to_meta, \
     parse_metadata_from_safetensors
-from toolkit.train_tools import get_torch_dtype, LearnableSNRGamma
+from toolkit.train_tools import get_torch_dtype, LearnableSNRGamma, apply_learnable_snr_gos, apply_snr_weight
 import gc
 
 from tqdm import tqdm
 
 from toolkit.config_modules import SaveConfig, LogingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
-    GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig
+    GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig
 
 
 def flush():
@@ -93,6 +93,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.data_loader: Union[DataLoader, None] = None
         self.data_loader_reg: Union[DataLoader, None] = None
         self.trigger_word = self.get_conf('trigger_word', None)
+
+        self.guidance_config: Union[GuidanceConfig, None] = None
+        guidance_config_raw = self.get_conf('guidance', None)
+        if guidance_config_raw is not None:
+            self.guidance_config = GuidanceConfig(**guidance_config_raw)
 
         # store is all are cached. Allows us to not load vae if we don't need to
         self.is_latents_cached = True
@@ -417,6 +422,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.print(f"Saved to {file_path}")
         self.clean_up_saves()
         self.post_save_hook(file_path)
+        flush()
 
     # Called before the model is loaded
     def hook_before_model_load(self):
@@ -500,6 +506,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             print("load_weights not implemented for non-network models")
             return None
+
+    def apply_snr(self, seperated_loss, timesteps):
+        if self.train_config.learnable_snr_gos:
+            # add snr_gamma
+            seperated_loss = apply_learnable_snr_gos(seperated_loss, timesteps, self.snr_gos)
+        elif self.train_config.snr_gamma is not None and self.train_config.snr_gamma > 0.000001:
+            # add snr_gamma
+            seperated_loss = apply_snr_weight(seperated_loss, timesteps, self.sd.noise_scheduler, self.train_config.snr_gamma, fixed=True)
+        elif self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001:
+            # add min_snr_gamma
+            seperated_loss = apply_snr_weight(seperated_loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
+
+        return seperated_loss
 
     def load_lorm(self):
         latest_save_path = self.get_latest_save_path()

@@ -1059,7 +1059,7 @@ class StableDiffusion:
         refiner_config_path = os.path.join(ORIG_CONFIGS_ROOT, 'sd_xl_refiner.yaml')
         # load the refiner model
         dtype = get_torch_dtype(self.dtype)
-        model_path = self.model_config.refiner_name_or_path
+        model_path = self.model_config._original_refiner_name_or_path
         if not os.path.exists(model_path) or os.path.isdir(model_path):
             # TODO only load unet??
             refiner = StableDiffusionXLImg2ImgPipeline.from_pretrained(

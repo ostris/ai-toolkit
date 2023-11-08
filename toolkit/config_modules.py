@@ -242,6 +242,7 @@ class ModelConfig:
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.vae_path = kwargs.get('vae_path', None)
         self.refiner_name_or_path = kwargs.get('refiner_name_or_path', None)
+        self._original_refiner_name_or_path = self.refiner_name_or_path
         self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)
 
         # only for SDXL models for now
@@ -284,6 +285,14 @@ class SliderTargetConfig:
         self.multiplier: float = kwargs.get('multiplier', 1.0)
         self.weight: float = kwargs.get('weight', 1.0)
         self.shuffle: bool = kwargs.get('shuffle', False)
+
+
+class GuidanceConfig:
+    def __init__(self, **kwargs):
+        self.target_class: str = kwargs.get('target_class', '')
+        self.guidance_scale: float = kwargs.get('guidance_scale', 1.0)
+        self.positive_prompt: str = kwargs.get('positive_prompt', '')
+        self.negative_prompt: str = kwargs.get('negative_prompt', '')
 
 
 class SliderConfigAnchors:

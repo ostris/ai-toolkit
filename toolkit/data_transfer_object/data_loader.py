@@ -35,7 +35,6 @@ class FileItemDTO(
     ArgBreakMixin,
 ):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.path = kwargs.get('path', None)
         self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         # process width and height
@@ -48,6 +47,7 @@ class FileItemDTO(
             h, w = img.size
         self.width: int = w
         self.height: int = h
+        super().__init__(*args, **kwargs)
 
         # self.caption_path: str = kwargs.get('caption_path', None)
         self.raw_caption: str = kwargs.get('raw_caption', None)

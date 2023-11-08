@@ -779,11 +779,21 @@ class PoiFileItemDTOMixin:
             if self.poi not in json_data['poi']:
                 raise Exception(f"Error: poi not found in caption file: {caption_path}")
             # poi has, x, y, width, height
-            poi = json_data['poi'][self.poi]
-            self.poi_x = int(poi['x'])
-            self.poi_y = int(poi['y'])
-            self.poi_width = int(poi['width'])
-            self.poi_height = int(poi['height'])
+            # do full image if no poi
+            self.poi_x = 0
+            self.poi_y = 0
+            self.poi_width = self.width
+            self.poi_height = self.height
+            try:
+                if self.poi in json_data['poi']:
+                    poi = json_data['poi'][self.poi]
+                    self.poi_x = int(poi['x'])
+                    self.poi_y = int(poi['y'])
+                    self.poi_width = int(poi['width'])
+                    self.poi_height = int(poi['height'])
+            except Exception as e:
+                pass
+
 
             # handle flipping
             if kwargs.get('flip_x', False):
