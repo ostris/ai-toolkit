@@ -327,6 +327,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
 
         with torch.no_grad():
             adapter_images = None
+            self.sd.unet.eval()
 
             # for a complete slider, the batch size is 4 to begin with now
             true_batch_size = prompt_pair.target_class.text_embeds.shape[0] * self.train_config.batch_size
@@ -385,21 +386,22 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 latents = noise * self.sd.noise_scheduler.init_noise_sigma
                 latents = latents.to(self.device_torch, dtype=dtype)
 
-                with self.network:
-                    assert self.network.is_active
-                    # pass the multiplier list to the network
-                    self.network.multiplier = prompt_pair.multiplier_list
-                    denoised_latents = self.sd.diffuse_some_steps(
-                        latents,  # pass simple noise latents
-                        train_tools.concat_prompt_embeddings(
-                            prompt_pair.positive_target,  # unconditional
-                            prompt_pair.target_class,  # target
-                            self.train_config.batch_size,
-                        ),
-                        start_timesteps=0,
-                        total_timesteps=timesteps_to,
-                        guidance_scale=3,
-                    )
+                assert not self.network.is_active
+                self.sd.unet.eval()
+                # pass the multiplier list to the network
+                self.network.multiplier = prompt_pair.multiplier_list
+                denoised_latents = self.sd.diffuse_some_steps(
+                    latents,  # pass simple noise latents
+                    train_tools.concat_prompt_embeddings(
+                        prompt_pair.positive_target,  # unconditional
+                        prompt_pair.target_class,  # target
+                        self.train_config.batch_size,
+                    ),
+                    start_timesteps=0,
+                    total_timesteps=timesteps_to,
+                    guidance_scale=3,
+                )
+
 
                 noise_scheduler.set_timesteps(1000)
 
@@ -473,6 +475,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
             denoised_latents = denoised_latents.detach()
 
         self.sd.set_device_state(self.train_slider_device_state)
+        self.sd.unet.train()
         # start accumulating gradients
         self.optimizer.zero_grad(set_to_none=True)
 

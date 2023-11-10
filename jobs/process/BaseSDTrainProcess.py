@@ -1061,31 +1061,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # load last saved weights
                 if latest_save_path is not None:
                     self.embedding.load_embedding_from_file(latest_save_path, self.device_torch)
+
+                # self.step_num = self.embedding.step
+                # self.start_step = self.step_num
                 params.append({
                     'params': self.embedding.get_trainable_params(),
                     'lr': self.train_config.embedding_lr
                 })
-
-                flush()
-
-            if self.embed_config is not None:
-                self.embedding = Embedding(
-                    sd=self.sd,
-                    embed_config=self.embed_config
-                )
-                latest_save_path = self.get_latest_save_path(self.embed_config.trigger)
-                # load last saved weights
-                if latest_save_path is not None:
-                    self.embedding.load_embedding_from_file(latest_save_path, self.device_torch)
-
-                # resume state from embedding
-                self.step_num = self.embedding.step
-                self.start_step = self.step_num
-
-                params = self.get_params()
-                if not params:
-                    # set trainable params
-                    params = self.embedding.get_trainable_params()
 
                 flush()
 

@@ -187,116 +187,80 @@ class SDTrainer(BaseSDTrainProcess):
             **kwargs
     ):
         with torch.no_grad():
-            conditional_noisy_latents = noisy_latents
+            # Perform targeted guidance (working title)
+            conditional_noisy_latents = noisy_latents  # target images
             dtype = get_torch_dtype(self.train_config.dtype)
 
             if batch.unconditional_latents is not None:
-                # Encode the unconditional image into latents
+                # unconditional latents are the "neutral" images. Add noise here identical to
+                # the noise added to the conditional latents, at the same timesteps
                 unconditional_noisy_latents = self.sd.noise_scheduler.add_noise(
                     batch.unconditional_latents, noise, timesteps
                 )
 
-            # was_network_active = self.network.is_active
+            # calculate the differential between our conditional (target image) and out unconditional (neutral image)
+            target_differential_noise = unconditional_noisy_latents - conditional_noisy_latents
+            target_differential_noise = target_differential_noise.detach()
+
+            # add the target differential to the target latents as if it were noise with the scheduler, scaled to
+            # the current timestep. Scaling the noise here is important as it scales our guidance to the current
+            # timestep. This is the key to making the guidance work.
+            guidance_latents = self.sd.noise_scheduler.add_noise(
+                conditional_noisy_latents,
+                target_differential_noise,
+                timesteps
+            )
+
+            # Disable the LoRA network so we can predict parent network knowledge without it
             self.network.is_active = False
             self.sd.unet.eval()
 
-            # calculate the differential between our conditional (target image) and out unconditional ("bad" image)
-            target_differential = unconditional_noisy_latents - conditional_noisy_latents
-
-            # scale the target differential by the scheduler
-            # todo, scale it the right way
-            # target_differential = self.sd.noise_scheduler.add_noise(
-            #     torch.zeros_like(target_differential),
-            #     target_differential,
-            #     timesteps
-            # )
-
-            target_differential = target_differential.detach()
-
-            # add the target differential to the target latents as if it were noise with the scheduler scaled to
-            # the current timestep. Scaling the noise here is IMPORTANT and will lead to a blurry targeted area if not done
-            # properly
-            # guidance_latents = self.sd.noise_scheduler.add_noise(
-            #     conditional_noisy_latents,
-            #     target_differential,
-            #     timesteps
-            # )
-
-            # guidance_latents = conditional_noisy_latents + target_differential
-            # target_noise = conditional_noisy_latents + target_differential
-
-            # With LoRA network bypassed, predict noise to get a baseline of what the network
-            # wants to do with the latents + noise. Pass our target latents here for the input.
-            target_unconditional = self.sd.predict_noise(
-                latents=unconditional_noisy_latents.to(self.device_torch, dtype=dtype).detach(),
+            # Predict noise to get a baseline of what the parent network wants to do with the latents + noise.
+            # This acts as our control to preserve the unaltered parts of the image.
+            baseline_prediction = self.sd.predict_noise(
+                latents=guidance_latents.to(self.device_torch, dtype=dtype).detach(),
                 conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype).detach(),
                 timestep=timesteps,
                 guidance_scale=1.0,
                 **pred_kwargs  # adapter residuals in here
             ).detach()
-            target_conditional = self.sd.predict_noise(
-                latents=conditional_noisy_latents.to(self.device_torch, dtype=dtype).detach(),
-                conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype).detach(),
-                timestep=timesteps,
-                guidance_scale=1.0,
-                **pred_kwargs  # adapter residuals in here
-            ).detach()
-
-            # we calculate the networks current knowledge so we do not overlearn what we know
-            current_knowledge = target_unconditional - target_conditional
-
-            # we now have the differential noise prediction needed to create our convergence target
-            target_unknown_knowledge = target_differential - current_knowledge
 
         # turn the LoRA network back on.
         self.sd.unet.train()
         self.network.is_active = True
         self.network.multiplier = network_weight_list
 
-        # with LoRA active, predict the noise with the scaled differential latents added. This will allow us
-        # the opportunity to predict the differential + noise that was added to the latents.
-        prediction_unconditional = self.sd.predict_noise(
-            latents=unconditional_noisy_latents.to(self.device_torch, dtype=dtype).detach(),
+        # do our prediction with LoRA active on the scaled guidance latents
+        prediction = self.sd.predict_noise(
+            latents=guidance_latents.to(self.device_torch, dtype=dtype).detach(),
             conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype).detach(),
             timestep=timesteps,
             guidance_scale=1.0,
             **pred_kwargs  # adapter residuals in here
         )
 
-        # remove the baseline conditional prediction. This will leave only the divergence from the baseline and
-        # the prediction of the added differential noise
-        # prediction_positive = prediction_unconditional - target_unconditional
-        prediction_positive = target_unconditional - prediction_unconditional
+        # remove the baseline prediction from our prediction to get the differential between the two
+        # all that should be left is the differential between the conditional and unconditional images
+        pred_differential_noise = prediction - baseline_prediction
 
         # for loss, we target ONLY the unscaled differential between our conditional and unconditional latents
-        # this is the diffusion training process.
+        # not the timestep scaled noise that was added. This is the diffusion training process.
         # This will guide the network to make identical predictions it previously did for everything EXCEPT our
-        # differential between the conditional and unconditional images
-
-        positive_loss = torch.nn.functional.mse_loss(
-            prediction_positive.float(),
-            target_unknown_knowledge.float(),
+        # differential between the conditional and unconditional images (target)
+        loss = torch.nn.functional.mse_loss(
+            pred_differential_noise.float(),
+            target_differential_noise.float(),
             reduction="none"
         )
 
-        # add adain loss
-        positive_loss = positive_loss
+        loss = loss.mean([1, 2, 3])
+        loss = self.apply_snr(loss, timesteps)
+        loss = loss.mean()
+        loss.backward()
 
-        positive_loss = positive_loss.mean([1, 2, 3])
-
-        # positive_loss = positive_loss + adain_loss.mean([1, 2, 3])
-        # send it backwards BEFORE switching network polarity
-        positive_loss = self.apply_snr(positive_loss, timesteps)
-        positive_loss = positive_loss.mean()
-        positive_loss.backward()
-        # loss = positive_loss.detach() + negative_loss.detach()
-        loss = positive_loss.detach()
-
-        # add a grad so other backward does not fail
+        # detach it so parent class can run backward on no grads without throwing error
+        loss = loss.detach()
         loss.requires_grad_(True)
-
-        # restore network
-        self.network.multiplier = network_weight_list
 
         return loss
 

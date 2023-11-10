@@ -775,9 +775,9 @@ class PoiFileItemDTOMixin:
             with open(caption_path, 'r', encoding='utf-8') as f:
                 json_data = json.load(f)
             if 'poi' not in json_data:
-                raise Exception(f"Error: poi not found in caption file: {caption_path}")
+                print(f"Warning: poi not found in caption file: {caption_path}")
             if self.poi not in json_data['poi']:
-                raise Exception(f"Error: poi not found in caption file: {caption_path}")
+                print(f"Warning: poi not found in caption file: {caption_path}")
             # poi has, x, y, width, height
             # do full image if no poi
             self.poi_x = 0
