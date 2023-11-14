@@ -194,6 +194,9 @@ class TrainConfig:
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
 
+        # dropout that happens before encoding. It functions independently per text encoder
+        self.prompt_dropout_prob = kwargs.get('prompt_dropout_prob', 0.0)
+
         # match the norm of the noise before computing loss. This will help the model maintain its
         # current understandin of the brightness of images.
 

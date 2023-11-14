@@ -12,7 +12,9 @@ from diffusers import (
     HeunDiscreteScheduler,
     KDPM2DiscreteScheduler,
     KDPM2AncestralDiscreteScheduler,
+    LCMScheduler
 )
+
 from k_diffusion.external import CompVisDenoiser
 
 # scheduler:
@@ -72,11 +74,14 @@ def get_sampler(
         scheduler_cls = KDPM2DiscreteScheduler
     elif sampler == "dpm_2_a":
         scheduler_cls = KDPM2AncestralDiscreteScheduler
+    elif sampler == "lcm":
+        scheduler_cls = LCMScheduler
 
     config = copy.deepcopy(sdxl_sampler_config)
     config.update(sched_init_args)
 
     scheduler = scheduler_cls.from_config(config)
+
 
     return scheduler
 
