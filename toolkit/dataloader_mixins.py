@@ -635,9 +635,9 @@ class MaskFileItemDTOMixin:
             # do a flip
             img.transpose(Image.FLIP_TOP_BOTTOM)
 
-        # randomly apply a blur up to 2% of the size of the min (width, height)
+        # randomly apply a blur up to 0.5% of the size of the min (width, height)
         min_size = min(img.width, img.height)
-        blur_radius = int(min_size * random.random() * 0.02)
+        blur_radius = int(min_size * random.random() * 0.005)
         img = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
 
         # make grayscale
@@ -794,7 +794,6 @@ class PoiFileItemDTOMixin:
             except Exception as e:
                 pass
 
-
             # handle flipping
             if kwargs.get('flip_x', False):
                 # flip the poi
@@ -825,7 +824,28 @@ class PoiFileItemDTOMixin:
         poi_width = int(self.poi_width * self.dataset_config.scale)
         poi_height = int(self.poi_height * self.dataset_config.scale)
 
-        # determine new cropping
+        # expand poi to fit resolution
+        if poi_width < resolution:
+            width_difference = resolution - poi_width
+            poi_x = poi_x - int(width_difference / 2)
+            poi_width = resolution
+            # make sure we dont go out of bounds
+            if poi_x < 0:
+                poi_x = 0
+            # if total width too much, crop
+            if poi_x + poi_width > initial_width:
+                poi_width = initial_width - poi_x
+
+        if poi_height < resolution:
+            height_difference = resolution - poi_height
+            poi_y = poi_y - int(height_difference / 2)
+            poi_height = resolution
+            # make sure we dont go out of bounds
+            if poi_y < 0:
+                poi_y = 0
+            # if total height too much, crop
+            if poi_y + poi_height > initial_height:
+                poi_height = initial_height - poi_y
 
         # crop left
         if poi_x > 0:

@@ -14,6 +14,7 @@ from PIL import Image
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 from safetensors.torch import save_file, load_file
 from torch.nn import Parameter
+from torch.utils.checkpoint import checkpoint
 from tqdm import tqdm
 from torchvision.transforms import Resize, transforms
 
@@ -828,6 +829,8 @@ class StableDiffusion:
             start_timesteps=0,
             guidance_scale=1,
             add_time_ids=None,
+            bleed_ratio: float = 0.5,
+            bleed_latents: torch.FloatTensor = None,
             **kwargs,
     ):
 
@@ -841,6 +844,10 @@ class StableDiffusion:
                 **kwargs,
             )
             latents = self.noise_scheduler.step(noise_pred, timestep, latents, return_dict=False)[0]
+
+            # if not last step, and bleeding, bleed in some latents
+            if bleed_latents is not None and timestep != self.noise_scheduler.timesteps[-1]:
+                latents = (latents * (1 - bleed_ratio)) + (bleed_latents * bleed_ratio)
 
         # return latents_steps
         return latents
