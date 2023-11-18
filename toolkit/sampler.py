@@ -17,7 +17,7 @@ from diffusers import (
 
 from k_diffusion.external import CompVisDenoiser
 
-from toolkit.samplers.scheduling_ddpm import ADDPMScheduler
+from toolkit.samplers.custom_lcm_scheduler import CustomLCMScheduler
 
 # scheduler:
 SCHEDULER_LINEAR_START = 0.00085
@@ -78,8 +78,8 @@ def get_sampler(
         scheduler_cls = KDPM2AncestralDiscreteScheduler
     elif sampler == "lcm":
         scheduler_cls = LCMScheduler
-    elif sampler == "addpm":
-        scheduler_cls = ADDPMScheduler
+    elif sampler == "custom_lcm":
+        scheduler_cls = CustomLCMScheduler
 
     config = copy.deepcopy(sdxl_sampler_config)
     config.update(sched_init_args)

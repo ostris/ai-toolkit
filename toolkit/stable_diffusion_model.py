@@ -836,8 +836,9 @@ class StableDiffusion:
             bleed_latents: torch.FloatTensor = None,
             **kwargs,
     ):
+        timesteps_to_run = self.noise_scheduler.timesteps[start_timesteps:total_timesteps]
 
-        for timestep in tqdm(self.noise_scheduler.timesteps[start_timesteps:total_timesteps], leave=False):
+        for timestep in tqdm(timesteps_to_run, leave=False):
             noise_pred = self.predict_noise(
                 latents,
                 text_embeddings,
