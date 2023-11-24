@@ -1259,6 +1259,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
 
         start_step_num = self.step_num
+        did_first_flush = False
         for step in range(start_step_num, self.train_config.steps):
             self.step_num = step
             # default to true so various things can turn it off
@@ -1332,6 +1333,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.timer.start('train_loop')
             loss_dict = self.hook_train_loop(batch)
             self.timer.stop('train_loop')
+            if not did_first_flush:
+                flush()
+                did_first_flush = True
             # flush()
             # setup the networks to gradient checkpointing and everything works
 

@@ -1,11 +1,12 @@
 from collections import OrderedDict
-from typing import Union
+from typing import Union, Literal, List
 from diffusers import T2IAdapter
 
 from toolkit import train_tools
-from toolkit.basic import value_map, adain
+from toolkit.basic import value_map, adain, get_mean_std
 from toolkit.config_modules import GuidanceConfig
-from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
+from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO, FileItemDTO
+from toolkit.image_utils import show_tensors, show_latents
 from toolkit.ip_adapter import IPAdapter
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
@@ -309,7 +310,6 @@ class SDTrainer(BaseSDTrainProcess):
         pass
 
     def hook_train_loop(self, batch: 'DataLoaderBatchDTO'):
-
         self.timer.start('preprocess_batch')
         batch = self.preprocess_batch(batch)
         dtype = get_torch_dtype(self.train_config.dtype)
@@ -321,6 +321,7 @@ class SDTrainer(BaseSDTrainProcess):
         has_adapter_img = batch.control_tensor is not None
 
         match_adapter_assist = False
+
 
         # check if we are matching the adapter assistant
         if self.assistant_adapter:
@@ -334,6 +335,12 @@ class SDTrainer(BaseSDTrainProcess):
         self.timer.stop('preprocess_batch')
 
         with torch.no_grad():
+            loss_multiplier = torch.ones((noisy_latents.shape[0], 1, 1, 1), device=self.device_torch, dtype=dtype)
+            for idx, file_item in enumerate(batch.file_items):
+                if file_item.is_reg:
+                    loss_multiplier[idx] = loss_multiplier[idx] * self.train_config.reg_weight
+
+
             adapter_images = None
             sigmas = None
             if has_adapter_img and (self.adapter or self.assistant_adapter):
@@ -471,6 +478,12 @@ class SDTrainer(BaseSDTrainProcess):
                 mask_multiplier_list,
                 prompt_2_list
         ):
+            if self.train_config.negative_prompt is not None:
+                # add negative prompt
+                conditioned_prompts = conditioned_prompts + [self.train_config.negative_prompt for x in
+                                                             range(len(conditioned_prompts))]
+                if prompt_2 is not None:
+                    prompt_2 = prompt_2 + [self.train_config.negative_prompt for x in range(len(prompt_2))]
 
             with network:
                 with self.timer('encode_prompt'):
@@ -585,6 +598,8 @@ class SDTrainer(BaseSDTrainProcess):
                     raise ValueError("loss is nan")
 
                 with self.timer('backward'):
+                    # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
+                    loss = loss * loss_multiplier.mean()
                     # IMPORTANT if gradient checkpointing do not leave with network when doing backward
                     # it will destroy the gradients. This is because the network is a context manager
                     # and will change the multipliers back to 0.0 when exiting. They will be
