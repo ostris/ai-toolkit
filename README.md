@@ -1,5 +1,10 @@
 # AI Toolkit by Ostris
 
+## Special Thanks
+I want to give a special thanks to Huggingface for their amazing work, and their continued support of
+my work. This repo would not be possible without them. 
+
+
 ## IMPORTANT NOTE - READ THIS
 This is an active WIP repo that is not ready for others to use. And definitely not ready for non developers to use.
 I am making major breaking changes and pushing straight to master until I have it in a planned state. I have big changes
