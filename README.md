@@ -35,8 +35,8 @@ git submodule update --init --recursive
 python3 -m venv venv
 source venv/bin/activate
 # .\venv\Scripts\activate on windows
-# windows install pytorch first with 
-# pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu117
+# install torch first
+pip3 install torch
 pip3 install -r requirements.txt
 ```
 
