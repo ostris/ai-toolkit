@@ -1,12 +1,11 @@
 import os
-from typing import Optional, TYPE_CHECKING, List
+from typing import Optional, TYPE_CHECKING, List, Union, Tuple
 
 import torch
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 import random
 
-from toolkit.stable_diffusion_model import PromptEmbeds
 from toolkit.train_tools import get_torch_dtype
 import itertools
 
@@ -17,6 +16,39 @@ if TYPE_CHECKING:
 class ACTION_TYPES_SLIDER:
     ERASE_NEGATIVE = 0
     ENHANCE_NEGATIVE = 1
+
+
+class PromptEmbeds:
+    text_embeds: torch.Tensor
+    pooled_embeds: Union[torch.Tensor, None]
+
+    def __init__(self, args: Union[Tuple[torch.Tensor], List[torch.Tensor], torch.Tensor]) -> None:
+        if isinstance(args, list) or isinstance(args, tuple):
+            # xl
+            self.text_embeds = args[0]
+            self.pooled_embeds = args[1]
+        else:
+            # sdv1.x, sdv2.x
+            self.text_embeds = args
+            self.pooled_embeds = None
+
+    def to(self, *args, **kwargs):
+        self.text_embeds = self.text_embeds.to(*args, **kwargs)
+        if self.pooled_embeds is not None:
+            self.pooled_embeds = self.pooled_embeds.to(*args, **kwargs)
+        return self
+
+    def detach(self):
+        self.text_embeds = self.text_embeds.detach()
+        if self.pooled_embeds is not None:
+            self.pooled_embeds = self.pooled_embeds.detach()
+        return self
+
+    def clone(self):
+        if self.pooled_embeds is not None:
+            return PromptEmbeds([self.text_embeds.clone(), self.pooled_embeds.clone()])
+        else:
+            return PromptEmbeds(self.text_embeds.clone())
 
 
 class EncodedPromptPair:
@@ -71,6 +103,18 @@ class EncodedPromptPair:
         self.neutral = self.neutral.to(*args, **kwargs)
         self.empty_prompt = self.empty_prompt.to(*args, **kwargs)
         self.both_targets = self.both_targets.to(*args, **kwargs)
+        return self
+
+    def detach(self):
+        self.target_class = self.target_class.detach()
+        self.target_class_with_neutral = self.target_class_with_neutral.detach()
+        self.positive_target = self.positive_target.detach()
+        self.positive_target_with_neutral = self.positive_target_with_neutral.detach()
+        self.negative_target = self.negative_target.detach()
+        self.negative_target_with_neutral = self.negative_target_with_neutral.detach()
+        self.neutral = self.neutral.detach()
+        self.empty_prompt = self.empty_prompt.detach()
+        self.both_targets = self.both_targets.detach()
         return self
 
 
@@ -235,15 +279,17 @@ def split_anchors(concatenated: EncodedAnchor, num_anchors: int = 4) -> List[Enc
     return anchors
 
 
-def get_permutations(s):
+def get_permutations(s, max_permutations=8):
     # Split the string by comma
     phrases = [phrase.strip() for phrase in s.split(',')]
 
     # remove empty strings
     phrases = [phrase for phrase in phrases if len(phrase) > 0]
+    # shuffle the list
+    random.shuffle(phrases)
 
     # Get all permutations
-    permutations = list(itertools.permutations(phrases))
+    permutations = list([p for p in itertools.islice(itertools.permutations(phrases), max_permutations)])
 
     # Convert the tuples back to comma separated strings
     return [', '.join(permutation) for permutation in permutations]
@@ -251,8 +297,8 @@ def get_permutations(s):
 
 def get_slider_target_permutations(target: 'SliderTargetConfig', max_permutations=8) -> List['SliderTargetConfig']:
     from toolkit.config_modules import SliderTargetConfig
-    pos_permutations = get_permutations(target.positive)
-    neg_permutations = get_permutations(target.negative)
+    pos_permutations = get_permutations(target.positive, max_permutations=max_permutations)
+    neg_permutations = get_permutations(target.negative, max_permutations=max_permutations)
 
     permutations = []
     for pos, neg in itertools.product(pos_permutations, neg_permutations):
@@ -465,3 +511,39 @@ def build_latent_image_batch_for_prompt_pair(
         latent_list.append(neg_latent)
 
     return torch.cat(latent_list, dim=0)
+
+
+def inject_trigger_into_prompt(prompt, trigger=None, to_replace_list=None, add_if_not_present=True):
+    if trigger is None:
+        # process as empty string to remove any [trigger] tokens
+        trigger = ''
+    output_prompt = prompt
+    default_replacements = ["[name]", "[trigger]"]
+
+    replace_with = trigger
+    if to_replace_list is None:
+        to_replace_list = default_replacements
+    else:
+        to_replace_list += default_replacements
+
+    # remove duplicates
+    to_replace_list = list(set(to_replace_list))
+
+    # replace them all
+    for to_replace in to_replace_list:
+        # replace it
+        output_prompt = output_prompt.replace(to_replace, replace_with)
+
+    if trigger.strip() != "":
+        # see how many times replace_with is in the prompt
+        num_instances = output_prompt.count(replace_with)
+
+        if num_instances == 0 and add_if_not_present:
+            # add it to the beginning of the prompt
+            output_prompt = replace_with + " " + output_prompt
+
+        # if num_instances > 1:
+        #     print(
+        #         f"Warning: {trigger} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+
+    return output_prompt

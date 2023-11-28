@@ -5,6 +5,9 @@ import os
 import time
 from typing import TYPE_CHECKING, Union
 import sys
+
+from torch.cuda.amp import GradScaler
+
 from toolkit.paths import SD_SCRIPTS_ROOT
 
 sys.path.append(SD_SCRIPTS_ROOT)
@@ -444,16 +447,44 @@ if TYPE_CHECKING:
 
 
 def text_tokenize(
-        tokenizer: 'CLIPTokenizer',  # 普通ならひとつ、XLならふたつ！
+        tokenizer: 'CLIPTokenizer',
         prompts: list[str],
+        truncate: bool = True,
+        max_length: int = None,
+        max_length_multiplier: int = 4,
 ):
-    return tokenizer(
+    # allow fo up to 4x the max length for long prompts
+    if max_length is None:
+        if truncate:
+            max_length = tokenizer.model_max_length
+        else:
+            # allow up to 4x the max length for long prompts
+            max_length = tokenizer.model_max_length * max_length_multiplier
+
+    input_ids = tokenizer(
         prompts,
-        padding="max_length",
-        max_length=tokenizer.model_max_length,
+        padding='max_length',
+        max_length=max_length,
         truncation=True,
         return_tensors="pt",
     ).input_ids
+
+    if truncate or max_length == tokenizer.model_max_length:
+        return input_ids
+    else:
+        # remove additional padding
+        num_chunks = input_ids.shape[1] // tokenizer.model_max_length
+        chunks = torch.chunk(input_ids, chunks=num_chunks, dim=1)
+
+        # New list to store non-redundant chunks
+        non_redundant_chunks = []
+
+        for chunk in chunks:
+            if not chunk.eq(chunk[0, 0]).all():  # Check if all elements in the chunk are the same as the first element
+                non_redundant_chunks.append(chunk)
+
+        input_ids = torch.cat(non_redundant_chunks, dim=1)
+        return input_ids
 
 
 # https://github.com/huggingface/diffusers/blob/78922ed7c7e66c20aa95159c7b7a6057ba7d590d/src/diffusers/pipelines/stable_diffusion_xl/pipeline_stable_diffusion_xl.py#L334-L348
@@ -461,12 +492,33 @@ def text_encode_xl(
         text_encoder: Union['CLIPTextModel', 'CLIPTextModelWithProjection'],
         tokens: torch.FloatTensor,
         num_images_per_prompt: int = 1,
+        max_length: int = 77,  # not sure what default to put here, always pass one?
+        truncate: bool = True,
 ):
-    prompt_embeds = text_encoder(
-        tokens.to(text_encoder.device), output_hidden_states=True
-    )
-    pooled_prompt_embeds = prompt_embeds[0]
-    prompt_embeds = prompt_embeds.hidden_states[-2]  # always penultimate layer
+    if truncate:
+        # normal short prompt 77 tokens max
+        prompt_embeds = text_encoder(
+            tokens.to(text_encoder.device), output_hidden_states=True
+        )
+        pooled_prompt_embeds = prompt_embeds[0]
+        prompt_embeds = prompt_embeds.hidden_states[-2]  # always penultimate layer
+    else:
+        # handle long prompts
+        prompt_embeds_list = []
+        tokens = tokens.to(text_encoder.device)
+        pooled_prompt_embeds = None
+        for i in range(0, tokens.shape[-1], max_length):
+            # todo run it through the in a single batch
+            section_tokens = tokens[:, i: i + max_length]
+            embeds = text_encoder(section_tokens, output_hidden_states=True)
+            pooled_prompt_embed = embeds[0]
+            if pooled_prompt_embeds is None:
+                # we only want the first ( I think??)
+                pooled_prompt_embeds = pooled_prompt_embed
+            prompt_embed = embeds.hidden_states[-2]  # always penultimate layer
+            prompt_embeds_list.append(prompt_embed)
+
+        prompt_embeds = torch.cat(prompt_embeds_list, dim=1)
 
     bs_embed, seq_len, _ = prompt_embeds.shape
     prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
@@ -479,26 +531,43 @@ def encode_prompts_xl(
         tokenizers: list['CLIPTokenizer'],
         text_encoders: list[Union['CLIPTextModel', 'CLIPTextModelWithProjection']],
         prompts: list[str],
+        prompts2: Union[list[str], None],
         num_images_per_prompt: int = 1,
         use_text_encoder_1: bool = True,  # sdxl
-        use_text_encoder_2: bool = True  # sdxl
+        use_text_encoder_2: bool = True,  # sdxl
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
 ) -> tuple[torch.FloatTensor, torch.FloatTensor]:
     # text_encoder and text_encoder_2's penuultimate layer's output
     text_embeds_list = []
     pooled_text_embeds = None  # always text_encoder_2's pool
+    if prompts2 is None:
+        prompts2 = prompts
 
     for idx, (tokenizer, text_encoder) in enumerate(zip(tokenizers, text_encoders)):
         # todo, we are using a blank string to ignore that encoder for now.
         # find a better way to do this (zeroing?, removing it from the unet?)
-        prompt_list_to_use = prompts
+        prompt_list_to_use = prompts if idx == 0 else prompts2
         if idx == 0 and not use_text_encoder_1:
             prompt_list_to_use = ["" for _ in prompts]
         if idx == 1 and not use_text_encoder_2:
             prompt_list_to_use = ["" for _ in prompts]
 
-        text_tokens_input_ids = text_tokenize(tokenizer, prompt_list_to_use)
+        if dropout_prob > 0.0:
+            # randomly drop out prompts
+            prompt_list_to_use = [
+                prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompt_list_to_use
+            ]
+
+        text_tokens_input_ids = text_tokenize(tokenizer, prompt_list_to_use, truncate=truncate, max_length=max_length)
+        # set the max length for the next one
+        if idx == 0:
+            max_length = text_tokens_input_ids.shape[-1]
+
         text_embeds, pooled_text_embeds = text_encode_xl(
-            text_encoder, text_tokens_input_ids, num_images_per_prompt
+            text_encoder, text_tokens_input_ids, num_images_per_prompt, max_length=tokenizer.model_max_length,
+            truncate=truncate
         )
 
         text_embeds_list.append(text_embeds)
@@ -511,17 +580,49 @@ def encode_prompts_xl(
     return torch.concat(text_embeds_list, dim=-1), pooled_text_embeds
 
 
-def text_encode(text_encoder: 'CLIPTextModel', tokens):
-    return text_encoder(tokens.to(text_encoder.device))[0]
+# ref for long prompts https://github.com/huggingface/diffusers/issues/2136
+def text_encode(text_encoder: 'CLIPTextModel', tokens, truncate: bool = True, max_length=None):
+    if max_length is None and not truncate:
+        raise ValueError("max_length must be set if truncate is True")
+    try:
+        tokens = tokens.to(text_encoder.device)
+    except Exception as e:
+        print(e)
+        print("tokens.device", tokens.device)
+        print("text_encoder.device", text_encoder.device)
+        raise e
+
+    if truncate:
+        return text_encoder(tokens)[0]
+    else:
+        # handle long prompts
+        prompt_embeds_list = []
+        for i in range(0, tokens.shape[-1], max_length):
+            prompt_embeds = text_encoder(tokens[:, i: i + max_length])[0]
+            prompt_embeds_list.append(prompt_embeds)
+
+        return torch.cat(prompt_embeds_list, dim=1)
 
 
 def encode_prompts(
         tokenizer: 'CLIPTokenizer',
-        text_encoder: 'CLIPTokenizer',
+        text_encoder: 'CLIPTextModel',
         prompts: list[str],
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
 ):
-    text_tokens = text_tokenize(tokenizer, prompts)
-    text_embeddings = text_encode(text_encoder, text_tokens)
+    if max_length is None:
+        max_length = tokenizer.model_max_length
+
+    if dropout_prob > 0.0:
+        # randomly drop out prompts
+        prompts = [
+            prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompts
+        ]
+
+    text_tokens = text_tokenize(tokenizer, prompts, truncate=truncate, max_length=max_length)
+    text_embeddings = text_encode(text_encoder, text_tokens, truncate=truncate, max_length=max_length)
 
     return text_embeddings
 
@@ -602,18 +703,86 @@ def get_all_snr(noise_scheduler, device):
         all_snr.requires_grad = False
     return all_snr.to(device)
 
+class LearnableSNRGamma:
+    """
+    This is a trainer for learnable snr gamma
+    It will adapt to the dataset and attempt to adjust the snr multiplier to balance the loss over the timesteps
+    """
+    def __init__(self, noise_scheduler: Union['DDPMScheduler'], device='cuda'):
+        self.device = device
+        self.noise_scheduler: Union['DDPMScheduler'] = noise_scheduler
+        self.offset_1 = torch.nn.Parameter(torch.tensor(0.0, dtype=torch.float32, device=device))
+        self.offset_2 = torch.nn.Parameter(torch.tensor(0.777, dtype=torch.float32, device=device))
+        self.scale = torch.nn.Parameter(torch.tensor(4.14, dtype=torch.float32, device=device))
+        self.gamma = torch.nn.Parameter(torch.tensor(2.03, dtype=torch.float32, device=device))
+        self.optimizer = torch.optim.AdamW([self.offset_1, self.offset_2, self.gamma, self.scale], lr=0.01)
+        self.buffer = []
+        self.max_buffer_size = 20
+
+    def forward(self, loss, timesteps):
+        # do a our train loop for lsnr here and return our values detached
+        loss = loss.detach()
+        with torch.no_grad():
+            loss_chunks = torch.chunk(loss, loss.shape[0], dim=0)
+            for loss_chunk in loss_chunks:
+                self.buffer.append(loss_chunk.mean().detach())
+                if len(self.buffer) > self.max_buffer_size:
+                    self.buffer.pop(0)
+            all_snr = get_all_snr(self.noise_scheduler, loss.device)
+            snr: torch.Tensor = torch.stack([all_snr[t] for t in timesteps]).detach().float().to(loss.device)
+        base_snrs = snr.clone().detach()
+        snr.requires_grad = True
+        snr = (snr + self.offset_1) * self.scale + self.offset_2
+
+        gamma_over_snr = torch.div(torch.ones_like(snr) * self.gamma, snr)
+        snr_weight = torch.abs(gamma_over_snr).float().to(loss.device)  # directly using gamma over snr
+        snr_adjusted_loss = loss * snr_weight
+        with torch.no_grad():
+            target = torch.mean(torch.stack(self.buffer)).detach()
+
+        # local_loss = torch.mean(torch.abs(snr_adjusted_loss - target))
+        squared_differences = (snr_adjusted_loss - target) ** 2
+        local_loss = torch.mean(squared_differences)
+        local_loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+
+        return base_snrs, self.gamma.detach(), self.offset_1.detach(), self.offset_2.detach(), self.scale.detach()
+
+
+def apply_learnable_snr_gos(
+        loss,
+        timesteps,
+        learnable_snr_trainer: LearnableSNRGamma
+):
+
+    snr, gamma, offset_1, offset_2, scale = learnable_snr_trainer.forward(loss, timesteps)
+
+    snr = (snr + offset_1) * scale + offset_2
+
+    gamma_over_snr = torch.div(torch.ones_like(snr) * gamma, snr)
+    snr_weight = torch.abs(gamma_over_snr).float().to(loss.device)  # directly using gamma over snr
+    snr_adjusted_loss = loss * snr_weight
+
+    return snr_adjusted_loss
+
 
 def apply_snr_weight(
         loss,
         timesteps,
         noise_scheduler: Union['DDPMScheduler'],
-        gamma
+        gamma,
+        fixed=False,
 ):
-    # will get it form noise scheduler if exist or will calculate it if not
+    # will get it from noise scheduler if exist or will calculate it if not
     all_snr = get_all_snr(noise_scheduler, loss.device)
-
-    snr = torch.stack([all_snr[t] for t in timesteps])
+    step_indices = [(noise_scheduler.timesteps == t).nonzero().item() for t in timesteps]
+    snr = torch.stack([all_snr[t] for t in step_indices])
     gamma_over_snr = torch.div(torch.ones_like(snr) * gamma, snr)
-    snr_weight = torch.minimum(gamma_over_snr, torch.ones_like(gamma_over_snr)).float().to(loss.device)  # from paper
-    loss = loss * snr_weight
-    return loss
+    if fixed:
+        snr_weight = gamma_over_snr.float().to(loss.device)  # directly using gamma over snr
+    else:
+        snr_weight = torch.minimum(gamma_over_snr, torch.ones_like(gamma_over_snr)).float().to(loss.device)
+    snr_adjusted_loss = loss * snr_weight
+
+    return snr_adjusted_loss

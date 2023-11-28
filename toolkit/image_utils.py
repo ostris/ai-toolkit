@@ -1,9 +1,16 @@
 # ref https://github.com/scardine/image_size/blob/master/get_image_size.py
+import atexit
 import collections
 import json
 import os
 import io
 import struct
+from typing import TYPE_CHECKING
+
+import cv2
+import numpy as np
+import torch
+from diffusers import AutoencoderTiny
 
 FILE_UNKNOWN = "Sorry, don't know how to get size for this file."
 
@@ -112,7 +119,7 @@ def get_image_metadata_from_bytesio(input, size, file_path=None):
         width = int(w)
         height = int(h)
     elif ((size >= 24) and data.startswith(b'\211PNG\r\n\032\n')
-            and (data[12:16] == b'IHDR')):
+          and (data[12:16] == b'IHDR')):
         # PNGs
         imgtype = PNG
         w, h = struct.unpack(">LL", data[16:24])
@@ -190,7 +197,7 @@ def get_image_metadata_from_bytesio(input, size, file_path=None):
             9: (4, boChar + "l"),  # SLONG
             10: (8, boChar + "ll"),  # SRATIONAL
             11: (4, boChar + "f"),  # FLOAT
-            12: (8, boChar + "d")   # DOUBLE
+            12: (8, boChar + "d")  # DOUBLE
         }
         ifdOffset = struct.unpack(boChar + "L", data[4:8])[0]
         try:
@@ -206,7 +213,7 @@ def get_image_metadata_from_bytesio(input, size, file_path=None):
                 input.seek(entryOffset)
                 tag = input.read(2)
                 tag = struct.unpack(boChar + "H", tag)[0]
-                if(tag == 256 or tag == 257):
+                if (tag == 256 or tag == 257):
                     # if type indicates that value fits into 4 bytes, value
                     # offset is not an offset but value itself
                     type = input.read(2)
@@ -229,7 +236,7 @@ def get_image_metadata_from_bytesio(input, size, file_path=None):
         except Exception as e:
             raise UnknownImageFormat(str(e))
     elif size >= 2:
-            # see http://en.wikipedia.org/wiki/ICO_(file_format)
+        # see http://en.wikipedia.org/wiki/ICO_(file_format)
         imgtype = 'ICO'
         input.seek(0)
         reserved = input.read(2)
@@ -350,13 +357,13 @@ def main(argv=None):
 
     prs.add_option('-v', '--verbose',
                    dest='verbose',
-                   action='store_true',)
+                   action='store_true', )
     prs.add_option('-q', '--quiet',
                    dest='quiet',
-                   action='store_true',)
+                   action='store_true', )
     prs.add_option('-t', '--test',
                    dest='run_tests',
-                   action='store_true',)
+                   action='store_true', )
 
     argv = list(argv) if argv is not None else sys.argv[1:]
     (opts, args) = prs.parse_args(args=argv)
@@ -417,6 +424,60 @@ def main(argv=None):
     return EX_OK
 
 
+is_window_shown = False
+
+
+def show_img(img, name='AI Toolkit'):
+    global is_window_shown
+
+    img = np.clip(img, 0, 255).astype(np.uint8)
+    cv2.imshow(name, img[:, :, ::-1])
+    k = cv2.waitKey(10) & 0xFF
+    if k == 27:  # Esc key to stop
+        print('\nESC pressed, stopping')
+        raise KeyboardInterrupt
+    if not is_window_shown:
+        is_window_shown = True
+
+
+
+def show_tensors(imgs: torch.Tensor, name='AI Toolkit'):
+    # if rank is 4
+    if len(imgs.shape) == 4:
+        img_list = torch.chunk(imgs, imgs.shape[0], dim=0)
+    else:
+        img_list = [imgs]
+    # put images side by side
+    img = torch.cat(img_list, dim=3)
+    # img is -1 to 1, convert to 0 to 255
+    img = img / 2 + 0.5
+    img_numpy = img.to(torch.float32).detach().cpu().numpy()
+    img_numpy = np.clip(img_numpy, 0, 1) * 255
+    # convert to numpy Move channel to last
+    img_numpy = img_numpy.transpose(0, 2, 3, 1)
+    # convert to uint8
+    img_numpy = img_numpy.astype(np.uint8)
+    show_img(img_numpy[0], name=name)
+
+
+def show_latents(latents: torch.Tensor, vae: 'AutoencoderTiny', name='AI Toolkit'):
+    # decode latents
+    if vae.device == 'cpu':
+        vae.to(latents.device)
+    latents = latents / vae.config['scaling_factor']
+    imgs = vae.decode(latents).sample
+    show_tensors(imgs, name=name)
+
+
+
+def on_exit():
+    if is_window_shown:
+        cv2.destroyAllWindows()
+
+
+atexit.register(on_exit)
+
 if __name__ == "__main__":
     import sys
+
     sys.exit(main(argv=sys.argv[1:]))

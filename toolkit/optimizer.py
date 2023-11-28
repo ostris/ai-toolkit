@@ -1,4 +1,5 @@
 import torch
+from transformers import Adafactor
 
 
 def get_optimizer(
@@ -35,6 +36,8 @@ def get_optimizer(
         if use_lr < 0.1:
             # dadaptation uses different lr that is values of 0.1 to 1.0. default to 1.0
             use_lr = 1.0
+
+        print(f"Using lr {use_lr}")
         # let net be the neural network you want to train
         # you can choose weight decay value based on your problem, 0 by default
         optimizer = Prodigy(params, lr=use_lr, **optimizer_params)
@@ -43,6 +46,8 @@ def get_optimizer(
 
         if lower_type == "adam8bit":
             return bitsandbytes.optim.Adam8bit(params, lr=learning_rate, **optimizer_params)
+        elif lower_type == "adamw8bit":
+            return bitsandbytes.optim.AdamW8bit(params, lr=learning_rate, **optimizer_params)
         elif lower_type == "lion8bit":
             return bitsandbytes.optim.Lion8bit(params, lr=learning_rate, **optimizer_params)
         else:
@@ -52,10 +57,15 @@ def get_optimizer(
     elif lower_type == 'adamw':
         optimizer = torch.optim.AdamW(params, lr=float(learning_rate), **optimizer_params)
     elif lower_type == 'lion':
-        from lion_pytorch import Lion
-        return Lion(params, lr=learning_rate, **optimizer_params)
+        try:
+            from lion_pytorch import Lion
+            return Lion(params, lr=learning_rate, **optimizer_params)
+        except ImportError:
+            raise ImportError("Please install lion_pytorch to use Lion optimizer -> pip install lion-pytorch")
     elif lower_type == 'adagrad':
         optimizer = torch.optim.Adagrad(params, lr=float(learning_rate), **optimizer_params)
+    elif lower_type == 'adafactor':
+        optimizer = Adafactor(params, lr=float(learning_rate), **optimizer_params)
     else:
         raise ValueError(f'Unknown optimizer type {optimizer_type}')
     return optimizer

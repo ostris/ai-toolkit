@@ -1,14 +1,16 @@
+import json
 import math
 import os
 import re
 import sys
 from typing import List, Optional, Dict, Type, Union
-
 import torch
 from transformers import CLIPTextModel
 
+from .config_modules import NetworkConfig
+from .lorm import count_parameters
+from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, ExtractableModuleMixin
 from .paths import SD_SCRIPTS_ROOT
-from .train_tools import get_torch_dtype
 
 sys.path.append(SD_SCRIPTS_ROOT)
 
@@ -19,7 +21,18 @@ from torch.utils.checkpoint import checkpoint
 RE_UPDOWN = re.compile(r"(up|down)_blocks_(\d+)_(resnets|upsamplers|downsamplers|attentions)_(\d+)_")
 
 
-class LoRAModule(torch.nn.Module):
+# diffusers specific stuff
+LINEAR_MODULES = [
+    'Linear',
+    'LoRACompatibleLinear'
+    # 'GroupNorm',
+]
+CONV_MODULES = [
+    'Conv2d',
+    'LoRACompatibleConv'
+]
+
+class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
     """
     replaces forward method of the original Linear, instead of replacing the original Linear module.
     """
@@ -34,12 +47,20 @@ class LoRAModule(torch.nn.Module):
             dropout=None,
             rank_dropout=None,
             module_dropout=None,
+            network: 'LoRASpecialNetwork' = None,
+            use_bias: bool = False,
+            **kwargs
     ):
         """if alpha == 0 or None, alpha is rank (no scaling)."""
-        super().__init__()
+        ToolkitModuleMixin.__init__(self, network=network)
+        torch.nn.Module.__init__(self)
         self.lora_name = lora_name
+        self.scalar = torch.tensor(1.0)
+        # check if parent has bias. if not force use_bias to False
+        if org_module.bias is None:
+            use_bias = False
 
-        if org_module.__class__.__name__ == "Conv2d":
+        if org_module.__class__.__name__ in CONV_MODULES:
             in_dim = org_module.in_channels
             out_dim = org_module.out_channels
         else:
@@ -53,15 +74,15 @@ class LoRAModule(torch.nn.Module):
         # else:
         self.lora_dim = lora_dim
 
-        if org_module.__class__.__name__ == "Conv2d":
+        if org_module.__class__.__name__ in CONV_MODULES:
             kernel_size = org_module.kernel_size
             stride = org_module.stride
             padding = org_module.padding
             self.lora_down = torch.nn.Conv2d(in_dim, self.lora_dim, kernel_size, stride, padding, bias=False)
-            self.lora_up = torch.nn.Conv2d(self.lora_dim, out_dim, (1, 1), (1, 1), bias=False)
+            self.lora_up = torch.nn.Conv2d(self.lora_dim, out_dim, (1, 1), (1, 1), bias=use_bias)
         else:
             self.lora_down = torch.nn.Linear(in_dim, self.lora_dim, bias=False)
-            self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=False)
+            self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=use_bias)
 
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
@@ -74,157 +95,20 @@ class LoRAModule(torch.nn.Module):
         torch.nn.init.zeros_(self.lora_up.weight)
 
         self.multiplier: Union[float, List[float]] = multiplier
-        self.org_module = org_module  # remove in applying
+        # wrap the original module so it doesn't get weights updated
+        self.org_module = [org_module]
         self.dropout = dropout
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
         self.is_checkpointing = False
-        self.is_normalizing = False
-        self.normalize_scaler = 1.0
 
     def apply_to(self):
-        self.org_forward = self.org_module.forward
-        self.org_module.forward = self.forward
-        del self.org_module
-
-    # this allows us to set different multipliers on a per item in a batch basis
-    # allowing us to run positive and negative weights in the same batch
-    # really only useful for slider training for now
-    def get_multiplier(self, lora_up):
-        with torch.no_grad():
-            batch_size = lora_up.size(0)
-            # batch will have all negative prompts first and positive prompts second
-            # our multiplier list is for a prompt pair. So we need to repeat it for positive and negative prompts
-            # if there is more than our multiplier, it is likely a batch size increase, so we need to
-            # interleave the multipliers
-            if isinstance(self.multiplier, list):
-                if len(self.multiplier) == 0:
-                    # single item, just return it
-                    return self.multiplier[0]
-                elif len(self.multiplier) == batch_size:
-                    # not doing CFG
-                    multiplier_tensor = torch.tensor(self.multiplier).to(lora_up.device, dtype=lora_up.dtype)
-                else:
-
-                    # we have a list of multipliers, so we need to get the multiplier for this batch
-                    multiplier_tensor = torch.tensor(self.multiplier * 2).to(lora_up.device, dtype=lora_up.dtype)
-                    # should be 1 for if total batch size was 1
-                    num_interleaves = (batch_size // 2) // len(self.multiplier)
-                    multiplier_tensor = multiplier_tensor.repeat_interleave(num_interleaves)
-
-                # match lora_up rank
-                if len(lora_up.size()) == 2:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1)
-                elif len(lora_up.size()) == 3:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1)
-                elif len(lora_up.size()) == 4:
-                    multiplier_tensor = multiplier_tensor.view(-1, 1, 1, 1)
-                return multiplier_tensor.detach()
-
-            else:
-                return self.multiplier
-
-    def _call_forward(self, x):
-        # module dropout
-        if self.module_dropout is not None and self.training:
-            if torch.rand(1) < self.module_dropout:
-                return 0.0  # added to original forward
-
-        lx = self.lora_down(x)
-
-        # normal dropout
-        if self.dropout is not None and self.training:
-            lx = torch.nn.functional.dropout(lx, p=self.dropout)
-
-        # rank dropout
-        if self.rank_dropout is not None and self.training:
-            mask = torch.rand((lx.size(0), self.lora_dim), device=lx.device) > self.rank_dropout
-            if len(lx.size()) == 3:
-                mask = mask.unsqueeze(1)  # for Text Encoder
-            elif len(lx.size()) == 4:
-                mask = mask.unsqueeze(-1).unsqueeze(-1)  # for Conv2d
-            lx = lx * mask
-
-            # scaling for rank dropout: treat as if the rank is changed
-            # maskから計算することも考えられるが、augmentation的な効果を期待してrank_dropoutを用いる
-            scale = self.scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
-        else:
-            scale = self.scale
-
-        lx = self.lora_up(lx)
-
-        return lx * scale
-
-    def forward(self, x):
-        org_forwarded = self.org_forward(x)
-        lora_output = self._call_forward(x)
-
-        if self.is_normalizing:
-            with torch.no_grad():
-                # do this calculation without multiplier
-                # get a dim array from orig forward that had index of all dimensions except the batch and channel
-
-                # Calculate the target magnitude for the combined output
-                orig_max = torch.max(torch.abs(org_forwarded))
-
-                # Calculate the additional increase in magnitude that lora_output would introduce
-                potential_max_increase = torch.max(torch.abs(org_forwarded + lora_output) - torch.abs(org_forwarded))
-
-                epsilon = 1e-6  # Small constant to avoid division by zero
-
-                # Calculate the scaling factor for the lora_output
-                # to ensure that the potential increase in magnitude doesn't change the original max
-                normalize_scaler = orig_max / (orig_max + potential_max_increase + epsilon)
-                normalize_scaler = normalize_scaler.detach()
-
-                # save the scaler so it can be applied later
-                self.normalize_scaler = normalize_scaler.clone().detach()
-
-            lora_output *= normalize_scaler
-
-        multiplier = self.get_multiplier(lora_output)
-
-        return org_forwarded + (lora_output * multiplier)
-
-    def enable_gradient_checkpointing(self):
-        self.is_checkpointing = True
-
-    def disable_gradient_checkpointing(self):
-        self.is_checkpointing = False
-
-    @torch.no_grad()
-    def apply_stored_normalizer(self, target_normalize_scaler: float = 1.0):
-        """
-        Applied the previous normalization calculation to the module.
-        This must be called before saving or normalization will be lost.
-        It is probably best to call after each batch as well.
-        We just scale the up down weights to match this vector
-        :return:
-        """
-        # get state dict
-        state_dict = self.state_dict()
-        dtype = state_dict['lora_up.weight'].dtype
-        device = state_dict['lora_up.weight'].device
-
-        # todo should we do this at fp32?
-
-        total_module_scale = torch.tensor(self.normalize_scaler / target_normalize_scaler) \
-            .to(device, dtype=dtype)
-        num_modules_layers = 2  # up and down
-        up_down_scale = torch.pow(total_module_scale, 1.0 / num_modules_layers) \
-            .to(device, dtype=dtype)
-
-        # apply the scaler to the up and down weights
-        for key in state_dict.keys():
-            if key.endswith('.lora_up.weight') or key.endswith('.lora_down.weight'):
-                # do it inplace do params are updated
-                state_dict[key] *= up_down_scale
-
-        # reset the normalization scaler
-        self.normalize_scaler = target_normalize_scaler
+        self.org_forward = self.org_module[0].forward
+        self.org_module[0].forward = self.forward
+        # del self.org_module
 
 
-class LoRASpecialNetwork(LoRANetwork):
+class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
     NUM_OF_BLOCKS = 12  # フルモデル相当でのup,downの層の数
 
     UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel"]
@@ -258,7 +142,18 @@ class LoRASpecialNetwork(LoRANetwork):
             module_class: Type[object] = LoRAModule,
             varbose: Optional[bool] = False,
             train_text_encoder: Optional[bool] = True,
+            use_text_encoder_1: bool = True,
+            use_text_encoder_2: bool = True,
             train_unet: Optional[bool] = True,
+            is_sdxl=False,
+            is_v2=False,
+            use_bias: bool = False,
+            is_lorm: bool = False,
+            ignore_if_contains = None,
+            parameter_threshold: float = 0.0,
+            target_lin_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE,
+            target_conv_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE_CONV2D_3X3,
+            **kwargs
     ) -> None:
         """
         LoRA network: すごく引数が多いが、パターンは以下の通り
@@ -269,8 +164,19 @@ class LoRASpecialNetwork(LoRANetwork):
         5. modules_dimとmodules_alphaを指定 (推論用)
         """
         # call the parent of the parent we are replacing (LoRANetwork) init
-        super(LoRANetwork, self).__init__()
-
+        torch.nn.Module.__init__(self)
+        ToolkitNetworkMixin.__init__(
+            self,
+            train_text_encoder=train_text_encoder,
+            train_unet=train_unet,
+            is_sdxl=is_sdxl,
+            is_v2=is_v2,
+            is_lorm=is_lorm,
+            **kwargs
+        )
+        if ignore_if_contains is None:
+            ignore_if_contains = []
+        self.ignore_if_contains = ignore_if_contains
         self.lora_dim = lora_dim
         self.alpha = alpha
         self.conv_lora_dim = conv_lora_dim
@@ -281,9 +187,11 @@ class LoRASpecialNetwork(LoRANetwork):
         self.is_checkpointing = False
         self._multiplier: float = 1.0
         self.is_active: bool = False
-        self._is_normalizing: bool = False
+        self.torch_multiplier = None
         # triggers the state updates
         self.multiplier = multiplier
+        self.is_sdxl = is_sdxl
+        self.is_v2 = is_v2
 
         if modules_dim is not None:
             print(f"create LoRA network from weights")
@@ -325,11 +233,19 @@ class LoRASpecialNetwork(LoRANetwork):
             for name, module in root_module.named_modules():
                 if module.__class__.__name__ in target_replace_modules:
                     for child_name, child_module in module.named_modules():
-                        is_linear = child_module.__class__.__name__ == "Linear"
-                        is_conv2d = child_module.__class__.__name__ == "Conv2d"
+                        is_linear = child_module.__class__.__name__ in LINEAR_MODULES
+                        is_conv2d = child_module.__class__.__name__ in CONV_MODULES
                         is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
-                        if is_linear or is_conv2d:
+                        skip = False
+                        if any([word in child_name for word in self.ignore_if_contains]):
+                            skip = True
+
+                        # see if it is over threshold
+                        if count_parameters(child_module) < parameter_threshold:
+                            skip = True
+
+                        if (is_linear or is_conv2d) and not skip:
                             lora_name = prefix + "." + name + "." + child_name
                             lora_name = lora_name.replace(".", "_")
 
@@ -375,6 +291,9 @@ class LoRASpecialNetwork(LoRANetwork):
                                 dropout=dropout,
                                 rank_dropout=rank_dropout,
                                 module_dropout=module_dropout,
+                                network=self,
+                                parent=module,
+                                use_bias=use_bias,
                             )
                             loras.append(lora)
             return loras, skipped
@@ -387,6 +306,10 @@ class LoRASpecialNetwork(LoRANetwork):
         skipped_te = []
         if train_text_encoder:
             for i, text_encoder in enumerate(text_encoders):
+                if not use_text_encoder_1 and i == 0:
+                    continue
+                if not use_text_encoder_2 and i == 1:
+                    continue
                 if len(text_encoders) > 1:
                     index = i + 1
                     print(f"create LoRA for Text Encoder {index}:")
@@ -401,9 +324,9 @@ class LoRASpecialNetwork(LoRANetwork):
         print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
 
         # extend U-Net target modules if conv2d 3x3 is enabled, or load from weights
-        target_modules = LoRANetwork.UNET_TARGET_REPLACE_MODULE
+        target_modules = target_lin_modules
         if modules_dim is not None or self.conv_lora_dim is not None or conv_block_dims is not None:
-            target_modules += LoRANetwork.UNET_TARGET_REPLACE_MODULE_CONV2D_3X3
+            target_modules += target_conv_modules
 
         if train_unet:
             self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)
@@ -430,106 +353,3 @@ class LoRASpecialNetwork(LoRANetwork):
         for lora in self.text_encoder_loras + self.unet_loras:
             assert lora.lora_name not in names, f"duplicated lora name: {lora.lora_name}"
             names.add(lora.lora_name)
-
-    def save_weights(self, file, dtype, metadata):
-        if metadata is not None and len(metadata) == 0:
-            metadata = None
-
-        state_dict = self.state_dict()
-
-        if dtype is not None:
-            for key in list(state_dict.keys()):
-                v = state_dict[key]
-                v = v.detach().clone().to("cpu").to(dtype)
-                state_dict[key] = v
-
-        if os.path.splitext(file)[1] == ".safetensors":
-            from safetensors.torch import save_file
-            save_file(state_dict, file, metadata)
-        else:
-            torch.save(state_dict, file)
-
-    @property
-    def multiplier(self) -> Union[float, List[float]]:
-        return self._multiplier
-
-    @multiplier.setter
-    def multiplier(self, value: Union[float, List[float]]):
-        self._multiplier = value
-        self._update_lora_multiplier()
-
-    def _update_lora_multiplier(self):
-
-        if self.is_active:
-            if hasattr(self, 'unet_loras'):
-                for lora in self.unet_loras:
-                    lora.multiplier = self._multiplier
-            if hasattr(self, 'text_encoder_loras'):
-                for lora in self.text_encoder_loras:
-                    lora.multiplier = self._multiplier
-        else:
-            if hasattr(self, 'unet_loras'):
-                for lora in self.unet_loras:
-                    lora.multiplier = 0
-            if hasattr(self, 'text_encoder_loras'):
-                for lora in self.text_encoder_loras:
-                    lora.multiplier = 0
-
-    # called when the context manager is entered
-    # ie: with network:
-    def __enter__(self):
-        self.is_active = True
-        self._update_lora_multiplier()
-
-    def __exit__(self, exc_type, exc_value, tb):
-        self.is_active = False
-        self._update_lora_multiplier()
-
-    def force_to(self, device, dtype):
-        self.to(device, dtype)
-        loras = []
-        if hasattr(self, 'unet_loras'):
-            loras += self.unet_loras
-        if hasattr(self, 'text_encoder_loras'):
-            loras += self.text_encoder_loras
-        for lora in loras:
-            lora.to(device, dtype)
-
-    def get_all_modules(self):
-        loras = []
-        if hasattr(self, 'unet_loras'):
-            loras += self.unet_loras
-        if hasattr(self, 'text_encoder_loras'):
-            loras += self.text_encoder_loras
-        return loras
-
-    def _update_checkpointing(self):
-        for module in self.get_all_modules():
-            if self.is_checkpointing:
-                module.enable_gradient_checkpointing()
-            else:
-                module.disable_gradient_checkpointing()
-
-    def enable_gradient_checkpointing(self):
-        # not supported
-        self.is_checkpointing = True
-        self._update_checkpointing()
-
-    def disable_gradient_checkpointing(self):
-        # not supported
-        self.is_checkpointing = False
-        self._update_checkpointing()
-
-    @property
-    def is_normalizing(self) -> bool:
-        return self._is_normalizing
-
-    @is_normalizing.setter
-    def is_normalizing(self, value: bool):
-        self._is_normalizing = value
-        for module in self.get_all_modules():
-            module.is_normalizing = self._is_normalizing
-
-    def apply_stored_normalizer(self, target_normalize_scaler: float = 1.0):
-        for module in self.get_all_modules():
-            module.apply_stored_normalizer(target_normalize_scaler)

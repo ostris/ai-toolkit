@@ -2,6 +2,8 @@ import copy
 import json
 from collections import OrderedDict
 
+from toolkit.timer import Timer
+
 
 class BaseProcess(object):
 
@@ -18,6 +20,9 @@ class BaseProcess(object):
         self.raw_process_config = config
         self.name = self.get_conf('name', self.job.name)
         self.meta = copy.deepcopy(self.job.meta)
+        self.timer: Timer = Timer(f'{self.name} Timer')
+        self.performance_log_every = self.get_conf('performance_log_every', 0)
+
         print(json.dumps(self.config, indent=4))
 
     def get_conf(self, key, default=None, required=False, as_type=None):

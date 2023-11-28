@@ -5,14 +5,18 @@ import itertools
 
 
 class LosslessLatentDecoder(nn.Module):
-    def __init__(self, in_channels, latent_depth, dtype=torch.float32):
+    def __init__(self, in_channels, latent_depth, dtype=torch.float32, trainable=False):
         super(LosslessLatentDecoder, self).__init__()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.latent_depth = latent_depth
         self.in_channels = in_channels
         self.out_channels = int(in_channels // (latent_depth * latent_depth))
         numpy_kernel = self.build_kernel(in_channels, latent_depth)
-        self.kernel = torch.from_numpy(numpy_kernel).to(device=device, dtype=dtype)
+        numpy_kernel = torch.from_numpy(numpy_kernel).to(device=device, dtype=dtype)
+        if trainable:
+            self.kernel = nn.Parameter(numpy_kernel)
+        else:
+            self.kernel = numpy_kernel
 
     def build_kernel(self, in_channels, latent_depth):
         # my old code from tensorflow.
@@ -35,19 +39,27 @@ class LosslessLatentDecoder(nn.Module):
         return kernel
 
     def forward(self, x):
+        dtype = x.dtype
+        if self.kernel.dtype != dtype:
+            self.kernel = self.kernel.to(dtype=dtype)
+
         # Deconvolve input tensor with the kernel
         return nn.functional.conv_transpose2d(x, self.kernel, stride=self.latent_depth, padding=0, groups=1)
 
 
 class LosslessLatentEncoder(nn.Module):
-    def __init__(self, in_channels, latent_depth, dtype=torch.float32):
+    def __init__(self, in_channels, latent_depth, dtype=torch.float32, trainable=False):
         super(LosslessLatentEncoder, self).__init__()
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.latent_depth = latent_depth
         self.in_channels = in_channels
         self.out_channels = int(in_channels * (latent_depth * latent_depth))
         numpy_kernel = self.build_kernel(in_channels, latent_depth)
-        self.kernel = torch.from_numpy(numpy_kernel).to(device=device, dtype=dtype)
+        numpy_kernel = torch.from_numpy(numpy_kernel).to(device=device, dtype=dtype)
+        if trainable:
+            self.kernel = nn.Parameter(numpy_kernel)
+        else:
+            self.kernel = numpy_kernel
 
 
     def build_kernel(self, in_channels, latent_depth):
@@ -70,18 +82,21 @@ class LosslessLatentEncoder(nn.Module):
         return kernel
 
     def forward(self, x):
+        dtype = x.dtype
+        if self.kernel.dtype != dtype:
+            self.kernel = self.kernel.to(dtype=dtype)
         # Convolve input tensor with the kernel
         return nn.functional.conv2d(x, self.kernel, stride=self.latent_depth, padding=0, groups=1)
 
 
 class LosslessLatentVAE(nn.Module):
-    def __init__(self, in_channels, latent_depth, dtype=torch.float32):
+    def __init__(self, in_channels, latent_depth, dtype=torch.float32, trainable=False):
         super(LosslessLatentVAE, self).__init__()
         self.latent_depth = latent_depth
         self.in_channels = in_channels
-        self.encoder = LosslessLatentEncoder(in_channels, latent_depth, dtype=dtype)
+        self.encoder = LosslessLatentEncoder(in_channels, latent_depth, dtype=dtype, trainable=trainable)
         encoder_out_channels = self.encoder.out_channels
-        self.decoder = LosslessLatentDecoder(encoder_out_channels, latent_depth, dtype=dtype)
+        self.decoder = LosslessLatentDecoder(encoder_out_channels, latent_depth, dtype=dtype, trainable=trainable)
 
     def forward(self, x):
         latent = self.latent_encoder(x)
@@ -101,7 +116,7 @@ if __name__ == '__main__':
     from PIL import Image
     import torchvision.transforms as transforms
     user_path = os.path.expanduser('~')
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dtype = torch.float32
 
     input_path = os.path.join(user_path, "Pictures/sample_2_512.png")

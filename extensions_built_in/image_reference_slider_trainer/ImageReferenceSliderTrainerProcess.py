@@ -16,6 +16,7 @@ from toolkit import train_tools
 import torch
 from jobs.process import BaseSDTrainProcess
 import random
+from toolkit.basic import value_map
 
 
 def flush():
@@ -91,11 +92,18 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
                 network_neg_weight = network_neg_weight.item()
 
             # get an array of random floats between -weight_jitter and weight_jitter
+            loss_jitter_multiplier = 1.0
             weight_jitter = self.slider_config.weight_jitter
             if weight_jitter > 0.0:
                 jitter_list = random.uniform(-weight_jitter, weight_jitter)
+                orig_network_pos_weight = network_pos_weight
                 network_pos_weight += jitter_list
                 network_neg_weight += (jitter_list * -1.0)
+                # penalize the loss for its distance from network_pos_weight
+                # a jitter_list of abs(3.0) on a weight of 5.0 is a 60% jitter
+                # so the loss_jitter_multiplier needs to be 0.4
+                loss_jitter_multiplier = value_map(abs(jitter_list), 0.0, weight_jitter, 1.0, 0.0)
+
 
             # if items in network_weight list are tensors, convert them to floats
 
@@ -146,38 +154,33 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
             timesteps = torch.cat([timesteps, timesteps], dim=0)
             network_multiplier = [network_pos_weight * 1.0, network_neg_weight * -1.0]
 
-        flush()
-
-        loss_float = None
-        loss_mirror_float = None
-
         self.optimizer.zero_grad()
         noisy_latents.requires_grad = False
 
         # if training text encoder enable grads, else do context of no grad
         with torch.set_grad_enabled(self.train_config.train_text_encoder):
-            # text encoding
-            embedding_list = []
-            # embed the prompts
+            # fix issue with them being tuples sometimes
+            prompt_list = []
             for prompt in prompts:
-                embedding = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=dtype)
-                embedding_list.append(embedding)
-            conditional_embeds = concat_prompt_embeds(embedding_list)
+                if isinstance(prompt, tuple):
+                    prompt = prompt[0]
+                prompt_list.append(prompt)
+            conditional_embeds = self.sd.encode_prompt(prompt_list).to(self.device_torch, dtype=dtype)
             conditional_embeds = concat_prompt_embeds([conditional_embeds, conditional_embeds])
 
-        if self.model_config.is_xl:
-            # todo also allow for setting this for low ram in general, but sdxl spikes a ton on back prop
-            network_multiplier_list = network_multiplier
-            noisy_latent_list = torch.chunk(noisy_latents, 2, dim=0)
-            noise_list = torch.chunk(noise, 2, dim=0)
-            timesteps_list = torch.chunk(timesteps, 2, dim=0)
-            conditional_embeds_list = split_prompt_embeds(conditional_embeds)
-        else:
-            network_multiplier_list = [network_multiplier]
-            noisy_latent_list = [noisy_latents]
-            noise_list = [noise]
-            timesteps_list = [timesteps]
-            conditional_embeds_list = [conditional_embeds]
+        # if self.model_config.is_xl:
+        #     # todo also allow for setting this for low ram in general, but sdxl spikes a ton on back prop
+        #     network_multiplier_list = network_multiplier
+        #     noisy_latent_list = torch.chunk(noisy_latents, 2, dim=0)
+        #     noise_list = torch.chunk(noise, 2, dim=0)
+        #     timesteps_list = torch.chunk(timesteps, 2, dim=0)
+        #     conditional_embeds_list = split_prompt_embeds(conditional_embeds)
+        # else:
+        network_multiplier_list = [network_multiplier]
+        noisy_latent_list = [noisy_latents]
+        noise_list = [noise]
+        timesteps_list = [timesteps]
+        conditional_embeds_list = [conditional_embeds]
 
         losses = []
         # allow to chunk it out to save vram
@@ -205,20 +208,17 @@ class ImageReferenceSliderTrainerProcess(BaseSDTrainProcess):
                 loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
                 loss = loss.mean([1, 2, 3])
 
-                # todo add snr gamma here
                 if self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001:
                     # add min_snr_gamma
                     loss = apply_snr_weight(loss, timesteps, noise_scheduler, self.train_config.min_snr_gamma)
 
-                loss = loss.mean()
-                loss_slide_float = loss.item()
+                loss = loss.mean() * loss_jitter_multiplier
 
                 loss_float = loss.item()
                 losses.append(loss_float)
 
                 # back propagate loss to free ram
                 loss.backward()
-                flush()
 
         # apply gradients
         optimizer.step()

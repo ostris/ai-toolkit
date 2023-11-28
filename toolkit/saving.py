@@ -32,6 +32,10 @@ def convert_state_dict_to_ldm_with_mapping(
     with open(mapping_path, 'r') as f:
         mapping = json.load(f, object_pairs_hook=OrderedDict)
 
+    # keep track of keys not matched
+    ldm_matched_keys = []
+    diffusers_matched_keys = []
+
     ldm_diffusers_keymap = mapping['ldm_diffusers_keymap']
     ldm_diffusers_shape_map = mapping['ldm_diffusers_shape_map']
     ldm_diffusers_operator_map = mapping['ldm_diffusers_operator_map']
@@ -52,11 +56,15 @@ def convert_state_dict_to_ldm_with_mapping(
             for diffusers_key in ldm_diffusers_operator_map[ldm_key]['cat']:
                 cat_list.append(diffusers_state_dict[diffusers_key].detach())
             converted_state_dict[ldm_key] = torch.cat(cat_list, dim=0).to(device, dtype=dtype)
+            diffusers_matched_keys.extend(ldm_diffusers_operator_map[ldm_key]['cat'])
+            ldm_matched_keys.append(ldm_key)
         if 'slice' in ldm_diffusers_operator_map[ldm_key]:
             tensor_to_slice = diffusers_state_dict[ldm_diffusers_operator_map[ldm_key]['slice'][0]]
             slice_text = diffusers_state_dict[ldm_diffusers_operator_map[ldm_key]['slice'][1]]
             converted_state_dict[ldm_key] = tensor_to_slice[get_slices_from_string(slice_text)].detach().to(device,
                                                                                                             dtype=dtype)
+            diffusers_matched_keys.extend(ldm_diffusers_operator_map[ldm_key]['slice'])
+            ldm_matched_keys.append(ldm_key)
 
     # process the rest of the keys
     for ldm_key in ldm_diffusers_keymap:
@@ -67,13 +75,29 @@ def convert_state_dict_to_ldm_with_mapping(
             if ldm_key in ldm_diffusers_shape_map:
                 tensor = tensor.view(ldm_diffusers_shape_map[ldm_key][0])
             converted_state_dict[ldm_key] = tensor
+            diffusers_matched_keys.append(ldm_diffusers_keymap[ldm_key])
+            ldm_matched_keys.append(ldm_key)
+
+    # see if any are missing from know mapping
+    mapped_diffusers_keys = list(ldm_diffusers_keymap.values())
+    mapped_ldm_keys = list(ldm_diffusers_keymap.keys())
+
+    missing_diffusers_keys = [x for x in mapped_diffusers_keys if x not in diffusers_matched_keys]
+    missing_ldm_keys = [x for x in mapped_ldm_keys if x not in ldm_matched_keys]
+
+    if len(missing_diffusers_keys) > 0:
+        print(f"WARNING!!!! Missing {len(missing_diffusers_keys)} diffusers keys")
+        print(missing_diffusers_keys)
+    if len(missing_ldm_keys) > 0:
+        print(f"WARNING!!!! Missing {len(missing_ldm_keys)} ldm keys")
+        print(missing_ldm_keys)
 
     return converted_state_dict
 
 
 def get_ldm_state_dict_from_diffusers(
         state_dict: 'OrderedDict',
-        sd_version: Literal['1', '2', 'sdxl'] = '2',
+        sd_version: Literal['1', '2', 'sdxl', 'ssd', 'sdxl_refiner'] = '2',
         device='cpu',
         dtype=get_torch_dtype('fp32'),
 ):
@@ -87,6 +111,14 @@ def get_ldm_state_dict_from_diffusers(
         # load our base
         base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_sdxl_ldm_base.safetensors')
         mapping_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_sdxl.json')
+    elif sd_version == 'ssd':
+        # load our base
+        base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_ssd_ldm_base.safetensors')
+        mapping_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_ssd.json')
+    elif sd_version == 'sdxl_refiner':
+        # load our base
+        base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_refiner_ldm_base.safetensors')
+        mapping_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_refiner.json')
     else:
         raise ValueError(f"Invalid sd_version {sd_version}")
 
@@ -105,7 +137,7 @@ def save_ldm_model_from_diffusers(
         output_file: str,
         meta: 'OrderedDict',
         save_dtype=get_torch_dtype('fp16'),
-        sd_version: Literal['1', '2', 'sdxl'] = '2'
+        sd_version: Literal['1', '2', 'sdxl', 'ssd'] = '2'
 ):
     converted_state_dict = get_ldm_state_dict_from_diffusers(
         sd.state_dict(),
@@ -117,3 +149,95 @@ def save_ldm_model_from_diffusers(
     # make sure parent folder exists
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     save_file(converted_state_dict, output_file, metadata=meta)
+
+
+def save_lora_from_diffusers(
+        lora_state_dict: 'OrderedDict',
+        output_file: str,
+        meta: 'OrderedDict',
+        save_dtype=get_torch_dtype('fp16'),
+        sd_version: Literal['1', '2', 'sdxl', 'ssd'] = '2'
+):
+    converted_state_dict = OrderedDict()
+    # only handle sxdxl for now
+    if sd_version != 'sdxl' and sd_version != 'ssd':
+        raise ValueError(f"Invalid sd_version {sd_version}")
+    for key, value in lora_state_dict.items():
+        # todo verify if this works with ssd
+        # test encoders share keys for some reason
+        if key.begins_with('lora_te'):
+            converted_state_dict[key] = value.detach().to('cpu', dtype=save_dtype)
+        else:
+            converted_key = key
+
+    # make sure parent folder exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    save_file(converted_state_dict, output_file, metadata=meta)
+
+
+def save_t2i_from_diffusers(
+        t2i_state_dict: 'OrderedDict',
+        output_file: str,
+        meta: 'OrderedDict',
+        dtype=get_torch_dtype('fp16'),
+):
+    # todo: test compatibility with non diffusers
+    converted_state_dict = OrderedDict()
+    for key, value in t2i_state_dict.items():
+        converted_state_dict[key] = value.detach().to('cpu', dtype=dtype)
+
+    # make sure parent folder exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    save_file(converted_state_dict, output_file, metadata=meta)
+
+
+def load_t2i_model(
+        path_to_file,
+        device: Union[str] = 'cpu',
+        dtype: torch.dtype = torch.float32
+):
+    raw_state_dict = load_file(path_to_file, device)
+    converted_state_dict = OrderedDict()
+    for key, value in raw_state_dict.items():
+        # todo see if we need to convert dict
+        converted_state_dict[key] = value.detach().to(device, dtype=dtype)
+    return converted_state_dict
+
+
+IP_ADAPTER_MODULES = ['image_proj', 'ip_adapter']
+
+def save_ip_adapter_from_diffusers(
+        combined_state_dict: 'OrderedDict',
+        output_file: str,
+        meta: 'OrderedDict',
+        dtype=get_torch_dtype('fp16'),
+):
+    # todo: test compatibility with non diffusers
+    converted_state_dict = OrderedDict()
+    for module_name, state_dict in combined_state_dict.items():
+        for key, value in state_dict.items():
+            converted_state_dict[f"{module_name}.{key}"] = value.detach().to('cpu', dtype=dtype)
+
+    # make sure parent folder exists
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    save_file(converted_state_dict, output_file, metadata=meta)
+
+
+def load_ip_adapter_model(
+        path_to_file,
+        device: Union[str] = 'cpu',
+        dtype: torch.dtype = torch.float32
+):
+    # check if it is safetensors or checkpoint
+    if path_to_file.endswith('.safetensors'):
+        raw_state_dict = load_file(path_to_file, device)
+        combined_state_dict = OrderedDict()
+        for combo_key, value in raw_state_dict.items():
+            key_split = combo_key.split('.')
+            module_name = key_split.pop(0)
+            if module_name not in combined_state_dict:
+                combined_state_dict[module_name] = OrderedDict()
+            combined_state_dict[module_name]['.'.join(key_split)] = value.detach().to(device, dtype=dtype)
+        return combined_state_dict
+    else:
+        return torch.load(path_to_file, map_location=device)

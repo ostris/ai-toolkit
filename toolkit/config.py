@@ -17,6 +17,24 @@ def get_cwd_abs_path(path):
     return path
 
 
+def replace_env_vars_in_string(s: str) -> str:
+    """
+    Replace placeholders like ${VAR_NAME} with the value of the corresponding environment variable.
+    If the environment variable is not set, raise an error.
+    """
+
+    def replacer(match):
+        var_name = match.group(1)
+        value = os.environ.get(var_name)
+
+        if value is None:
+            raise ValueError(f"Environment variable {var_name} not set. Please ensure it's defined before proceeding.")
+
+        return value
+
+    return re.sub(r'\$\{([^}]+)\}', replacer, s)
+
+
 def preprocess_config(config: OrderedDict, name: str = None):
     if "job" not in config:
         raise ValueError("config file must have a job key")
@@ -81,13 +99,14 @@ def get_config(
         raise ValueError(f"Could not find config file {config_file_path}")
 
     # if we found it, check if it is a json or yaml file
-    if real_config_path.endswith('.json') or real_config_path.endswith('.jsonc'):
-        with open(real_config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f, object_pairs_hook=OrderedDict)
-    elif real_config_path.endswith('.yaml') or real_config_path.endswith('.yml'):
-        with open(real_config_path, 'r', encoding='utf-8') as f:
-            config = yaml.load(f, Loader=fixed_loader)
-    else:
-        raise ValueError(f"Config file {config_file_path} must be a json or yaml file")
+    with open(real_config_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+        content_with_env_replaced = replace_env_vars_in_string(content)
+        if real_config_path.endswith('.json') or real_config_path.endswith('.jsonc'):
+            config = json.loads(content_with_env_replaced, object_pairs_hook=OrderedDict)
+        elif real_config_path.endswith('.yaml') or real_config_path.endswith('.yml'):
+            config = yaml.load(content_with_env_replaced, Loader=fixed_loader)
+        else:
+            raise ValueError(f"Config file {config_file_path} must be a json or yaml file")
 
     return preprocess_config(config, name)

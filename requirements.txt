@@ -1,9 +1,9 @@
 torch
 torchvision
 safetensors
-diffusers
-transformers
-lycoris_lora
+diffusers==0.21.3
+git+https://github.com/huggingface/transformers.git
+lycoris-lora==1.8.3
 flatten_json
 pyyaml
 oyaml
@@ -16,3 +16,9 @@ toml
 albumentations
 pydantic
 omegaconf
+k-diffusion
+open_clip_torch
+timm
+prodigyopt
+controlnet_aux==0.0.7
+python-dotenv

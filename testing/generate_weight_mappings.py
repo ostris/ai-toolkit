@@ -6,6 +6,8 @@ import os
 # add project root to sys path
 import sys
 
+from diffusers import DiffusionPipeline, StableDiffusionXLPipeline
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
@@ -50,6 +52,8 @@ parser.add_argument(
 
 parser.add_argument('--name', type=str, default='stable_diffusion', help='name for mapping to make')
 parser.add_argument('--sdxl', action='store_true', help='is sdxl model')
+parser.add_argument('--refiner', action='store_true', help='is refiner model')
+parser.add_argument('--ssd', action='store_true', help='is ssd model')
 parser.add_argument('--sd2', action='store_true', help='is sd 2 model')
 
 args = parser.parse_args()
@@ -60,24 +64,76 @@ find_matches = False
 
 print(f'Loading diffusers model')
 
-diffusers_model_config = ModelConfig(
-    name_or_path=file_path,
-    is_xl=args.sdxl,
-    is_v2=args.sd2,
-    dtype=dtype,
-)
-diffusers_sd = StableDiffusion(
-    model_config=diffusers_model_config,
-    device=device,
-    dtype=dtype,
-)
-diffusers_sd.load_model()
-# delete things we dont need
-del diffusers_sd.tokenizer
-flush()
+ignore_ldm_begins_with = []
 
-print(f'Loading ldm model')
-diffusers_state_dict = diffusers_sd.state_dict()
+diffusers_file_path = file_path
+if args.ssd:
+    diffusers_file_path = "segmind/SSD-1B"
+
+# if args.refiner:
+#     diffusers_file_path = "stabilityai/stable-diffusion-xl-refiner-1.0"
+
+diffusers_file_path = file_path if len(args.file_1) == 1 else args.file_1[1]
+
+if not args.refiner:
+
+    diffusers_model_config = ModelConfig(
+        name_or_path=diffusers_file_path,
+        is_xl=args.sdxl,
+        is_v2=args.sd2,
+        is_ssd=args.ssd,
+        dtype=dtype,
+    )
+    diffusers_sd = StableDiffusion(
+        model_config=diffusers_model_config,
+        device=device,
+        dtype=dtype,
+    )
+    diffusers_sd.load_model()
+    # delete things we dont need
+    del diffusers_sd.tokenizer
+    flush()
+
+    print(f'Loading ldm model')
+    diffusers_state_dict = diffusers_sd.state_dict()
+else:
+    # refiner wont work directly with stable diffusion
+    # so we need to load the model and then load the state dict
+    diffusers_pipeline = StableDiffusionXLPipeline.from_single_file(
+        diffusers_file_path,
+        torch_dtype=torch.float16,
+        use_safetensors=True,
+        variant="fp16",
+    ).to(device)
+    # diffusers_pipeline = StableDiffusionXLPipeline.from_single_file(
+    #     file_path,
+    #     torch_dtype=torch.float16,
+    #     use_safetensors=True,
+    #     variant="fp16",
+    # ).to(device)
+
+    SD_PREFIX_VAE = "vae"
+    SD_PREFIX_UNET = "unet"
+    SD_PREFIX_REFINER_UNET = "refiner_unet"
+    SD_PREFIX_TEXT_ENCODER = "te"
+
+    SD_PREFIX_TEXT_ENCODER1 = "te0"
+    SD_PREFIX_TEXT_ENCODER2 = "te1"
+
+    diffusers_state_dict = OrderedDict()
+    for k, v in diffusers_pipeline.vae.state_dict().items():
+        new_key = k if k.startswith(f"{SD_PREFIX_VAE}") else f"{SD_PREFIX_VAE}_{k}"
+        diffusers_state_dict[new_key] = v
+    for k, v in diffusers_pipeline.text_encoder_2.state_dict().items():
+        new_key = k if k.startswith(f"{SD_PREFIX_TEXT_ENCODER2}_") else f"{SD_PREFIX_TEXT_ENCODER2}_{k}"
+        diffusers_state_dict[new_key] = v
+    for k, v in diffusers_pipeline.unet.state_dict().items():
+        new_key = k if k.startswith(f"{SD_PREFIX_UNET}_") else f"{SD_PREFIX_UNET}_{k}"
+        diffusers_state_dict[new_key] = v
+
+    # add ignore ones as we are only going to focus on unet and copy the rest
+    # ignore_ldm_begins_with = ["conditioner.", "first_stage_model."]
+
 diffusers_dict_keys = list(diffusers_state_dict.keys())
 
 ldm_state_dict = load_file(file_path)
@@ -93,18 +149,26 @@ total_keys = len(ldm_dict_keys)
 matched_ldm_keys = []
 matched_diffusers_keys = []
 
-error_margin = 1e-4
+error_margin = 1e-8
+
+tmp_merge_key = "TMP___MERGE"
 
 te_suffix = ''
 proj_pattern_weight = None
 proj_pattern_bias = None
 text_proj_layer = None
-if args.sdxl:
+if args.sdxl or args.ssd:
     te_suffix = '1'
     ldm_res_block_prefix = "conditioner.embedders.1.model.transformer.resblocks"
     proj_pattern_weight = r"conditioner\.embedders\.1\.model\.transformer\.resblocks\.(\d+)\.attn\.in_proj_weight"
     proj_pattern_bias = r"conditioner\.embedders\.1\.model\.transformer\.resblocks\.(\d+)\.attn\.in_proj_bias"
     text_proj_layer = "conditioner.embedders.1.model.text_projection"
+if args.refiner:
+    te_suffix = '1'
+    ldm_res_block_prefix = "conditioner.embedders.0.model.transformer.resblocks"
+    proj_pattern_weight = r"conditioner\.embedders\.0\.model\.transformer\.resblocks\.(\d+)\.attn\.in_proj_weight"
+    proj_pattern_bias = r"conditioner\.embedders\.0\.model\.transformer\.resblocks\.(\d+)\.attn\.in_proj_bias"
+    text_proj_layer = "conditioner.embedders.0.model.text_projection"
 if args.sd2:
     te_suffix = ''
     ldm_res_block_prefix = "cond_stage_model.model.transformer.resblocks"
@@ -112,10 +176,13 @@ if args.sd2:
     proj_pattern_bias = r"cond_stage_model\.model\.transformer\.resblocks\.(\d+)\.attn\.in_proj_bias"
     text_proj_layer = "cond_stage_model.model.text_projection"
 
-if args.sdxl or args.sd2:
+if args.sdxl or args.sd2 or args.ssd or args.refiner:
     if "conditioner.embedders.1.model.text_projection" in ldm_dict_keys:
         # d_model = int(checkpoint[prefix + "text_projection"].shape[0]))
         d_model = int(ldm_state_dict["conditioner.embedders.1.model.text_projection"].shape[0])
+    elif "conditioner.embedders.0.model.text_projection" in ldm_dict_keys:
+        # d_model = int(checkpoint[prefix + "text_projection"].shape[0]))
+        d_model = int(ldm_state_dict["conditioner.embedders.0.model.text_projection"].shape[0])
     else:
         d_model = 1024
 
@@ -139,7 +206,7 @@ if args.sdxl or args.sd2:
                     f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.v_proj.weight")
                 # make diffusers convertable_dict
                 diffusers_state_dict[
-                    f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.MERGED.weight"] = new_val
+                    f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.{tmp_merge_key}.weight"] = new_val
 
                 # add operator
                 ldm_operator_map[ldm_key] = {
@@ -148,7 +215,6 @@ if args.sdxl or args.sd2:
                         f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.k_proj.weight",
                         f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.v_proj.weight",
                     ],
-                    "target": f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.MERGED.weight"
                 }
 
                 # text_model_dict[new_key + ".q_proj.weight"] = checkpoint[key][:d_model, :]
@@ -189,7 +255,7 @@ if args.sdxl or args.sd2:
                 matched_diffusers_keys.append(f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.v_proj.bias")
                 # make diffusers convertable_dict
                 diffusers_state_dict[
-                    f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.MERGED.bias"] = new_val
+                    f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.{tmp_merge_key}.bias"] = new_val
 
                 # add operator
                 ldm_operator_map[ldm_key] = {
@@ -198,7 +264,6 @@ if args.sdxl or args.sd2:
                         f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.k_proj.bias",
                         f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.v_proj.bias",
                     ],
-                    # "target": f"te{te_suffix}_text_model.encoder.layers.{number}.self_attn.MERGED.bias"
                 }
 
                 # add diffusers operators
@@ -237,11 +302,11 @@ for ldm_key in ldm_dict_keys:
         diffusers_reduced_shape_tuple = get_reduced_shape(diffusers_shape_tuple)
 
         # That was easy. Same key
-        if ldm_key == diffusers_key:
-            ldm_diffusers_keymap[ldm_key] = diffusers_key
-            matched_ldm_keys.append(ldm_key)
-            matched_diffusers_keys.append(diffusers_key)
-            break
+        # if ldm_key == diffusers_key:
+        #     ldm_diffusers_keymap[ldm_key] = diffusers_key
+        #     matched_ldm_keys.append(ldm_key)
+        #     matched_diffusers_keys.append(diffusers_key)
+        #     break
 
         # if we already have this key mapped, skip it
         if diffusers_key in matched_diffusers_keys:
@@ -266,7 +331,7 @@ for ldm_key in ldm_dict_keys:
             did_reduce_diffusers = True
 
         # check to see if they match within a margin of error
-        mse = torch.nn.functional.mse_loss(ldm_weight, diffusers_weight)
+        mse = torch.nn.functional.mse_loss(ldm_weight.float(), diffusers_weight.float())
         if mse < error_margin:
             ldm_diffusers_keymap[ldm_key] = diffusers_key
             matched_ldm_keys.append(ldm_key)
@@ -289,6 +354,10 @@ pbar.close()
 name = args.name
 if args.sdxl:
     name += '_sdxl'
+elif args.ssd:
+    name += '_ssd'
+elif args.refiner:
+    name += '_refiner'
 elif args.sd2:
     name += '_sd2'
 else:
@@ -359,13 +428,35 @@ for key in unmatched_ldm_keys:
 save_file(remaining_ldm_values, os.path.join(KEYMAPS_FOLDER, f'{name}_ldm_base.safetensors'))
 print(f'Saved remaining ldm values to {os.path.join(KEYMAPS_FOLDER, f"{name}_ldm_base.safetensors")}')
 
+# do cleanup of some left overs and bugs
+to_remove = []
+for ldm_key, diffusers_key in ldm_diffusers_keymap.items():
+    # get rid of tmp merge keys used to slicing
+    if tmp_merge_key in diffusers_key or tmp_merge_key in ldm_key:
+        to_remove.append(ldm_key)
+
+for key in to_remove:
+    del ldm_diffusers_keymap[key]
+
+to_remove = []
+# remove identical shape mappings. Not sure why they exist but they do
+for ldm_key, shape_list in ldm_diffusers_shape_map.items():
+    # remove identical shape mappings. Not sure why they exist but they do
+    # convert to json string to make it easier to compare
+    ldm_shape = json.dumps(shape_list[0])
+    diffusers_shape = json.dumps(shape_list[1])
+    if ldm_shape == diffusers_shape:
+        to_remove.append(ldm_key)
+
+for key in to_remove:
+    del ldm_diffusers_shape_map[key]
+
 dest_path = os.path.join(KEYMAPS_FOLDER, f'{name}.json')
 save_obj = OrderedDict()
 save_obj["ldm_diffusers_keymap"] = ldm_diffusers_keymap
 save_obj["ldm_diffusers_shape_map"] = ldm_diffusers_shape_map
 save_obj["ldm_diffusers_operator_map"] = ldm_operator_map
 save_obj["diffusers_ldm_operator_map"] = diffusers_operator_map
-
 with open(dest_path, 'w') as f:
     f.write(json.dumps(save_obj, indent=4))
 

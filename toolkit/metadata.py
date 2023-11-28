@@ -77,6 +77,10 @@ def parse_metadata_from_safetensors(meta: OrderedDict) -> OrderedDict:
 
 
 def load_metadata_from_safetensors(file_path: str) -> OrderedDict:
-    with safe_open(file_path, framework="pt") as f:
-        metadata = f.metadata()
-    return parse_metadata_from_safetensors(metadata)
+    try:
+        with safe_open(file_path, framework="pt") as f:
+            metadata = f.metadata()
+        return parse_metadata_from_safetensors(metadata)
+    except Exception as e:
+        print(f"Error loading metadata from {file_path}: {e}")
+        return OrderedDict()

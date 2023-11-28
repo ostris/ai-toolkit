@@ -1,10 +1,13 @@
+import copy
+import json
 import os
 import random
-from typing import List
+import traceback
+from functools import lru_cache
+from typing import List, TYPE_CHECKING
 
 import cv2
 import numpy as np
-import torch
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from torchvision import transforms
@@ -12,9 +15,13 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from tqdm import tqdm
 import albumentations as A
 
-from toolkit import image_utils
-from toolkit.config_modules import DatasetConfig
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin
+from toolkit.buckets import get_bucket_for_image_size, BucketResolution
+from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments
+from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
+
+if TYPE_CHECKING:
+    from toolkit.stable_diffusion_model import StableDiffusion
 
 
 class ImageDataset(Dataset, CaptionMixin):
@@ -27,7 +34,7 @@ class ImageDataset(Dataset, CaptionMixin):
         self.include_prompt = self.get_config('include_prompt', False)
         self.default_prompt = self.get_config('default_prompt', '')
         if self.include_prompt:
-            self.caption_type = self.get_config('caption_type', 'txt')
+            self.caption_type = self.get_config('caption_ext', 'txt')
         else:
             self.caption_type = None
         # we always random crop if random scale is enabled
@@ -47,6 +54,8 @@ class ImageDataset(Dataset, CaptionMixin):
                 new_file_list.append(file)
             else:
                 bad_count += 1
+
+        self.file_list = new_file_list
 
         print(f"  -  Found {len(self.file_list)} images")
         print(f"  -  Found {bad_count} images that are too small")
@@ -85,7 +94,10 @@ class ImageDataset(Dataset, CaptionMixin):
                     scale_size = self.resolution
                 else:
                     scale_size = random.randint(self.resolution, int(min_img_size))
-                img = img.resize((scale_size, scale_size), Image.BICUBIC)
+                scaler = scale_size / min_img_size
+                scale_width = int((img.width + 5) * scaler)
+                scale_height = int((img.height + 5) * scaler)
+                img = img.resize((scale_width, scale_height), Image.BICUBIC)
             img = transforms.RandomCrop(self.resolution)(img)
         else:
             img = transforms.CenterCrop(min_img_size)(img)
@@ -100,21 +112,7 @@ class ImageDataset(Dataset, CaptionMixin):
             return img
 
 
-class Augments:
-    def __init__(self, **kwargs):
-        self.method_name = kwargs.get('method', None)
-        self.params = kwargs.get('params', {})
 
-        # convert kwargs enums for cv2
-        for key, value in self.params.items():
-            if isinstance(value, str):
-                # split the string
-                split_string = value.split('.')
-                if len(split_string) == 2 and split_string[0] == 'cv2':
-                    if hasattr(cv2, split_string[1]):
-                        self.params[key] = getattr(cv2, split_string[1].upper())
-                    else:
-                        raise ValueError(f"invalid cv2 enum: {split_string[1]}")
 
 
 class AugmentedImageDataset(ImageDataset):
@@ -265,6 +263,38 @@ class PairedImageDataset(Dataset):
             img1 = exif_transpose(Image.open(img_path)).convert('RGB')
             img_path = img_path_or_tuple[1]
             img2 = exif_transpose(Image.open(img_path)).convert('RGB')
+
+            # always use # 2 (pos)
+            bucket_resolution = get_bucket_for_image_size(
+                width=img2.width,
+                height=img2.height,
+                resolution=self.size,
+                # divisibility=self.
+            )
+
+            # images will be same base dimension, but may be trimmed. We need to shrink and then central crop
+            if bucket_resolution['width'] > bucket_resolution['height']:
+                img1_scale_to_height = bucket_resolution["height"]
+                img1_scale_to_width = int(img1.width * (bucket_resolution["height"] / img1.height))
+                img2_scale_to_height = bucket_resolution["height"]
+                img2_scale_to_width = int(img2.width * (bucket_resolution["height"] / img2.height))
+            else:
+                img1_scale_to_width = bucket_resolution["width"]
+                img1_scale_to_height = int(img1.height * (bucket_resolution["width"] / img1.width))
+                img2_scale_to_width = bucket_resolution["width"]
+                img2_scale_to_height = int(img2.height * (bucket_resolution["width"] / img2.width))
+
+            img1_crop_height = bucket_resolution["height"]
+            img1_crop_width = bucket_resolution["width"]
+            img2_crop_height = bucket_resolution["height"]
+            img2_crop_width = bucket_resolution["width"]
+
+            # scale then center crop images
+            img1 = img1.resize((img1_scale_to_width, img1_scale_to_height), Image.BICUBIC)
+            img1 = transforms.CenterCrop((img1_crop_height, img1_crop_width))(img1)
+            img2 = img2.resize((img2_scale_to_width, img2_scale_to_height), Image.BICUBIC)
+            img2 = transforms.CenterCrop((img2_crop_height, img2_crop_width))(img2)
+
             # combine them side by side
             img = Image.new('RGB', (img1.width + img2.width, max(img1.height, img2.height)))
             img.paste(img1, (0, 0))
@@ -272,52 +302,45 @@ class PairedImageDataset(Dataset):
         else:
             img_path = img_path_or_tuple
             img = exif_transpose(Image.open(img_path)).convert('RGB')
+            height = self.size
+            # determine width to keep aspect ratio
+            width = int(img.size[0] * height / img.size[1])
+
+            # Downscale the source image first
+            img = img.resize((width, height), Image.BICUBIC)
 
         prompt = self.get_prompt_item(index)
-
-        height = self.size
-        # determine width to keep aspect ratio
-        width = int(img.size[0] * height / img.size[1])
-
-        # Downscale the source image first
-        img = img.resize((width, height), Image.BICUBIC)
         img = self.transform(img)
 
         return img, prompt, (self.neg_weight, self.pos_weight)
 
 
-printed_messages = []
+class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
 
-
-def print_once(msg):
-    global printed_messages
-    if msg not in printed_messages:
-        print(msg)
-        printed_messages.append(msg)
-
-
-class FileItem:
-    def __init__(self, **kwargs):
-        self.path = kwargs.get('path', None)
-        self.width = kwargs.get('width', None)
-        self.height = kwargs.get('height', None)
-        # we scale first, then crop
-        self.scale_to_width = kwargs.get('scale_to_width', self.width)
-        self.scale_to_height = kwargs.get('scale_to_height', self.height)
-        # crop values are from scaled size
-        self.crop_x = kwargs.get('crop_x', 0)
-        self.crop_y = kwargs.get('crop_y', 0)
-        self.crop_width = kwargs.get('crop_width', self.scale_to_width)
-        self.crop_height = kwargs.get('crop_height', self.scale_to_height)
-
-
-class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
-
-    def __init__(self, dataset_config: 'DatasetConfig', batch_size=1):
+    def __init__(
+            self,
+            dataset_config: 'DatasetConfig',
+            batch_size=1,
+            sd: 'StableDiffusion' = None,
+    ):
         super().__init__()
         self.dataset_config = dataset_config
-        self.folder_path = dataset_config.folder_path
-        self.caption_type = dataset_config.caption_type
+        folder_path = dataset_config.folder_path
+        self.dataset_path = dataset_config.dataset_path
+        if self.dataset_path is None:
+            self.dataset_path = folder_path
+
+        self.is_caching_latents = dataset_config.cache_latents or dataset_config.cache_latents_to_disk
+        self.is_caching_latents_to_memory = dataset_config.cache_latents
+        self.is_caching_latents_to_disk = dataset_config.cache_latents_to_disk
+        self.epoch_num = 0
+
+        self.sd = sd
+
+        if self.sd is None and self.is_caching_latents:
+            raise ValueError(f"sd is required for caching latents")
+
+        self.caption_type = dataset_config.caption_ext
         self.default_caption = dataset_config.default_caption
         self.random_scale = dataset_config.random_scale
         self.scale = dataset_config.scale
@@ -325,176 +348,211 @@ class AiToolkitDataset(Dataset, CaptionMixin, BucketsMixin):
         # we always random crop if random scale is enabled
         self.random_crop = self.random_scale if self.random_scale else dataset_config.random_crop
         self.resolution = dataset_config.resolution
-        self.file_list: List['FileItem'] = []
+        self.caption_dict = None
+        self.file_list: List['FileItemDTO'] = []
 
-        # get the file list
-        file_list = [
-            os.path.join(self.folder_path, file) for file in os.listdir(self.folder_path) if
-            file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
-        ]
+        # check if dataset_path is a folder or json
+        if os.path.isdir(self.dataset_path):
+            file_list = [
+                os.path.join(self.dataset_path, file) for file in os.listdir(self.dataset_path) if
+                file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+            ]
+        else:
+            # assume json
+            with open(self.dataset_path, 'r') as f:
+                self.caption_dict = json.load(f)
+                # keys are file paths
+                file_list = list(self.caption_dict.keys())
+
+        if self.dataset_config.num_repeats > 1:
+            # repeat the list
+            file_list = file_list * self.dataset_config.num_repeats
 
         # this might take a while
         print(f"  -  Preprocessing image dimensions")
         bad_count = 0
         for file in tqdm(file_list):
             try:
-                w, h = image_utils.get_image_size(file)
-            except image_utils.UnknownImageFormat:
-                print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
-                           f'This process is faster for png, jpeg')
-                img = Image.open(file)
-                h, w = img.size
-            if int(min(h, w) * self.scale) >= self.resolution:
-                self.file_list.append(
-                    FileItem(
-                        path=file,
-                        width=w,
-                        height=h,
-                        scale_to_width=int(w * self.scale),
-                        scale_to_height=int(h * self.scale),
-                    )
+                file_item = FileItemDTO(
+                    path=file,
+                    dataset_config=dataset_config
                 )
-            else:
+                self.file_list.append(file_item)
+            except Exception as e:
+                print(traceback.format_exc())
+                print(f"Error processing image: {file}")
+                print(e)
                 bad_count += 1
 
         print(f"  -  Found {len(self.file_list)} images")
-        print(f"  -  Found {bad_count} images that are too small")
-        assert len(self.file_list) > 0, f"no images found in {self.folder_path}"
+        # print(f"  -  Found {bad_count} images that are too small")
+        assert len(self.file_list) > 0, f"no images found in {self.dataset_path}"
 
-        if self.dataset_config.buckets:
-            # setup buckets
-            self.setup_buckets()
+        # handle x axis flips
+        if self.dataset_config.flip_x:
+            print("  -  adding x axis flips")
+            current_file_list = [x for x in self.file_list]
+            for file_item in current_file_list:
+                # create a copy that is flipped on the x axis
+                new_file_item = copy.deepcopy(file_item)
+                new_file_item.flip_x = True
+                self.file_list.append(new_file_item)
+
+        # handle y axis flips
+        if self.dataset_config.flip_y:
+            print("  -  adding y axis flips")
+            current_file_list = [x for x in self.file_list]
+            for file_item in current_file_list:
+                # create a copy that is flipped on the y axis
+                new_file_item = copy.deepcopy(file_item)
+                new_file_item.flip_y = True
+                self.file_list.append(new_file_item)
+
+        if self.dataset_config.flip_x or self.dataset_config.flip_y:
+            print(f"  -  Found {len(self.file_list)} images after adding flips")
 
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),  # normalize to [-1, 1]
         ])
 
+        self.setup_epoch()
+
+    def setup_epoch(self):
+        if self.epoch_num == 0:
+            # initial setup
+            # do not call for now
+            if self.dataset_config.buckets:
+                # setup buckets
+                self.setup_buckets()
+            if self.is_caching_latents:
+                self.cache_latents_all_latents()
+        else:
+            if self.dataset_config.poi is not None:
+                # handle cropping to a specific point of interest
+                # setup buckets every epoch
+                self.setup_buckets(quiet=True)
+        self.epoch_num += 1
+
     def __len__(self):
         if self.dataset_config.buckets:
             return len(self.batch_indices)
         return len(self.file_list)
 
-    def _get_single_item(self, index):
-        file_item = self.file_list[index]
-        # todo make sure this matches
-        img = exif_transpose(Image.open(file_item.path)).convert('RGB')
-        w, h = img.size
-        if w > h and file_item.scale_to_width < file_item.scale_to_height:
-            # throw error, they should match
-            raise ValueError(
-                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={file_item.scale_to_width}, file_item.scale_to_height={file_item.scale_to_height}, file_item.path={file_item.path}")
-        elif h > w and file_item.scale_to_height < file_item.scale_to_width:
-            # throw error, they should match
-            raise ValueError(
-                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={file_item.scale_to_width}, file_item.scale_to_height={file_item.scale_to_height}, file_item.path={file_item.path}")
-
-        # Downscale the source image first
-        img = img.resize((int(img.size[0] * self.scale), int(img.size[1] * self.scale)), Image.BICUBIC)
-        min_img_size = min(img.size)
-
-        if self.dataset_config.buckets:
-            # todo allow scaling and cropping, will be hard to add
-            # scale and crop based on file item
-            img = img.resize((file_item.scale_to_width, file_item.scale_to_height), Image.BICUBIC)
-            img = transforms.CenterCrop((file_item.crop_height, file_item.crop_width))(img)
-        else:
-            if self.random_crop:
-                if self.random_scale and min_img_size > self.resolution:
-                    if min_img_size < self.resolution:
-                        print(
-                            f"Unexpected values: min_img_size={min_img_size}, self.resolution={self.resolution}, image file={file_item.path}")
-                        scale_size = self.resolution
-                    else:
-                        scale_size = random.randint(self.resolution, int(min_img_size))
-                    img = img.resize((scale_size, scale_size), Image.BICUBIC)
-                img = transforms.RandomCrop(self.resolution)(img)
-            else:
-                img = transforms.CenterCrop(min_img_size)(img)
-                img = img.resize((self.resolution, self.resolution), Image.BICUBIC)
-
-        img = self.transform(img)
-
-        # todo convert it all
-        dataset_config_dict = {
-            "is_reg": 1 if self.dataset_config.is_reg else 0,
-        }
-
-        if self.caption_type is not None:
-            prompt = self.get_caption_item(index)
-            return img, prompt, dataset_config_dict
-        else:
-            return img, dataset_config_dict
+    def _get_single_item(self, index) -> 'FileItemDTO':
+        file_item = copy.deepcopy(self.file_list[index])
+        file_item.load_and_process_image(self.transform)
+        file_item.load_caption(self.caption_dict)
+        return file_item
 
     def __getitem__(self, item):
         if self.dataset_config.buckets:
+            # for buckets we collate ourselves for now
+            # todo allow a scheduler to dynamically make buckets
             # we collate ourselves
+            if len(self.batch_indices) - 1 < item:
+                # tried everything to solve this. No way to reset length when redoing things. Pick another index
+                item = random.randint(0, len(self.batch_indices) - 1)
             idx_list = self.batch_indices[item]
-            tensor_list = []
-            prompt_list = []
-            dataset_config_dict_list = []
-            for idx in idx_list:
-                if self.caption_type is not None:
-                    img, prompt, dataset_config_dict = self._get_single_item(idx)
-                    prompt_list.append(prompt)
-                    dataset_config_dict_list.append(dataset_config_dict)
-                else:
-                    img, dataset_config_dict = self._get_single_item(idx)
-                    dataset_config_dict_list.append(dataset_config_dict)
-                tensor_list.append(img.unsqueeze(0))
-
-            if self.caption_type is not None:
-                return torch.cat(tensor_list, dim=0), prompt_list, dataset_config_dict_list
-            else:
-                return torch.cat(tensor_list, dim=0), dataset_config_dict_list
+            return [self._get_single_item(idx) for idx in idx_list]
         else:
             # Dataloader is batching
             return self._get_single_item(item)
 
 
-def get_dataloader_from_datasets(dataset_options, batch_size=1):
-    # TODO do bucketing
+def get_dataloader_from_datasets(
+        dataset_options,
+        batch_size=1,
+        sd: 'StableDiffusion' = None,
+) -> DataLoader:
     if dataset_options is None or len(dataset_options) == 0:
         return None
 
     datasets = []
     has_buckets = False
+    is_caching_latents = False
+
+    dataset_config_list = []
+    # preprocess them all
     for dataset_option in dataset_options:
         if isinstance(dataset_option, DatasetConfig):
-            config = dataset_option
+            dataset_config_list.append(dataset_option)
         else:
-            config = DatasetConfig(**dataset_option)
+            # preprocess raw data
+            split_configs = preprocess_dataset_raw_config([dataset_option])
+            for x in split_configs:
+                dataset_config_list.append(DatasetConfig(**x))
+
+    for config in dataset_config_list:
+
         if config.type == 'image':
-            dataset = AiToolkitDataset(config, batch_size=batch_size)
+            dataset = AiToolkitDataset(config, batch_size=batch_size, sd=sd)
             datasets.append(dataset)
             if config.buckets:
                 has_buckets = True
+            if config.cache_latents or config.cache_latents_to_disk:
+                is_caching_latents = True
         else:
             raise ValueError(f"invalid dataset type: {config.type}")
 
     concatenated_dataset = ConcatDataset(datasets)
+
+    # todo build scheduler that can get buckets from all datasets that match
+    # todo and evenly distribute reg images
+
+    def dto_collation(batch: List['FileItemDTO']):
+        # create DTO batch
+        batch = DataLoaderBatchDTO(
+            file_items=batch
+        )
+        return batch
+
+    # check if is caching latents
+
+
     if has_buckets:
         # make sure they all have buckets
         for dataset in datasets:
             assert dataset.dataset_config.buckets, f"buckets not found on dataset {dataset.dataset_config.folder_path}, you either need all buckets or none"
 
-        def custom_collate_fn(batch):
-            # just return as is
-            return batch
-
         data_loader = DataLoader(
             concatenated_dataset,
-            batch_size=None,  # we batch in the dataloader
+            batch_size=None,  # we batch in the datasets for now
             drop_last=False,
             shuffle=True,
-            collate_fn=custom_collate_fn,  # Use the custom collate function
-            num_workers=2
+            collate_fn=dto_collation,  # Use the custom collate function
+            num_workers=4
         )
     else:
         data_loader = DataLoader(
             concatenated_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=2
+            num_workers=4,
+            collate_fn=dto_collation
         )
     return data_loader
+
+
+def trigger_dataloader_setup_epoch(dataloader: DataLoader):
+    # hacky but needed because of different types of datasets and dataloaders
+    dataloader.len = None
+    if isinstance(dataloader.dataset, list):
+        for dataset in dataloader.dataset:
+            if hasattr(dataset, 'datasets'):
+                for sub_dataset in dataset.datasets:
+                    if hasattr(sub_dataset, 'setup_epoch'):
+                        sub_dataset.setup_epoch()
+                        sub_dataset.len = None
+            elif hasattr(dataset, 'setup_epoch'):
+                dataset.setup_epoch()
+                dataset.len = None
+    elif hasattr(dataloader.dataset, 'setup_epoch'):
+        dataloader.dataset.setup_epoch()
+        dataloader.dataset.len = None
+    elif hasattr(dataloader.dataset, 'datasets'):
+        dataloader.dataset.len = None
+        for sub_dataset in dataloader.dataset.datasets:
+            if hasattr(sub_dataset, 'setup_epoch'):
+                sub_dataset.setup_epoch()
+                sub_dataset.len = None

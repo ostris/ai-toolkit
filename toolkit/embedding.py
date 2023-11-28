@@ -21,7 +21,8 @@ class Embedding:
     def __init__(
             self,
             sd: 'StableDiffusion',
-            embed_config: 'EmbeddingConfig'
+            embed_config: 'EmbeddingConfig',
+            state_dict: OrderedDict = None,
     ):
         self.name = embed_config.trigger
         self.sd = sd
@@ -38,74 +39,115 @@ class Embedding:
             additional_tokens.append(f"{self.embed_config.trigger}_{i}")
         placeholder_tokens += additional_tokens
 
-        num_added_tokens = self.sd.tokenizer.add_tokens(placeholder_tokens)
-        if num_added_tokens != self.embed_config.tokens:
-            raise ValueError(
-                f"The tokenizer already contains the token {self.embed_config.trigger}. Please pass a different"
-                " `placeholder_token` that is not already in the tokenizer."
-            )
+        # handle dual tokenizer
+        self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
+        self.text_encoder_list = self.sd.text_encoder if isinstance(self.sd.text_encoder, list) else [
+            self.sd.text_encoder]
 
-        # Convert the initializer_token, placeholder_token to ids
-        init_token_ids = self.sd.tokenizer.encode(self.embed_config.init_words, add_special_tokens=False)
-        # if length of token ids is more than number of orm embedding tokens fill with *
-        if len(init_token_ids) > self.embed_config.tokens:
-            init_token_ids = init_token_ids[:self.embed_config.tokens]
-        elif len(init_token_ids) < self.embed_config.tokens:
-            pad_token_id = self.sd.tokenizer.encode(["*"], add_special_tokens=False)
-            init_token_ids += pad_token_id * (self.embed_config.tokens - len(init_token_ids))
+        self.placeholder_token_ids = []
+        self.embedding_tokens = []
 
-        self.placeholder_token_ids = self.sd.tokenizer.convert_tokens_to_ids(placeholder_tokens)
+        print(f"Adding {placeholder_tokens} tokens to tokenizer")
+        print(f"Adding {self.embed_config.tokens} tokens to tokenizer")
 
-        # Resize the token embeddings as we are adding new special tokens to the tokenizer
-        # todo SDXL has 2 text encoders, need to do both for all of this
-        self.sd.text_encoder.resize_token_embeddings(len(self.sd.tokenizer))
+        for text_encoder, tokenizer in zip(self.text_encoder_list, self.tokenizer_list):
+            num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
+            if num_added_tokens != self.embed_config.tokens:
+                raise ValueError(
+                    f"The tokenizer already contains the token {self.embed_config.trigger}. Please pass a different"
+                    f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
+                )
 
-        # Initialise the newly added placeholder token with the embeddings of the initializer token
-        token_embeds = self.sd.text_encoder.get_input_embeddings().weight.data
-        with torch.no_grad():
-            for initializer_token_id, token_id in zip(init_token_ids, self.placeholder_token_ids):
-                token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+            # Convert the initializer_token, placeholder_token to ids
+            init_token_ids = tokenizer.encode(self.embed_config.init_words, add_special_tokens=False)
+            # if length of token ids is more than number of orm embedding tokens fill with *
+            if len(init_token_ids) > self.embed_config.tokens:
+                init_token_ids = init_token_ids[:self.embed_config.tokens]
+            elif len(init_token_ids) < self.embed_config.tokens:
+                pad_token_id = tokenizer.encode(["*"], add_special_tokens=False)
+                init_token_ids += pad_token_id * (self.embed_config.tokens - len(init_token_ids))
 
-        # replace "[name] with this. on training. This is automatically generated in pipeline on inference
-        self.embedding_tokens = " ".join(self.sd.tokenizer.convert_ids_to_tokens(self.placeholder_token_ids))
+            placeholder_token_ids = tokenizer.encode(placeholder_tokens, add_special_tokens=False)
+            self.placeholder_token_ids.append(placeholder_token_ids)
 
-    # returns the string to have in the prompt to trigger the embedding
-    def get_embedding_string(self):
-        return self.embedding_tokens
+            # Resize the token embeddings as we are adding new special tokens to the tokenizer
+            text_encoder.resize_token_embeddings(len(tokenizer))
+
+            # Initialise the newly added placeholder token with the embeddings of the initializer token
+            token_embeds = text_encoder.get_input_embeddings().weight.data
+            with torch.no_grad():
+                for initializer_token_id, token_id in zip(init_token_ids, placeholder_token_ids):
+                    token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+
+            # replace "[name] with this. on training. This is automatically generated in pipeline on inference
+            self.embedding_tokens.append(" ".join(tokenizer.convert_ids_to_tokens(placeholder_token_ids)))
+
+        # backup text encoder embeddings
+        self.orig_embeds_params = [x.get_input_embeddings().weight.data.clone() for x in self.text_encoder_list]
+
+    def restore_embeddings(self):
+        # Let's make sure we don't update any embedding weights besides the newly added token
+        for text_encoder, tokenizer, orig_embeds, placeholder_token_ids in zip(self.text_encoder_list,
+                                                                               self.tokenizer_list,
+                                                                               self.orig_embeds_params,
+                                                                               self.placeholder_token_ids):
+            index_no_updates = torch.ones((len(tokenizer),), dtype=torch.bool)
+            index_no_updates[
+            min(placeholder_token_ids): max(placeholder_token_ids) + 1] = False
+            with torch.no_grad():
+                text_encoder.get_input_embeddings().weight[
+                    index_no_updates
+                ] = orig_embeds[index_no_updates]
 
     def get_trainable_params(self):
-        # todo only get this one as we could have more than one
-        return self.sd.text_encoder.get_input_embeddings().parameters()
+        params = []
+        for text_encoder in self.text_encoder_list:
+            params += text_encoder.get_input_embeddings().parameters()
+        return params
 
-    # make setter and getter for vec
-    @property
-    def vec(self):
+    def _get_vec(self, text_encoder_idx=0):
         # should we get params instead
         # create vector from token embeds
-        token_embeds = self.sd.text_encoder.get_input_embeddings().weight.data
+        token_embeds = self.text_encoder_list[text_encoder_idx].get_input_embeddings().weight.data
         # stack the tokens along batch axis adding that axis
         new_vector = torch.stack(
-            [token_embeds[token_id] for token_id in self.placeholder_token_ids],
+            [token_embeds[token_id] for token_id in self.placeholder_token_ids[text_encoder_idx]],
             dim=0
         )
         return new_vector
 
-    @vec.setter
-    def vec(self, new_vector):
+    def _set_vec(self, new_vector, text_encoder_idx=0):
         # shape is (1, 768) for SD 1.5 for 1 token
-        token_embeds = self.sd.text_encoder.get_input_embeddings().weight.data
+        token_embeds = self.text_encoder_list[text_encoder_idx].get_input_embeddings().weight.data
         for i in range(new_vector.shape[0]):
             # apply the weights to the placeholder tokens while preserving gradient
-            token_embeds[self.placeholder_token_ids[i]] = new_vector[i].clone()
-            x = 1
+            token_embeds[self.placeholder_token_ids[text_encoder_idx][i]] = new_vector[i].clone()
+
+    # make setter and getter for vec
+    @property
+    def vec(self):
+        return self._get_vec(0)
+
+    @vec.setter
+    def vec(self, new_vector):
+        self._set_vec(new_vector, 0)
+
+    @property
+    def vec2(self):
+        return self._get_vec(1)
+
+    @vec2.setter
+    def vec2(self, new_vector):
+        self._set_vec(new_vector, 1)
 
     # diffusers automatically expands the token meaning test123 becomes test123 test123_1 test123_2 etc
     # however, on training we don't use that pipeline, so we have to do it ourselves
     def inject_embedding_to_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
-        default_replacements = [self.name, self.trigger, "[name]", "[trigger]", self.embedding_tokens]
+        embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
+        default_replacements = ["[name]", "[trigger]"]
 
-        replace_with = self.embedding_tokens if expand_token else self.trigger
+        replace_with = embedding_tokens if expand_token else self.trigger
         if to_replace_list is None:
             to_replace_list = default_replacements
         else:
@@ -120,7 +162,7 @@ class Embedding:
             output_prompt = output_prompt.replace(to_replace, replace_with)
 
         # see how many times replace_with is in the prompt
-        num_instances = prompt.count(replace_with)
+        num_instances = output_prompt.count(replace_with)
 
         if num_instances == 0 and add_if_not_present:
             # add it to the beginning of the prompt
@@ -128,9 +170,20 @@ class Embedding:
 
         if num_instances > 1:
             print(
-                f"Warning: {self.name} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+                f"Warning: {replace_with} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
 
         return output_prompt
+
+    def state_dict(self):
+        if self.sd.is_xl:
+            state_dict = OrderedDict()
+            state_dict['clip_l'] = self.vec
+            state_dict['clip_g'] = self.vec2
+        else:
+            state_dict = OrderedDict()
+            state_dict['emb_params'] = self.vec
+
+        return state_dict
 
     def save(self, filename):
         # todo check to see how to get the vector out of the embedding
@@ -145,13 +198,14 @@ class Embedding:
             "sd_checkpoint_name": None,
             "notes": None,
         }
+        # TODO we do not currently support this. Check how auto is doing it. Only safetensors supported sor sdxl
         if filename.endswith('.pt'):
             torch.save(embedding_data, filename)
         elif filename.endswith('.bin'):
             torch.save(embedding_data, filename)
         elif filename.endswith('.safetensors'):
             # save the embedding as a safetensors file
-            state_dict = {"emb_params": self.vec}
+            state_dict = self.state_dict()
             # add all embedding data (except string_to_param), to metadata
             metadata = OrderedDict({k: json.dumps(v) for k, v in embedding_data.items() if k != "string_to_param"})
             metadata["string_to_param"] = {"*": "emb_params"}
@@ -163,6 +217,7 @@ class Embedding:
         path = os.path.realpath(file_path)
         filename = os.path.basename(path)
         name, ext = os.path.splitext(filename)
+        tensors = {}
         ext = ext.upper()
         if ext in ['.PNG', '.WEBP', '.JXL', '.AVIF']:
             _, second_ext = os.path.splitext(name)
@@ -170,10 +225,12 @@ class Embedding:
                 return
 
         if ext in ['.BIN', '.PT']:
+            # todo check this
+            if self.sd.is_xl:
+               raise Exception("XL not supported yet for bin, pt")
             data = torch.load(path, map_location="cpu")
         elif ext in ['.SAFETENSORS']:
             # rebuild the embedding from the safetensors file if it has it
-            tensors = {}
             with safetensors.torch.safe_open(path, framework="pt", device="cpu") as f:
                 metadata = f.metadata()
                 for k in f.keys():
@@ -195,26 +252,32 @@ class Embedding:
         else:
             return
 
-        # textual inversion embeddings
-        if 'string_to_param' in data:
-            param_dict = data['string_to_param']
-            if hasattr(param_dict, '_parameters'):
-                param_dict = getattr(param_dict,
-                                     '_parameters')  # fix for torch 1.12.1 loading saved file from torch 1.11
-            assert len(param_dict) == 1, 'embedding file has multiple terms in it'
-            emb = next(iter(param_dict.items()))[1]
-        # diffuser concepts
-        elif type(data) == dict and type(next(iter(data.values()))) == torch.Tensor:
-            assert len(data.keys()) == 1, 'embedding file has multiple terms in it'
-
-            emb = next(iter(data.values()))
-            if len(emb.shape) == 1:
-                emb = emb.unsqueeze(0)
+        if self.sd.is_xl:
+            self.vec = tensors['clip_l'].detach().to(device, dtype=torch.float32)
+            self.vec2 = tensors['clip_g'].detach().to(device, dtype=torch.float32)
+            if 'step' in data:
+                self.step = int(data['step'])
         else:
-            raise Exception(
-                f"Couldn't identify {filename} as neither textual inversion embedding nor diffuser concept.")
+            # textual inversion embeddings
+            if 'string_to_param' in data:
+                param_dict = data['string_to_param']
+                if hasattr(param_dict, '_parameters'):
+                    param_dict = getattr(param_dict,
+                                         '_parameters')  # fix for torch 1.12.1 loading saved file from torch 1.11
+                assert len(param_dict) == 1, 'embedding file has multiple terms in it'
+                emb = next(iter(param_dict.items()))[1]
+            # diffuser concepts
+            elif type(data) == dict and type(next(iter(data.values()))) == torch.Tensor:
+                assert len(data.keys()) == 1, 'embedding file has multiple terms in it'
 
-        if 'step' in data:
-            self.step = int(data['step'])
+                emb = next(iter(data.values()))
+                if len(emb.shape) == 1:
+                    emb = emb.unsqueeze(0)
+            else:
+                raise Exception(
+                    f"Couldn't identify {filename} as neither textual inversion embedding nor diffuser concept.")
 
-        self.vec = emb.detach().to(device, dtype=torch.float32)
+            if 'step' in data:
+                self.step = int(data['step'])
+
+            self.vec = emb.detach().to(device, dtype=torch.float32)
