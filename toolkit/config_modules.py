@@ -331,7 +331,7 @@ class SliderConfig:
         print(f"Building slider targets")
         for target in targets:
             if target.shuffle:
-                target_permutations = get_slider_target_permutations(target, max_permutations=100)
+                target_permutations = get_slider_target_permutations(target, max_permutations=8)
                 self.targets = self.targets + target_permutations
             else:
                 self.targets.append(target)
