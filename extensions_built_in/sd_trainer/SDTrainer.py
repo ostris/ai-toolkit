@@ -34,6 +34,7 @@ class SDTrainer(BaseSDTrainProcess):
         super().__init__(process_id, job, config, **kwargs)
         self.assistant_adapter: Union['T2IAdapter', None]
         self.do_prior_prediction = False
+        self.do_long_prompts = False
         if self.train_config.inverted_mask_prior:
             self.do_prior_prediction = True
 
@@ -126,6 +127,7 @@ class SDTrainer(BaseSDTrainProcess):
                 # we also denoise as the unaugmented tensor is not a noisy diffirental
                 with torch.no_grad():
                     unaugmented_latents = self.sd.encode_images(batch.unaugmented_tensor)
+                    unaugmented_latents = unaugmented_latents * self.train_config.latent_multiplier
                     target = unaugmented_latents.detach()
 
                 # Get the target for loss depending on the prediction type
@@ -492,7 +494,7 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
-                                long_prompts=True).to(
+                                long_prompts=self.do_long_prompts).to(
                                 self.device_torch,
                                 dtype=dtype)
                     else:
@@ -506,7 +508,7 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
-                                long_prompts=True).to(
+                                long_prompts=self.do_long_prompts).to(
                                 self.device_torch,
                                 dtype=dtype)
 

@@ -30,9 +30,12 @@ parser.add_argument('--epochs', type=int, default=1)
 args = parser.parse_args()
 
 dataset_folder = args.dataset_folder
-resolution = 512
+resolution = 1024
 bucket_tolerance = 64
-batch_size = 4
+batch_size = 1
+
+
+##
 
 dataset_config = DatasetConfig(
     dataset_path=dataset_folder,
@@ -41,8 +44,31 @@ dataset_config = DatasetConfig(
     default_caption='default',
     buckets=True,
     bucket_tolerance=bucket_tolerance,
-    augments=['ColorJitter'],
-    poi='person'
+    poi='person',
+    augmentations=[
+        {
+            'method': 'RandomBrightnessContrast',
+            'brightness_limit': (-0.3, 0.3),
+            'contrast_limit': (-0.3, 0.3),
+            'brightness_by_max': False,
+            'p': 1.0
+        },
+        {
+            'method': 'HueSaturationValue',
+            'hue_shift_limit': (-0, 0),
+            'sat_shift_limit': (-40, 40),
+            'val_shift_limit': (-40, 40),
+            'p': 1.0
+        },
+        # {
+        #     'method': 'RGBShift',
+        #     'r_shift_limit': (-20, 20),
+        #     'g_shift_limit': (-20, 20),
+        #     'b_shift_limit': (-20, 20),
+        #     'p': 1.0
+        # },
+    ]
+
 
 )
 
