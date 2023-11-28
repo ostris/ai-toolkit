@@ -1,7 +1,7 @@
 torch
 torchvision
 safetensors
-diffusers==0.21.3
+diffusers
 git+https://github.com/huggingface/transformers.git
 lycoris-lora==1.8.3
 flatten_json
@@ -22,3 +22,4 @@ timm
 prodigyopt
 controlnet_aux==0.0.7
 python-dotenv
+bitsandbytes
