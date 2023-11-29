@@ -674,14 +674,8 @@ class StableDiffusion:
 
         for idx in range(original_samples.shape[0]):
 
-            if scheduler_class_name not in index_noise_schedulers:
-                # convert to idx
-                noise_timesteps = [(self.noise_scheduler.timesteps == t).nonzero().item() for t in timesteps_chunks[idx]]
-                noise_timesteps = torch.tensor(noise_timesteps, device=self.device_torch)
-            else:
-                noise_timesteps = timesteps_chunks[idx]
-
             # the add noise for ddpm solver is broken, do it ourselves
+            noise_timesteps = timesteps_chunks[idx]
             if scheduler_class_name == 'DPMSolverMultistepScheduler':
                 # Make sure sigmas and timesteps have the same device and dtype as original_samples
                 sigmas = self.noise_scheduler.sigmas.to(device=original_samples_chunks[idx].device, dtype=original_samples_chunks[idx].dtype)

@@ -26,8 +26,8 @@ SCHEDULER_TIMESTEPS = 1000
 SCHEDLER_SCHEDULE = "scaled_linear"
 
 sdxl_sampler_config = {
-    "_class_name": "EulerDiscreteScheduler",
-    "_diffusers_version": "0.19.0.dev0",
+    "_class_name": "EulerAncestralDiscreteScheduler",
+    "_diffusers_version": "0.24.0.dev0",
     "beta_end": 0.012,
     "beta_schedule": "scaled_linear",
     "beta_start": 0.00085,
@@ -37,11 +37,10 @@ sdxl_sampler_config = {
     "prediction_type": "epsilon",
     "sample_max_value": 1.0,
     "set_alpha_to_one": False,
-    "skip_prk_steps": True,
+    "skip_prk_steps": False,
     "steps_offset": 1,
-    "timestep_spacing": "leading",
-    "trained_betas": None,
-    "use_karras_sigmas": False
+    "timestep_spacing": "trailing",
+    "trained_betas": None
 }
 
 
@@ -85,7 +84,6 @@ def get_sampler(
     config.update(sched_init_args)
 
     scheduler = scheduler_cls.from_config(config)
-
 
     return scheduler
 
