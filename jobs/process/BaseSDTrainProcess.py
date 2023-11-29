@@ -775,7 +775,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if batch.unconditional_latents is not None:
                     batch.unconditional_latents = batch.unconditional_latents * self.train_config.latent_multiplier
 
-                noisy_latents = self.sd.noise_scheduler.add_noise(latents, noise, timesteps)
+
+                noisy_latents = self.sd.add_noise(latents, noise, timesteps)
 
                 # determine scaled noise
                 # todo do we need to scale this or does it always predict full intensity

@@ -643,6 +643,80 @@ class StableDiffusion:
         else:
             return None
 
+    def add_noise(
+            self,
+            original_samples: torch.FloatTensor,
+            noise: torch.FloatTensor,
+            timesteps: torch.IntTensor
+    ) -> torch.FloatTensor:
+        # we handle adding noise for the various schedulers here. Some
+        # schedulers reference timesteps while others reference idx
+        # so we need to handle both cases
+        # get scheduler class name
+        scheduler_class_name = self.noise_scheduler.__class__.__name__
+
+        index_noise_schedulers = [
+            'DPMSolverMultistepScheduler',
+            'EulerDiscreteSchedulerOutput',
+        ]
+
+
+        # todo handle if timestep is single value
+
+        original_samples_chunks = torch.chunk(original_samples, original_samples.shape[0], dim=0)
+        noise_chunks = torch.chunk(noise, noise.shape[0], dim=0)
+        timesteps_chunks = torch.chunk(timesteps, timesteps.shape[0], dim=0)
+
+        if len(timesteps_chunks) == 1 and len(timesteps_chunks) != len(original_samples_chunks):
+            timesteps_chunks = [timesteps_chunks[0]] * len(original_samples_chunks)
+
+        noisy_latents_chunks = []
+
+        for idx in range(original_samples.shape[0]):
+
+            if scheduler_class_name not in index_noise_schedulers:
+                # convert to idx
+                noise_timesteps = [(self.noise_scheduler.timesteps == t).nonzero().item() for t in timesteps_chunks[idx]]
+                noise_timesteps = torch.tensor(noise_timesteps, device=self.device_torch)
+            else:
+                noise_timesteps = timesteps_chunks[idx]
+
+            # the add noise for ddpm solver is broken, do it ourselves
+            if scheduler_class_name == 'DPMSolverMultistepScheduler':
+                # Make sure sigmas and timesteps have the same device and dtype as original_samples
+                sigmas = self.noise_scheduler.sigmas.to(device=original_samples_chunks[idx].device, dtype=original_samples_chunks[idx].dtype)
+                if original_samples_chunks[idx].device.type == "mps" and torch.is_floating_point(noise_timesteps):
+                    # mps does not support float64
+                    schedule_timesteps = self.noise_scheduler.timesteps.to(original_samples_chunks[idx].device, dtype=torch.float32)
+                    noise_timesteps = noise_timesteps.to(original_samples_chunks[idx].device, dtype=torch.float32)
+                else:
+                    schedule_timesteps = self.noise_scheduler.timesteps.to(original_samples_chunks[idx].device)
+                    noise_timesteps = noise_timesteps.to(original_samples_chunks[idx].device)
+
+                step_indices = []
+                for t in noise_timesteps:
+                    for i, st in enumerate(schedule_timesteps):
+                        if st == t:
+                            step_indices.append(i)
+                            break
+
+                # find only first match. There can be double here, this breaks
+                # step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
+
+                sigma = sigmas[step_indices].flatten()
+                while len(sigma.shape) < len(original_samples.shape):
+                    sigma = sigma.unsqueeze(-1)
+
+                alpha_t, sigma_t = self.noise_scheduler._sigma_to_alpha_sigma_t(sigma)
+                noisy_samples = alpha_t * original_samples + sigma_t * noise_chunks[idx]
+                noisy_latents = noisy_samples
+            else:
+                noisy_latents = self.noise_scheduler.add_noise(original_samples_chunks[idx], noise_chunks[idx], noise_timesteps)
+            noisy_latents_chunks.append(noisy_latents)
+
+        noisy_latents = torch.cat(noisy_latents_chunks, dim=0)
+        return noisy_latents
+
     def predict_noise(
             self,
             latents: torch.Tensor,

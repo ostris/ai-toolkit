@@ -776,7 +776,14 @@ def apply_snr_weight(
 ):
     # will get it from noise scheduler if exist or will calculate it if not
     all_snr = get_all_snr(noise_scheduler, loss.device)
-    step_indices = [(noise_scheduler.timesteps == t).nonzero().item() for t in timesteps]
+    step_indices = []
+    for t in timesteps:
+        for i, st in enumerate(noise_scheduler.timesteps):
+            if st == t:
+                step_indices.append(i)
+                break
+    # this breaks on some schedulers
+    # step_indices = [(noise_scheduler.timesteps == t).nonzero().item() for t in timesteps]
     snr = torch.stack([all_snr[t] for t in step_indices])
     gamma_over_snr = torch.div(torch.ones_like(snr) * gamma, snr)
     if fixed:
