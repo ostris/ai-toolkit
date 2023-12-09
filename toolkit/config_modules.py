@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional, Literal, Union
+from typing import List, Optional, Literal, Union, TYPE_CHECKING
 import random
 
 import torch
@@ -11,6 +11,8 @@ ImgExt = Literal['jpg', 'png', 'webp']
 
 SaveFormat = Literal['safetensors', 'diffusers']
 
+if TYPE_CHECKING:
+    from toolkit.guidance import GuidanceType
 
 class SaveConfig:
     def __init__(self, **kwargs):
@@ -400,6 +402,7 @@ class DatasetConfig:
         if legacy_caption_type:
             self.caption_ext = legacy_caption_type
         self.caption_type = self.caption_ext
+        self.guidance_type: GuidanceType = kwargs.get('guidance_type', 'targeted_polarity')
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

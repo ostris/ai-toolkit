@@ -293,6 +293,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # will end in safetensors or pt
                 embed_files = [f for f in embed_items if f.endswith('.safetensors') or f.endswith('.pt')]
 
+            # check for critic files
+            critic_pattern = f"CRITIC_{self.job.name}_*"
+            critic_items = glob.glob(os.path.join(self.save_root, critic_pattern))
+
             # Sort the lists by creation time if they are not empty
             if safetensors_files:
                 safetensors_files.sort(key=os.path.getctime)
@@ -302,6 +306,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 directories.sort(key=os.path.getctime)
             if embed_files:
                 embed_files.sort(key=os.path.getctime)
+            if critic_items:
+                critic_items.sort(key=os.path.getctime)
 
             # Combine and sort the lists
             combined_items = safetensors_files + directories + pt_files
@@ -313,8 +319,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             pt_files_to_remove = pt_files[:-self.save_config.max_step_saves_to_keep] if pt_files else []
             directories_to_remove = directories[:-self.save_config.max_step_saves_to_keep] if directories else []
             embeddings_to_remove = embed_files[:-self.save_config.max_step_saves_to_keep] if embed_files else []
+            critic_to_remove = critic_items[:-self.save_config.max_step_saves_to_keep] if critic_items else []
 
-            items_to_remove = safetensors_to_remove + pt_files_to_remove + directories_to_remove + embeddings_to_remove
+            items_to_remove = safetensors_to_remove + pt_files_to_remove + directories_to_remove + embeddings_to_remove + critic_to_remove
 
             # remove all but the latest max_step_saves_to_keep
             # items_to_remove = combined_items[:-self.save_config.max_step_saves_to_keep]
@@ -1041,8 +1048,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     train_text_encoder=self.train_config.train_text_encoder,
                     conv_lora_dim=self.network_config.conv,
                     conv_alpha=self.network_config.conv_alpha,
-                    is_sdxl=self.model_config.is_xl,
+                    is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
                     is_v2=self.model_config.is_v2,
+                    is_ssd=self.model_config.is_ssd,
                     dropout=self.network_config.dropout,
                     use_text_encoder_1=self.model_config.use_text_encoder_1,
                     use_text_encoder_2=self.model_config.use_text_encoder_2,
