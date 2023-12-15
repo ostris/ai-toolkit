@@ -247,6 +247,7 @@ class ModelConfig:
         self.is_v2: bool = kwargs.get('is_v2', False)
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_ssd: bool = kwargs.get('is_ssd', False)
+        self.is_vega: bool = kwargs.get('is_vega', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.vae_path = kwargs.get('vae_path', None)
@@ -265,6 +266,9 @@ class ModelConfig:
 
         if self.is_ssd:
             # sed sdxl as true since it is mostly the same architecture
+            self.is_xl = True
+
+        if self.is_vega:
             self.is_xl = True
 
 
@@ -402,7 +406,7 @@ class DatasetConfig:
         if legacy_caption_type:
             self.caption_ext = legacy_caption_type
         self.caption_type = self.caption_ext
-        self.guidance_type: GuidanceType = kwargs.get('guidance_type', 'targeted_polarity')
+        self.guidance_type: GuidanceType = kwargs.get('guidance_type', 'targeted')
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

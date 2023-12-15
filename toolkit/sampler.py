@@ -46,8 +46,11 @@ sdxl_sampler_config = {
 
 def get_sampler(
         sampler: str,
+        kwargs: dict = None,
 ):
     sched_init_args = {}
+    if kwargs is not None:
+        sched_init_args.update(kwargs)
 
     if sampler.startswith("k_"):
         sched_init_args["use_karras_sigmas"] = True

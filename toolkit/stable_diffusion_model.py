@@ -137,6 +137,7 @@ class StableDiffusion:
         self.is_xl = model_config.is_xl
         self.is_v2 = model_config.is_v2
         self.is_ssd = model_config.is_ssd
+        self.is_vega = model_config.is_vega
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
@@ -149,7 +150,10 @@ class StableDiffusion:
         dtype = get_torch_dtype(self.dtype)
         # sch = KDPM2DiscreteScheduler
         if self.noise_scheduler is None:
-            scheduler = get_sampler('ddpm')
+            scheduler = get_sampler(
+                'ddpm', {
+                "prediction_type": self.prediction_type,
+            })
             self.noise_scheduler = scheduler
 
         # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
@@ -169,7 +173,7 @@ class StableDiffusion:
         if self.model_config.vae_path is not None:
             load_args['vae'] = load_vae(self.model_config.vae_path, dtype)
 
-        if self.model_config.is_xl or self.model_config.is_ssd:
+        if self.model_config.is_xl or self.model_config.is_ssd or self.model_config.is_vega:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
             else:
@@ -358,9 +362,17 @@ class StableDiffusion:
             if sampler is not None:
                 if sampler.startswith("sample_"):  # sample_dpmpp_2m
                     # using ksampler
-                    noise_scheduler = get_sampler('lms')
+                    noise_scheduler = get_sampler(
+                        'lms', {
+                            "prediction_type": self.prediction_type,
+                        })
                 else:
-                    noise_scheduler = get_sampler(sampler)
+                    noise_scheduler = get_sampler(
+                        sampler,
+                        {
+                            "prediction_type": self.prediction_type,
+                        }
+                    )
 
                 try:
                     noise_scheduler = noise_scheduler.to(self.device_torch, self.torch_dtype)
@@ -674,7 +686,6 @@ class StableDiffusion:
             'EulerDiscreteSchedulerOutput',
         ]
 
-
         # todo handle if timestep is single value
 
         original_samples_chunks = torch.chunk(original_samples, original_samples.shape[0], dim=0)
@@ -692,10 +703,12 @@ class StableDiffusion:
             noise_timesteps = timesteps_chunks[idx]
             if scheduler_class_name == 'DPMSolverMultistepScheduler':
                 # Make sure sigmas and timesteps have the same device and dtype as original_samples
-                sigmas = self.noise_scheduler.sigmas.to(device=original_samples_chunks[idx].device, dtype=original_samples_chunks[idx].dtype)
+                sigmas = self.noise_scheduler.sigmas.to(device=original_samples_chunks[idx].device,
+                                                        dtype=original_samples_chunks[idx].dtype)
                 if original_samples_chunks[idx].device.type == "mps" and torch.is_floating_point(noise_timesteps):
                     # mps does not support float64
-                    schedule_timesteps = self.noise_scheduler.timesteps.to(original_samples_chunks[idx].device, dtype=torch.float32)
+                    schedule_timesteps = self.noise_scheduler.timesteps.to(original_samples_chunks[idx].device,
+                                                                           dtype=torch.float32)
                     noise_timesteps = noise_timesteps.to(original_samples_chunks[idx].device, dtype=torch.float32)
                 else:
                     schedule_timesteps = self.noise_scheduler.timesteps.to(original_samples_chunks[idx].device)
@@ -719,7 +732,8 @@ class StableDiffusion:
                 noisy_samples = alpha_t * original_samples + sigma_t * noise_chunks[idx]
                 noisy_latents = noisy_samples
             else:
-                noisy_latents = self.noise_scheduler.add_noise(original_samples_chunks[idx], noise_chunks[idx], noise_timesteps)
+                noisy_latents = self.noise_scheduler.add_noise(original_samples_chunks[idx], noise_chunks[idx],
+                                                               noise_timesteps)
             noisy_latents_chunks.append(noisy_latents)
 
         noisy_latents = torch.cat(noisy_latents_chunks, dim=0)
@@ -776,7 +790,6 @@ class StableDiffusion:
                 timestep = timestep.repeat(latents.shape[0])
             else:
                 timestep = timestep.repeat(latents.shape[0], 0)
-
 
         def scale_model_input(model_input, timestep_tensor):
             if is_input_scaled:
@@ -985,7 +998,6 @@ class StableDiffusion:
             **kwargs,
     ):
         timesteps_to_run = self.noise_scheduler.timesteps[start_timesteps:total_timesteps]
-
 
         for timestep in tqdm(timesteps_to_run, leave=False):
             timestep = timestep.unsqueeze_(0)
@@ -1290,7 +1302,6 @@ class StableDiffusion:
             output_config_path = f"{output_path_no_ext}.yaml"
             shutil.copyfile(self.config_file, output_config_path)
 
-
     def save(self, output_file: str, meta: OrderedDict, save_dtype=get_torch_dtype('fp16'), logit_scale=None):
         version_string = '1'
         if self.is_v2:
@@ -1300,6 +1311,8 @@ class StableDiffusion:
         if self.is_ssd:
             # overwrite sdxl because both wil be true here
             version_string = 'ssd'
+        if self.is_ssd and self.is_vega:
+            version_string = 'vega'
         # if output file does not end in .safetensors, then it is a directory and we are
         # saving in diffusers format
         if not output_file.endswith('.safetensors'):

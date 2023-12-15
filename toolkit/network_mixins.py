@@ -340,6 +340,7 @@ class ToolkitNetworkMixin:
             is_sdxl=False,
             is_v2=False,
             is_ssd=False,
+            is_vega=False,
             network_config: Optional[NetworkConfig] = None,
             is_lorm=False,
             **kwargs
@@ -351,6 +352,7 @@ class ToolkitNetworkMixin:
         self.is_active: bool = False
         self.is_sdxl = is_sdxl
         self.is_ssd = is_ssd
+        self.is_vega = is_vega
         self.is_v2 = is_v2
         self.is_merged_in = False
         self.is_lorm = is_lorm
@@ -364,6 +366,9 @@ class ToolkitNetworkMixin:
 
         if self.is_ssd:
             keymap_tail = 'ssd'
+            use_weight_mapping = True
+        elif self.is_vega:
+            keymap_tail = 'vega'
             use_weight_mapping = True
         elif self.is_sdxl:
             keymap_tail = 'sdxl'

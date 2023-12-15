@@ -84,5 +84,8 @@ def get_train_sd_device_state_preset(
         preset['adapter']['training'] = True
         preset['adapter']['device'] = device
         preset['unet']['training'] = True
+        preset['unet']['requires_grad'] = False
+        preset['unet']['device'] = device
+        preset['text_encoder']['device'] = device
 
     return preset
