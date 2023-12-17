@@ -880,13 +880,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.device,
                     dtype=dtype
                 )
+                self.adapter.load_state_dict(loaded_state_dict)
             else:
+                # ip adapter
                 loaded_state_dict = load_ip_adapter_model(
                     latest_save_path,
                     self.device,
                     dtype=dtype
                 )
-            self.adapter.load_state_dict(loaded_state_dict)
+                self.adapter.load_state_dict(loaded_state_dict)
             if self.adapter_config.train:
                 self.load_training_state_from_metadata(latest_save_path)
         # set trainable params

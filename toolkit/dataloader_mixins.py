@@ -457,9 +457,11 @@ class ControlFileItemDTOMixin:
         self.control_path: Union[str, None] = None
         self.control_tensor: Union[torch.Tensor, None] = None
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        self.full_size_control_images = False
         if dataset_config.control_path is not None:
             # find the control image path
             control_path = dataset_config.control_path
+            self.full_size_control_images = dataset_config.full_size_control_images
             # we are using control images
             img_path = kwargs.get('path', None)
             img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
@@ -477,36 +479,38 @@ class ControlFileItemDTOMixin:
         except Exception as e:
             print(f"Error: {e}")
             print(f"Error loading image: {self.control_path}")
-        w, h = img.size
-        if w > h and self.scale_to_width < self.scale_to_height:
-            # throw error, they should match
-            raise ValueError(
-                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
-        elif h > w and self.scale_to_height < self.scale_to_width:
-            # throw error, they should match
-            raise ValueError(
-                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
 
-        if self.flip_x:
-            # do a flip
-            img.transpose(Image.FLIP_LEFT_RIGHT)
-        if self.flip_y:
-            # do a flip
-            img.transpose(Image.FLIP_TOP_BOTTOM)
+        if not self.full_size_control_images:
+            w, h = img.size
+            if w > h and self.scale_to_width < self.scale_to_height:
+                # throw error, they should match
+                raise ValueError(
+                    f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            elif h > w and self.scale_to_height < self.scale_to_width:
+                # throw error, they should match
+                raise ValueError(
+                    f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
 
-        if self.dataset_config.buckets:
-            # scale and crop based on file item
-            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
-            # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
-            # crop
-            img = img.crop((
-                self.crop_x,
-                self.crop_y,
-                self.crop_x + self.crop_width,
-                self.crop_y + self.crop_height
-            ))
-        else:
-            raise Exception("Control images not supported for non-bucket datasets")
+            if self.flip_x:
+                # do a flip
+                img.transpose(Image.FLIP_LEFT_RIGHT)
+            if self.flip_y:
+                # do a flip
+                img.transpose(Image.FLIP_TOP_BOTTOM)
+
+            if self.dataset_config.buckets:
+                # scale and crop based on file item
+                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+                # crop
+                img = img.crop((
+                    self.crop_x,
+                    self.crop_y,
+                    self.crop_x + self.crop_width,
+                    self.crop_y + self.crop_height
+                ))
+            else:
+                raise Exception("Control images not supported for non-bucket datasets")
 
         self.control_tensor = transforms.ToTensor()(img)
 

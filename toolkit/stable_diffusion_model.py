@@ -474,9 +474,7 @@ class StableDiffusion:
                             extra['adapter_conditioning_scale'] = gen_config.adapter_conditioning_scale
                         if isinstance(self.adapter, IPAdapter):
                             transform = transforms.Compose([
-                                transforms.Resize(gen_config.width,
-                                                  interpolation=transforms.InterpolationMode.BILINEAR),
-                                transforms.PILToTensor(),
+                                transforms.ToTensor(),
                             ])
                             validation_image = transform(validation_image)
 
@@ -500,6 +498,7 @@ class StableDiffusion:
 
                     if self.adapter is not None and isinstance(self.adapter,
                                                                IPAdapter) and gen_config.adapter_image_path is not None:
+
                         # apply the image projection
                         conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image)
                         unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image,

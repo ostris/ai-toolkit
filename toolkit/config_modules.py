@@ -375,6 +375,8 @@ class DatasetConfig:
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])
         self.control_path: str = kwargs.get('control_path', None)  # depth maps, etc
+        # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
+        self.full_size_control_images: bool = kwargs.get('full_size_control_images', False)
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
                                          None)  # focus mask (black and white. White has higher loss than black)
