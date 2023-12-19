@@ -94,9 +94,18 @@ class SDTrainer(BaseSDTrainProcess):
             noise_pred_norm = torch.linalg.vector_norm(noise_pred, ord=2, dim=(1, 2, 3), keepdim=True)
             noise_pred = noise_pred * (noise_norm / noise_pred_norm)
 
-        if self.train_config.inverted_mask_prior:
+        if self.train_config.inverted_mask_prior and prior_pred is not None:
             # we need to make the noise prediction be a masked blending of noise and prior_pred
-            prior_mask_multiplier = 1.0 - mask_multiplier
+            stretched_mask_multiplier = value_map(
+                mask_multiplier,
+                batch.file_items[0].dataset_config.mask_min_value,
+                1.0,
+                0.0,
+                1.0
+            )
+
+            prior_mask_multiplier = 1.0 - stretched_mask_multiplier
+
             # target_mask_multiplier = mask_multiplier
             # mask_multiplier = 1.0
             target = noise
@@ -152,7 +161,8 @@ class SDTrainer(BaseSDTrainProcess):
         # multiply by our mask
         loss = loss * mask_multiplier
 
-        if self.train_config.inverted_mask_prior:
+        prior_loss = None
+        if self.train_config.inverted_mask_prior and prior_pred is not None:
             # to a loss to unmasked areas of the prior for unmasked regularization
             prior_loss = torch.nn.functional.mse_loss(
                 prior_pred.float(),
@@ -160,9 +170,15 @@ class SDTrainer(BaseSDTrainProcess):
                 reduction="none"
             )
             prior_loss = prior_loss * prior_mask_multiplier * self.train_config.inverted_mask_prior_multiplier
-            loss = loss + prior_loss
+            if torch.isnan(prior_loss).any():
+                raise ValueError("Prior loss is nan")
+
+            prior_loss = prior_loss.mean([1, 2, 3])
 
         loss = loss.mean([1, 2, 3])
+
+        if prior_loss is not None:
+            loss = loss + prior_loss
 
         if self.train_config.learnable_snr_gos:
             # add snr_gamma
@@ -491,14 +507,25 @@ class SDTrainer(BaseSDTrainProcess):
             noise: torch.Tensor,
             **kwargs
     ):
+        was_unet_training = self.sd.unet.training
+        was_network_active = False
+        if self.network is not None:
+            was_network_active = self.network.is_active
+            self.network.is_active = False
+        is_ip_adapter = False
+        was_ip_adapter_active = False
+        if self.adapter is not None and isinstance(self.adapter, IPAdapter):
+            is_ip_adapter = True
+            was_ip_adapter_active = self.adapter.is_active
+            self.adapter.is_active = False
+
         # do a prediction here so we can match its output with network multiplier set to 0.0
         with torch.no_grad():
             dtype = get_torch_dtype(self.train_config.dtype)
             # dont use network on this
             # self.network.multiplier = 0.0
-            was_network_active = self.network.is_active
-            self.network.is_active = False
             self.sd.unet.eval()
+
             prior_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype).detach(),
                 conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype).detach(),
@@ -506,14 +533,19 @@ class SDTrainer(BaseSDTrainProcess):
                 guidance_scale=1.0,
                 **pred_kwargs  # adapter residuals in here
             )
-            self.sd.unet.train()
+            if was_unet_training:
+                self.sd.unet.train()
             prior_pred = prior_pred.detach()
             # remove the residuals as we wont use them on prediction when matching control
             if match_adapter_assist and 'down_intrablock_additional_residuals' in pred_kwargs:
                 del pred_kwargs['down_intrablock_additional_residuals']
+
+            if is_ip_adapter:
+                self.adapter.is_active = was_ip_adapter_active
             # restore network
             # self.network.multiplier = network_weight_list
-            self.network.is_active = was_network_active
+            if self.network is not None:
+                self.network.is_active = was_network_active
         return prior_pred
 
     def before_unet_predict(self):
@@ -752,19 +784,6 @@ class SDTrainer(BaseSDTrainProcess):
 
                             pred_kwargs['down_intrablock_additional_residuals'] = down_block_additional_residuals
 
-                prior_pred = None
-                if (has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction:
-                    with self.timer('prior predict'):
-                        prior_pred = self.get_prior_prediction(
-                            noisy_latents=noisy_latents,
-                            conditional_embeds=conditional_embeds,
-                            match_adapter_assist=match_adapter_assist,
-                            network_weight_list=network_weight_list,
-                            timesteps=timesteps,
-                            pred_kwargs=pred_kwargs,
-                            noise=noise,
-                            batch=batch,
-                        )
 
                 if self.adapter and isinstance(self.adapter, IPAdapter):
                     with self.timer('encode_adapter_embeds'):
@@ -787,6 +806,20 @@ class SDTrainer(BaseSDTrainProcess):
 
                     with self.timer('encode_adapter'):
                         conditional_embeds = self.adapter(conditional_embeds.detach(), conditional_clip_embeds.detach())
+
+                prior_pred = None
+                if (has_adapter_img and self.assistant_adapter and match_adapter_assist) or (self.do_prior_prediction and not is_reg):
+                    with self.timer('prior predict'):
+                        prior_pred = self.get_prior_prediction(
+                            noisy_latents=noisy_latents,
+                            conditional_embeds=conditional_embeds,
+                            match_adapter_assist=match_adapter_assist,
+                            network_weight_list=network_weight_list,
+                            timesteps=timesteps,
+                            pred_kwargs=pred_kwargs,
+                            noise=noise,
+                            batch=batch,
+                        )
 
                 self.before_unet_predict()
                 # do a prior pred if we have an unconditional image, we will swap out the giadance later

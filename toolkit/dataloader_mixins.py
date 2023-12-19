@@ -480,7 +480,12 @@ class ControlFileItemDTOMixin:
             print(f"Error: {e}")
             print(f"Error loading image: {self.control_path}")
 
-        if not self.full_size_control_images:
+        if self.full_size_control_images:
+            # we just scale them to 512x512:
+            w, h = img.size
+            img = img.resize((512, 512), Image.BICUBIC)
+
+        else:
             w, h = img.size
             if w > h and self.scale_to_width < self.scale_to_height:
                 # throw error, they should match
