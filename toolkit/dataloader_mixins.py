@@ -350,6 +350,8 @@ class ImageProcessingDTOMixin:
             self.get_latent()
             if self.has_control_image:
                 self.load_control_image()
+            if self.has_clip_image:
+                self.load_clip_image()
             if self.has_mask_image:
                 self.load_mask_image()
             if self.has_unconditional:
@@ -443,6 +445,8 @@ class ImageProcessingDTOMixin:
         if not only_load_latents:
             if self.has_control_image:
                 self.load_control_image()
+            if self.has_clip_image:
+                self.load_clip_image()
             if self.has_mask_image:
                 self.load_mask_image()
             if self.has_unconditional:
@@ -521,6 +525,46 @@ class ControlFileItemDTOMixin:
 
     def cleanup_control(self: 'FileItemDTO'):
         self.control_tensor = None
+
+
+class ClipImageFileItemDTOMixin:
+    def __init__(self: 'FileItemDTO', *args, **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(*args, **kwargs)
+        self.has_clip_image = False
+        self.clip_image_path: Union[str, None] = None
+        self.clip_image_tensor: Union[torch.Tensor, None] = None
+        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        if dataset_config.clip_image_path is not None:
+            # find the control image path
+            clip_image_path = dataset_config.clip_image_path
+            # we are using control images
+            img_path = kwargs.get('path', None)
+            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+            file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
+            for ext in img_ext_list:
+                if os.path.exists(os.path.join(clip_image_path, file_name_no_ext + ext)):
+                    self.clip_image_path = os.path.join(clip_image_path, file_name_no_ext + ext)
+                    self.has_clip_image = True
+                    break
+
+    def load_clip_image(self: 'FileItemDTO'):
+        img = Image.open(self.clip_image_path).convert('RGB')
+        try:
+            img = exif_transpose(img)
+        except Exception as e:
+            print(f"Error: {e}")
+            print(f"Error loading image: {self.clip_image_path}")
+
+        # we just scale them to 512x512:
+        img = img.resize((512, 512), Image.BICUBIC)
+
+        self.clip_image_tensor = transforms.ToTensor()(img)
+
+    def cleanup_clip_image(self: 'FileItemDTO'):
+        self.clip_image_tensor = None
+
+
 
 
 class AugmentationFileItemDTOMixin:

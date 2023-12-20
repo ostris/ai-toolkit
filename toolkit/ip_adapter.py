@@ -153,7 +153,10 @@ class IPAdapter(torch.nn.Module):
         super().__init__()
         self.config = adapter_config
         self.sd_ref: weakref.ref = weakref.ref(sd)
-        self.clip_image_processor = CLIPImageProcessor.from_pretrained(adapter_config.image_encoder_path)
+        try:
+            self.clip_image_processor = CLIPImageProcessor.from_pretrained(adapter_config.image_encoder_path)
+        except EnvironmentError:
+            self.clip_image_processor = CLIPImageProcessor()
         self.device = self.sd_ref().unet.device
         self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(adapter_config.image_encoder_path,
                                                                            ignore_mismatched_sizes=True)

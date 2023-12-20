@@ -421,6 +421,9 @@ class DatasetConfig:
         self.caption_type = self.caption_ext
         self.guidance_type: GuidanceType = kwargs.get('guidance_type', 'targeted')
 
+        # ip adapter / reference dataset
+        self.clip_image_path: str = kwargs.get('clip_image_path', None)  # depth maps, etc
+
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
     """
