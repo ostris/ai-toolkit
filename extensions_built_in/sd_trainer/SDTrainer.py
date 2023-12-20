@@ -787,25 +787,33 @@ class SDTrainer(BaseSDTrainProcess):
 
                 if self.adapter and isinstance(self.adapter, IPAdapter):
                     with self.timer('encode_adapter_embeds'):
-                        with torch.no_grad():
-                            if has_adapter_img:
-                                conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
-                                    adapter_images.detach().to(self.device_torch, dtype=dtype))
-                            elif is_reg:
-                                # we will zero it out in the img embedder
-                                adapter_img = torch.zeros(
-                                    (noisy_latents.shape[0], 3, 512, 512),
-                                    device=self.device_torch, dtype=dtype
-                                )
-                                # drop will zero it out
-                                conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
-                                    adapter_img, drop=True
-                                )
-                            else:
-                                raise ValueError("Adapter images now must be loaded with dataloader or be a reg image")
+                        if has_adapter_img:
+                            conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
+                                adapter_images.detach().to(self.device_torch, dtype=dtype),
+                                is_training=True
+                            )
+                        elif is_reg:
+                            # we will zero it out in the img embedder
+                            adapter_img = torch.zeros(
+                                (noisy_latents.shape[0], 3, 512, 512),
+                                device=self.device_torch, dtype=dtype
+                            ).detach()
+                            # drop will zero it out
+                            conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
+                                adapter_img,
+                                drop=True,
+                                is_training=True
+                            )
+                        else:
+                            raise ValueError("Adapter images now must be loaded with dataloader or be a reg image")
+
+                    if not self.adapter_config.train_image_encoder:
+                        # we are not training the image encoder, so we need to detach the embeds
+                        conditional_clip_embeds = conditional_clip_embeds.detach()
+
 
                     with self.timer('encode_adapter'):
-                        conditional_embeds = self.adapter(conditional_embeds.detach(), conditional_clip_embeds.detach())
+                        conditional_embeds = self.adapter(conditional_embeds.detach(), conditional_clip_embeds)
 
                 prior_pred = None
                 if (has_adapter_img and self.assistant_adapter and match_adapter_assist) or (self.do_prior_prediction and not is_reg):

@@ -142,6 +142,17 @@ class AdapterConfig:
         self.image_encoder_path: str = kwargs.get('image_encoder_path', None)
         self.name_or_path = kwargs.get('name_or_path', None)
 
+        num_tokens = kwargs.get('num_tokens', None)
+        if num_tokens is None and self.type.startswith('ip'):
+            if self.type == 'ip+':
+                num_tokens = 16
+            elif self.type == 'ip':
+                num_tokens = 4
+
+        self.num_tokens: int = num_tokens
+        self.train_image_encoder: bool = kwargs.get('train_image_encoder', False)
+
+
 
 class EmbeddingConfig:
     def __init__(self, **kwargs):

@@ -870,6 +870,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 sd=self.sd,
                 adapter_config=self.adapter_config,
             )
+            if self.train_config.gradient_checkpointing:
+                self.adapter.enable_gradient_checkpointing()
         self.adapter.to(self.device_torch, dtype=dtype)
         if latest_save_path is not None:
             # load adapter from path
