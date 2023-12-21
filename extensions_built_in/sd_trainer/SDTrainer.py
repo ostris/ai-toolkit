@@ -173,12 +173,9 @@ class SDTrainer(BaseSDTrainProcess):
             if torch.isnan(prior_loss).any():
                 raise ValueError("Prior loss is nan")
 
-            prior_loss = prior_loss.mean([1, 2, 3])
-
-        loss = loss.mean([1, 2, 3])
-
-        if prior_loss is not None:
+            # prior_loss = prior_loss.mean([1, 2, 3])
             loss = loss + prior_loss
+        loss = loss.mean([1, 2, 3])
 
         if self.train_config.learnable_snr_gos:
             # add snr_gamma

@@ -423,6 +423,8 @@ class DatasetConfig:
 
         # ip adapter / reference dataset
         self.clip_image_path: str = kwargs.get('clip_image_path', None)  # depth maps, etc
+        self.clip_image_augmentations: List[dict] = kwargs.get('clip_image_augmentations', None)
+        self.clip_image_shuffle_augmentations: bool = kwargs.get('clip_image_shuffle_augmentations', False)
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

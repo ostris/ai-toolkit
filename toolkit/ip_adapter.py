@@ -170,12 +170,16 @@ class IPAdapter(torch.nn.Module):
                 clip_extra_context_tokens=self.config.num_tokens,  # usually 4
             )
         elif adapter_config.type == 'ip+':
+            heads = 12 if not sd.is_xl else 20
+            dim = sd.unet.config['cross_attention_dim'] if not sd.is_xl else 1280
+            # size mismatch for latents: copying a param with shape torch.Size([1, 16, 1280]) from checkpoint, the shape in current model is torch.Size([1, 16, 2048]).
+            # size mismatch for latents: copying a param with shape torch.Size([1, 32, 2048]) from checkpoint, the shape in current model is torch.Size([1, 16, 1280])
             # ip-adapter-plus
             image_proj_model = Resampler(
-                dim=sd.unet.config['cross_attention_dim'],
+                dim=dim,
                 depth=4,
                 dim_head=64,
-                heads=12,
+                heads=heads,
                 num_queries=self.config.num_tokens,  # usually 16
                 embedding_dim=self.image_encoder.config.hidden_size,
                 output_dim=sd.unet.config['cross_attention_dim'],
@@ -266,7 +270,7 @@ class IPAdapter(torch.nn.Module):
     def set_scale(self, scale):
         self.current_scale = scale
         for attn_processor in self.sd_ref().unet.attn_processors.values():
-            if isinstance(attn_processor, IPAttnProcessor):
+            if isinstance(attn_processor, CustomIPAttentionProcessor):
                 attn_processor.scale = scale
 
     @torch.no_grad()

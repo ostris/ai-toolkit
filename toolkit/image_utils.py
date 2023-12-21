@@ -432,7 +432,7 @@ def show_img(img, name='AI Toolkit'):
 
     img = np.clip(img, 0, 255).astype(np.uint8)
     cv2.imshow(name, img[:, :, ::-1])
-    k = cv2.waitKey(10) & 0xFF
+    k = cv2.waitKey(1) & 0xFF
     if k == 27:  # Esc key to stop
         print('\nESC pressed, stopping')
         raise KeyboardInterrupt

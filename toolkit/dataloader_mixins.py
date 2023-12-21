@@ -534,6 +534,8 @@ class ClipImageFileItemDTOMixin:
         self.has_clip_image = False
         self.clip_image_path: Union[str, None] = None
         self.clip_image_tensor: Union[torch.Tensor, None] = None
+        self.has_clip_augmentations = False
+        self.clip_image_aug_transform: Union[None, A.Compose] = None
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         if dataset_config.clip_image_path is not None:
             # find the control image path
@@ -548,6 +550,51 @@ class ClipImageFileItemDTOMixin:
                     self.has_clip_image = True
                     break
 
+            self.build_clip_imag_augmentation_transform()
+
+    def build_clip_imag_augmentation_transform(self: 'FileItemDTO'):
+        if self.dataset_config.clip_image_augmentations is not None and len(self.dataset_config.clip_image_augmentations) > 0:
+            self.has_clip_augmentations = True
+            augmentations = [Augments(**aug) for aug in self.dataset_config.clip_image_augmentations]
+
+            if self.dataset_config.clip_image_shuffle_augmentations:
+                random.shuffle(augmentations)
+
+            augmentation_list = []
+            for aug in augmentations:
+                # make sure method name is valid
+                assert hasattr(A, aug.method_name), f"invalid augmentation method: {aug.method_name}"
+                # get the method
+                method = getattr(A, aug.method_name)
+                # add the method to the list
+                augmentation_list.append(method(**aug.params))
+
+            self.clip_image_aug_transform = A.Compose(augmentation_list)
+
+    def augment_clip_image(self: 'FileItemDTO', img: Image, transform: Union[None, transforms.Compose], ):
+        if self.dataset_config.clip_image_shuffle_augmentations:
+            self.build_clip_imag_augmentation_transform()
+
+        # save the original tensor
+        self.unaugmented_tensor = transforms.ToTensor()(img) if transform is None else transform(img)
+
+        open_cv_image = np.array(img)
+        # Convert RGB to BGR
+        open_cv_image = open_cv_image[:, :, ::-1].copy()
+
+        # apply augmentations
+        augmented = self.clip_image_aug_transform(image=open_cv_image)["image"]
+
+        # convert back to RGB tensor
+        augmented = cv2.cvtColor(augmented, cv2.COLOR_BGR2RGB)
+
+        # convert to PIL image
+        augmented = Image.fromarray(augmented)
+
+        augmented_tensor = transforms.ToTensor()(augmented) if transform is None else transform(augmented)
+
+        return augmented_tensor
+
     def load_clip_image(self: 'FileItemDTO'):
         img = Image.open(self.clip_image_path).convert('RGB')
         try:
@@ -558,8 +605,10 @@ class ClipImageFileItemDTOMixin:
 
         # we just scale them to 512x512:
         img = img.resize((512, 512), Image.BICUBIC)
-
-        self.clip_image_tensor = transforms.ToTensor()(img)
+        if self.has_clip_augmentations:
+            self.clip_image_tensor = self.augment_clip_image(img, transform=None)
+        else:
+            self.clip_image_tensor = transforms.ToTensor()(img)
 
     def cleanup_clip_image(self: 'FileItemDTO'):
         self.clip_image_tensor = None
