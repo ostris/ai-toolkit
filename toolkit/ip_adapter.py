@@ -26,8 +26,15 @@ if TYPE_CHECKING:
 from transformers import (
     CLIPImageProcessor,
     CLIPVisionModelWithProjection,
-    CLIPVisionModel
+    CLIPVisionModel,
+    AutoImageProcessor,
+    ConvNextModel,
+    ConvNextForImageClassification,
+    ConvNextImageProcessor
 )
+from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
+
+from transformers import ViTFeatureExtractor, ViTForImageClassification
 
 import torch.nn.functional as F
 
@@ -153,13 +160,51 @@ class IPAdapter(torch.nn.Module):
         super().__init__()
         self.config = adapter_config
         self.sd_ref: weakref.ref = weakref.ref(sd)
-        try:
-            self.clip_image_processor = CLIPImageProcessor.from_pretrained(adapter_config.image_encoder_path)
-        except EnvironmentError:
-            self.clip_image_processor = CLIPImageProcessor()
         self.device = self.sd_ref().unet.device
-        self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(adapter_config.image_encoder_path,
-                                                                           ignore_mismatched_sizes=True)
+        if self.config.image_encoder_arch == 'clip':
+            try:
+                self.clip_image_processor = CLIPImageProcessor.from_pretrained(adapter_config.image_encoder_path)
+            except EnvironmentError:
+                self.clip_image_processor = CLIPImageProcessor()
+            self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(
+                adapter_config.image_encoder_path,
+                ignore_mismatched_sizes=True).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        elif self.config.image_encoder_arch == 'vit':
+            try:
+                self.clip_image_processor = ViTFeatureExtractor.from_pretrained(adapter_config.image_encoder_path)
+            except EnvironmentError:
+                self.clip_image_processor = ViTFeatureExtractor()
+            self.image_encoder = ViTForImageClassification.from_pretrained(adapter_config.image_encoder_path).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        elif self.config.image_encoder_arch == 'convnext':
+            try:
+                self.clip_image_processor = ConvNextImageProcessor.from_pretrained(adapter_config.image_encoder_path)
+            except EnvironmentError:
+                print(f"could not load image processor from {adapter_config.image_encoder_path}")
+                self.clip_image_processor = ConvNextImageProcessor(
+                    size=320,
+                    image_mean=[0.48145466, 0.4578275, 0.40821073],
+                    image_std=[0.26862954, 0.26130258, 0.27577711],
+                )
+            self.image_encoder = ConvNextForImageClassification.from_pretrained(
+                adapter_config.image_encoder_path,
+                use_safetensors=True,
+            ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        elif self.config.image_encoder_arch == 'vit-hybrid':
+            try:
+                self.clip_image_processor = ViTHybridImageProcessor.from_pretrained(adapter_config.image_encoder_path)
+            except EnvironmentError:
+                print(f"could not load image processor from {adapter_config.image_encoder_path}")
+                self.clip_image_processor = ViTHybridImageProcessor(
+                    size=320,
+                    image_mean=[0.48145466, 0.4578275, 0.40821073],
+                    image_std=[0.26862954, 0.26130258, 0.27577711],
+                )
+            self.image_encoder = ViTHybridForImageClassification.from_pretrained(
+                adapter_config.image_encoder_path,
+                use_safetensors=True,
+            ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        else:
+            raise ValueError(f"unknown image encoder arch: {adapter_config.image_encoder_arch}")
         self.current_scale = 1.0
         self.is_active = True
         if adapter_config.type == 'ip':
@@ -181,7 +226,7 @@ class IPAdapter(torch.nn.Module):
                 dim_head=64,
                 heads=heads,
                 num_queries=self.config.num_tokens,  # usually 16
-                embedding_dim=self.image_encoder.config.hidden_size,
+                embedding_dim=self.image_encoder.config.hidden_size if not self.config.image_encoder_arch == "convnext" else self.image_encoder.config.hidden_sizes[-1],
                 output_dim=sd.unet.config['cross_attention_dim'],
                 ff_mult=4
             )
@@ -239,6 +284,10 @@ class IPAdapter(torch.nn.Module):
 
         self.set_scale(1.0)
 
+        if self.config.train_image_encoder:
+            self.image_encoder.train()
+            self.image_encoder.requires_grad_(True)
+
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
         self.image_encoder.to(*args, **kwargs)
@@ -280,7 +329,7 @@ class IPAdapter(torch.nn.Module):
         if isinstance(pil_image, Image.Image):
             pil_image = [pil_image]
         clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
-        clip_image = clip_image.to(self.device, dtype=torch.float16)
+        clip_image = clip_image.to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         if drop:
             clip_image = clip_image * 0
         clip_image_embeds = self.image_encoder(clip_image, output_hidden_states=True).hidden_states[-2]
@@ -307,15 +356,18 @@ class IPAdapter(torch.nn.Module):
                 do_resize=True,
                 do_rescale=False,
             ).pixel_values
-            clip_image = clip_image.to(self.device, dtype=torch.float16).detach()
+            clip_image = clip_image.to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype)).detach()
             if drop:
                 clip_image = clip_image * 0
         with torch.set_grad_enabled(is_training):
             if is_training:
                 self.image_encoder.train()
+                clip_output = self.image_encoder(clip_image.requires_grad_(True)
+                                                 , output_hidden_states=True)
             else:
                 self.image_encoder.eval()
-            clip_output = self.image_encoder(clip_image, output_hidden_states=True)
+                clip_output = self.image_encoder(clip_image, output_hidden_states=True)
+
             clip_image_embeds = clip_output.hidden_states[-2]
         return clip_image_embeds
 
@@ -332,8 +384,16 @@ class IPAdapter(torch.nn.Module):
         yield from self.image_proj_model.parameters(recurse)
         if self.config.train_image_encoder:
             yield from self.image_encoder.parameters(recurse)
+        # if self.config.train_image_encoder:
+        #     yield from self.image_encoder.parameters(recurse)
+        #     self.image_encoder.train()
+        # else:
+        #     for attn_processor in self.adapter_modules:
+        #         yield from attn_processor.parameters(recurse)
+        #     yield from self.image_proj_model.parameters(recurse)
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
+        strict = False
         self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=strict)
         self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=strict)
         if self.config.train_image_encoder and 'image_encoder' in state_dict:

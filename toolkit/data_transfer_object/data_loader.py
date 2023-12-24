@@ -48,6 +48,7 @@ class FileItemDTO(
             h, w = img.size
         self.width: int = w
         self.height: int = h
+        self.dataloader_transforms = kwargs.get('dataloader_transforms', None)
         super().__init__(*args, **kwargs)
 
         # self.caption_path: str = kwargs.get('caption_path', None)
@@ -63,6 +64,7 @@ class FileItemDTO(
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_x', False)
         self.augments: List[str] = self.dataset_config.augments
+
 
         self.network_weight: float = self.dataset_config.network_weight
         self.is_reg = self.dataset_config.is_reg

@@ -827,7 +827,7 @@ class SDTrainer(BaseSDTrainProcess):
                         conditional_embeds = self.adapter(conditional_embeds.detach(), conditional_clip_embeds)
 
                 prior_pred = None
-                if (has_adapter_img and self.assistant_adapter and match_adapter_assist) or (self.do_prior_prediction and not is_reg):
+                if ((has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction) and not is_reg:
                     with self.timer('prior predict'):
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,

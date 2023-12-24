@@ -39,10 +39,11 @@ class PromptEmbeds:
         return self
 
     def detach(self):
-        self.text_embeds = self.text_embeds.detach()
-        if self.pooled_embeds is not None:
-            self.pooled_embeds = self.pooled_embeds.detach()
-        return self
+        new_embeds = self.clone()
+        new_embeds.text_embeds = new_embeds.text_embeds.detach()
+        if new_embeds.pooled_embeds is not None:
+            new_embeds.pooled_embeds = new_embeds.pooled_embeds.detach()
+        return new_embeds
 
     def clone(self):
         if self.pooled_embeds is not None:

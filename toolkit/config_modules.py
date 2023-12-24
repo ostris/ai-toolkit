@@ -151,6 +151,16 @@ class AdapterConfig:
 
         self.num_tokens: int = num_tokens
         self.train_image_encoder: bool = kwargs.get('train_image_encoder', False)
+        self.image_encoder_arch: str = kwargs.get('image_encoder_arch', 'clip')  # clip vit vit_hybrid
+
+
+
+class ClipTokenMakerConfig:
+    def __init__(self, **kwargs):
+        self.image_encoder_path: str = kwargs.get('image_encoder_path', None)
+        self.num_tokens: int = kwargs.get('num_tokens', 8)
+
+
 
 
 
@@ -393,7 +403,7 @@ class DatasetConfig:
                                          None)  # focus mask (black and white. White has higher loss than black)
         self.unconditional_path: str = kwargs.get('unconditional_path', None)  # path where matching unconditional images are located
         self.invert_mask: bool = kwargs.get('invert_mask', False)  # invert mask
-        self.mask_min_value: float = kwargs.get('mask_min_value', 0.01)  # min value for . 0 - 1
+        self.mask_min_value: float = kwargs.get('mask_min_value', 0.0)  # min value for . 0 - 1
         self.poi: Union[str, None] = kwargs.get('poi',
                                                 None)  # if one is set and in json data, will be used as auto crop scale point of interes
         self.num_repeats: int = kwargs.get('num_repeats', 1)  # number of times to repeat dataset
@@ -401,6 +411,8 @@ class DatasetConfig:
         self.cache_latents: bool = kwargs.get('cache_latents', False)
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
+
+        self.standardize_images: bool = kwargs.get('standardize_images', False)
 
         # https://albumentations.ai/docs/api_reference/augmentations/transforms
         # augmentations are returned as a separate image and cannot currently be cached
