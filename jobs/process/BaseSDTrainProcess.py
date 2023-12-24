@@ -5,7 +5,7 @@ import json
 import shutil
 from collections import OrderedDict
 import os
-from typing import Union, List
+from typing import Union, List, Optional
 
 import numpy as np
 import yaml
@@ -17,6 +17,7 @@ import torch
 import torch.backends.cuda
 
 from toolkit.basic import value_map
+from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.embedding import Embedding
@@ -138,7 +139,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # to hold network if there is one
         self.network: Union[Network, None] = None
-        self.adapter: Union[T2IAdapter, IPAdapter, None] = None
+        self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, None] = None
         self.embedding: Union[Embedding, None] = None
 
         is_training_adapter = self.adapter_config is not None and self.adapter_config.train
@@ -202,7 +203,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # ie test123 will become test123 test123_1 test123_2 etc. Do not add this yourself here
             if self.embedding is not None:
                 prompt = self.embedding.inject_embedding_to_prompt(
-                    prompt, add_if_not_present=False
+                    prompt, expand_token=True, add_if_not_present=False
+                )
+            if self.adapter is not None and isinstance(self.adapter, ClipVisionAdapter):
+                prompt = self.adapter.inject_trigger_into_prompt(
+                    prompt, expand_token=True, add_if_not_present=False
                 )
             if self.trigger_word is not None:
                 prompt = self.sd.inject_trigger_into_prompt(
@@ -400,6 +405,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # add _lora to name
                     if self.adapter_config.type == 't2i':
                         adapter_name += '_t2i'
+                    elif self.adapter_config.type == 'clip':
+                        adapter_name += '_clip'
                     else:
                         adapter_name += '_ip'
 
@@ -647,6 +654,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             add_if_not_present=not is_reg,
                         )
 
+                    if self.adapter and isinstance(self.adapter, ClipVisionAdapter):
+                        prompt = self.adapter.inject_trigger_into_prompt(
+                            prompt,
+                            expand_token=True,
+                            add_if_not_present=not is_reg,
+                        )
+
                     # make sure trigger is in the prompts if not a regularization run
                     if self.trigger_word is not None:
                         prompt = self.sd.inject_trigger_into_prompt(
@@ -840,7 +854,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def setup_adapter(self):
         # t2i adapter
         is_t2i = self.adapter_config.type == 't2i'
-        suffix = 't2i' if is_t2i else 'ip'
+        if self.adapter_config.type == 't2i':
+            suffix = 't2i'
+        elif self.adapter_config.type == 'clip':
+            suffix = 'clip'
+        else:
+            suffix = 'ip'
         adapter_name = self.name
         if self.network_config is not None:
             adapter_name = f"{adapter_name}_{suffix}"
@@ -865,6 +884,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     downscale_factor=self.adapter_config.downscale_factor,
                     adapter_type=self.adapter_config.adapter_type,
                 )
+        elif self.adapter_config.type == 'clip':
+            self.adapter = ClipVisionAdapter(
+                sd=self.sd,
+                adapter_config=self.adapter_config,
+            )
         else:
             self.adapter = IPAdapter(
                 sd=self.sd,

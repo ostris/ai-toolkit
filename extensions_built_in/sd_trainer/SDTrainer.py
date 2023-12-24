@@ -5,6 +5,7 @@ from diffusers import T2IAdapter
 import torch.functional as F
 from toolkit import train_tools
 from toolkit.basic import value_map, adain, get_mean_std
+from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.config_modules import GuidanceConfig
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO, FileItemDTO
 from toolkit.guidance import get_targeted_guidance_loss, get_guidance_loss
@@ -504,6 +505,7 @@ class SDTrainer(BaseSDTrainProcess):
             noise: torch.Tensor,
             **kwargs
     ):
+        # todo for embeddings, we need to run without trigger words
         was_unet_training = self.sd.unet.training
         was_network_active = False
         if self.network is not None:
@@ -519,13 +521,28 @@ class SDTrainer(BaseSDTrainProcess):
         # do a prediction here so we can match its output with network multiplier set to 0.0
         with torch.no_grad():
             dtype = get_torch_dtype(self.train_config.dtype)
+
+            embeds_to_use = conditional_embeds.clone().detach()
+            # handle clip vision adapter by removing triggers from prompt and replacing with the class name
+            if self.adapter is not None and isinstance(self.adapter, ClipVisionAdapter):
+                prompt_list = batch.get_caption_list()
+                for idx, prompt in enumerate(prompt_list):
+                    prompt = self.adapter.inject_trigger_class_name_into_prompt(prompt)
+                    prompt_list[idx] = prompt
+
+                embeds_to_use = self.sd.encode_prompt(
+                    prompt,
+                    long_prompts=self.do_long_prompts).to(
+                    self.device_torch,
+                    dtype=dtype).detach()
+
             # dont use network on this
             # self.network.multiplier = 0.0
             self.sd.unet.eval()
 
             prior_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype).detach(),
-                conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype).detach(),
+                conditional_embeddings=embeds_to_use.to(self.device_torch, dtype=dtype).detach(),
                 timestep=timesteps,
                 guidance_scale=1.0,
                 **pred_kwargs  # adapter residuals in here
@@ -666,6 +683,9 @@ class SDTrainer(BaseSDTrainProcess):
             if self.embedding:
                 grad_on_text_encoder = True
 
+            if self.adapter and isinstance(self.adapter, ClipVisionAdapter):
+                grad_on_text_encoder = True
+
             # have a blank network so we can wrap it in a context and set multipliers without checking every time
             if self.network is not None:
                 network = self.network
@@ -745,6 +765,26 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt_2 = prompt_2 + [self.train_config.negative_prompt for x in range(len(prompt_2))]
 
             with network:
+                # encode clip adapter here so embeds are active for tokenizer
+                if self.adapter and isinstance(self.adapter, ClipVisionAdapter):
+                    with self.timer('encode_clip_vision_embeds'):
+                        if has_clip_image:
+                            conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
+                                clip_images.detach().to(self.device_torch, dtype=dtype),
+                                is_training=True
+                            )
+                        else:
+                            # just do a blank one
+                            conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
+                                torch.zeros(
+                                    (noisy_latents.shape[0], 3, 512, 512),
+                                    device=self.device_torch, dtype=dtype
+                                ),
+                                is_training=True
+                            )
+                        # it will be injected into the tokenizer when called
+                        self.adapter(conditional_clip_embeds)
+
                 with self.timer('encode_prompt'):
                     if grad_on_text_encoder:
                         with torch.set_grad_enabled(True):
@@ -912,6 +952,10 @@ class SDTrainer(BaseSDTrainProcess):
             with self.timer('restore_embeddings'):
                 # Let's make sure we don't update any embedding weights besides the newly added token
                 self.embedding.restore_embeddings()
+        if self.adapter is not None and isinstance(self.adapter, ClipVisionAdapter):
+            with self.timer('restore_adapter'):
+                # Let's make sure we don't update any embedding weights besides the newly added token
+                self.adapter.restore_embeddings()
 
         loss_dict = OrderedDict(
             {'loss': loss.item()}

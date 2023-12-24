@@ -14,6 +14,7 @@ SaveFormat = Literal['safetensors', 'diffusers']
 if TYPE_CHECKING:
     from toolkit.guidance import GuidanceType
 
+
 class SaveConfig:
     def __init__(self, **kwargs):
         self.save_every: int = kwargs.get('save_every', 1000)
@@ -47,7 +48,8 @@ class SampleConfig:
         self.guidance_rescale = kwargs.get('guidance_rescale', 0.0)
         self.ext: ImgExt = kwargs.get('format', 'jpg')
         self.adapter_conditioning_scale = kwargs.get('adapter_conditioning_scale', 1.0)
-        self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)  # step to start using refiner on sample if it exists
+        self.refiner_start_at = kwargs.get('refiner_start_at',
+                                           0.5)  # step to start using refiner on sample if it exists
 
 
 class LormModuleSettingsConfig:
@@ -130,7 +132,7 @@ AdapterTypes = Literal['t2i', 'ip', 'ip+']
 
 class AdapterConfig:
     def __init__(self, **kwargs):
-        self.type: AdapterTypes = kwargs.get('type', 't2i')  # t2i, ip
+        self.type: AdapterTypes = kwargs.get('type', 't2i')  # t2i, ip, clip
         self.in_channels: int = kwargs.get('in_channels', 3)
         self.channels: List[int] = kwargs.get('channels', [320, 640, 1280, 1280])
         self.num_res_blocks: int = kwargs.get('num_res_blocks', 2)
@@ -153,15 +155,9 @@ class AdapterConfig:
         self.train_image_encoder: bool = kwargs.get('train_image_encoder', False)
         self.image_encoder_arch: str = kwargs.get('image_encoder_arch', 'clip')  # clip vit vit_hybrid
 
-
-
-class ClipTokenMakerConfig:
-    def __init__(self, **kwargs):
-        self.image_encoder_path: str = kwargs.get('image_encoder_path', None)
-        self.num_tokens: int = kwargs.get('num_tokens', 8)
-
-
-
+        # clip vision
+        self.trigger = kwargs.get('trigger', 'tri993r')
+        self.trigger_class_name = kwargs.get('trigger_class_name', 'person')
 
 
 class EmbeddingConfig:
@@ -401,7 +397,8 @@ class DatasetConfig:
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
                                          None)  # focus mask (black and white. White has higher loss than black)
-        self.unconditional_path: str = kwargs.get('unconditional_path', None)  # path where matching unconditional images are located
+        self.unconditional_path: str = kwargs.get('unconditional_path',
+                                                  None)  # path where matching unconditional images are located
         self.invert_mask: bool = kwargs.get('invert_mask', False)  # invert mask
         self.mask_min_value: float = kwargs.get('mask_min_value', 0.0)  # min value for . 0 - 1
         self.poi: Union[str, None] = kwargs.get('poi',
