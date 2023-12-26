@@ -1054,12 +1054,16 @@ class PoiFileItemDTOMixin:
         # Use the maximum of the scale factors to ensure both dimensions are scaled above the bucket resolution
         max_scale_factor = max(width_scale_factor, height_scale_factor)
 
-        self.scale_to_width = int(initial_width * max_scale_factor)
-        self.scale_to_height = int(initial_height * max_scale_factor)
+        self.scale_to_width = math.ceil(initial_width * max_scale_factor)
+        self.scale_to_height = math.ceil(initial_height * max_scale_factor)
         self.crop_width = bucket_resolution['width']
         self.crop_height = bucket_resolution['height']
         self.crop_x = int(poi_x * max_scale_factor)
         self.crop_y = int(poi_y * max_scale_factor)
+
+        if self.scale_to_width < self.crop_x + self.crop_width or self.scale_to_height < self.crop_y + self.crop_height:
+            # todo look into this. This still happens sometimes
+            print('size mismatch')
 
         return True
 

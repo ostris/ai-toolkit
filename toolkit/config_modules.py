@@ -257,6 +257,10 @@ class TrainConfig:
         if match_adapter_assist and self.match_adapter_chance == 0.0:
             self.match_adapter_chance = 1.0
 
+        # standardize inputs to the meand std of the model knowledge
+        self.standardize_images = kwargs.get('standardize_images', False)
+        self.standardize_latents = kwargs.get('standardize_latents', False)
+
 
 class ModelConfig:
     def __init__(self, **kwargs):
