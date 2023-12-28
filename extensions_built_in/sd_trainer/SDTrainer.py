@@ -39,8 +39,6 @@ class SDTrainer(BaseSDTrainProcess):
         self.do_prior_prediction = False
         self.do_long_prompts = False
         self.do_guided_loss = False
-        if self.train_config.inverted_mask_prior:
-            self.do_prior_prediction = True
 
     def before_model_load(self):
         pass
@@ -89,13 +87,15 @@ class SDTrainer(BaseSDTrainProcess):
         prior_mask_multiplier = None
         target_mask_multiplier = None
 
+        has_mask = batch.mask_tensor is not None
+
         if self.train_config.match_noise_norm:
             # match the norm of the noise
             noise_norm = torch.linalg.vector_norm(noise, ord=2, dim=(1, 2, 3), keepdim=True)
             noise_pred_norm = torch.linalg.vector_norm(noise_pred, ord=2, dim=(1, 2, 3), keepdim=True)
             noise_pred = noise_pred * (noise_norm / noise_pred_norm)
 
-        if self.train_config.inverted_mask_prior and prior_pred is not None:
+        if self.train_config.inverted_mask_prior and prior_pred is not None and has_mask:
             # we need to make the noise prediction be a masked blending of noise and prior_pred
             stretched_mask_multiplier = value_map(
                 mask_multiplier,
@@ -867,7 +867,17 @@ class SDTrainer(BaseSDTrainProcess):
                         conditional_embeds = self.adapter(conditional_embeds.detach(), conditional_clip_embeds)
 
                 prior_pred = None
-                if ((has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction) and not is_reg:
+
+                do_reg_prior = False
+                if is_reg and (self.network is not None or self.adapter is not None):
+                    # we are doing a reg image and we have a network or adapter
+                    do_reg_prior = True
+
+                do_inverted_masked_prior = False
+                if self.train_config.inverted_mask_prior and batch.mask_tensor is not None:
+                    do_inverted_masked_prior = True
+
+                if ((has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction or do_reg_prior or do_inverted_masked_prior):
                     with self.timer('prior predict'):
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,

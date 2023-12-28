@@ -153,7 +153,9 @@ class AdapterConfig:
 
         self.num_tokens: int = num_tokens
         self.train_image_encoder: bool = kwargs.get('train_image_encoder', False)
-        self.image_encoder_arch: str = kwargs.get('image_encoder_arch', 'clip')  # clip vit vit_hybrid
+        self.image_encoder_arch: str = kwargs.get('image_encoder_arch', 'clip')  # clip vit vit_hybrid, safe
+        self.safe_reducer_channels: int = kwargs.get('safe_reducer_channels', 512)
+        self.safe_channels: int = kwargs.get('safe_channels', 2048)
 
         # clip vision
         self.trigger = kwargs.get('trigger', 'tri993r')

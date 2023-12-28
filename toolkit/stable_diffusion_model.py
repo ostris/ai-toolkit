@@ -1447,7 +1447,7 @@ class StableDiffusion:
             }
         if self.adapter is not None:
             if isinstance(self.adapter, IPAdapter):
-                requires_grad = self.adapter.adapter_modules.training
+                requires_grad = self.adapter.image_proj_model.training
                 adapter_device = self.unet.device
             elif isinstance(self.adapter, T2IAdapter):
                 requires_grad = self.adapter.adapter.conv_in.weight.requires_grad
