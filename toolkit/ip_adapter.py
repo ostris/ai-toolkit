@@ -184,8 +184,8 @@ class IPAdapter(torch.nn.Module):
                 self.clip_image_processor = SAFEImageProcessor()
             self.image_encoder = SAFEVisionModel(
                 in_channels=3,
-                num_tokens=self.config.num_tokens if self.config.adapter_type == 'ip+' else 1,
-                num_vectors=sd.unet.config['cross_attention_dim'] if self.config.adapter_type == 'ip+' else self.config.safe_channels,
+                num_tokens=8,
+                num_vectors=sd.unet.config['cross_attention_dim'],
                 reducer_channels=self.config.safe_reducer_channels,
                 channels=self.config.safe_channels,
                 downscale_factor=8
