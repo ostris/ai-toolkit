@@ -198,6 +198,8 @@ class TrainConfig:
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', True)
         self.train_refiner = kwargs.get('train_refiner', True)
+        self.train_turbo = kwargs.get('train_turbo', False)
+        self.show_turbo_outputs = kwargs.get('show_turbo_outputs', False)
         self.min_snr_gamma = kwargs.get('min_snr_gamma', None)
         self.snr_gamma = kwargs.get('snr_gamma', None)
         # trains a gamma, offset, and scale to adjust loss to adapt to timestep differentials
@@ -262,6 +264,9 @@ class TrainConfig:
         # standardize inputs to the meand std of the model knowledge
         self.standardize_images = kwargs.get('standardize_images', False)
         self.standardize_latents = kwargs.get('standardize_latents', False)
+
+        if self.train_turbo and not self.noise_scheduler.startswith("euler"):
+            raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
 
 
 class ModelConfig:

@@ -5,8 +5,8 @@ from typing import Union, List, Optional, Dict, Any, Tuple, Callable
 import torch
 from diffusers import StableDiffusionXLPipeline, StableDiffusionPipeline, LMSDiscreteScheduler
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_k_diffusion import ModelWrapper
-from diffusers.pipelines.stable_diffusion_xl import StableDiffusionXLPipelineOutput
+# from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_k_diffusion import ModelWrapper
+from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 from diffusers.utils import is_torch_xla_available
 from k_diffusion.external import CompVisVDenoiser, CompVisDenoiser
@@ -43,13 +43,14 @@ class StableDiffusionKDiffusionXLPipeline(StableDiffusionXLPipeline):
             unet=unet,
             scheduler=scheduler,
         )
-        self.sampler = None
-        scheduler = LMSDiscreteScheduler.from_config(scheduler.config)
-        model = ModelWrapper(unet, scheduler.alphas_cumprod)
-        if scheduler.config.prediction_type == "v_prediction":
-            self.k_diffusion_model = CompVisVDenoiser(model)
-        else:
-            self.k_diffusion_model = CompVisDenoiser(model)
+        raise NotImplementedError("This pipeline is not implemented yet")
+        # self.sampler = None
+        # scheduler = LMSDiscreteScheduler.from_config(scheduler.config)
+        # model = ModelWrapper(unet, scheduler.alphas_cumprod)
+        # if scheduler.config.prediction_type == "v_prediction":
+        #     self.k_diffusion_model = CompVisVDenoiser(model)
+        # else:
+        #     self.k_diffusion_model = CompVisDenoiser(model)
 
     def set_scheduler(self, scheduler_type: str):
         library = importlib.import_module("k_diffusion")

@@ -755,7 +755,7 @@ class StableDiffusion:
             add_time_ids=None,
             conditional_embeddings: Union[PromptEmbeds, None] = None,
             unconditional_embeddings: Union[PromptEmbeds, None] = None,
-            is_input_scaled=True,
+            is_input_scaled=False,
             **kwargs,
     ):
         with torch.no_grad():
