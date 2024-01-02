@@ -178,6 +178,7 @@ class TrainConfig:
     def __init__(self, **kwargs):
         self.noise_scheduler = kwargs.get('noise_scheduler', 'ddpm')
         self.content_or_style: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
+        self.content_or_style_reg: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
         self.steps: int = kwargs.get('steps', 1000)
         self.lr = kwargs.get('lr', 1e-6)
         self.unet_lr = kwargs.get('unet_lr', self.lr)
@@ -267,6 +268,8 @@ class TrainConfig:
 
         if self.train_turbo and not self.noise_scheduler.startswith("euler"):
             raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
+
+        self.dynamic_noise_offset = kwargs.get('dynamic_noise_offset', False)
 
 
 class ModelConfig:

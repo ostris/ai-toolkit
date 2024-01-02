@@ -27,6 +27,7 @@ from toolkit.config_modules import ModelConfig, GenerateImageConfig
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds
+from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sampler import get_sampler
 from toolkit.saving import save_ldm_model_from_diffusers, get_ldm_state_dict_from_diffusers
 from toolkit.sd_device_states_presets import empty_preset
@@ -76,6 +77,7 @@ class BlankNetwork:
         self.multiplier = 1.0
         self.is_active = True
         self.is_merged_in = False
+        self.can_merge_in = False
 
     def __enter__(self):
         self.is_active = True
@@ -134,7 +136,7 @@ class StableDiffusion:
 
         # to hold network if there is one
         self.network = None
-        self.adapter: Union['T2IAdapter', 'IPAdapter', None] = None
+        self.adapter: Union['T2IAdapter', 'IPAdapter', 'ReferenceAdapter', None] = None
         self.is_xl = model_config.is_xl
         self.is_v2 = model_config.is_v2
         self.is_ssd = model_config.is_ssd
@@ -396,6 +398,9 @@ class StableDiffusion:
                     else:
                         Pipe = StableDiffusionAdapterPipeline
                     extra_args['adapter'] = self.adapter
+                elif isinstance(self.adapter, ReferenceAdapter):
+                    # pass the noise scheduler to the adapter
+                    self.adapter.noise_scheduler = noise_scheduler
                 else:
                     if self.is_xl:
                         extra_args['add_watermarker'] = False
@@ -478,6 +483,12 @@ class StableDiffusion:
                                 transforms.ToTensor(),
                             ])
                             validation_image = transform(validation_image)
+                        if isinstance(self.adapter, ReferenceAdapter):
+                            # need -1 to 1
+                            validation_image = transforms.ToTensor()(validation_image)
+                            validation_image = validation_image * 2.0 - 1.0
+                            validation_image = validation_image.unsqueeze(0)
+                            self.adapter.set_reference_images(validation_image)
 
                     if self.network is not None:
                         self.network.multiplier = gen_config.network_multiplier
@@ -593,6 +604,9 @@ class StableDiffusion:
                         ).images[0]
 
                     gen_config.save_image(img, i)
+
+                if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
+                    self.adapter.clear_memory()
 
         # clear pipeline and cache to reduce vram usage
         del pipeline
@@ -1454,6 +1468,10 @@ class StableDiffusion:
                 adapter_device = self.adapter.device
             elif isinstance(self.adapter, ClipVisionAdapter):
                 requires_grad = self.adapter.embedder.training
+                adapter_device = self.adapter.device
+            elif isinstance(self.adapter, ReferenceAdapter):
+                # todo update this!!
+                requires_grad = True
                 adapter_device = self.adapter.device
             else:
                 raise ValueError(f"Unknown adapter type: {type(self.adapter)}")

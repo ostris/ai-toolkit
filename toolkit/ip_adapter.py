@@ -232,6 +232,10 @@ class IPAdapter(torch.nn.Module):
         elif adapter_config.type == 'ip+':
             heads = 12 if not sd.is_xl else 20
             dim = sd.unet.config['cross_attention_dim'] if not sd.is_xl else 1280
+            embedding_dim = self.image_encoder.config.hidden_size if not self.config.image_encoder_arch == "convnext" else self.image_encoder.config.hidden_sizes[-1]
+
+            if self.config.image_encoder_arch == 'safe':
+                embedding_dim = self.config.safe_channels
             # size mismatch for latents: copying a param with shape torch.Size([1, 16, 1280]) from checkpoint, the shape in current model is torch.Size([1, 16, 2048]).
             # size mismatch for latents: copying a param with shape torch.Size([1, 32, 2048]) from checkpoint, the shape in current model is torch.Size([1, 16, 1280])
             # ip-adapter-plus
@@ -241,7 +245,7 @@ class IPAdapter(torch.nn.Module):
                 dim_head=64,
                 heads=heads,
                 num_queries=self.config.num_tokens,  # usually 16
-                embedding_dim=self.image_encoder.config.hidden_size if not self.config.image_encoder_arch == "convnext" else self.image_encoder.config.hidden_sizes[-1],
+                embedding_dim=embedding_dim,
                 output_dim=sd.unet.config['cross_attention_dim'],
                 ff_mult=4
             )
