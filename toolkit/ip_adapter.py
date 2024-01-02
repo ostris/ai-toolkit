@@ -184,7 +184,7 @@ class IPAdapter(torch.nn.Module):
                 self.clip_image_processor = SAFEImageProcessor()
             self.image_encoder = SAFEVisionModel(
                 in_channels=3,
-                num_tokens=8,
+                num_tokens=self.config.safe_tokens,
                 num_vectors=sd.unet.config['cross_attention_dim'],
                 reducer_channels=self.config.safe_reducer_channels,
                 channels=self.config.safe_channels,
@@ -234,8 +234,8 @@ class IPAdapter(torch.nn.Module):
             dim = sd.unet.config['cross_attention_dim'] if not sd.is_xl else 1280
             embedding_dim = self.image_encoder.config.hidden_size if not self.config.image_encoder_arch == "convnext" else self.image_encoder.config.hidden_sizes[-1]
 
-            if self.config.image_encoder_arch == 'safe':
-                embedding_dim = self.config.safe_channels
+            # if self.config.image_encoder_arch == 'safe':
+            #     embedding_dim = self.config.safe_tokens
             # size mismatch for latents: copying a param with shape torch.Size([1, 16, 1280]) from checkpoint, the shape in current model is torch.Size([1, 16, 2048]).
             # size mismatch for latents: copying a param with shape torch.Size([1, 32, 2048]) from checkpoint, the shape in current model is torch.Size([1, 16, 1280])
             # ip-adapter-plus

@@ -156,6 +156,7 @@ class AdapterConfig:
         self.image_encoder_arch: str = kwargs.get('image_encoder_arch', 'clip')  # clip vit vit_hybrid, safe
         self.safe_reducer_channels: int = kwargs.get('safe_reducer_channels', 512)
         self.safe_channels: int = kwargs.get('safe_channels', 2048)
+        self.safe_tokens: int = kwargs.get('safe_tokens', 8)
 
         # clip vision
         self.trigger = kwargs.get('trigger', 'tri993r')
@@ -270,6 +271,7 @@ class TrainConfig:
             raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
 
         self.dynamic_noise_offset = kwargs.get('dynamic_noise_offset', False)
+        self.do_cfg = kwargs.get('do_cfg', False)
 
 
 class ModelConfig:
