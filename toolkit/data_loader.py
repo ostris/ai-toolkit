@@ -431,6 +431,7 @@ class AiToolkitDataset(LatentCachingMixin, BucketsMixin, CaptionMixin, Dataset):
         for file in tqdm(file_list):
             try:
                 file_item = FileItemDTO(
+                    sd=self.sd,
                     path=file,
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,

@@ -666,7 +666,7 @@ class SDTrainer(BaseSDTrainProcess):
                 conditional_embeddings=embeds_to_use.to(self.device_torch, dtype=dtype).detach(),
                 unconditional_embeddings=unconditional_embeds,
                 timestep=timesteps,
-                guidance_scale=1.0,
+                guidance_scale=self.train_config.cfg_scale,
                 **pred_kwargs  # adapter residuals in here
             )
             if was_unet_training:
@@ -980,40 +980,45 @@ class SDTrainer(BaseSDTrainProcess):
 
                 if self.adapter and isinstance(self.adapter, IPAdapter):
                     with self.timer('encode_adapter_embeds'):
+                        image_size = self.adapter.input_size
                         if is_reg:
                             # we will zero it out in the img embedder
                             clip_images = torch.zeros(
-                                (noisy_latents.shape[0], 3, 512, 512),
+                                (noisy_latents.shape[0], 3, image_size, image_size),
                                 device=self.device_torch, dtype=dtype
                             ).detach()
                             # drop will zero it out
                             conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
                                 clip_images,
                                 drop=True,
-                                is_training=True
+                                is_training=True,
+                                has_been_preprocessed=True
                             )
                             if self.train_config.do_cfg:
                                 unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
                                     torch.zeros(
-                                        (noisy_latents.shape[0], 3, 512, 512),
+                                        (noisy_latents.shape[0], 3, image_size, image_size),
                                         device=self.device_torch, dtype=dtype
                                     ).detach(),
                                     is_training=True,
-                                    drop=True
+                                    drop=True,
+                                    has_been_preprocessed=True
                                 )
                         elif has_clip_image:
                             conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
                                 clip_images.detach().to(self.device_torch, dtype=dtype),
-                                is_training=True
+                                is_training=True,
+                                has_been_preprocessed=True
                             )
                             if self.train_config.do_cfg:
                                 unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
                                     torch.zeros(
-                                        (noisy_latents.shape[0], 3, 512, 512),
+                                        (noisy_latents.shape[0], 3, image_size, image_size),
                                         device=self.device_torch, dtype=dtype
                                     ).detach(),
                                     is_training=True,
-                                    drop=True
+                                    drop=True,
+                                    has_been_preprocessed=True
                                 )
                         else:
                             raise ValueError("Adapter images now must be loaded with dataloader or be a reg image")
@@ -1094,7 +1099,7 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
                             unconditional_embeddings=unconditional_embeds,
                             timestep=timesteps,
-                            guidance_scale=1.0,
+                            guidance_scale=self.train_config.cfg_scale,
                             **pred_kwargs
                         )
                     self.after_unet_predict()

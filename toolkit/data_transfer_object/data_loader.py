@@ -1,3 +1,5 @@
+import weakref
+from _weakref import ReferenceType
 from typing import TYPE_CHECKING, List, Union
 import torch
 import random
@@ -10,8 +12,10 @@ from toolkit.dataloader_mixins import CaptionProcessingDTOMixin, ImageProcessing
     ControlFileItemDTOMixin, ArgBreakMixin, PoiFileItemDTOMixin, MaskFileItemDTOMixin, AugmentationFileItemDTOMixin, \
     UnconditionalFileItemDTOMixin, ClipImageFileItemDTOMixin
 
+
 if TYPE_CHECKING:
     from toolkit.config_modules import DatasetConfig
+    from toolkit.stable_diffusion_model import StableDiffusion
 
 printed_messages = []
 

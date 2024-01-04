@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from safetensors.torch import load_file, save_file
 from tqdm import tqdm
+from transformers import CLIPImageProcessor
 
 from toolkit.basic import flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
@@ -27,7 +28,7 @@ from toolkit.train_tools import get_torch_dtype
 if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
     from toolkit.data_transfer_object.data_loader import FileItemDTO
-
+    from toolkit.stable_diffusion_model import StableDiffusion
 
 # def get_associated_caption_from_img_path(img_path):
 # https://demo.albumentations.ai/
@@ -565,8 +566,13 @@ class ClipImageFileItemDTOMixin:
         self.clip_image_tensor: Union[torch.Tensor, None] = None
         self.has_clip_augmentations = False
         self.clip_image_aug_transform: Union[None, A.Compose] = None
+        self.clip_image_processor: Union[None, CLIPImageProcessor] = None
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         if dataset_config.clip_image_path is not None:
+            # copy the clip image processor so the dataloader can do it
+            sd = kwargs.get('sd', None)
+            if hasattr(sd.adapter, 'clip_image_processor'):
+                self.clip_image_processor = sd.adapter.clip_image_processor
             # find the control image path
             clip_image_path = dataset_config.clip_image_path
             # we are using control images
@@ -632,12 +638,21 @@ class ClipImageFileItemDTOMixin:
             print(f"Error: {e}")
             print(f"Error loading image: {self.clip_image_path}")
 
-        # we just scale them to 512x512:
-        img = img.resize((512, 512), Image.BICUBIC)
         if self.has_clip_augmentations:
             self.clip_image_tensor = self.augment_clip_image(img, transform=None)
         else:
             self.clip_image_tensor = transforms.ToTensor()(img)
+
+        if self.clip_image_processor is not None:
+            # run it
+            tensors_0_1 = self.clip_image_tensor.to(dtype=torch.float16)
+            clip_out = self.clip_image_processor(
+                images=tensors_0_1,
+                return_tensors="pt",
+                do_resize=True,
+                do_rescale=False,
+            ).pixel_values
+            self.clip_image_tensor = clip_out.squeeze(0).clone().detach()
 
     def cleanup_clip_image(self: 'FileItemDTO'):
         self.clip_image_tensor = None

@@ -678,6 +678,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if batch.tensor is not None:
                     imgs = batch.tensor
                     imgs = imgs.to(self.device_torch, dtype=dtype)
+                    if self.train_config.img_multiplier is not None:
+                        imgs = imgs * self.train_config.img_multiplier
                 if batch.latents is not None:
                     latents = batch.latents.to(self.device_torch, dtype=dtype)
                     batch.latents = latents
@@ -1113,6 +1115,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.snr_gos.scale.data = torch.tensor(json_data['scale'], device=self.device_torch)
                     self.snr_gos.gamma.data = torch.tensor(json_data['gamma'], device=self.device_torch)
 
+        # load the adapters before the dataset as they may use the clip encoders
+        if self.adapter_config is not None:
+            self.setup_adapter()
         flush()
 
         ### HOOk ###
@@ -1249,7 +1254,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 flush()
 
             if self.adapter_config is not None:
-                self.setup_adapter()
+                # self.setup_adapter()
                 # set trainable params
                 params.append({
                     'params': self.adapter.parameters(),

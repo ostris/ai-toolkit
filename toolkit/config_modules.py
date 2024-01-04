@@ -272,6 +272,7 @@ class TrainConfig:
 
         self.dynamic_noise_offset = kwargs.get('dynamic_noise_offset', False)
         self.do_cfg = kwargs.get('do_cfg', False)
+        self.cfg_scale = kwargs.get('cfg_scale', 1.0)
 
 
 class ModelConfig:
