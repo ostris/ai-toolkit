@@ -208,7 +208,6 @@ def load_t2i_model(
     return converted_state_dict
 
 
-IP_ADAPTER_MODULES = ['image_proj', 'ip_adapter']
 
 
 def save_ip_adapter_from_diffusers(
