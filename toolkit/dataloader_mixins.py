@@ -410,10 +410,10 @@ class ImageProcessingDTOMixin:
 
         if self.flip_x:
             # do a flip
-            img.transpose(Image.FLIP_LEFT_RIGHT)
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
         if self.flip_y:
             # do a flip
-            img.transpose(Image.FLIP_TOP_BOTTOM)
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
         if self.dataset_config.buckets:
             # scale and crop based on file item
@@ -527,10 +527,10 @@ class ControlFileItemDTOMixin:
 
             if self.flip_x:
                 # do a flip
-                img.transpose(Image.FLIP_LEFT_RIGHT)
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
             if self.flip_y:
                 # do a flip
-                img.transpose(Image.FLIP_TOP_BOTTOM)
+                img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
             if self.dataset_config.buckets:
                 # scale and crop based on file item
@@ -637,6 +637,15 @@ class ClipImageFileItemDTOMixin:
         except Exception as e:
             print(f"Error: {e}")
             print(f"Error loading image: {self.clip_image_path}")
+
+        img = img.convert('RGB')
+
+        if self.flip_x:
+            # do a flip
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if self.flip_y:
+            # do a flip
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
         if self.has_clip_augmentations:
             self.clip_image_tensor = self.augment_clip_image(img, transform=None)
@@ -822,10 +831,10 @@ class MaskFileItemDTOMixin:
 
         if self.flip_x:
             # do a flip
-            img.transpose(Image.FLIP_LEFT_RIGHT)
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
         if self.flip_y:
             # do a flip
-            img.transpose(Image.FLIP_TOP_BOTTOM)
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
         # randomly apply a blur up to 0.5% of the size of the min (width, height)
         min_size = min(img.width, img.height)
@@ -906,10 +915,10 @@ class UnconditionalFileItemDTOMixin:
 
         if self.flip_x:
             # do a flip
-            img.transpose(Image.FLIP_LEFT_RIGHT)
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
         if self.flip_y:
             # do a flip
-            img.transpose(Image.FLIP_TOP_BOTTOM)
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
         if self.dataset_config.buckets:
             # scale and crop based on file item

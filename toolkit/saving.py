@@ -256,7 +256,6 @@ def get_lora_keymap_from_model_keymap(model_keymap: 'OrderedDict') -> 'OrderedDi
         if key.startswith('conditioner.embedders.1'):
             has_dual_text_encoders = True
             break
-
     # map through the keys and values
     for key, value in model_keymap.items():
         # ignore bias weights
