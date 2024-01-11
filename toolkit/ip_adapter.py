@@ -480,19 +480,36 @@ class IPAdapter(torch.nn.Module):
                 current_shape = current_img_proj_state_dict[key].shape
                 new_shape = value.shape
                 if current_shape != new_shape:
-                    # merge in what we can and leave the other values as they are
-                    if len(current_shape) == 1:
-                        current_img_proj_state_dict[key][:new_shape[0]] = value
-                    elif len(current_shape) == 2:
-                        current_img_proj_state_dict[key][:new_shape[0], :new_shape[1]] = value
-                    elif len(current_shape) == 3:
-                        current_img_proj_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2]] = value
-                    elif len(current_shape) == 4:
-                        current_img_proj_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2],
-                        :new_shape[3]] = value
-                    else:
-                        raise ValueError(f"unknown shape: {current_shape}")
-                    print(f"Force merged in {key}: {list(current_shape)} <<< {list(new_shape)}")
+                    try:
+                        # merge in what we can and leave the other values as they are
+                        if len(current_shape) == 1:
+                            current_img_proj_state_dict[key][:new_shape[0]] = value
+                        elif len(current_shape) == 2:
+                            current_img_proj_state_dict[key][:new_shape[0], :new_shape[1]] = value
+                        elif len(current_shape) == 3:
+                            current_img_proj_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2]] = value
+                        elif len(current_shape) == 4:
+                            current_img_proj_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2],
+                            :new_shape[3]] = value
+                        else:
+                            raise ValueError(f"unknown shape: {current_shape}")
+                    except RuntimeError as e:
+                        print(e)
+                        print(f"could not merge in {key}: {list(current_shape)} <<< {list(new_shape)}. Trying other way")
+
+                        if len(current_shape) == 1:
+                            current_img_proj_state_dict[key][:current_shape[0]] = value[:current_shape[0]]
+                        elif len(current_shape) == 2:
+                            current_img_proj_state_dict[key][:current_shape[0], :current_shape[1]] = value[:current_shape[0], :current_shape[1]]
+                        elif len(current_shape) == 3:
+                            current_img_proj_state_dict[key][:current_shape[0], :current_shape[1], :current_shape[2]] = value[:current_shape[0], :current_shape[1], :current_shape[2]]
+                        elif len(current_shape) == 4:
+                            current_img_proj_state_dict[key][:current_shape[0], :current_shape[1], :current_shape[2],
+                            :current_shape[3]] = value[:current_shape[0], :current_shape[1], :current_shape[2],
+                            :current_shape[3]]
+                        else:
+                            raise ValueError(f"unknown shape: {current_shape}")
+                        print(f"Force merged in {key}: {list(current_shape)} <<< {list(new_shape)}")
                 else:
                     current_img_proj_state_dict[key] = value
         self.image_proj_model.load_state_dict(current_img_proj_state_dict)
@@ -504,19 +521,36 @@ class IPAdapter(torch.nn.Module):
                 current_shape = current_ip_adapter_state_dict[key].shape
                 new_shape = value.shape
                 if current_shape != new_shape:
-                    # merge in what we can and leave the other values as they are
-                    if len(current_shape) == 1:
-                        current_ip_adapter_state_dict[key][:new_shape[0]] = value
-                    elif len(current_shape) == 2:
-                        current_ip_adapter_state_dict[key][:new_shape[0], :new_shape[1]] = value
-                    elif len(current_shape) == 3:
-                        current_ip_adapter_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2]] = value
-                    elif len(current_shape) == 4:
-                        current_ip_adapter_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2],
-                        :new_shape[3]] = value
-                    else:
-                        raise ValueError(f"unknown shape: {current_shape}")
-                    print(f"Force merged in {key}: {list(current_shape)} <<< {list(new_shape)}")
+                    try:
+                        # merge in what we can and leave the other values as they are
+                        if len(current_shape) == 1:
+                            current_ip_adapter_state_dict[key][:new_shape[0]] = value
+                        elif len(current_shape) == 2:
+                            current_ip_adapter_state_dict[key][:new_shape[0], :new_shape[1]] = value
+                        elif len(current_shape) == 3:
+                            current_ip_adapter_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2]] = value
+                        elif len(current_shape) == 4:
+                            current_ip_adapter_state_dict[key][:new_shape[0], :new_shape[1], :new_shape[2],
+                            :new_shape[3]] = value
+                        else:
+                            raise ValueError(f"unknown shape: {current_shape}")
+                        print(f"Force merged in {key}: {list(current_shape)} <<< {list(new_shape)}")
+                    except RuntimeError as e:
+                        print(e)
+                        print(f"could not merge in {key}: {list(current_shape)} <<< {list(new_shape)}. Trying other way")
+
+                        if(len(current_shape) == 1):
+                            current_ip_adapter_state_dict[key][:current_shape[0]] = value[:current_shape[0]]
+                        elif(len(current_shape) == 2):
+                            current_ip_adapter_state_dict[key][:current_shape[0], :current_shape[1]] = value[:current_shape[0], :current_shape[1]]
+                        elif(len(current_shape) == 3):
+                            current_ip_adapter_state_dict[key][:current_shape[0], :current_shape[1], :current_shape[2]] = value[:current_shape[0], :current_shape[1], :current_shape[2]]
+                        elif(len(current_shape) == 4):
+                            current_ip_adapter_state_dict[key][:current_shape[0], :current_shape[1], :current_shape[2], :current_shape[3]] = value[:current_shape[0], :current_shape[1], :current_shape[2], :current_shape[3]]
+                        else:
+                            raise ValueError(f"unknown shape: {current_shape}")
+                        print(f"Force merged in {key}: {list(current_shape)} <<< {list(new_shape)}")
+
                 else:
                     current_ip_adapter_state_dict[key] = value
         self.adapter_modules.load_state_dict(current_ip_adapter_state_dict)

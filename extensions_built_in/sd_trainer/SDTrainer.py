@@ -1087,7 +1087,9 @@ class SDTrainer(BaseSDTrainProcess):
                         pred_kwargs=pred_kwargs,
                         batch=batch,
                         noise=noise,
-                        unconditional_embeds=unconditional_embeds
+                        unconditional_embeds=unconditional_embeds,
+                        mask_multiplier=mask_multiplier,
+                        prior_pred=prior_pred,
                     )
 
                 else:

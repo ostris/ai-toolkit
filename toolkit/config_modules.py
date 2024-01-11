@@ -392,7 +392,14 @@ class DatasetConfig:
         self.dataset_path: str = kwargs.get('dataset_path', None)
 
         self.default_caption: str = kwargs.get('default_caption', None)
-        self.random_triggers: List[str] = kwargs.get('random_triggers', [])
+        random_triggers = kwargs.get('random_triggers', [])
+        # if they are a string, load them from a file
+        if isinstance(random_triggers, str) and os.path.exists(random_triggers):
+            with open(random_triggers, 'r') as f:
+                random_triggers = f.read().splitlines()
+                # remove empty lines
+                random_triggers = [line for line in random_triggers if line.strip() != '']
+        self.random_triggers: List[str] = random_triggers
         self.caption_ext: str = kwargs.get('caption_ext', None)
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)

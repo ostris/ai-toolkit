@@ -820,14 +820,24 @@ class MaskFileItemDTOMixin:
         if self.dataset_config.invert_mask:
             img = ImageOps.invert(img)
         w, h = img.size
+        fix_size = False
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
-            raise ValueError(
-                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            print(f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            fix_size = True
         elif h > w and self.scale_to_height < self.scale_to_width:
             # throw error, they should match
-            raise ValueError(
-                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            print(f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            fix_size = True
+
+        if fix_size:
+            # swap all the sizes
+            self.scale_to_width, self.scale_to_height = self.scale_to_height, self.scale_to_width
+            self.crop_width, self.crop_height = self.crop_height, self.crop_width
+            self.crop_x, self.crop_y = self.crop_y, self.crop_x
+
+
+
 
         if self.flip_x:
             # do a flip
@@ -1052,8 +1062,14 @@ class PoiFileItemDTOMixin:
                 crop_bottom = initial_height
 
             poi_height = crop_bottom - poi_y
-            # now we have our random crop, but it may be smaller than resolution. Check and expand if needed
-            current_resolution = get_resolution(poi_width, poi_height)
+            try:
+                # now we have our random crop, but it may be smaller than resolution. Check and expand if needed
+                current_resolution = get_resolution(poi_width, poi_height)
+            except Exception as e:
+                print(f"Error: {e}")
+                print(f"Error getting resolution: {self.path}")
+                raise e
+                return False
             if current_resolution >= self.dataset_config.resolution:
                 # We can break now
                 break
