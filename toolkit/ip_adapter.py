@@ -288,6 +288,9 @@ class IPAdapter(torch.nn.Module):
                 output_dim=sd.unet.config['cross_attention_dim'],
                 ff_mult=4
             )
+        elif adapter_config.type == 'ilora':
+            # we apply the clip encodings to the LoRA
+            image_proj_model = None
         else:
             raise ValueError(f"unknown adapter type: {adapter_config.type}")
 

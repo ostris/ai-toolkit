@@ -127,7 +127,7 @@ class NetworkConfig:
                 self.conv = 4
 
 
-AdapterTypes = Literal['t2i', 'ip', 'ip+']
+AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora']
 
 
 class AdapterConfig:
