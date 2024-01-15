@@ -413,6 +413,7 @@ def get_guided_loss_polarity(
     device = sd.device_torch
     with torch.no_grad():
         dtype = get_torch_dtype(dtype)
+        noise = noise.to(device, dtype=dtype).detach()
 
         conditional_latents = batch.latents.to(device, dtype=dtype).detach()
         unconditional_latents = batch.unconditional_latents.to(device, dtype=dtype).detach()

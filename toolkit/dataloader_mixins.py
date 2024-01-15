@@ -610,9 +610,6 @@ class ClipImageFileItemDTOMixin:
         if self.dataset_config.clip_image_shuffle_augmentations:
             self.build_clip_imag_augmentation_transform()
 
-        # save the original tensor
-        self.unaugmented_tensor = transforms.ToTensor()(img) if transform is None else transform(img)
-
         open_cv_image = np.array(img)
         # Convert RGB to BGR
         open_cv_image = open_cv_image[:, :, ::-1].copy()

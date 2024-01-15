@@ -222,6 +222,7 @@ class TrainConfig:
         self.negative_prompt = kwargs.get('negative_prompt', None)
         # multiplier applied to loos on regularization images
         self.reg_weight = kwargs.get('reg_weight', 1.0)
+        self.num_train_timesteps = kwargs.get('num_train_timesteps', 1000)
 
         # dropout that happens before encoding. It functions independently per text encoder
         self.prompt_dropout_prob = kwargs.get('prompt_dropout_prob', 0.0)

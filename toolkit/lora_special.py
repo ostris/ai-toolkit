@@ -51,6 +51,7 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
             use_bias: bool = False,
             **kwargs
     ):
+        self.can_merge_in = True
         """if alpha == 0 or None, alpha is rank (no scaling)."""
         ToolkitModuleMixin.__init__(self, network=network)
         torch.nn.Module.__init__(self)
