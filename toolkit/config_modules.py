@@ -127,7 +127,7 @@ class NetworkConfig:
                 self.conv = 4
 
 
-AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora']
+AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker']
 
 
 class AdapterConfig:
@@ -161,6 +161,8 @@ class AdapterConfig:
         # clip vision
         self.trigger = kwargs.get('trigger', 'tri993r')
         self.trigger_class_name = kwargs.get('trigger_class_name', 'person')
+
+        self.class_names = kwargs.get('class_names', [])
 
 
 class EmbeddingConfig:

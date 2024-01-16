@@ -18,6 +18,7 @@ import torch.backends.cuda
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
+from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.embedding import Embedding
@@ -34,7 +35,7 @@ from toolkit.progress_bar import ToolkitProgressBar
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sampler import get_sampler
 from toolkit.saving import save_t2i_from_diffusers, load_t2i_model, save_ip_adapter_from_diffusers, \
-    load_ip_adapter_model
+    load_ip_adapter_model, load_custom_adapter_model
 
 from toolkit.scheduler import get_lr_scheduler
 from toolkit.sd_device_states_presets import get_train_sd_device_state_preset
@@ -141,7 +142,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # to hold network if there is one
         self.network: Union[Network, None] = None
-        self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, None] = None
+        self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, CustomAdapter, None] = None
         self.embedding: Union[Embedding, None] = None
 
         is_training_adapter = self.adapter_config is not None and self.adapter_config.train
@@ -412,8 +413,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         adapter_name += '_t2i'
                     elif self.adapter_config.type == 'clip':
                         adapter_name += '_clip'
-                    else:
+                    elif self.adapter_config.type == 'ip':
                         adapter_name += '_ip'
+                    else:
+                        adapter_name += '_adapter'
 
                 filename = f'{adapter_name}{step_num}.safetensors'
                 file_path = os.path.join(self.save_root, filename)
@@ -931,8 +934,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             suffix = 'clip'
         elif self.adapter_config.type == 'reference':
             suffix = 'ref'
-        else:
+        elif self.adapter_config.type.startswith('ip'):
             suffix = 'ip'
+        else:
+            suffix = 'adapter'
         adapter_name = self.name
         if self.network_config is not None:
             adapter_name = f"{adapter_name}_{suffix}"
@@ -967,13 +972,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 sd=self.sd,
                 adapter_config=self.adapter_config,
             )
-        else:
+        elif self.adapter_config.type.startswith('ip'):
             self.adapter = IPAdapter(
                 sd=self.sd,
                 adapter_config=self.adapter_config,
             )
             if self.train_config.gradient_checkpointing:
                 self.adapter.enable_gradient_checkpointing()
+        else:
+            self.adapter = CustomAdapter(
+                sd=self.sd,
+                adapter_config=self.adapter_config,
+            )
         self.adapter.to(self.device_torch, dtype=dtype)
         if latest_save_path is not None:
             # load adapter from path
@@ -985,9 +995,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     dtype=dtype
                 )
                 self.adapter.load_state_dict(loaded_state_dict)
-            else:
+            elif self.adapter_config.type.startswith('ip'):
                 # ip adapter
                 loaded_state_dict = load_ip_adapter_model(
+                    latest_save_path,
+                    self.device,
+                    dtype=dtype
+                )
+                self.adapter.load_state_dict(loaded_state_dict)
+            else:
+                # custom adapter
+                loaded_state_dict = load_custom_adapter_model(
                     latest_save_path,
                     self.device,
                     dtype=dtype
