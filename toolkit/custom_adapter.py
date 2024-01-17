@@ -245,12 +245,13 @@ class CustomAdapter(torch.nn.Module):
     def state_dict(self) -> OrderedDict:
         state_dict = OrderedDict()
         if self.adapter_type == 'photo_maker':
-            if self.train_image_encoder:
+            if self.config.train_image_encoder:
                 state_dict["id_encoder"] = self.vision_encoder.state_dict()
 
             state_dict["fuse_module"] = self.fuse_module.state_dict()
 
             # todo save LoRA
+            return state_dict
         else:
             raise NotImplementedError
 

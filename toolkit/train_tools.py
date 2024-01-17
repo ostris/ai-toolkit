@@ -788,7 +788,7 @@ def apply_snr_weight(
     offset = 0
     if noise_scheduler.timesteps[0] == 1000:
         offset = 1
-    snr = torch.stack([all_snr[t - offset] for t in timesteps])
+    snr = torch.stack([all_snr[(t - offset).int()] for t in timesteps])
     gamma_over_snr = torch.div(torch.ones_like(snr) * gamma, snr)
     if fixed:
         snr_weight = gamma_over_snr.float().to(loss.device)  # directly using gamma over snr
