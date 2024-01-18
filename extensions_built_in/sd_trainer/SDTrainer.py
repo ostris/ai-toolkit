@@ -1085,7 +1085,7 @@ class SDTrainer(BaseSDTrainProcess):
                             noise=noise,
                             batch=batch,
                             unconditional_embeds=unconditional_embeds
-                        )
+                        ).detach()
 
                 # do the custom adapter after the prior prediction
                 if self.adapter and isinstance(self.adapter, CustomAdapter) and has_clip_image:

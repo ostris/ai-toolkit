@@ -277,7 +277,7 @@ class CustomAdapter(torch.nn.Module):
                             raise ValueError(f"unknown shape: {v.shape}")
                     self.fuse_module.load_state_dict(current_state_dict, strict=strict)
 
-        if 'vision_encoder' in state_dict:
+        if 'vision_encoder' in state_dict and self.config.train_image_encoder:
             self.vision_encoder.load_state_dict(state_dict['vision_encoder'], strict=strict)
 
         if 'fuse_module' in state_dict:
@@ -411,7 +411,7 @@ class CustomAdapter(torch.nn.Module):
         if self.adapter_type == 'photo_maker' or self.adapter_type == 'clip_fusion':
             if is_unconditional:
                 # we dont condition the negative embeds for photo maker
-                return prompt_embeds
+                return prompt_embeds.clone()
             with torch.no_grad():
                 # on training the clip image is created in the dataloader
                 if not has_been_preprocessed:

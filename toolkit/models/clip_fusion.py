@@ -86,6 +86,49 @@ class ZipperBlock(nn.Module):
         return x
 
 
+class ContextualAlphaMask(nn.Module):
+    def __init__(
+        self,
+        dim: int = 768,
+    ):
+        super(ContextualAlphaMask, self).__init__()
+        self.dim = dim
+
+        half_dim = dim // 2
+        quarter_dim = dim // 4
+
+        self.fc1 = nn.Linear(self.dim, self.dim)
+        self.fc2 = nn.Linear(self.dim, half_dim)
+        self.norm1 = nn.LayerNorm(half_dim)
+        self.fc3 = nn.Linear(half_dim, half_dim)
+        self.fc4 = nn.Linear(half_dim, quarter_dim)
+        self.norm2 = nn.LayerNorm(quarter_dim)
+        self.fc5 = nn.Linear(quarter_dim, quarter_dim)
+        self.fc6 = nn.Linear(quarter_dim, 1)
+        # set fc6  weights to near zero
+        self.fc6.weight.data.normal_(mean=0.0, std=0.0001)
+        self.act_fn = nn.GELU()
+
+    def forward(self, x):
+        # x = (batch_size, 77, 768)
+        x = self.fc1(x)
+        x = self.act_fn(x)
+        x = self.fc2(x)
+        x = self.norm1(x)
+        x = self.act_fn(x)
+        x = self.fc3(x)
+        x = self.act_fn(x)
+        x = self.fc4(x)
+        x = self.norm2(x)
+        x = self.act_fn(x)
+        x = self.fc5(x)
+        x = self.act_fn(x)
+        x = self.fc6(x)
+        x = torch.sigmoid(x)
+        return x
+
+
+
 # CLIPFusionModule
 # Fuses any size of vision and text embeddings into a single embedding.
 # remaps tokens and vectors.
@@ -96,7 +139,7 @@ class CLIPFusionModule(nn.Module):
             text_tokens: int = 77,
             vision_hidden_size: int = 1024,
             vision_tokens: int = 257,
-            num_blocks: int = 2,
+            num_blocks: int = 1,
     ):
         super(CLIPFusionModule, self).__init__()
 
@@ -125,6 +168,10 @@ class CLIPFusionModule(nn.Module):
             ) for i in range(num_blocks)
         ])
 
+        self.ctx_alpha = ContextualAlphaMask(
+            dim=self.text_hidden_size,
+        )
+
     def forward(self, text_embeds, vision_embeds):
         # text_embeds = (batch_size, 77, 768)
         # vision_embeds = (batch_size, 257, 1024)
@@ -138,6 +185,8 @@ class CLIPFusionModule(nn.Module):
             x = block(x)
             x = x + res
 
-        x = text_embeds + x
+        # alpha mask
+        alpha = self.ctx_alpha(text_embeds)
+        x = alpha * x + (1 - alpha) * text_embeds
 
         return x

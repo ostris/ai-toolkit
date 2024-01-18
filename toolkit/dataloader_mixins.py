@@ -348,8 +348,14 @@ class CaptionProcessingDTOMixin:
         caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
 
         if self.dataset_config.random_triggers and len(self.dataset_config.random_triggers) > 0:
-            # add random triggers
-            caption = caption + ', ' + random.choice(self.dataset_config.random_triggers)
+            num_triggers = self.dataset_config.random_triggers_max
+            if num_triggers > 1:
+                num_triggers = random.randint(0, num_triggers)
+
+            if num_triggers > 0:
+                # add random triggers
+                for i in range(num_triggers):
+                    caption = caption + ', ' + random.choice(self.dataset_config.random_triggers)
 
         if self.dataset_config.shuffle_tokens:
             # shuffle again

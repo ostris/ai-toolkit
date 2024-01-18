@@ -403,6 +403,7 @@ class DatasetConfig:
                 # remove empty lines
                 random_triggers = [line for line in random_triggers if line.strip() != '']
         self.random_triggers: List[str] = random_triggers
+        self.random_triggers_max: int = kwargs.get('random_triggers_max', 1)
         self.caption_ext: str = kwargs.get('caption_ext', None)
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
