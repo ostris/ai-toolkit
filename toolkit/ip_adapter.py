@@ -1,3 +1,5 @@
+import random
+
 import torch
 import sys
 
@@ -38,6 +40,9 @@ from toolkit.models.size_agnostic_feature_encoder import SAFEImageProcessor, SAF
 from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
 
 from transformers import ViTFeatureExtractor, ViTForImageClassification
+
+# gradient checkpointing
+from torch.utils.checkpoint import checkpoint
 
 import torch.nn.functional as F
 
@@ -166,6 +171,8 @@ class IPAdapter(torch.nn.Module):
         self.device = self.sd_ref().unet.device
         self.preprocessor: Optional[CLIPImagePreProcessor] = None
         self.input_size = 224
+        self.clip_noise_zero = True
+        self.unconditional: torch.Tensor = None
         if self.config.image_encoder_arch == 'clip' or self.config.image_encoder_arch == 'clip+':
             try:
                 self.clip_image_processor = CLIPImageProcessor.from_pretrained(adapter_config.image_encoder_path)
@@ -235,6 +242,16 @@ class IPAdapter(torch.nn.Module):
             raise ValueError(f"unknown image encoder arch: {adapter_config.image_encoder_arch}")
 
         self.input_size = self.image_encoder.config.image_size
+
+        if self.config.quad_image:  # 4x4 image
+            # self.clip_image_processor.config
+            # We do a 3x downscale of the image, so we need to adjust the input size
+            preprocessor_input_size = self.image_encoder.config.image_size * 2
+
+            # update the preprocessor so images come in at the right size
+            self.clip_image_processor.size['shortest_edge'] = preprocessor_input_size
+            self.clip_image_processor.crop_size['height'] = preprocessor_input_size
+            self.clip_image_processor.crop_size['width'] = preprocessor_input_size
 
         if self.config.image_encoder_arch == 'clip+':
             # self.clip_image_processor.config
@@ -349,6 +366,15 @@ class IPAdapter(torch.nn.Module):
             self.image_encoder.train()
             self.image_encoder.requires_grad_(True)
 
+        # premake a unconditional
+        zerod = torch.zeros(1, 3, self.input_size, self.input_size, device=self.device, dtype=torch.float16)
+        self.unconditional = self.clip_image_processor(
+            images=zerod,
+            return_tensors="pt",
+            do_resize=True,
+            do_rescale=False,
+        ).pixel_values
+
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
         self.image_encoder.to(*args, **kwargs)
@@ -358,20 +384,23 @@ class IPAdapter(torch.nn.Module):
             self.preprocessor.to(*args, **kwargs)
         return self
 
-    def load_ip_adapter(self, state_dict: Union[OrderedDict, dict]):
-        self.image_proj_model.load_state_dict(state_dict["image_proj"])
-        ip_layers = torch.nn.ModuleList(self.pipe.unet.attn_processors.values())
-        ip_layers.load_state_dict(state_dict["ip_adapter"])
-        if self.config.train_image_encoder and 'image_encoder' in state_dict:
-            self.image_encoder.load_state_dict(state_dict["image_encoder"])
-        if self.preprocessor is not None and 'preprocessor' in state_dict:
-            self.preprocessor.load_state_dict(state_dict["preprocessor"])
+    # def load_ip_adapter(self, state_dict: Union[OrderedDict, dict]):
+    #     self.image_proj_model.load_state_dict(state_dict["image_proj"])
+    #     ip_layers = torch.nn.ModuleList(self.pipe.unet.attn_processors.values())
+    #     ip_layers.load_state_dict(state_dict["ip_adapter"])
+    #     if self.config.train_image_encoder and 'image_encoder' in state_dict:
+    #         self.image_encoder.load_state_dict(state_dict["image_encoder"])
+    #     if self.preprocessor is not None and 'preprocessor' in state_dict:
+    #         self.preprocessor.load_state_dict(state_dict["preprocessor"])
 
     # def load_state_dict(self, state_dict: Union[OrderedDict, dict]):
     #     self.load_ip_adapter(state_dict)
 
     def state_dict(self) -> OrderedDict:
         state_dict = OrderedDict()
+        if self.config.train_only_image_encoder:
+            return self.image_encoder.state_dict()
+
         state_dict["image_proj"] = self.image_proj_model.state_dict()
         state_dict["ip_adapter"] = self.adapter_modules.state_dict()
         if self.config.train_image_encoder:
@@ -402,13 +431,28 @@ class IPAdapter(torch.nn.Module):
     #     clip_image_embeds = self.image_encoder(clip_image, output_hidden_states=True).hidden_states[-2]
     #     return clip_image_embeds
 
+    def to(self, *args, **kwargs):
+        super().to(*args, **kwargs)
+        self.image_encoder.to(*args, **kwargs)
+        self.image_proj_model.to(*args, **kwargs)
+        self.adapter_modules.to(*args, **kwargs)
+        if self.preprocessor is not None:
+            self.preprocessor.to(*args, **kwargs)
+        return self
     def get_clip_image_embeds_from_tensors(
             self,
             tensors_0_1: torch.Tensor,
             drop=False,
             is_training=False,
-            has_been_preprocessed=False
+            has_been_preprocessed=False,
+            quad_count=4,
     ) -> torch.Tensor:
+        if self.sd_ref().unet.device != self.device:
+            self.to(self.sd_ref().unet.device)
+        if self.sd_ref().unet.device != self.image_encoder.device:
+            self.to(self.sd_ref().unet.device)
+        if not self.config.train:
+            is_training = False
         with torch.no_grad():
             # on training the clip image is created in the dataloader
             if not has_been_preprocessed:
@@ -417,11 +461,19 @@ class IPAdapter(torch.nn.Module):
                     tensors_0_1 = tensors_0_1.unsqueeze(0)
                 # training tensors are 0 - 1
                 tensors_0_1 = tensors_0_1.to(self.device, dtype=torch.float16)
+
                 # if images are out of this range throw error
                 if tensors_0_1.min() < -0.3 or tensors_0_1.max() > 1.3:
                     raise ValueError("image tensor values must be between 0 and 1. Got min: {}, max: {}".format(
                         tensors_0_1.min(), tensors_0_1.max()
                     ))
+                # unconditional
+                if drop:
+                    if self.clip_noise_zero:
+                        tensors_0_1 = torch.rand_like(tensors_0_1).detach()
+                    else:
+                        tensors_0_1 = torch.zeros_like(tensors_0_1).detach()
+                    # tensors_0_1 = tensors_0_1 * 0
                 clip_image = self.clip_image_processor(
                     images=tensors_0_1,
                     return_tensors="pt",
@@ -429,10 +481,42 @@ class IPAdapter(torch.nn.Module):
                     do_rescale=False,
                 ).pixel_values
             else:
-                clip_image = tensors_0_1
+                if drop:
+                    # scale the noise down
+                    if self.clip_noise_zero:
+                        tensors_0_1 = torch.rand_like(tensors_0_1).detach()
+                    else:
+                        tensors_0_1 = torch.zeros_like(tensors_0_1).detach()
+                    # tensors_0_1 = tensors_0_1 * 0
+                    mean = torch.tensor(self.clip_image_processor.image_mean).to(
+                        self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
+                    ).detach()
+                    std = torch.tensor(self.clip_image_processor.image_std).to(
+                        self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
+                    ).detach()
+                    tensors_0_1 = torch.clip((255. * tensors_0_1), 0, 255).round() / 255.0
+                    clip_image = (tensors_0_1 - mean.view([1, 3, 1, 1])) / std.view([1, 3, 1, 1])
+
+                else:
+                    clip_image = tensors_0_1
             clip_image = clip_image.to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype)).detach()
-            if drop:
-                clip_image = clip_image * 0
+
+            if self.config.quad_image:
+                # split the 4x4 grid and stack on batch
+                ci1, ci2 = clip_image.chunk(2, dim=2)
+                ci1, ci3 = ci1.chunk(2, dim=3)
+                ci2, ci4 = ci2.chunk(2, dim=3)
+                to_cat = []
+                for i, ci in enumerate([ci1, ci2, ci3, ci4]):
+                    if i < quad_count:
+                        to_cat.append(ci)
+                    else:
+                        break
+
+                clip_image = torch.cat(to_cat, dim=0).detach()
+
+            # if drop:
+            #     clip_image = clip_image * 0
         with torch.set_grad_enabled(is_training):
             if is_training:
                 self.image_encoder.train()
@@ -457,6 +541,20 @@ class IPAdapter(torch.nn.Module):
                 clip_image_embeds = clip_output.hidden_states[-2]
             else:
                 clip_image_embeds = clip_output.image_embeds
+
+            if self.config.quad_image:
+                # get the outputs of the quat
+                chunks = clip_image_embeds.chunk(quad_count, dim=0)
+                chunk_sum = torch.zeros_like(chunks[0])
+                for chunk in chunks:
+                    chunk_sum = chunk_sum + chunk
+                # get the mean of them
+
+                clip_image_embeds = chunk_sum / quad_count
+
+        if not is_training:
+            clip_image_embeds = clip_image_embeds.detach()
+
         return clip_image_embeds
 
     # use drop for prompt dropout, or negatives
@@ -467,6 +565,9 @@ class IPAdapter(torch.nn.Module):
         return embeddings
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
+        if self.config.train_only_image_encoder:
+            yield from self.image_encoder.parameters(recurse)
+            return
         for attn_processor in self.adapter_modules:
             yield from attn_processor.parameters(recurse)
         yield from self.image_proj_model.parameters(recurse)
@@ -561,17 +662,26 @@ class IPAdapter(torch.nn.Module):
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
         strict = False
-        try:
-            self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=strict)
-            self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=strict)
-        except Exception as e:
-            print(e)
-            print("could not load ip adapter weights, trying to merge in weights")
-            self.merge_in_weights(state_dict)
+        if 'ip_adapter' in state_dict:
+            try:
+                self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=strict)
+                self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=strict)
+            except Exception as e:
+                print(e)
+                print("could not load ip adapter weights, trying to merge in weights")
+                self.merge_in_weights(state_dict)
         if self.config.train_image_encoder and 'image_encoder' in state_dict:
             self.image_encoder.load_state_dict(state_dict["image_encoder"], strict=strict)
         if self.preprocessor is not None and 'preprocessor' in state_dict:
             self.preprocessor.load_state_dict(state_dict["preprocessor"], strict=strict)
 
+        if self.config.train_only_image_encoder and 'ip_adapter' not in state_dict:
+            # we are loading pure clip weights.
+            self.image_encoder.load_state_dict(state_dict, strict=strict)
+
+
     def enable_gradient_checkpointing(self):
-        self.image_encoder.gradient_checkpointing = True
+        if hasattr(self.image_encoder, "enable_gradient_checkpointing"):
+            self.image_encoder.enable_gradient_checkpointing()
+        elif hasattr(self.image_encoder, 'gradient_checkpointing'):
+            self.image_encoder.gradient_checkpointing = True

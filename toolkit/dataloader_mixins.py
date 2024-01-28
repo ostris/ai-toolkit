@@ -655,6 +655,21 @@ class ClipImageFileItemDTOMixin:
         else:
             self.clip_image_tensor = transforms.ToTensor()(img)
 
+        # random crop
+        # if self.dataset_config.clip_image_random_crop:
+        #     # crop up to 20% on all sides. Keep is square
+        #     crop_percent = random.randint(0, 20) / 100
+        #     crop_width = int(self.clip_image_tensor.shape[2] * crop_percent)
+        #     crop_height = int(self.clip_image_tensor.shape[1] * crop_percent)
+        #     crop_left = random.randint(0, crop_width)
+        #     crop_top = random.randint(0, crop_height)
+        #     crop_right = self.clip_image_tensor.shape[2] - crop_width - crop_left
+        #     crop_bottom = self.clip_image_tensor.shape[1] - crop_height - crop_top
+        #     if len(self.clip_image_tensor.shape) == 3:
+        #         self.clip_image_tensor = self.clip_image_tensor[:, crop_top:-crop_bottom, crop_left:-crop_right]
+        #     elif len(self.clip_image_tensor.shape) == 4:
+        #         self.clip_image_tensor = self.clip_image_tensor[:, :, crop_top:-crop_bottom, crop_left:-crop_right]
+
         if self.clip_image_processor is not None:
             # run it
             tensors_0_1 = self.clip_image_tensor.to(dtype=torch.float16)

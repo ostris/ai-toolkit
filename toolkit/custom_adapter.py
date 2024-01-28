@@ -7,6 +7,7 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 
 from toolkit.models.clip_fusion import CLIPFusionModule
 from toolkit.models.clip_pre_processor import CLIPImagePreProcessor
+from toolkit.models.ilora import InstantLoRAModule
 from toolkit.paths import REPOS_ROOT
 from toolkit.photomaker import PhotoMakerIDEncoder, FuseModule, PhotoMakerCLIPEncoder
 from toolkit.saving import load_ip_adapter_model
@@ -74,6 +75,7 @@ class CustomAdapter(torch.nn.Module):
         self.clip_image_processor = self.image_processor
 
         self.clip_fusion_module: CLIPFusionModule = None
+        self.ilora_module: InstantLoRAModule = None
 
         self.setup_adapter()
 
@@ -105,6 +107,15 @@ class CustomAdapter(torch.nn.Module):
                 text_tokens=77,
                 vision_hidden_size=self.vision_encoder.config.hidden_size,
                 vision_tokens=vision_tokens
+            )
+        elif self.adapter_type == 'ilora':
+            vision_tokens = ((self.vision_encoder.config.image_size // self.vision_encoder.config.patch_size) ** 2)
+            if self.config.image_encoder_arch == 'clip':
+                vision_tokens = vision_tokens + 1
+            self.ilora_module = InstantLoRAModule(
+                vision_tokens=vision_tokens,
+                vision_hidden_size=self.vision_encoder.config.hidden_size,
+                sd=self.sd_ref()
             )
         else:
             raise ValueError(f"unknown adapter type: {self.adapter_type}")
@@ -283,6 +294,9 @@ class CustomAdapter(torch.nn.Module):
         if 'fuse_module' in state_dict:
             self.fuse_module.load_state_dict(state_dict['fuse_module'], strict=strict)
 
+        if 'ilora' in state_dict:
+            self.ilora_module.load_state_dict(state_dict['ilora'], strict=strict)
+
         pass
 
     def state_dict(self) -> OrderedDict:
@@ -301,6 +315,11 @@ class CustomAdapter(torch.nn.Module):
                 state_dict["vision_encoder"] = self.vision_encoder.state_dict()
             state_dict["clip_fusion"] = self.clip_fusion_module.state_dict()
             return state_dict
+        elif self.adapter_type == 'ilora':
+            if self.config.train_image_encoder:
+                state_dict["vision_encoder"] = self.vision_encoder.state_dict()
+            state_dict["ilora"] = self.ilora_module.state_dict()
+            return state_dict
         else:
             raise NotImplementedError
 
@@ -309,7 +328,7 @@ class CustomAdapter(torch.nn.Module):
             prompt: Union[List[str], str],
             is_unconditional: bool = False,
     ):
-        if self.adapter_type == 'clip_fusion':
+        if self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora':
             return prompt
         elif self.adapter_type == 'photo_maker':
             if is_unconditional:
@@ -408,7 +427,7 @@ class CustomAdapter(torch.nn.Module):
             has_been_preprocessed=False,
             is_unconditional=False
     ) -> PromptEmbeds:
-        if self.adapter_type == 'photo_maker' or self.adapter_type == 'clip_fusion':
+        if self.adapter_type == 'photo_maker' or self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora':
             if is_unconditional:
                 # we dont condition the negative embeds for photo maker
                 return prompt_embeds.clone()
@@ -459,7 +478,7 @@ class CustomAdapter(torch.nn.Module):
                         self.token_mask
                     )
                     return prompt_embeds
-            elif self.adapter_type == 'clip_fusion':
+            elif self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora':
                 with torch.set_grad_enabled(is_training):
                     if is_training and self.config.train_image_encoder:
                         self.vision_encoder.train()
@@ -480,11 +499,17 @@ class CustomAdapter(torch.nn.Module):
                     if not is_training or not self.config.train_image_encoder:
                         img_embeds = img_embeds.detach()
 
-                    prompt_embeds.text_embeds = self.clip_fusion_module(
-                        prompt_embeds.text_embeds,
-                        img_embeds
-                    )
-                    return prompt_embeds
+                    if self.adapter_type == 'ilora':
+                        self.ilora_module.img_embeds = img_embeds
+
+                        return prompt_embeds
+                    else:
+
+                        prompt_embeds.text_embeds = self.clip_fusion_module(
+                            prompt_embeds.text_embeds,
+                            img_embeds
+                        )
+                        return prompt_embeds
 
 
         else:
@@ -497,6 +522,10 @@ class CustomAdapter(torch.nn.Module):
                 yield from self.vision_encoder.parameters(recurse)
         elif self.config.type == 'clip_fusion':
             yield from self.clip_fusion_module.parameters(recurse)
+            if self.config.train_image_encoder:
+                yield from self.vision_encoder.parameters(recurse)
+        elif self.config.type == 'ilora':
+            yield from self.ilora_module.parameters(recurse)
             if self.config.train_image_encoder:
                 yield from self.vision_encoder.parameters(recurse)
         else:

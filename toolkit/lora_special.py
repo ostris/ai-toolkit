@@ -114,9 +114,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
     # UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel"]
     # UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel", "ResnetBlock2D"]
-    UNET_TARGET_REPLACE_MODULE = ["''UNet2DConditionModel''"]
+    UNET_TARGET_REPLACE_MODULE = ["UNet2DConditionModel"]
     # UNET_TARGET_REPLACE_MODULE_CONV2D_3X3 = ["ResnetBlock2D", "Downsample2D", "Upsample2D"]
-    UNET_TARGET_REPLACE_MODULE_CONV2D_3X3 = ["'UNet2DConditionModel'"]
+    UNET_TARGET_REPLACE_MODULE_CONV2D_3X3 = ["UNet2DConditionModel"]
     TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
     LORA_PREFIX_UNET = "lora_unet"
     LORA_PREFIX_TEXT_ENCODER = "lora_te"
@@ -155,6 +155,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             is_lorm: bool = False,
             ignore_if_contains = None,
             parameter_threshold: float = 0.0,
+            attn_only: bool = False,
             target_lin_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE,
             target_conv_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE_CONV2D_3X3,
             **kwargs
@@ -243,6 +244,10 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         #     for child_name, child_module in module.named_modules():
                         is_linear = module_name == 'LoRACompatibleLinear'
                         is_conv2d = module_name == 'LoRACompatibleConv'
+                        # check if attn in name
+                        is_attention = "attentions" in name
+                        if not is_attention and attn_only:
+                            continue
 
                         if is_linear and self.lora_dim is None:
                             continue

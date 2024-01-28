@@ -23,6 +23,8 @@ def get_meta_for_safetensors(meta: OrderedDict, name=None, add_software_info=Tru
         # if not float, int, bool, or str, convert to json string
         if not isinstance(value, str):
             save_meta[key] = json.dumps(value)
+    # add the pt format
+    save_meta["format"] = "pt"
     return save_meta
 
 
