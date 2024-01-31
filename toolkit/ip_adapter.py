@@ -249,9 +249,13 @@ class IPAdapter(torch.nn.Module):
             preprocessor_input_size = self.image_encoder.config.image_size * 2
 
             # update the preprocessor so images come in at the right size
-            self.clip_image_processor.size['shortest_edge'] = preprocessor_input_size
-            self.clip_image_processor.crop_size['height'] = preprocessor_input_size
-            self.clip_image_processor.crop_size['width'] = preprocessor_input_size
+            if 'height' in self.clip_image_processor.size:
+                self.clip_image_processor.size['height'] = preprocessor_input_size
+                self.clip_image_processor.size['width'] = preprocessor_input_size
+            elif hasattr(self.clip_image_processor, 'crop_size'):
+                self.clip_image_processor.size['shortest_edge'] = preprocessor_input_size
+                self.clip_image_processor.crop_size['height'] = preprocessor_input_size
+                self.clip_image_processor.crop_size['width'] = preprocessor_input_size
 
         if self.config.image_encoder_arch == 'clip+':
             # self.clip_image_processor.config
@@ -439,6 +443,32 @@ class IPAdapter(torch.nn.Module):
         if self.preprocessor is not None:
             self.preprocessor.to(*args, **kwargs)
         return self
+
+    def parse_clip_image_embeds_from_cache(
+            self,
+            image_embeds_list: List[dict],  # has ['last_hidden_state', 'image_embeds', 'penultimate_hidden_states']
+            quad_count=4,
+    ):
+        with torch.no_grad():
+            device = self.sd_ref().unet.device
+            if self.config.type.startswith('ip+'):
+                clip_image_embeds = torch.cat([x['penultimate_hidden_states'] for x in image_embeds_list], dim=0)
+            else:
+                clip_image_embeds = torch.cat([x['image_embeds'] for x in image_embeds_list], dim=0)
+
+            if self.config.quad_image:
+                # get the outputs of the quat
+                chunks = clip_image_embeds.chunk(quad_count, dim=0)
+                chunk_sum = torch.zeros_like(chunks[0])
+                for chunk in chunks:
+                    chunk_sum = chunk_sum + chunk
+                # get the mean of them
+
+                clip_image_embeds = chunk_sum / quad_count
+
+            clip_image_embeds = clip_image_embeds.to(device, dtype=get_torch_dtype(self.sd_ref().dtype)).detach()
+        return clip_image_embeds
+
     def get_clip_image_embeds_from_tensors(
             self,
             tensors_0_1: torch.Tensor,

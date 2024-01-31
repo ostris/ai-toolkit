@@ -285,6 +285,13 @@ class TrainConfig:
         self.cfg_scale = kwargs.get('cfg_scale', 1.0)
         self.max_cfg_scale = kwargs.get('max_cfg_scale', self.cfg_scale)
 
+        # applies the inverse of the prediction mean and std to the target to correct
+        # for norm drift
+        self.correct_pred_norm = kwargs.get('correct_pred_norm', False)
+        self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
+
+        self.loss_type = kwargs.get('loss_type', 'mse')
+
 
 class ModelConfig:
     def __init__(self, **kwargs):
@@ -444,6 +451,7 @@ class DatasetConfig:
         self.cache_latents: bool = kwargs.get('cache_latents', False)
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
+        self.cache_clip_vision_to_disk: bool = kwargs.get('cache_clip_vision_to_disk', False)
 
         self.standardize_images: bool = kwargs.get('standardize_images', False)
 

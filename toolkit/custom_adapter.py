@@ -227,6 +227,16 @@ class CustomAdapter(torch.nn.Module):
 
         self.input_size = self.vision_encoder.config.image_size
 
+        if self.config.quad_image:  # 4x4 image
+            # self.clip_image_processor.config
+            # We do a 3x downscale of the image, so we need to adjust the input size
+            preprocessor_input_size = self.vision_encoder.config.image_size * 2
+
+            # update the preprocessor so images come in at the right size
+            self.image_processor.size['shortest_edge'] = preprocessor_input_size
+            self.image_processor.crop_size['height'] = preprocessor_input_size
+            self.image_processor.crop_size['width'] = preprocessor_input_size
+
         if self.config.image_encoder_arch == 'clip+':
             # self.image_processor.config
             # We do a 3x downscale of the image, so we need to adjust the input size
@@ -425,7 +435,8 @@ class CustomAdapter(torch.nn.Module):
             prompt_embeds: PromptEmbeds,
             is_training=False,
             has_been_preprocessed=False,
-            is_unconditional=False
+            is_unconditional=False,
+            quad_count=4,
     ) -> PromptEmbeds:
         if self.adapter_type == 'photo_maker' or self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora':
             if is_unconditional:
@@ -453,6 +464,20 @@ class CustomAdapter(torch.nn.Module):
                 else:
                     clip_image = tensors_0_1
                 clip_image = clip_image.to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype)).detach()
+
+            if self.config.quad_image:
+                # split the 4x4 grid and stack on batch
+                ci1, ci2 = clip_image.chunk(2, dim=2)
+                ci1, ci3 = ci1.chunk(2, dim=3)
+                ci2, ci4 = ci2.chunk(2, dim=3)
+                to_cat = []
+                for i, ci in enumerate([ci1, ci2, ci3, ci4]):
+                    if i < quad_count:
+                        to_cat.append(ci)
+                    else:
+                        break
+
+                clip_image = torch.cat(to_cat, dim=0).detach()
 
             if self.adapter_type == 'photo_maker':
                 # Embeddings need to be  (b, num_inputs, c, h, w) for now, just put 1 input image
@@ -495,6 +520,17 @@ class CustomAdapter(torch.nn.Module):
                             )
 
                     img_embeds = id_embeds['last_hidden_state']
+
+                    if self.config.quad_image:
+                        # get the outputs of the quat
+                        chunks = img_embeds.chunk(quad_count, dim=0)
+                        chunk_sum = torch.zeros_like(chunks[0])
+                        for chunk in chunks:
+                            chunk_sum = chunk_sum + chunk
+                        # get the mean of them
+
+                        img_embeds = chunk_sum / quad_count
+
 
                     if not is_training or not self.config.train_image_encoder:
                         img_embeds = img_embeds.detach()

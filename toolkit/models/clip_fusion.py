@@ -172,6 +172,8 @@ class CLIPFusionModule(nn.Module):
             dim=self.text_hidden_size,
         )
 
+        self.alpha = nn.Parameter(torch.zeros([text_tokens]) + 0.01)
+
     def forward(self, text_embeds, vision_embeds):
         # text_embeds = (batch_size, 77, 768)
         # vision_embeds = (batch_size, 257, 1024)
@@ -186,7 +188,12 @@ class CLIPFusionModule(nn.Module):
             x = x + res
 
         # alpha mask
-        alpha = self.ctx_alpha(text_embeds)
-        x = alpha * x + (1 - alpha) * text_embeds
+        ctx_alpha = self.ctx_alpha(text_embeds)
+        # reshape alpha to (1, 77, 1)
+        alpha = self.alpha.unsqueeze(0).unsqueeze(-1)
+
+        x = ctx_alpha * x * alpha
+
+        x = x + text_embeds
 
         return x
