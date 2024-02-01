@@ -306,6 +306,7 @@ class ModelConfig:
         self.refiner_name_or_path = kwargs.get('refiner_name_or_path', None)
         self._original_refiner_name_or_path = self.refiner_name_or_path
         self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)
+        self.lora_path = kwargs.get('lora_path', None)
 
         # only for SDXL models for now
         self.use_text_encoder_1: bool = kwargs.get('use_text_encoder_1', True)

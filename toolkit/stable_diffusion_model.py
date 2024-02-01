@@ -281,6 +281,12 @@ class StableDiffusion:
         self.unet.requires_grad_(False)
         self.unet.eval()
 
+        # load any loras we have
+        if self.model_config.lora_path is not None:
+            pipe.load_lora_weights(self.model_config.lora_path, adapter_name="lora1")
+            pipe.fuse_lora()
+            self.unet.fuse_lora()
+
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
         self.pipeline = pipe
