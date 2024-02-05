@@ -130,6 +130,7 @@ class NetworkConfig:
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker']
 
+CLIPLayer = Literal['penultimate_hidden_states', 'image_embeds', 'last_hidden_state']
 
 class AdapterConfig:
     def __init__(self, **kwargs):
@@ -168,6 +169,13 @@ class AdapterConfig:
         self.trigger_class_name = kwargs.get('trigger_class_name', 'person')
 
         self.class_names = kwargs.get('class_names', [])
+
+        self.clip_layer: CLIPLayer = kwargs.get('clip_layer', None)
+        if self.clip_layer is None:
+            if self.type.startswith('ip+'):
+                self.clip_layer = 'penultimate_hidden_states'
+            else:
+                self.clip_layer = 'last_hidden_state'
 
 
 class EmbeddingConfig:

@@ -528,6 +528,14 @@ class StableDiffusion:
                         )
                         gen_config.negative_prompt_2 = gen_config.negative_prompt
 
+                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
+                        self.adapter.trigger_pre_te(
+                            tensors_0_1=validation_image,
+                            is_training=False,
+                            has_been_preprocessed=False,
+                            quad_count=4
+                        )
+
                     # encode the prompt ourselves so we can do fun stuff with embeddings
                     conditional_embeds = self.encode_prompt(gen_config.prompt, gen_config.prompt_2, force_all=True)
 

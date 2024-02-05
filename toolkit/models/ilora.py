@@ -53,7 +53,6 @@ class InstantLoRAMidModule(torch.nn.Module):
             # reshape if needed
             if len(x.shape) == 3:
                 scaler = scaler.unsqueeze(1)
-            x = x * scaler
         except Exception as e:
             print(e)
             print(x.shape)

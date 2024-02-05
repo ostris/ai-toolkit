@@ -225,52 +225,51 @@ class SDTrainer(BaseSDTrainProcess):
             noise_pred_norm = torch.linalg.vector_norm(noise_pred, ord=2, dim=(1, 2, 3), keepdim=True)
             noise_pred = noise_pred * (noise_norm / noise_pred_norm)
 
-        if self.train_config.correct_pred_norm and not is_reg:
-            with torch.no_grad():
-                # this only works if doing a prior pred
-                if prior_pred is not None:
-                    prior_mean = prior_pred.mean([2,3], keepdim=True)
-                    prior_std = prior_pred.std([2,3], keepdim=True)
-                    noise_mean = noise_pred.mean([2,3], keepdim=True)
-                    noise_std = noise_pred.std([2,3], keepdim=True)
+        target = None
+        if self.train_config.correct_pred_norm or (self.train_config.inverted_mask_prior and prior_pred is not None and has_mask):
+            if self.train_config.correct_pred_norm and not is_reg:
+                with torch.no_grad():
+                    # this only works if doing a prior pred
+                    if prior_pred is not None:
+                        prior_mean = prior_pred.mean([2,3], keepdim=True)
+                        prior_std = prior_pred.std([2,3], keepdim=True)
+                        noise_mean = noise_pred.mean([2,3], keepdim=True)
+                        noise_std = noise_pred.std([2,3], keepdim=True)
 
-                    mean_adjust = prior_mean - noise_mean
-                    std_adjust = prior_std - noise_std
+                        mean_adjust = prior_mean - noise_mean
+                        std_adjust = prior_std - noise_std
 
-                    mean_adjust = mean_adjust * self.train_config.correct_pred_norm_multiplier
-                    std_adjust = std_adjust * self.train_config.correct_pred_norm_multiplier
+                        mean_adjust = mean_adjust * self.train_config.correct_pred_norm_multiplier
+                        std_adjust = std_adjust * self.train_config.correct_pred_norm_multiplier
 
-                    target_mean = noise_mean + mean_adjust
-                    target_std = noise_std + std_adjust
+                        target_mean = noise_mean + mean_adjust
+                        target_std = noise_std + std_adjust
 
-                    eps = 1e-5
+                        eps = 1e-5
+                        # match the noise to the prior
+                        noise = (noise - noise_mean) / (noise_std + eps)
+                        noise = noise * (target_std + eps) + target_mean
+                        noise = noise.detach()
 
-                    # adjust the noise target to match the current knowledge of the model
-                    # noise_mean, noise_std = get_mean_std(noise)
-                    # match the noise to the prior
-                    noise = (noise - noise_mean) / (noise_std + eps)
-                    noise = noise * (target_std + eps) + target_mean
-                    noise = noise.detach()
+            if self.train_config.inverted_mask_prior and prior_pred is not None and has_mask:
+                assert not self.train_config.train_turbo
+                # we need to make the noise prediction be a masked blending of noise and prior_pred
+                stretched_mask_multiplier = value_map(
+                    mask_multiplier,
+                    batch.file_items[0].dataset_config.mask_min_value,
+                    1.0,
+                    0.0,
+                    1.0
+                )
 
-        if self.train_config.inverted_mask_prior and prior_pred is not None and has_mask:
-            assert not self.train_config.train_turbo
-            # we need to make the noise prediction be a masked blending of noise and prior_pred
-            stretched_mask_multiplier = value_map(
-                mask_multiplier,
-                batch.file_items[0].dataset_config.mask_min_value,
-                1.0,
-                0.0,
-                1.0
-            )
+                prior_mask_multiplier = 1.0 - stretched_mask_multiplier
 
-            prior_mask_multiplier = 1.0 - stretched_mask_multiplier
-
-            # target_mask_multiplier = mask_multiplier
-            # mask_multiplier = 1.0
-            target = noise
-            # target = (noise * mask_multiplier) + (prior_pred * prior_mask_multiplier)
-            # set masked multiplier to 1.0 so we dont double apply it
-            # mask_multiplier = 1.0
+                # target_mask_multiplier = mask_multiplier
+                # mask_multiplier = 1.0
+                target = noise
+                # target = (noise * mask_multiplier) + (prior_pred * prior_mask_multiplier)
+                # set masked multiplier to 1.0 so we dont double apply it
+                # mask_multiplier = 1.0
         elif prior_pred is not None:
             assert not self.train_config.train_turbo
             # matching adapter prediction
@@ -279,6 +278,9 @@ class SDTrainer(BaseSDTrainProcess):
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
         else:
+            target = noise
+
+        if target is None:
             target = noise
 
         pred = noise_pred
@@ -360,6 +362,13 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
 
         loss = loss.mean()
+
+        # check for additional losses
+        if self.adapter is not None and hasattr(self.adapter, "additional_loss") and self.adapter.additional_loss is not None:
+
+            loss = loss + self.adapter.additional_loss.mean()
+            self.adapter.additional_loss = None
+
         return loss
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
@@ -677,6 +686,7 @@ class SDTrainer(BaseSDTrainProcess):
             batch: 'DataLoaderBatchDTO',
             noise: torch.Tensor,
             unconditional_embeds: Optional[PromptEmbeds] = None,
+            conditioned_prompts=None,
             **kwargs
     ):
         # todo for embeddings, we need to run without trigger words
@@ -980,6 +990,17 @@ class SDTrainer(BaseSDTrainProcess):
                         # it will be injected into the tokenizer when called
                         self.adapter(conditional_clip_embeds)
 
+                # do the custom adapter after the prior prediction
+                if self.adapter and isinstance(self.adapter, CustomAdapter) and has_clip_image:
+                    quad_count = random.randint(1, 4)
+                    self.adapter.train()
+                    self.adapter.trigger_pre_te(
+                        tensors_0_1=clip_images,
+                        is_training=True,
+                        has_been_preprocessed=True,
+                        quad_count=quad_count
+                    )
+
                 with self.timer('encode_prompt'):
                     unconditional_embeds = None
                     if grad_on_text_encoder:
@@ -1140,6 +1161,7 @@ class SDTrainer(BaseSDTrainProcess):
                             unconditional_clip_embeds = unconditional_clip_embeds.detach()
 
                     with self.timer('encode_adapter'):
+                        self.adapter.train()
                         conditional_embeds = self.adapter(conditional_embeds.detach(), conditional_clip_embeds)
                         if self.train_config.do_cfg:
                             unconditional_embeds = self.adapter(unconditional_embeds.detach(),
@@ -1170,8 +1192,10 @@ class SDTrainer(BaseSDTrainProcess):
                 if self.train_config.inverted_mask_prior and batch.mask_tensor is not None:
                     do_inverted_masked_prior = True
 
+                do_correct_pred_norm_prior = self.train_config.correct_pred_norm
+
                 if ((
-                        has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction or do_reg_prior or do_inverted_masked_prior):
+                        has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction or do_reg_prior or do_inverted_masked_prior or self.train_config.correct_pred_norm):
                     with self.timer('prior predict'):
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,
@@ -1182,8 +1206,12 @@ class SDTrainer(BaseSDTrainProcess):
                             pred_kwargs=pred_kwargs,
                             noise=noise,
                             batch=batch,
-                            unconditional_embeds=unconditional_embeds
-                        ).detach()
+                            unconditional_embeds=unconditional_embeds,
+                            conditioned_prompts=conditioned_prompts
+                        )
+                        if prior_pred is not None:
+                            prior_pred = prior_pred.detach()
+
 
                 # do the custom adapter after the prior prediction
                 if self.adapter and isinstance(self.adapter, CustomAdapter) and has_clip_image:

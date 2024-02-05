@@ -354,6 +354,7 @@ class ToolkitNetworkMixin:
         self.is_ssd = is_ssd
         self.is_vega = is_vega
         self.is_v2 = is_v2
+        self.is_v1 = not is_v2 and not is_sdxl and not is_ssd and not is_vega
         self.is_merged_in = False
         self.is_lorm = is_lorm
         self.network_config: NetworkConfig = network_config
@@ -361,7 +362,7 @@ class ToolkitNetworkMixin:
         self.lorm_train_mode: Literal['local', None] = None
         self.can_merge_in = not is_lorm
 
-    def get_keymap(self: Network):
+    def get_keymap(self: Network, force_weight_mapping=False):
         use_weight_mapping = False
 
         if self.is_ssd:
@@ -377,6 +378,9 @@ class ToolkitNetworkMixin:
         else:
             keymap_tail = 'sd1'
             # todo double check this
+            # use_weight_mapping = True
+
+        if force_weight_mapping:
             use_weight_mapping = True
 
         # load keymap
@@ -440,9 +444,9 @@ class ToolkitNetworkMixin:
         else:
             torch.save(save_dict, file)
 
-    def load_weights(self: Network, file):
+    def load_weights(self: Network, file, force_weight_mapping=False):
         # allows us to save and load to and from ldm weights
-        keymap = self.get_keymap()
+        keymap = self.get_keymap(force_weight_mapping)
         keymap = {} if keymap is None else keymap
 
         if os.path.splitext(file)[1] == ".safetensors":
@@ -467,6 +471,11 @@ class ToolkitNetworkMixin:
                 to_delete.append(key)
         for key in to_delete:
             del load_sd[key]
+
+        print(f"Missing keys: {to_delete}")
+        if len(to_delete) > 0 and self.is_v1:
+            print(" Attempting to load with forced keymap")
+            return self.load_weights(file, force_weight_mapping=True)
 
         info = self.load_state_dict(load_sd, False)
         if len(extra_dict.keys()) == 0:
