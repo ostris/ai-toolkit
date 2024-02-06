@@ -500,6 +500,9 @@ class IPAdapter(torch.nn.Module):
                 if drop:
                     if self.clip_noise_zero:
                         tensors_0_1 = torch.rand_like(tensors_0_1).detach()
+                        noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
+                                                    dtype=get_torch_dtype(self.sd_ref().dtype))
+                        tensors_0_1 = tensors_0_1 * noise_scale
                     else:
                         tensors_0_1 = torch.zeros_like(tensors_0_1).detach()
                     # tensors_0_1 = tensors_0_1 * 0
@@ -514,6 +517,9 @@ class IPAdapter(torch.nn.Module):
                     # scale the noise down
                     if self.clip_noise_zero:
                         tensors_0_1 = torch.rand_like(tensors_0_1).detach()
+                        noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
+                                                 dtype=get_torch_dtype(self.sd_ref().dtype))
+                        tensors_0_1 = tensors_0_1 * noise_scale
                     else:
                         tensors_0_1 = torch.zeros_like(tensors_0_1).detach()
                     # tensors_0_1 = tensors_0_1 * 0
