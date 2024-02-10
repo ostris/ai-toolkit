@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from typing import TYPE_CHECKING
 from toolkit.models.clip_fusion import ZipperBlock
+from toolkit.models.zipper_resampler import ZipperModule, ZipperResampler
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRAModule
@@ -26,7 +27,7 @@ class InstantLoRAMidModule(torch.nn.Module):
         self.lora_module_ref = weakref.ref(lora_module)
         self.instant_lora_module_ref = weakref.ref(instant_lora_module)
 
-        self.zip = ZipperBlock(
+        self.zip = ZipperModule(
             in_size=self.vision_hidden_size,
             in_tokens=self.vision_tokens,
             out_size=self.dim,
@@ -71,7 +72,7 @@ class InstantLoRAModule(torch.nn.Module):
             sd: 'StableDiffusion'
     ):
         super(InstantLoRAModule, self).__init__()
-        self.linear = torch.nn.Linear(2, 1)
+        # self.linear = torch.nn.Linear(2, 1)
         self.sd_ref = weakref.ref(sd)
         self.dim = sd.network.lora_dim
         self.vision_hidden_size = vision_hidden_size
@@ -82,6 +83,15 @@ class InstantLoRAModule(torch.nn.Module):
 
         # disable merging in. It is slower on inference
         self.sd_ref().network.can_merge_in = False
+
+        self.resampler = ZipperResampler(
+            in_size=self.vision_hidden_size,
+            in_tokens=self.vision_tokens,
+            out_size=self.vision_hidden_size,
+            out_tokens=self.vision_tokens,
+            hidden_size=self.vision_hidden_size,
+            hidden_tokens=self.vision_tokens
+        )
 
         self.ilora_modules = torch.nn.ModuleList()
 
@@ -99,5 +109,7 @@ class InstantLoRAModule(torch.nn.Module):
         # add a new mid module that will take the original forward and add a vector to it
         # this will be used to add the vector to the original forward
 
-    def forward(self, x):
-        return self.linear(x)
+    def forward(self, img_embeds):
+        img_embeds = self.resampler(img_embeds)
+        self.img_embeds = img_embeds
+

@@ -998,7 +998,7 @@ class SDTrainer(BaseSDTrainProcess):
                         tensors_0_1=clip_images,
                         is_training=True,
                         has_been_preprocessed=True,
-                        quad_count=quad_count
+                        quad_count=quad_count,
                     )
 
                 with self.timer('encode_prompt'):

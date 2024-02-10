@@ -473,7 +473,7 @@ class ToolkitNetworkMixin:
             del load_sd[key]
 
         print(f"Missing keys: {to_delete}")
-        if len(to_delete) > 0 and self.is_v1:
+        if len(to_delete) > 0 and self.is_v1 and not force_weight_mapping and not (len(to_delete) == 1 and 'emb_params' in to_delete):
             print(" Attempting to load with forced keymap")
             return self.load_weights(file, force_weight_mapping=True)
 
