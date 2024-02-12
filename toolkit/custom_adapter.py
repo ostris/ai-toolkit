@@ -3,11 +3,14 @@ import sys
 
 from PIL import Image
 from torch.nn import Parameter
-from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
+from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, T5EncoderModel, CLIPTextModel, \
+    CLIPTokenizer, T5Tokenizer
 
 from toolkit.models.clip_fusion import CLIPFusionModule
 from toolkit.models.clip_pre_processor import CLIPImagePreProcessor
 from toolkit.models.ilora import InstantLoRAModule
+from toolkit.models.te_adapter import TEAdapter
+from toolkit.models.vd_adapter import VisionDirectAdapter
 from toolkit.paths import REPOS_ROOT
 from toolkit.photomaker import PhotoMakerIDEncoder, FuseModule, PhotoMakerCLIPEncoder
 from toolkit.saving import load_ip_adapter_model
@@ -77,6 +80,13 @@ class CustomAdapter(torch.nn.Module):
         self.clip_fusion_module: CLIPFusionModule = None
         self.ilora_module: InstantLoRAModule = None
 
+        self.te: Union[T5EncoderModel, CLIPTextModel] = None
+        self.tokenizer: CLIPTokenizer = None
+        self.te_adapter: TEAdapter = None
+        self.vd_adapter: VisionDirectAdapter = None
+        self.conditional_embeds: Optional[torch.Tensor] = None
+        self.unconditional_embeds: Optional[torch.Tensor] = None
+
         self.setup_adapter()
 
         if self.adapter_type == 'photo_maker':
@@ -117,6 +127,23 @@ class CustomAdapter(torch.nn.Module):
                 vision_hidden_size=self.vision_encoder.config.hidden_size,
                 sd=self.sd_ref()
             )
+        elif self.adapter_type == 'text_encoder':
+            if self.config.text_encoder_arch == 't5':
+                self.te = T5EncoderModel.from_pretrained(self.config.text_encoder_path).to(self.sd_ref().unet.device,
+                                                                                           dtype=get_torch_dtype(
+                                                                                               self.sd_ref().dtype))
+                self.tokenizer = T5Tokenizer.from_pretrained(self.config.text_encoder_path)
+            elif self.config.text_encoder_arch == 'clip':
+                self.te = CLIPTextModel.from_pretrained(self.config.text_encoder_path).to(self.sd_ref().unet.device,
+                                                                                          dtype=get_torch_dtype(
+                                                                                              self.sd_ref().dtype))
+                self.tokenizer = CLIPTokenizer.from_pretrained(self.config.text_encoder_path)
+            else:
+                raise ValueError(f"unknown text encoder arch: {self.config.text_encoder_arch}")
+
+            self.te_adapter = TEAdapter(self, self.sd_ref(), self.te, self.tokenizer)
+        elif self.adapter_type == 'vision_direct':
+            self.vd_adapter = VisionDirectAdapter(self, self.sd_ref(), self.vision_encoder)
         else:
             raise ValueError(f"unknown adapter type: {self.adapter_type}")
 
@@ -148,6 +175,8 @@ class CustomAdapter(torch.nn.Module):
     def setup_clip(self):
         adapter_config = self.config
         sd = self.sd_ref()
+        if self.config.type == "text_encoder":
+            return
         if self.config.type == 'photo_maker':
             try:
                 self.image_processor = CLIPImageProcessor.from_pretrained(self.config.image_encoder_path)
@@ -298,6 +327,12 @@ class CustomAdapter(torch.nn.Module):
                             raise ValueError(f"unknown shape: {v.shape}")
                     self.fuse_module.load_state_dict(current_state_dict, strict=strict)
 
+        if 'te_adapter' in state_dict:
+            self.te_adapter.load_state_dict(state_dict['te_adapter'], strict=strict)
+
+        if 'vd_adapter' in state_dict:
+            self.vd_adapter.load_state_dict(state_dict['vd_adapter'], strict=strict)
+
         if 'vision_encoder' in state_dict and self.config.train_image_encoder:
             self.vision_encoder.load_state_dict(state_dict['vision_encoder'], strict=strict)
 
@@ -325,6 +360,12 @@ class CustomAdapter(torch.nn.Module):
                 state_dict["vision_encoder"] = self.vision_encoder.state_dict()
             state_dict["clip_fusion"] = self.clip_fusion_module.state_dict()
             return state_dict
+        elif self.adapter_type == 'text_encoder':
+            state_dict["te_adapter"] = self.te_adapter.state_dict()
+            return state_dict
+        elif self.adapter_type == 'vision_direct':
+            state_dict["vd_adapter"] = self.vd_adapter.state_dict()
+            return state_dict
         elif self.adapter_type == 'ilora':
             if self.config.train_image_encoder:
                 state_dict["vision_encoder"] = self.vision_encoder.state_dict()
@@ -338,7 +379,16 @@ class CustomAdapter(torch.nn.Module):
             prompt: Union[List[str], str],
             is_unconditional: bool = False,
     ):
-        if self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora':
+        if self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct':
+            return prompt
+        elif self.adapter_type == 'text_encoder':
+            # todo allow for training
+            with torch.no_grad():
+                # encode and save the embeds
+                if is_unconditional:
+                    self.unconditional_embeds = self.te_adapter.encode_text(prompt).detach()
+                else:
+                    self.conditional_embeds = self.te_adapter.encode_text(prompt).detach()
             return prompt
         elif self.adapter_type == 'photo_maker':
             if is_unconditional:
@@ -428,6 +478,9 @@ class CustomAdapter(torch.nn.Module):
                         prompt = prompt_list
 
                     return prompt
+
+        else:
+            return prompt
 
     def condition_encoded_embeds(
             self,
@@ -534,10 +587,8 @@ class CustomAdapter(torch.nn.Module):
 
                         img_embeds = chunk_sum / quad_count
 
-
                     if not is_training or not self.config.train_image_encoder:
                         img_embeds = img_embeds.detach()
-
 
                     prompt_embeds.text_embeds = self.clip_fusion_module(
                         prompt_embeds.text_embeds,
@@ -547,7 +598,24 @@ class CustomAdapter(torch.nn.Module):
 
 
         else:
-            raise NotImplementedError
+            return prompt_embeds
+
+    def get_empty_clip_image(self, batch_size: int) -> torch.Tensor:
+        with torch.no_grad():
+            tensors_0_1 = torch.rand([batch_size, 3, self.input_size, self.input_size], device=self.device)
+            noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
+                                     dtype=get_torch_dtype(self.sd_ref().dtype))
+            tensors_0_1 = tensors_0_1 * noise_scale
+            # tensors_0_1 = tensors_0_1 * 0
+            mean = torch.tensor(self.clip_image_processor.image_mean).to(
+                self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
+            ).detach()
+            std = torch.tensor(self.clip_image_processor.image_std).to(
+                self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
+            ).detach()
+            tensors_0_1 = torch.clip((255. * tensors_0_1), 0, 255).round() / 255.0
+            clip_image = (tensors_0_1 - mean.view([1, 3, 1, 1])) / std.view([1, 3, 1, 1])
+        return clip_image.detach()
 
     def trigger_pre_te(
             self,
@@ -556,22 +624,11 @@ class CustomAdapter(torch.nn.Module):
             has_been_preprocessed=False,
             quad_count=4,
     ) -> PromptEmbeds:
-        if self.adapter_type == 'ilora':
+        if self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct':
             if tensors_0_1 is None:
-                # scale the noise down
-                tensors_0_1 = torch.rand([1, 3, self.input_size, self.input_size], device=self.device)
-                noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
-                                         dtype=get_torch_dtype(self.sd_ref().dtype))
-                tensors_0_1 = tensors_0_1 * noise_scale
-                # tensors_0_1 = tensors_0_1 * 0
-                mean = torch.tensor(self.clip_image_processor.image_mean).to(
-                    self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
-                ).detach()
-                std = torch.tensor(self.clip_image_processor.image_std).to(
-                    self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
-                ).detach()
-                tensors_0_1 = torch.clip((255. * tensors_0_1), 0, 255).round() / 255.0
-                clip_image = (tensors_0_1 - mean.view([1, 3, 1, 1])) / std.view([1, 3, 1, 1])
+                tensors_0_1 = self.get_empty_clip_image(1)
+                has_been_preprocessed = True
+
             with torch.no_grad():
                 # on training the clip image is created in the dataloader
                 if not has_been_preprocessed:
@@ -593,6 +650,15 @@ class CustomAdapter(torch.nn.Module):
                     ).pixel_values
                 else:
                     clip_image = tensors_0_1
+
+                batch_size = clip_image.shape[0]
+                if self.adapter_type == 'vision_direct':
+                    # add an unconditional so we can save it
+                    unconditional = self.get_empty_clip_image(batch_size).to(
+                        clip_image.device, dtype=clip_image.dtype
+                    )
+                    clip_image = torch.cat([unconditional, clip_image], dim=0)
+
                 clip_image = clip_image.to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype)).detach()
 
             if self.config.quad_image:
@@ -637,11 +703,36 @@ class CustomAdapter(torch.nn.Module):
 
                         img_embeds = chunk_sum / quad_count
 
-
                     if not is_training or not self.config.train_image_encoder:
                         img_embeds = img_embeds.detach()
 
                     self.ilora_module(img_embeds)
+            if self.adapter_type == 'vision_direct':
+                with torch.set_grad_enabled(is_training):
+                    if is_training and self.config.train_image_encoder:
+                        self.vision_encoder.train()
+                        clip_image = clip_image.requires_grad_(True)
+                    else:
+                        with torch.no_grad():
+                            self.vision_encoder.eval()
+                    clip_output = self.vision_encoder(
+                        clip_image,
+                        output_hidden_states=True,
+                    )
+                    if self.config.clip_layer == 'penultimate_hidden_states':
+                        # they skip last layer for ip+
+                        # https://github.com/tencent-ailab/IP-Adapter/blob/f4b6742db35ea6d81c7b829a55b0a312c7f5a677/tutorial_train_plus.py#L403C26-L403C26
+                        clip_image_embeds = clip_output.hidden_states[-2]
+                    elif self.config.clip_layer == 'last_hidden_state':
+                        clip_image_embeds = clip_output.hidden_states[-1]
+                    else:
+                        clip_image_embeds = clip_output.image_embeds
+
+                    if not is_training or not self.config.train_image_encoder:
+                        clip_image_embeds = clip_image_embeds.detach()
+
+                    # save them to the conditional and unconditional
+                    self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         if self.config.type == 'photo_maker':
@@ -656,5 +747,11 @@ class CustomAdapter(torch.nn.Module):
             yield from self.ilora_module.parameters(recurse)
             if self.config.train_image_encoder:
                 yield from self.vision_encoder.parameters(recurse)
+        elif self.config.type == 'text_encoder':
+            for attn_processor in self.te_adapter.adapter_modules:
+                yield from attn_processor.parameters(recurse)
+        elif self.config.type == 'vision_direct':
+            for attn_processor in self.vd_adapter.adapter_modules:
+                yield from attn_processor.parameters(recurse)
         else:
             raise NotImplementedError

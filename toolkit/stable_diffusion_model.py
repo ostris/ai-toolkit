@@ -478,6 +478,7 @@ class StableDiffusion:
                     gen_config = image_configs[i]
 
                     extra = {}
+                    validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
                         validation_image = Image.open(gen_config.adapter_image_path).convert("RGB")
                         if isinstance(self.adapter, T2IAdapter):
@@ -528,7 +529,7 @@ class StableDiffusion:
                         )
                         gen_config.negative_prompt_2 = gen_config.negative_prompt
 
-                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
+                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter) and validation_image is not None:
                         self.adapter.trigger_pre_te(
                             tensors_0_1=validation_image,
                             is_training=False,
@@ -559,7 +560,7 @@ class StableDiffusion:
                         conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds)
                         unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds)
 
-                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
+                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter) and validation_image is not None:
                         conditional_embeds = self.adapter.condition_encoded_embeds(
                             tensors_0_1=validation_image,
                             prompt_embeds=conditional_embeds,

@@ -698,7 +698,8 @@ class SDTrainer(BaseSDTrainProcess):
         can_disable_adapter = False
         was_adapter_active = False
         if self.adapter is not None and (isinstance(self.adapter, IPAdapter) or
-                                         isinstance(self.adapter, ReferenceAdapter)
+                                         isinstance(self.adapter, ReferenceAdapter) or
+                                         (isinstance(self.adapter, CustomAdapter))
         ):
             can_disable_adapter = True
             was_adapter_active = self.adapter.is_active

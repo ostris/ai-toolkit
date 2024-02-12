@@ -407,11 +407,11 @@ class ImageProcessingDTOMixin:
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
-            raise ValueError(
+            print(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
         elif h > w and self.scale_to_height < self.scale_to_width:
             # throw error, they should match
-            raise ValueError(
+            print(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
 
         if self.flip_x:
@@ -681,10 +681,12 @@ class ClipImageFileItemDTOMixin:
                 self.clip_image_embeds_unconditional = load_file(unconditional_path)
 
             return
-        img = Image.open(self.clip_image_path).convert('RGB')
         try:
+            img = Image.open(self.clip_image_path).convert('RGB')
             img = exif_transpose(img)
         except Exception as e:
+            # make a random noise image
+            img = Image.new('RGB', (self.dataset_config.resolution, self.dataset_config.resolution))
             print(f"Error: {e}")
             print(f"Error loading image: {self.clip_image_path}")
 

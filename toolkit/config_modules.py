@@ -177,6 +177,10 @@ class AdapterConfig:
             else:
                 self.clip_layer = 'last_hidden_state'
 
+        # text encoder
+        self.text_encoder_path: str = kwargs.get('text_encoder_path', None)
+        self.text_encoder_arch: str = kwargs.get('text_encoder_arch', 'clip')  # clip t5
+
 
 class EmbeddingConfig:
     def __init__(self, **kwargs):
