@@ -304,12 +304,16 @@ class TrainConfig:
 
         self.loss_type = kwargs.get('loss_type', 'mse')
 
+        # scale the prediction by this. Increase for more detail, decrease for less
+        self.pred_scaler = kwargs.get('pred_scaler', 1.0)
+
 
 class ModelConfig:
     def __init__(self, **kwargs):
         self.name_or_path: str = kwargs.get('name_or_path', None)
         self.is_v2: bool = kwargs.get('is_v2', False)
         self.is_xl: bool = kwargs.get('is_xl', False)
+        self.is_pixart: bool = kwargs.get('is_pixart', False)
         self.is_ssd: bool = kwargs.get('is_ssd', False)
         self.is_vega: bool = kwargs.get('is_vega', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)

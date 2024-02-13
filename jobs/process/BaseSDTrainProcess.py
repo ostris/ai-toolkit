@@ -1054,7 +1054,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.train_config.noise_scheduler,
             {
                 "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
-            }
+            },
+            'sd' if not self.model_config.is_pixart else 'pixart'
         )
 
         if self.train_config.train_refiner and self.model_config.refiner_name_or_path is not None and self.network_config is None:

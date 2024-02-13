@@ -29,6 +29,7 @@ from diffusers import (
 from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipeline
 import torch
 import re
+from transformers import T5Tokenizer, T5EncoderModel
 
 SCHEDULER_LINEAR_START = 0.00085
 SCHEDULER_LINEAR_END = 0.0120
@@ -625,6 +626,48 @@ def encode_prompts(
     text_embeddings = text_encode(text_encoder, text_tokens, truncate=truncate, max_length=max_length)
 
     return text_embeddings
+
+
+def encode_prompts_pixart(
+        tokenizer: 'T5Tokenizer',
+        text_encoder: 'T5EncoderModel',
+        prompts: list[str],
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
+):
+    if max_length is None:
+        # See Section 3.1. of the paper.
+        max_length = 120
+
+    if dropout_prob > 0.0:
+        # randomly drop out prompts
+        prompts = [
+            prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompts
+        ]
+
+    text_inputs = tokenizer(
+        prompts,
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+        add_special_tokens=True,
+        return_tensors="pt",
+    )
+    text_input_ids = text_inputs.input_ids
+    untruncated_ids = tokenizer(prompts, padding="longest", return_tensors="pt").input_ids
+
+    if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+            text_input_ids, untruncated_ids
+    ):
+        removed_text = tokenizer.batch_decode(untruncated_ids[:, max_length - 1: -1])
+
+    prompt_attention_mask = text_inputs.attention_mask
+    prompt_attention_mask = prompt_attention_mask.to(text_encoder.device)
+
+    prompt_embeds = text_encoder(text_input_ids.to(text_encoder.device), attention_mask=prompt_attention_mask)
+
+    return prompt_embeds.last_hidden_state, prompt_attention_mask
 
 
 # for XL
