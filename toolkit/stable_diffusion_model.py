@@ -1567,10 +1567,15 @@ class StableDiffusion:
             named_params = self.named_parameters(vae=False, unet=unet, text_encoder=False, state_dict_keys=True)
             unet_lr = unet_lr if unet_lr is not None else default_lr
             params = []
-            for key, diffusers_key in ldm_diffusers_keymap.items():
-                if diffusers_key in named_params and diffusers_key not in DO_NOT_TRAIN_WEIGHTS:
-                    if named_params[diffusers_key].requires_grad:
-                        params.append(named_params[diffusers_key])
+            if self.is_pixart:
+                for param in named_params.values():
+                    if param.requires_grad:
+                        params.append(param)
+            else:
+                for key, diffusers_key in ldm_diffusers_keymap.items():
+                    if diffusers_key in named_params and diffusers_key not in DO_NOT_TRAIN_WEIGHTS:
+                        if named_params[diffusers_key].requires_grad:
+                            params.append(named_params[diffusers_key])
             param_data = {"params": params, "lr": unet_lr}
             trainable_parameters.append(param_data)
             print(f"Found {len(params)} trainable parameter in unet")
