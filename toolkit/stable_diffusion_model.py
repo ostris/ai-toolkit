@@ -287,7 +287,7 @@ class StableDiffusion:
                     load_safety_checker=False,
                     requires_safety_checker=False,
                     torch_dtype=self.torch_dtype,
-                    safety_checker=False,
+                    safety_checker=None,
                     **load_args
                 ).to(self.device_torch)
             flush()

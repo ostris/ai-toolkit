@@ -240,6 +240,7 @@ class TrainConfig:
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.latent_multiplier = kwargs.get('latent_multiplier', 1.0)
         self.negative_prompt = kwargs.get('negative_prompt', None)
+        self.max_negative_prompts = kwargs.get('max_negative_prompts', 1)
         # multiplier applied to loos on regularization images
         self.reg_weight = kwargs.get('reg_weight', 1.0)
         self.num_train_timesteps = kwargs.get('num_train_timesteps', 1000)

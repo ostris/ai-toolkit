@@ -1,3 +1,4 @@
+import os
 import random
 from collections import OrderedDict
 from typing import Union, Literal, List, Optional
@@ -51,6 +52,8 @@ class SDTrainer(BaseSDTrainProcess):
         self.taesd: Optional[AutoencoderTiny] = None
 
         self._clip_image_embeds_unconditional: Union[List[str], None] = None
+        self.negative_prompt_pool: Union[List[str], None] = None
+        self.batch_negative_prompt: Union[List[str], None] = None
 
     def before_model_load(self):
         pass
@@ -107,6 +110,16 @@ class SDTrainer(BaseSDTrainProcess):
                     raise ValueError("No unconditional clip image embeds found. This should not happen")
 
                 self._clip_image_embeds_unconditional = unconditional_clip_image_embeds
+
+        if self.train_config.negative_prompt is not None:
+            if os.path.exists(self.train_config.negative_prompt):
+                with open(self.train_config.negative_prompt, 'r') as f:
+                    self.negative_prompt_pool = f.readlines()
+                    # remove empty
+                    self.negative_prompt_pool = [x.strip() for x in self.negative_prompt_pool if x.strip() != ""]
+            else:
+                # single prompt
+                self.negative_prompt_pool = [self.train_config.negative_prompt]
 
     def process_output_for_turbo(self, pred, noisy_latents, timesteps, noise, batch):
         # to process turbo learning, we make one big step from our current timestep to the end
@@ -781,6 +794,18 @@ class SDTrainer(BaseSDTrainProcess):
         batch = self.preprocess_batch(batch)
         dtype = get_torch_dtype(self.train_config.dtype)
         noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
+        if self.train_config.do_cfg or self.train_config.do_random_cfg:
+            # pick random negative prompts
+            if self.negative_prompt_pool is not None:
+                negative_prompts = []
+                for i in range(noisy_latents.shape[0]):
+                    num_neg = random.randint(1, self.train_config.max_negative_prompts)
+                    this_neg_prompts = [random.choice(self.negative_prompt_pool) for _ in range(num_neg)]
+                    this_neg_prompt = ', '.join(this_neg_prompts)
+                    negative_prompts.append(this_neg_prompt)
+                self.batch_negative_prompt = negative_prompts
+            else:
+                self.batch_negative_prompt = ['' for _ in range(batch.latents.shape[0])]
 
         if self.adapter and isinstance(self.adapter, CustomAdapter):
             # condition the prompt
@@ -1030,7 +1055,8 @@ class SDTrainer(BaseSDTrainProcess):
                             if self.train_config.do_cfg:
                                 # todo only do one and repeat it
                                 unconditional_embeds = self.sd.encode_prompt(
-                                    ["" for _ in range(noisy_latents.shape[0])],
+                                    self.batch_negative_prompt,
+                                    self.batch_negative_prompt,
                                     dropout_prob=self.train_config.prompt_dropout_prob,
                                     long_prompts=self.do_long_prompts).to(
                                     self.device_torch,
@@ -1050,9 +1076,8 @@ class SDTrainer(BaseSDTrainProcess):
                                 self.device_torch,
                                 dtype=dtype)
                             if self.train_config.do_cfg:
-                                # todo only do one and repeat it
                                 unconditional_embeds = self.sd.encode_prompt(
-                                    ["" for _ in range(noisy_latents.shape[0])],
+                                    self.batch_negative_prompt,
                                     dropout_prob=self.train_config.prompt_dropout_prob,
                                     long_prompts=self.do_long_prompts).to(
                                     self.device_torch,
