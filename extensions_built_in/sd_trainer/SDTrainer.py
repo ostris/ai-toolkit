@@ -930,7 +930,7 @@ class SDTrainer(BaseSDTrainProcess):
             if self.adapter and isinstance(self.adapter, ClipVisionAdapter):
                 grad_on_text_encoder = True
 
-            if self.adapter_config.type == 'te_augmenter':
+            if self.adapter_config and self.adapter_config.type == 'te_augmenter':
                 grad_on_text_encoder = True
 
             # have a blank network so we can wrap it in a context and set multipliers without checking every time
