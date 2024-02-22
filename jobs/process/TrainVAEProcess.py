@@ -477,7 +477,8 @@ class TrainVAEProcess(BaseTrainProcess):
                 if self.use_critic:
                     loss_string += f" crD: {critic_d_loss:.2e}"
 
-                if self.optimizer_type.startswith('dadaptation'):
+                if self.optimizer_type.startswith('dadaptation') or \
+                        self.optimizer_type.lower().startswith('prodigy'):
                     learning_rate = (
                             optimizer.param_groups[0]["d"] *
                             optimizer.param_groups[0]["lr"]

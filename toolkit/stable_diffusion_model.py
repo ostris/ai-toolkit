@@ -585,11 +585,17 @@ class StableDiffusion:
                         )
 
                     # encode the prompt ourselves so we can do fun stuff with embeddings
+                    if isinstance(self.adapter, CustomAdapter):
+                        self.adapter.is_unconditional_run = False
                     conditional_embeds = self.encode_prompt(gen_config.prompt, gen_config.prompt_2, force_all=True)
 
+                    if isinstance(self.adapter, CustomAdapter):
+                        self.adapter.is_unconditional_run = True
                     unconditional_embeds = self.encode_prompt(
                         gen_config.negative_prompt, gen_config.negative_prompt_2, force_all=True
                     )
+                    if isinstance(self.adapter, CustomAdapter):
+                        self.adapter.is_unconditional_run = False
 
                     # allow any manipulations to take place to embeddings
                     gen_config.post_process_embeddings(
