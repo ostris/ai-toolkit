@@ -1206,8 +1206,8 @@ class SDTrainer(BaseSDTrainProcess):
                                     has_been_preprocessed=True,
                                     quad_count=quad_count
                                 )
-                        else:
-                            raise ValueError("Adapter images now must be loaded with dataloader or be a reg image")
+                        # else:
+                            # raise ValueError("Adapter images now must be loaded with dataloader or be a reg image")
 
                     if not self.adapter_config.train_image_encoder:
                         # we are not training the image encoder, so we need to detach the embeds

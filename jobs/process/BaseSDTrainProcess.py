@@ -1192,6 +1192,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     use_bias=is_lorm,
                     is_lorm=is_lorm,
                     network_config=self.network_config,
+                    network_type=self.network_config.type,
                     **network_kwargs
                 )
 
