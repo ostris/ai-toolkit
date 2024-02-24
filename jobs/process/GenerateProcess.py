@@ -32,15 +32,29 @@ class GenerateConfig:
         self.guidance_rescale = kwargs.get('guidance_rescale', 0.0)
         self.ext = kwargs.get('ext', 'png')
         self.prompt_file = kwargs.get('prompt_file', False)
+        self.prompts_in_file = self.prompts
         if self.prompts is None:
             raise ValueError("Prompts must be set")
         if isinstance(self.prompts, str):
             if os.path.exists(self.prompts):
                 with open(self.prompts, 'r', encoding='utf-8') as f:
-                    self.prompts = f.read().splitlines()
-                    self.prompts = [p.strip() for p in self.prompts if len(p.strip()) > 0]
+                    self.prompts_in_file = f.read().splitlines()
+                    self.prompts_in_file = [p.strip() for p in self.prompts_in_file if len(p.strip()) > 0]
             else:
                 raise ValueError("Prompts file does not exist, put in list if you want to use a list of prompts")
+
+        self.random_prompts = kwargs.get('random_prompts', False)
+        self.max_random_per_prompt = kwargs.get('max_random_per_prompt', 1)
+        self.max_images = kwargs.get('max_prompts', 10000)
+
+        if self.random_prompts:
+            self.prompts = []
+            for i in range(self.max_images):
+                num_prompts = random.randint(1, self.max_random_per_prompt)
+                prompt_list = [random.choice(self.prompts_in_file) for _ in range(num_prompts)]
+                self.prompts.append(", ".join(prompt_list))
+        else:
+            self.prompts = self.prompts_in_file
 
         if kwargs.get('shuffle', False):
             # shuffle the prompts
@@ -77,6 +91,9 @@ class GenerateProcess(BaseProcess):
         super().run()
         print("Loading model...")
         self.sd.load_model()
+
+        print("Compiling model...")
+        self.sd.unet = torch.compile(self.sd.unet, mode="reduce-overhead", fullgraph=True)
 
         print(f"Generating {len(self.generate_config.prompts)} images")
         # build prompt image configs

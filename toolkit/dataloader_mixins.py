@@ -629,8 +629,23 @@ class ClipImageFileItemDTOMixin:
         # Convert RGB to BGR
         open_cv_image = open_cv_image[:, :, ::-1].copy()
 
-        # apply augmentations
-        augmented = self.clip_image_aug_transform(image=open_cv_image)["image"]
+        if self.clip_vision_is_quad:
+            # image is in a 2x2 gris. split, run augs, and recombine
+            # split
+            img1, img2 = np.hsplit(open_cv_image, 2)
+            img1_1, img1_2 = np.vsplit(img1, 2)
+            img2_1, img2_2 = np.vsplit(img2, 2)
+            # apply augmentations
+            img1_1 = self.clip_image_aug_transform(image=img1_1)["image"]
+            img1_2 = self.clip_image_aug_transform(image=img1_2)["image"]
+            img2_1 = self.clip_image_aug_transform(image=img2_1)["image"]
+            img2_2 = self.clip_image_aug_transform(image=img2_2)["image"]
+            # recombine
+            augmented = np.vstack((np.hstack((img1_1, img1_2)), np.hstack((img2_1, img2_2))))
+
+        else:
+            # apply augmentations
+            augmented = self.clip_image_aug_transform(image=open_cv_image)["image"]
 
         # convert back to RGB tensor
         augmented = cv2.cvtColor(augmented, cv2.COLOR_BGR2RGB)
