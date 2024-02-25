@@ -271,6 +271,11 @@ class IPAdapter(torch.nn.Module):
         else:
             raise ValueError(f"unknown image encoder arch: {adapter_config.image_encoder_arch}")
 
+        if not self.config.train_image_encoder:
+            # compile it
+            print('Compiling image encoder')
+            torch.compile(self.image_encoder, fullgraph=True)
+
         self.input_size = self.image_encoder.config.image_size
 
         if self.config.quad_image:  # 4x4 image

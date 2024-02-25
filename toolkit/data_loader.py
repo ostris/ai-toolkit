@@ -120,7 +120,13 @@ class ImageDataset(Dataset, CaptionMixin):
 
     def __getitem__(self, index):
         img_path = self.file_list[index]
-        img = exif_transpose(Image.open(img_path)).convert('RGB')
+        try:
+            img = exif_transpose(Image.open(img_path)).convert('RGB')
+        except Exception as e:
+            print(f"Error opening image: {img_path}")
+            print(e)
+            # make a noise image if we can't open it
+            img = Image.fromarray(np.random.randint(0, 255, (1024, 1024, 3), dtype=np.uint8))
 
         # Downscale the source image first
         img = img.resize((int(img.size[0] * self.scale), int(img.size[1] * self.scale)), Image.BICUBIC)
