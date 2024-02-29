@@ -1273,6 +1273,7 @@ class StableDiffusion:
 
         images = torch.stack(image_list)
         latents = self.vae.encode(images).latent_dist.sample()
+        # latents = self.vae.encode(images, return_dict=False)[0]
         latents = latents * self.vae.config['scaling_factor']
         latents = latents.to(device, dtype=dtype)
 

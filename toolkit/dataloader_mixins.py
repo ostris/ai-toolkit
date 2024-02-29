@@ -137,6 +137,13 @@ class CaptionMixin:
                 prompt = self.default_prompt
             if hasattr(self, 'default_caption'):
                 prompt = self.default_caption
+
+        # handle replacements
+        replacement_list = self.dataset_config.replacements if isinstance(self.dataset_config.replacements, list) else []
+        for replacement in replacement_list:
+            from_string, to_string = replacement.split('|')
+            prompt = prompt.replace(from_string, to_string)
+
         return prompt
 
 

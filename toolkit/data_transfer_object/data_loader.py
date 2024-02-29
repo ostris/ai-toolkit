@@ -68,7 +68,7 @@ class FileItemDTO(
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_x', False)
         self.augments: List[str] = self.dataset_config.augments
-
+        self.loss_multiplier: float = self.dataset_config.loss_multiplier
 
         self.network_weight: float = self.dataset_config.network_weight
         self.is_reg = self.dataset_config.is_reg
@@ -123,6 +123,8 @@ class DataLoaderBatchDTO:
                     else:
                         control_tensors.append(x.control_tensor)
                 self.control_tensor = torch.cat([x.unsqueeze(0) for x in control_tensors])
+
+            self.loss_multiplier_list: List[float] = [x.loss_multiplier for x in self.file_items]
 
             if any([x.clip_image_tensor is not None for x in self.file_items]):
                 # find one to use as a base

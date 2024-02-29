@@ -1480,10 +1480,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     batch = None
 
-                # if we are doing a reg step, always accumulate
-                if is_reg_step:
-                    self.is_grad_accumulation_step = True
-
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:
                     # epoch is handling the accumulation, dont touch it
