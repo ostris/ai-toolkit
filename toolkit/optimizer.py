@@ -65,7 +65,16 @@ def get_optimizer(
     elif lower_type == 'adagrad':
         optimizer = torch.optim.Adagrad(params, lr=float(learning_rate), **optimizer_params)
     elif lower_type == 'adafactor':
+        # hack in stochastic rounding
+        if 'relative_step' not in optimizer_params:
+            optimizer_params['relative_step'] = False
+        if 'scale_parameter' not in optimizer_params:
+            optimizer_params['scale_parameter'] = True
+        if 'warmup_init' not in optimizer_params:
+            optimizer_params['warmup_init'] = False
         optimizer = Adafactor(params, lr=float(learning_rate), **optimizer_params)
+        from toolkit.util.adafactor_stochastic_rounding import step_adafactor
+        optimizer.step = step_adafactor.__get__(optimizer, Adafactor)
     else:
         raise ValueError(f'Unknown optimizer type {optimizer_type}')
     return optimizer

@@ -49,7 +49,7 @@ class InstantLoRAMidModule(torch.nn.Module):
             print(scaler.shape)
             raise e
         # apply tanh to limit values to -1 to 1
-        scaler = torch.tanh(scaler)
+        # scaler = torch.tanh(scaler)
         return x * scaler
 
 

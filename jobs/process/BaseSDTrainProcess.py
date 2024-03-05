@@ -688,6 +688,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             trigger=self.trigger_word,
                             add_if_not_present=not is_reg,
                         )
+
+                    if not is_reg and self.train_config.prompt_saturation_chance > 0.0:
+                        # do random prompt saturation by expanding the prompt to hit at least 77 tokens
+                        if random.random() < self.train_config.prompt_saturation_chance:
+                            est_num_tokens = len(prompt.split(' '))
+                            if est_num_tokens < 77:
+                                num_repeats = int(77 / est_num_tokens) + 1
+                                prompt = ', '.join([prompt] * num_repeats)
+
+
                     conditioned_prompts.append(prompt)
 
             with self.timer('prepare_latents'):

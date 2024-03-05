@@ -308,6 +308,13 @@ class TrainConfig:
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
 
+        # repeats the prompt a few times to saturate the encoder
+        self.prompt_saturation_chance = kwargs.get('prompt_saturation_chance', 0.0)
+
+        # applies negative loss on the prior to encourage network to diverge from it
+        self.do_prior_divergence = kwargs.get('do_prior_divergence', False)
+
+
 
 class ModelConfig:
     def __init__(self, **kwargs):

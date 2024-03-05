@@ -83,6 +83,8 @@ class SDTrainer(BaseSDTrainProcess):
             self.taesd.requires_grad_(False)
 
     def hook_before_train_loop(self):
+        if self.train_config.do_prior_divergence:
+            self.do_prior_prediction = True
         # move vae to device if we did not cache latents
         if not self.is_latents_cached:
             self.sd.vae.eval()
@@ -290,7 +292,7 @@ class SDTrainer(BaseSDTrainProcess):
                 # target = (noise * mask_multiplier) + (prior_pred * prior_mask_multiplier)
                 # set masked multiplier to 1.0 so we dont double apply it
                 # mask_multiplier = 1.0
-        elif prior_pred is not None:
+        elif prior_pred is not None and not self.train_config.do_prior_divergence:
             assert not self.train_config.train_turbo
             # matching adapter prediction
             target = prior_pred
@@ -346,6 +348,9 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
             else:
                 loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
+
+        if self.train_config.do_prior_divergence and prior_pred is not None:
+            loss = loss + (torch.nn.functional.mse_loss(pred.float(), prior_pred.float(), reduction="none") * -1.0)
 
         # multiply by our mask
         loss = loss * mask_multiplier
