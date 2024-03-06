@@ -1363,7 +1363,13 @@ class SDTrainer(BaseSDTrainProcess):
         # flush()
 
         if not self.is_grad_accumulation_step:
-            torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
+            # torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
+            # fix this for multi params
+            if isinstance(self.params[0], dict):
+                for i in range(len(self.params)):
+                    torch.nn.utils.clip_grad_norm_(self.params[i]['params'], self.train_config.max_grad_norm)
+            else:
+                torch.nn.utils.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
             # only step if we are not accumulating
             with self.timer('optimizer_step'):
                 # apply gradients
