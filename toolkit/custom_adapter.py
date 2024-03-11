@@ -767,6 +767,10 @@ class CustomAdapter(torch.nn.Module):
                         clip_image_embeds = clip_output.hidden_states[-1]
                     else:
                         clip_image_embeds = clip_output.image_embeds
+                        # TODO should we always norm image embeds?
+                        # get norm embeddings
+                        l2_norm = torch.norm(clip_image_embeds, p=2)
+                        clip_image_embeds = clip_image_embeds / l2_norm
 
                     if not is_training or not self.config.train_image_encoder:
                         clip_image_embeds = clip_image_embeds.detach()
