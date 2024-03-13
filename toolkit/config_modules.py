@@ -166,7 +166,7 @@ class AdapterConfig:
 
         # clip vision
         self.trigger = kwargs.get('trigger', 'tri993r')
-        self.trigger_class_name = kwargs.get('trigger_class_name', 'person')
+        self.trigger_class_name = kwargs.get('trigger_class_name', None)
 
         self.class_names = kwargs.get('class_names', [])
 
@@ -188,6 +188,7 @@ class EmbeddingConfig:
         self.tokens = kwargs.get('tokens', 4)
         self.init_words = kwargs.get('init_words', '*')
         self.save_format = kwargs.get('save_format', 'safetensors')
+        self.trigger_class_name = kwargs.get('trigger_class_name', None)  # used for inverted masked prior
 
 
 ContentOrStyleType = Literal['balanced', 'style', 'content']
