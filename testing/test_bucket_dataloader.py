@@ -42,6 +42,7 @@ dataset_config = DatasetConfig(
     resolution=resolution,
     caption_ext='json',
     default_caption='default',
+    clip_image_path='/mnt/Datasets/face_pairs2/control_clean',
     buckets=True,
     bucket_tolerance=bucket_tolerance,
     poi='person',

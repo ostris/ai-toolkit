@@ -132,9 +132,16 @@ class CustomAdapter(torch.nn.Module):
             vision_tokens = ((self.vision_encoder.config.image_size // self.vision_encoder.config.patch_size) ** 2)
             if self.config.image_encoder_arch == 'clip':
                 vision_tokens = vision_tokens + 1
+
+            vision_hidden_size = self.vision_encoder.config.hidden_size
+
+            if self.config.clip_layer == 'image_embeds':
+                vision_tokens = 1
+                vision_hidden_size = self.vision_encoder.config.projection_dim
+
             self.ilora_module = InstantLoRAModule(
                 vision_tokens=vision_tokens,
-                vision_hidden_size=self.vision_encoder.config.hidden_size,
+                vision_hidden_size=vision_hidden_size,
                 sd=self.sd_ref()
             )
         elif self.adapter_type == 'text_encoder':
@@ -731,7 +738,14 @@ class CustomAdapter(torch.nn.Module):
                                 clip_image, output_hidden_states=True
                             )
 
-                    img_embeds = id_embeds['last_hidden_state']
+                    if self.config.clip_layer == 'penultimate_hidden_states':
+                        img_embeds = id_embeds.hidden_states[-2]
+                    elif self.config.clip_layer == 'last_hidden_state':
+                        img_embeds = id_embeds.hidden_states[-1]
+                    elif self.config.clip_layer == 'image_embeds':
+                        img_embeds = id_embeds.image_embeds
+                    else:
+                        raise ValueError(f"unknown clip layer: {self.config.clip_layer}")
 
                     if self.config.quad_image:
                         # get the outputs of the quat

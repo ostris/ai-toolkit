@@ -1352,6 +1352,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # try to load
             # previous param groups
             # previous_params = copy.deepcopy(optimizer.param_groups)
+            previous_lrs = []
+            for group in optimizer.param_groups:
+                previous_lrs.append(group['lr'])
+
             try:
                 print(f"Loading optimizer state from {optimizer_state_file_path}")
                 optimizer_state_dict = torch.load(optimizer_state_file_path)
@@ -1359,6 +1363,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
             except Exception as e:
                 print(f"Failed to load optimizer state from {optimizer_state_file_path}")
                 print(e)
+
+            # update the optimizer LR from the params
+            print(f"Updating optimizer LR from params")
+            if len(previous_lrs) > 0:
+                for i, group in enumerate(optimizer.param_groups):
+                    group['lr'] = previous_lrs[i]
+                    group['initial_lr'] = previous_lrs[i]
 
             # Update the learning rates if they changed
             # optimizer.param_groups = previous_params

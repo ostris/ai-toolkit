@@ -796,6 +796,7 @@ class SDTrainer(BaseSDTrainProcess):
                 unconditional_embeddings=unconditional_embeds,
                 timestep=timesteps,
                 guidance_scale=self.train_config.cfg_scale,
+                rescale_cfg=self.train_config.cfg_rescale,
                 **pred_kwargs  # adapter residuals in here
             )
             if was_unet_training:
@@ -1355,6 +1356,7 @@ class SDTrainer(BaseSDTrainProcess):
                             timestep=timesteps,
                             guidance_scale=self.train_config.cfg_scale,
                             detach_unconditional=False,
+                            rescale_cfg=self.train_config.cfg_rescale,
                             **pred_kwargs
                         )
                     self.after_unet_predict()

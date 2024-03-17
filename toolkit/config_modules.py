@@ -218,7 +218,7 @@ class TrainConfig:
         self.xformers = kwargs.get('xformers', False)
         self.sdp = kwargs.get('sdp', False)
         self.train_unet = kwargs.get('train_unet', True)
-        self.train_text_encoder = kwargs.get('train_text_encoder', True)
+        self.train_text_encoder = kwargs.get('train_text_encoder', False)
         self.train_refiner = kwargs.get('train_refiner', True)
         self.train_turbo = kwargs.get('train_turbo', False)
         self.show_turbo_outputs = kwargs.get('show_turbo_outputs', False)
@@ -298,6 +298,9 @@ class TrainConfig:
         self.do_random_cfg = kwargs.get('do_random_cfg', False)
         self.cfg_scale = kwargs.get('cfg_scale', 1.0)
         self.max_cfg_scale = kwargs.get('max_cfg_scale', self.cfg_scale)
+        self.cfg_rescale = kwargs.get('cfg_rescale', None)
+        if self.cfg_rescale is None:
+            self.cfg_rescale = self.cfg_scale
 
         # applies the inverse of the prediction mean and std to the target to correct
         # for norm drift

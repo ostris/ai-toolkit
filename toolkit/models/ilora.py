@@ -106,6 +106,9 @@ class InstantLoRAModule(torch.nn.Module):
         # this will be used to add the vector to the original forward
 
     def forward(self, img_embeds):
+        # expand token rank if only rank 2
+        if len(img_embeds.shape) == 2:
+            img_embeds = img_embeds.unsqueeze(1)
         img_embeds = self.resampler(img_embeds)
         self.img_embeds = img_embeds
 
