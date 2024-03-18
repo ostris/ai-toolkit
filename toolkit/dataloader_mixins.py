@@ -336,19 +336,26 @@ class CaptionProcessingDTOMixin:
         # remove empty strings
         token_list = [x for x in token_list if x]
 
-        if self.dataset_config.shuffle_tokens:
-            random.shuffle(token_list)
-
         # handle token dropout
         if self.dataset_config.token_dropout_rate > 0 and not short_caption:
             new_token_list = []
-            for token in token_list:
-                # get a random float form 0 to 1
-                rand = random.random()
-                if rand > self.dataset_config.token_dropout_rate:
-                    # keep the token
+            keep_tokens: int = self.dataset_config.keep_tokens
+            for idx, token in enumerate(token_list):
+                if idx < keep_tokens:
                     new_token_list.append(token)
+                elif self.dataset_config.token_dropout_rate >= 1.0:
+                    # drop the token
+                    pass
+                else:
+                    # get a random float form 0 to 1
+                    rand = random.random()
+                    if rand > self.dataset_config.token_dropout_rate:
+                        # keep the token
+                        new_token_list.append(token)
             token_list = new_token_list
+
+        if self.dataset_config.shuffle_tokens:
+            random.shuffle(token_list)
 
         # join back together
         caption = ', '.join(token_list)
