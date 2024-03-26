@@ -48,6 +48,7 @@ from diffusers import PixArtAlphaPipeline, DPMSolverMultistepScheduler
 from transformers import T5EncoderModel
 
 from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
+from toolkit.util.inverse_cfg import inverse_classifier_guidance
 
 # tell it to shut up
 diffusers.logging.set_verbosity(diffusers.logging.ERROR)
@@ -234,13 +235,20 @@ class StableDiffusion:
                 flush()
                 print("Injecting alt weights")
         elif self.model_config.is_pixart:
+            te_kwargs = {}
+            # handle quantization of TE
+            if self.model_config.text_encoder_bits == 8:
+                te_kwargs['load_in_8bit'] = True
+                te_kwargs['device_map'] = "auto"
+            elif self.model_config.text_encoder_bits == 4:
+                te_kwargs['load_in_4bit'] = True
+                te_kwargs['device_map'] = "auto"
             # load the TE in 8bit mode
             text_encoder = T5EncoderModel.from_pretrained(
                 "PixArt-alpha/PixArt-XL-2-1024-MS",
                 subfolder="text_encoder",
-                load_in_8bit=True,
-                device_map="auto",
                 torch_dtype=self.torch_dtype,
+                **te_kwargs
             )
 
             # load the transformer

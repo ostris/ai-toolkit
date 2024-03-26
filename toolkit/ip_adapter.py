@@ -14,6 +14,7 @@ from toolkit.models.zipper_resampler import ZipperResampler
 from toolkit.paths import REPOS_ROOT
 from toolkit.saving import load_ip_adapter_model
 from toolkit.train_tools import get_torch_dtype
+from toolkit.util.inverse_cfg import inverse_classifier_guidance
 
 sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional
@@ -376,8 +377,10 @@ class IPAdapter(torch.nn.Module):
             output_dim = sd.unet.config['cross_attention_dim']
 
             if is_pixart:
-                heads = 20
-                dim = 4096
+                # heads = 20
+                heads = 12
+                # dim = 4096
+                dim = 1280
                 output_dim = 4096
 
             if self.config.image_encoder_arch.startswith('convnext'):
@@ -628,6 +631,23 @@ class IPAdapter(torch.nn.Module):
             clip_image_embeds = clip_image_embeds.to(device, dtype=get_torch_dtype(self.sd_ref().dtype)).detach()
         return clip_image_embeds
 
+    def get_empty_clip_image(self, batch_size: int) -> torch.Tensor:
+        with torch.no_grad():
+            tensors_0_1 = torch.rand([batch_size, 3, self.input_size, self.input_size], device=self.device)
+            noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
+                                     dtype=get_torch_dtype(self.sd_ref().dtype))
+            tensors_0_1 = tensors_0_1 * noise_scale
+            # tensors_0_1 = tensors_0_1 * 0
+            mean = torch.tensor(self.clip_image_processor.image_mean).to(
+                self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
+            ).detach()
+            std = torch.tensor(self.clip_image_processor.image_std).to(
+                self.device, dtype=get_torch_dtype(self.sd_ref().dtype)
+            ).detach()
+            tensors_0_1 = torch.clip((255. * tensors_0_1), 0, 255).round() / 255.0
+            clip_image = (tensors_0_1 - mean.view([1, 3, 1, 1])) / std.view([1, 3, 1, 1])
+        return clip_image.detach()
+
     def get_clip_image_embeds_from_tensors(
             self,
             tensors_0_1: torch.Tensor,
@@ -635,6 +655,7 @@ class IPAdapter(torch.nn.Module):
             is_training=False,
             has_been_preprocessed=False,
             quad_count=4,
+            cfg_embed_strength=None, # perform CFG on embeds with unconditional as negative
     ) -> torch.Tensor:
         if self.sd_ref().unet.device != self.device:
             self.to(self.sd_ref().unet.device)
@@ -642,6 +663,7 @@ class IPAdapter(torch.nn.Module):
             self.to(self.sd_ref().unet.device)
         if not self.config.train:
             is_training = False
+        uncond_clip = None
         with torch.no_grad():
             # on training the clip image is created in the dataloader
             if not has_been_preprocessed:
@@ -748,6 +770,48 @@ class IPAdapter(torch.nn.Module):
                 clip_image_embeds = clip_image_embeds.view(clip_image_embeds.size(0), clip_image_embeds.size(1), -1)
                 # rearrange to (batch, tokens, size)
                 clip_image_embeds = clip_image_embeds.permute(0, 2, 1)
+
+            # apply unconditional if doing cfg on embeds
+            with torch.no_grad():
+                if cfg_embed_strength is not None:
+                    uncond_clip = self.get_empty_clip_image(tensors_0_1.shape[0]).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+                    if self.config.quad_image:
+                        # split the 4x4 grid and stack on batch
+                        ci1, ci2 = uncond_clip.chunk(2, dim=2)
+                        ci1, ci3 = ci1.chunk(2, dim=3)
+                        ci2, ci4 = ci2.chunk(2, dim=3)
+                        to_cat = []
+                        for i, ci in enumerate([ci1, ci2, ci3, ci4]):
+                            if i < quad_count:
+                                to_cat.append(ci)
+                            else:
+                                break
+
+                        uncond_clip = torch.cat(to_cat, dim=0).detach()
+                    uncond_clip_output = self.image_encoder(
+                        uncond_clip, output_hidden_states=True
+                    )
+
+                    if self.config.clip_layer == 'penultimate_hidden_states':
+                        uncond_clip_output_embeds = uncond_clip_output.hidden_states[-2]
+                    elif self.config.clip_layer == 'last_hidden_state':
+                        uncond_clip_output_embeds = uncond_clip_output.hidden_states[-1]
+                    else:
+                        uncond_clip_output_embeds = uncond_clip_output.image_embeds
+                        if self.config.adapter_type == "clip_face":
+                            l2_norm = torch.norm(uncond_clip_output_embeds, p=2)
+                            uncond_clip_output_embeds = uncond_clip_output_embeds / l2_norm
+
+                    uncond_clip_output_embeds = uncond_clip_output_embeds.detach()
+
+
+                    # apply inverse cfg
+                    clip_image_embeds = inverse_classifier_guidance(
+                        clip_image_embeds,
+                        uncond_clip_output_embeds,
+                        cfg_embed_strength
+                    )
+
 
             if self.config.quad_image:
                 # get the outputs of the quat

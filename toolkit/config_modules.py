@@ -352,6 +352,9 @@ class ModelConfig:
         if self.is_vega:
             self.is_xl = True
 
+        # for text encoder quant. Only works with pixart currently
+        self.text_encoder_bits = kwargs.get('text_encoder_bits', 8)  # 16, 8, 4
+
 
 class ReferenceDatasetConfig:
     def __init__(self, **kwargs):
