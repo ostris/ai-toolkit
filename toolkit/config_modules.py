@@ -181,6 +181,12 @@ class AdapterConfig:
         self.text_encoder_path: str = kwargs.get('text_encoder_path', None)
         self.text_encoder_arch: str = kwargs.get('text_encoder_arch', 'clip')  # clip t5
 
+        self.train_scaler: bool = kwargs.get('train_scaler', False)
+        self.scaler_lr: Optional[float] = kwargs.get('scaler_lr', None)
+
+        # trains with a scaler to easy channel bias but merges it in on save
+        self.merge_scaler: bool = kwargs.get('merge_scaler', False)
+
 
 class EmbeddingConfig:
     def __init__(self, **kwargs):

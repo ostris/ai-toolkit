@@ -1243,8 +1243,10 @@ class SDTrainer(BaseSDTrainProcess):
                                     has_been_preprocessed=True,
                                     quad_count=quad_count
                                 )
-                        # else:
-                            # raise ValueError("Adapter images now must be loaded with dataloader or be a reg image")
+                        else:
+                            print("No Clip Image")
+                            print([file_item.path for file_item in batch.file_items])
+                            raise ValueError("Could not find clip image")
 
                     if not self.adapter_config.train_image_encoder:
                         # we are not training the image encoder, so we need to detach the embeds

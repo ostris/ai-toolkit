@@ -39,7 +39,7 @@ from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffu
     StableDiffusionKDiffusionXLPipeline, StableDiffusionXLRefinerPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, DDPMScheduler, \
     StableDiffusionXLAdapterPipeline, StableDiffusionAdapterPipeline, DiffusionPipeline, \
-    StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel
+    StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -872,8 +872,10 @@ class StableDiffusion:
             is_input_scaled=False,
             detach_unconditional=False,
             rescale_cfg=None,
+            return_conditional_pred=False,
             **kwargs,
     ):
+        conditional_pred = None
         # get the embeddings
         if text_embeddings is None and conditional_embeddings is None:
             raise ValueError("Either text_embeddings or conditional_embeddings must be specified")
@@ -1024,9 +1026,12 @@ class StableDiffusion:
                     **kwargs,
                 ).sample
 
+            conditional_pred = noise_pred
+
             if do_classifier_free_guidance:
                 # perform guidance
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                conditional_pred = noise_pred_text
                 noise_pred = noise_pred_uncond + guidance_scale * (
                         noise_pred_text - noise_pred_uncond
                 )
@@ -1112,9 +1117,12 @@ class StableDiffusion:
                     **kwargs,
                 ).sample
 
+            conditional_pred = noise_pred
+
             if do_classifier_free_guidance:
                 # perform guidance
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2, dim=0)
+                conditional_pred = noise_pred_text
                 if detach_unconditional:
                     noise_pred_uncond = noise_pred_uncond.detach()
                 noise_pred = noise_pred_uncond + guidance_scale * (
@@ -1141,6 +1149,8 @@ class StableDiffusion:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                     noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
+        if return_conditional_pred:
+            return noise_pred, conditional_pred
         return noise_pred
 
     def step_scheduler(self, model_input, latent_input, timestep_tensor, noise_scheduler=None):
@@ -1187,22 +1197,29 @@ class StableDiffusion:
             bleed_ratio: float = 0.5,
             bleed_latents: torch.FloatTensor = None,
             is_input_scaled=False,
+            return_first_prediction=False,
             **kwargs,
     ):
         timesteps_to_run = self.noise_scheduler.timesteps[start_timesteps:total_timesteps]
 
+        first_prediction = None
+
         for timestep in tqdm(timesteps_to_run, leave=False):
             timestep = timestep.unsqueeze_(0)
-            noise_pred = self.predict_noise(
+            noise_pred, conditional_pred = self.predict_noise(
                 latents,
                 text_embeddings,
                 timestep,
                 guidance_scale=guidance_scale,
                 add_time_ids=add_time_ids,
                 is_input_scaled=is_input_scaled,
+                return_conditional_pred=True,
                 **kwargs,
             )
             # some schedulers need to run separately, so do that. (euler for example)
+
+            if return_first_prediction and first_prediction is None:
+                first_prediction = conditional_pred
 
             latents = self.step_scheduler(noise_pred, latents, timestep)
 
@@ -1214,6 +1231,8 @@ class StableDiffusion:
             is_input_scaled = False
 
         # return latents_steps
+        if return_first_prediction:
+            return latents, first_prediction
         return latents
 
     def encode_prompt(
@@ -1311,7 +1330,10 @@ class StableDiffusion:
                 image_list[i] = Resize((image.shape[1] // 8 * 8, image.shape[2] // 8 * 8))(image)
 
         images = torch.stack(image_list)
-        latents = self.vae.encode(images).latent_dist.sample()
+        if isinstance(self.vae, AutoencoderTiny):
+            latents = self.vae.encode(images, return_dict=False)[0]
+        else:
+            latents = self.vae.encode(images).latent_dist.sample()
         # latents = self.vae.encode(images, return_dict=False)[0]
         latents = latents * self.vae.config['scaling_factor']
         latents = latents.to(device, dtype=dtype)

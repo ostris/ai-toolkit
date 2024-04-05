@@ -80,9 +80,14 @@ class MLPProjModelClipFace(torch.nn.Module):
 
 
 class CustomIPAttentionProcessor(IPAttnProcessor2_0):
-    def __init__(self, hidden_size, cross_attention_dim, scale=1.0, num_tokens=4, adapter=None):
+    def __init__(self, hidden_size, cross_attention_dim, scale=1.0, num_tokens=4, adapter=None, train_scaler=False):
         super().__init__(hidden_size, cross_attention_dim, scale=scale, num_tokens=num_tokens)
         self.adapter_ref: weakref.ref = weakref.ref(adapter)
+        self.train_scaler = train_scaler
+        if train_scaler:
+            # self.ip_scaler = torch.nn.Parameter(torch.ones([num_tokens], dtype=torch.float32) * 0.9999)
+            self.ip_scaler = torch.nn.Parameter(torch.ones([1], dtype=torch.float32) * 0.9999)
+            self.ip_scaler.requires_grad_(True)
 
     def __call__(
             self,
@@ -169,6 +174,13 @@ class CustomIPAttentionProcessor(IPAttnProcessor2_0):
 
         # will be none if disabled
         if ip_hidden_states is not None:
+            # apply scaler
+            if self.train_scaler:
+                weight = self.ip_scaler
+                # reshape to (1, self.num_tokens, 1)
+                weight = weight.view(1, -1, 1)
+                ip_hidden_states = ip_hidden_states * weight
+
             # for ip-adapter
             ip_key = self.to_k_ip(ip_hidden_states)
             ip_value = self.to_v_ip(ip_hidden_states)
@@ -185,7 +197,8 @@ class CustomIPAttentionProcessor(IPAttnProcessor2_0):
             ip_hidden_states = ip_hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
             ip_hidden_states = ip_hidden_states.to(query.dtype)
 
-            hidden_states = hidden_states + self.scale * ip_hidden_states
+            scale = self.scale
+            hidden_states = hidden_states + scale * ip_hidden_states
 
         # linear proj
         hidden_states = attn.to_out[0](hidden_states)
@@ -201,6 +214,21 @@ class CustomIPAttentionProcessor(IPAttnProcessor2_0):
         hidden_states = hidden_states / attn.rescale_output_factor
 
         return hidden_states
+
+    # this ensures that the ip_scaler is not changed when we load the model
+    # def _apply(self, fn):
+    #     if hasattr(self, "ip_scaler"):
+    #         # Overriding the _apply method to prevent the special_parameter from changing dtype
+    #         self.ip_scaler = fn(self.ip_scaler)
+    #         # Temporarily set the special_parameter to None to exclude it from default _apply processing
+    #         ip_scaler = self.ip_scaler
+    #         self.ip_scaler = None
+    #         super(CustomIPAttentionProcessor, self)._apply(fn)
+    #         # Restore the special_parameter after the default _apply processing
+    #         self.ip_scaler = ip_scaler
+    #         return self
+    #     else:
+    #         return super(CustomIPAttentionProcessor, self)._apply(fn)
 
 
 # loosely based on # ref https://github.com/tencent-ailab/IP-Adapter/blob/main/tutorial_train.py
@@ -485,7 +513,8 @@ class IPAdapter(torch.nn.Module):
                     cross_attention_dim=cross_attention_dim,
                     scale=1.0,
                     num_tokens=self.config.num_tokens,
-                    adapter=self
+                    adapter=self,
+                    train_scaler=self.config.train_scaler or self.config.merge_scaler
                 )
                 if self.sd_ref().is_pixart:
                     # pixart is much more sensitive
@@ -494,7 +523,7 @@ class IPAdapter(torch.nn.Module):
                         "to_v_ip.weight": weights["to_v_ip.weight"] * 0.01,
                     }
 
-                attn_procs[name].load_state_dict(weights)
+                attn_procs[name].load_state_dict(weights, strict=False)
                 attn_processor_names.append(name)
         print(f"Attn Processors")
         print(attn_processor_names)
@@ -568,9 +597,34 @@ class IPAdapter(torch.nn.Module):
         state_dict = OrderedDict()
         if self.config.train_only_image_encoder:
             return self.image_encoder.state_dict()
+        if self.config.train_scaler:
+            state_dict["ip_scale"] = self.adapter_modules.state_dict()
+            # remove items that are not scalers
+            for key in list(state_dict["ip_scale"].keys()):
+                if not key.endswith("ip_scaler"):
+                    del state_dict["ip_scale"][key]
+            return state_dict
 
         state_dict["image_proj"] = self.image_proj_model.state_dict()
         state_dict["ip_adapter"] = self.adapter_modules.state_dict()
+        # handle merge scaler training
+        if self.config.merge_scaler:
+            for key in list(state_dict["ip_adapter"].keys()):
+                if key.endswith("ip_scaler"):
+                    # merge in the scaler so we dont have to save it and it will be compatible with other ip adapters
+                    scale = state_dict["ip_adapter"][key].clone()
+
+                    key_start = key.split(".")[-2]
+                    # reshape to (1, 1)
+                    scale = scale.view(1, 1)
+                    del state_dict["ip_adapter"][key]
+                    # find the to_k_ip and to_v_ip keys
+                    for key2 in list(state_dict["ip_adapter"].keys()):
+                        if key2.endswith(f"{key_start}.to_k_ip.weight"):
+                            state_dict["ip_adapter"][key2] = state_dict["ip_adapter"][key2].clone() * scale
+                        if key2.endswith(f"{key_start}.to_v_ip.weight"):
+                            state_dict["ip_adapter"][key2] = state_dict["ip_adapter"][key2].clone() * scale
+
         if self.config.train_image_encoder:
             state_dict["image_encoder"] = self.image_encoder.state_dict()
         if self.preprocessor is not None:
@@ -866,17 +920,60 @@ class IPAdapter(torch.nn.Module):
             self.image_proj_model.train(mode)
         return super().train(mode)
 
-    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
+    def get_parameter_groups(self, adapter_lr):
+        param_groups = []
+        # when training just scaler, we do not train anything else
+        if not self.config.train_scaler:
+            param_groups.append({
+                "params": self.get_non_scaler_parameters(),
+                "lr": adapter_lr,
+            })
+        if self.config.train_scaler or self.config.merge_scaler:
+            scaler_lr = adapter_lr if self.config.scaler_lr is None else self.config.scaler_lr
+            param_groups.append({
+                "params": self.get_scaler_parameters(),
+                "lr": scaler_lr,
+            })
+        return param_groups
+
+    def get_scaler_parameters(self):
+        # only get the scalera from the adapter modules
+        for attn_processor in self.adapter_modules:
+            # only get the scaler
+            # check if it has ip_scaler attribute
+            if hasattr(attn_processor, "ip_scaler"):
+                scaler_param = attn_processor.ip_scaler
+                yield scaler_param
+
+    def get_non_scaler_parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         if self.config.train_only_image_encoder:
             yield from self.image_encoder.parameters(recurse)
             return
+        if self.config.train_scaler:
+            # no params
+            return
+
         for attn_processor in self.adapter_modules:
-            yield from attn_processor.parameters(recurse)
+            if self.config.train_scaler or self.config.merge_scaler:
+                # todo remove scaler
+                if hasattr(attn_processor, "to_k_ip"):
+                    # yield the linear layer
+                    yield from attn_processor.to_k_ip.parameters(recurse)
+                if hasattr(attn_processor, "to_v_ip"):
+                    # yield the linear layer
+                    yield from attn_processor.to_v_ip.parameters(recurse)
+            else:
+                yield from attn_processor.parameters(recurse)
         yield from self.image_proj_model.parameters(recurse)
         if self.config.train_image_encoder:
             yield from self.image_encoder.parameters(recurse)
         if self.preprocessor is not None:
             yield from self.preprocessor.parameters(recurse)
+
+    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
+        yield from self.get_non_scaler_parameters(recurse)
+        if self.config.train_scaler or self.config.merge_scaler:
+            yield from self.get_scaler_parameters()
 
     def merge_in_weights(self, state_dict: Mapping[str, Any]):
         # merge in img_proj weights
@@ -975,6 +1072,8 @@ class IPAdapter(torch.nn.Module):
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
         strict = False
+        if self.config.train_scaler and 'ip_scale' in state_dict:
+            self.adapter_modules.load_state_dict(state_dict["ip_scale"], strict=False)
         if 'ip_adapter' in state_dict:
             try:
                 self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=strict)
