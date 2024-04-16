@@ -164,10 +164,10 @@ class SDTrainer(BaseSDTrainProcess):
                 timestep_idx = [(train_timesteps == t).nonzero().item() for t in timesteps_item][0]
                 single_step_timestep_schedule = [timesteps_item.squeeze().item()]
                 # extract the sigma idx for our midpoint timestep
-                sigmas = train_sigmas[timestep_idx:timestep_idx + 1]
+                sigmas = train_sigmas[timestep_idx:timestep_idx + 1].to(self.device_torch)
 
                 end_sigma_idx = random.randint(timestep_idx, len(train_sigmas) - 1)
-                end_sigma = train_sigmas[end_sigma_idx:end_sigma_idx + 1]
+                end_sigma = train_sigmas[end_sigma_idx:end_sigma_idx + 1].to(self.device_torch)
 
                 # add noise to our target
 
@@ -351,6 +351,11 @@ class SDTrainer(BaseSDTrainProcess):
 
         if self.train_config.do_prior_divergence and prior_pred is not None:
             loss = loss + (torch.nn.functional.mse_loss(pred.float(), prior_pred.float(), reduction="none") * -1.0)
+
+        if self.train_config.train_turbo:
+            mask_multiplier = mask_multiplier[:, 3:, :, :]
+            # resize to the size of the loss
+            mask_multiplier = torch.nn.functional.interpolate(mask_multiplier, size=(pred.shape[2], pred.shape[3]), mode='nearest')
 
         # multiply by our mask
         loss = loss * mask_multiplier
