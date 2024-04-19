@@ -16,7 +16,7 @@ from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.config_modules import GuidanceConfig
 from toolkit.data_loader import get_dataloader_datasets
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO, FileItemDTO
-from toolkit.guidance import get_targeted_guidance_loss, get_guidance_loss
+from toolkit.guidance import get_targeted_guidance_loss, get_guidance_loss, GuidanceType
 from toolkit.image_utils import show_tensors, show_latents
 from toolkit.ip_adapter import IPAdapter
 from toolkit.custom_adapter import CustomAdapter
@@ -1293,8 +1293,16 @@ class SDTrainer(BaseSDTrainProcess):
 
                 do_correct_pred_norm_prior = self.train_config.correct_pred_norm
 
+                do_guidance_prior = False
+
+                if batch.unconditional_latents is not None:
+                    # for this not that, we need a prior pred to normalize
+                    guidance_type: GuidanceType = batch.file_items[0].dataset_config.guidance_type
+                    if guidance_type == 'tnt':
+                        do_guidance_prior = True
+
                 if ((
-                        has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction or do_reg_prior or do_inverted_masked_prior or self.train_config.correct_pred_norm):
+                        has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction or do_guidance_prior or do_reg_prior or do_inverted_masked_prior or self.train_config.correct_pred_norm):
                     with self.timer('prior predict'):
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,
