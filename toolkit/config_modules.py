@@ -332,6 +332,9 @@ class ModelConfig:
         self.is_v2: bool = kwargs.get('is_v2', False)
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_pixart: bool = kwargs.get('is_pixart', False)
+        self.is_pixart_sigma: bool = kwargs.get('is_pixart', False)
+        if self.is_pixart_sigma:
+            self.is_pixart = True
         self.is_ssd: bool = kwargs.get('is_ssd', False)
         self.is_vega: bool = kwargs.get('is_vega', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)

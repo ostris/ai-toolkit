@@ -99,7 +99,7 @@ class SDTrainer(BaseSDTrainProcess):
 
             # check if we have regs and using adapter and caching clip embeddings
             has_reg = self.datasets_reg is not None and len(self.datasets_reg) > 0
-            is_caching_clip_embeddings = any([self.datasets[i].cache_clip_vision_to_disk for i in range(len(self.datasets))])
+            is_caching_clip_embeddings = self.datasets is not None and any([self.datasets[i].cache_clip_vision_to_disk for i in range(len(self.datasets))])
 
             if has_reg and is_caching_clip_embeddings:
                 # we need a list of unconditional clip image embeds from other datasets to handle regs
