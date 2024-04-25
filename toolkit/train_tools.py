@@ -665,7 +665,9 @@ def encode_prompts_pixart(
     prompt_attention_mask = text_inputs.attention_mask
     prompt_attention_mask = prompt_attention_mask.to(text_encoder.device)
 
-    prompt_embeds = text_encoder(text_input_ids.to(text_encoder.device), attention_mask=prompt_attention_mask)
+    text_input_ids = text_input_ids.to(text_encoder.device)
+
+    prompt_embeds = text_encoder(text_input_ids, attention_mask=prompt_attention_mask)
 
     return prompt_embeds.last_hidden_state, prompt_attention_mask
 

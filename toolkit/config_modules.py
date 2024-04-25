@@ -344,6 +344,7 @@ class ModelConfig:
         self._original_refiner_name_or_path = self.refiner_name_or_path
         self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)
         self.lora_path = kwargs.get('lora_path', None)
+        self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now
         self.use_text_encoder_1: bool = kwargs.get('use_text_encoder_1', True)

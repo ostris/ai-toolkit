@@ -1450,8 +1450,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         flush()
         # self.step_num = 0
 
-        print(f"Compiling Model")
-        torch.compile(self.sd.unet, dynamic=True)
+        # print(f"Compiling Model")
+        # torch.compile(self.sd.unet, dynamic=True)
 
         ###################################################################
         # TRAIN LOOP

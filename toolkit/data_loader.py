@@ -585,7 +585,7 @@ def get_dataloader_from_datasets(
             drop_last=False,
             shuffle=True,
             collate_fn=dto_collation,  # Use the custom collate function
-            num_workers=4
+            num_workers=8
         )
     else:
         data_loader = DataLoader(

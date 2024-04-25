@@ -361,7 +361,7 @@ class CaptionProcessingDTOMixin:
         caption = ', '.join(token_list)
         caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
 
-        if self.dataset_config.random_triggers and len(self.dataset_config.random_triggers) > 0:
+        if self.dataset_config.random_triggers:
             num_triggers = self.dataset_config.random_triggers_max
             if num_triggers > 1:
                 num_triggers = random.randint(0, num_triggers)
@@ -369,6 +369,9 @@ class CaptionProcessingDTOMixin:
             if num_triggers > 0:
                 # add random triggers
                 for i in range(num_triggers):
+
+
+
                     caption = caption + ', ' + random.choice(self.dataset_config.random_triggers)
 
         if self.dataset_config.shuffle_tokens:
@@ -1316,7 +1319,9 @@ class LatentCachingMixin:
         i = 0
         for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
             # set latent space version
-            if self.sd.is_xl:
+            if self.sd.model_config.latent_space_version is not None:
+                file_item.latent_space_version = self.sd.model_config.latent_space_version
+            elif self.sd.is_xl:
                 file_item.latent_space_version = 'sdxl'
             else:
                 file_item.latent_space_version = 'sd1'
