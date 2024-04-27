@@ -220,11 +220,7 @@ class DataLoaderBatchDTO:
             to_replace_list=None,
             add_if_not_present=True
     ):
-        return [x.get_caption(
-            trigger=trigger,
-            to_replace_list=to_replace_list,
-            add_if_not_present=add_if_not_present
-        ) for x in self.file_items]
+        return [x.caption for x in self.file_items]
 
     def get_caption_short_list(
             self,
@@ -232,12 +228,7 @@ class DataLoaderBatchDTO:
             to_replace_list=None,
             add_if_not_present=True
     ):
-        return [x.get_caption(
-            trigger=trigger,
-            to_replace_list=to_replace_list,
-            add_if_not_present=add_if_not_present,
-            short_caption=True
-        ) for x in self.file_items]
+        return [x.caption_short for x in self.file_items]
 
     def cleanup(self):
         del self.latents

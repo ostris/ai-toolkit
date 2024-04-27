@@ -524,6 +524,9 @@ class DatasetConfig:
         self.replacements: List[str] = kwargs.get('replacements', [])
         self.loss_multiplier: float = kwargs.get('loss_multiplier', 1.0)
 
+        self.num_workers: int = kwargs.get('num_workers', 4)
+        self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
     """

@@ -263,6 +263,8 @@ class CaptionProcessingDTOMixin:
             super().__init__(*args, **kwargs)
             self.raw_caption: str = None
             self.raw_caption_short: str = None
+            self.caption: str = None
+            self.caption_short: str = None
 
     # todo allow for loading from sd-scripts style dict
     def load_caption(self: 'FileItemDTO', caption_dict: Union[dict, None]):
@@ -307,6 +309,10 @@ class CaptionProcessingDTOMixin:
                 short_caption = self.dataset_config.default_caption
             self.raw_caption = prompt
             self.raw_caption_short = short_caption
+
+        self.caption = self.get_caption()
+        if self.raw_caption_short is not None:
+            self.caption_short = self.get_caption(short_caption=True)
 
     def get_caption(
             self: 'FileItemDTO',
@@ -367,12 +373,13 @@ class CaptionProcessingDTOMixin:
                 num_triggers = random.randint(0, num_triggers)
 
             if num_triggers > 0:
+                triggers = random.sample(self.dataset_config.random_triggers, num_triggers)
+                caption = caption + ', ' + ', '.join(triggers)
                 # add random triggers
-                for i in range(num_triggers):
-
-
-
-                    caption = caption + ', ' + random.choice(self.dataset_config.random_triggers)
+                # for i in range(num_triggers):
+                #     # fastest method
+                #     trigger = self.dataset_config.random_triggers[int(random.random() * (len(self.dataset_config.random_triggers)))]
+                #     caption = caption + ', ' + trigger
 
         if self.dataset_config.shuffle_tokens:
             # shuffle again

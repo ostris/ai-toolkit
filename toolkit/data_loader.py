@@ -585,7 +585,8 @@ def get_dataloader_from_datasets(
             drop_last=False,
             shuffle=True,
             collate_fn=dto_collation,  # Use the custom collate function
-            num_workers=8
+            num_workers=dataset_config_list[0].num_workers,
+            prefetch_factor=dataset_config_list[0].prefetch_factor,
         )
     else:
         data_loader = DataLoader(
