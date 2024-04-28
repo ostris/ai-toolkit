@@ -266,6 +266,9 @@ class CaptionProcessingDTOMixin:
             self.caption: str = None
             self.caption_short: str = None
 
+            dataset_config: DatasetConfig = kwargs.get('dataset_config', None)
+            self.extra_values: List[float] = dataset_config.extra_values
+
     # todo allow for loading from sd-scripts style dict
     def load_caption(self: 'FileItemDTO', caption_dict: Union[dict, None]):
         if self.raw_caption is not None:
@@ -292,11 +295,15 @@ class CaptionProcessingDTOMixin:
                         prompt = prompt.replace('\n', ' ')
                         prompt = prompt.replace('\r', ' ')
 
-                        prompt = json.loads(prompt)
-                        if 'caption' in prompt:
-                            prompt = prompt['caption']
-                        if 'caption_short' in prompt:
-                            short_caption = prompt['caption_short']
+                        prompt_json = json.loads(prompt)
+                        if 'caption' in prompt_json:
+                            prompt = prompt_json['caption']
+                        if 'caption_short' in prompt_json:
+                            short_caption = prompt_json['caption_short']
+
+                        if 'extra_values' in prompt_json:
+                            self.extra_values = prompt_json['extra_values']
+
                     prompt = clean_caption(prompt)
                     if short_caption is not None:
                         short_caption = clean_caption(short_caption)

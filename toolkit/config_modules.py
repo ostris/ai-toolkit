@@ -50,6 +50,7 @@ class SampleConfig:
         self.adapter_conditioning_scale = kwargs.get('adapter_conditioning_scale', 1.0)
         self.refiner_start_at = kwargs.get('refiner_start_at',
                                            0.5)  # step to start using refiner on sample if it exists
+        self.extra_values = kwargs.get('extra_values', [])
 
 
 class LormModuleSettingsConfig:
@@ -526,6 +527,7 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 4)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        self.extra_values: List[float] = kwargs.get('extra_values', [])
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
@@ -574,6 +576,7 @@ class GenerateImageConfig:
             latents: Union[torch.Tensor | None] = None,  # input latent to start with,
             extra_kwargs: dict = None,  # extra data to save with prompt file
             refiner_start_at: float = 0.5,  # start at this percentage of a step. 0.0 to 1.0 . 1.0 is the end
+            extra_values: List[float] = None,  # extra values to save with prompt file
     ):
         self.width: int = width
         self.height: int = height
@@ -601,6 +604,7 @@ class GenerateImageConfig:
         self.adapter_conditioning_scale: float = adapter_conditioning_scale
         self.extra_kwargs = extra_kwargs if extra_kwargs is not None else {}
         self.refiner_start_at = refiner_start_at
+        self.extra_values = extra_values if extra_values is not None else []
 
         # prompt string will override any settings above
         self._process_prompt_string()
@@ -610,7 +614,7 @@ class GenerateImageConfig:
             self.negative_prompt_2 = negative_prompt
 
         if prompt_2 is None:
-            self.prompt_2 = prompt
+            self.prompt_2 = self.prompt
 
         # parse prompt paths
         if self.output_path is None and self.output_folder is None:
@@ -759,6 +763,12 @@ class GenerateImageConfig:
                         self.adapter_conditioning_scale = float(content)
                     elif flag == 'ref':
                         self.refiner_start_at = float(content)
+                    elif flag == 'ev':
+                        # split by comma
+                        self.extra_values = [float(val) for val in content.split(',')]
+                    elif flag == 'extra_values':
+                        # split by comma
+                        self.extra_values = [float(val) for val in content.split(',')]
 
     def post_process_embeddings(
             self,

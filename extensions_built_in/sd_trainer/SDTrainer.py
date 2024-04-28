@@ -1341,6 +1341,12 @@ class SDTrainer(BaseSDTrainProcess):
                             quad_count=quad_count
                         )
 
+                if self.adapter and isinstance(self.adapter, CustomAdapter) and batch.extra_values is not None:
+                    self.adapter.add_extra_values(batch.extra_values.detach())
+
+                    if self.train_config.do_cfg:
+                        self.adapter.add_extra_values(torch.zeros_like(batch.extra_values.detach()), is_unconditional=True)
+
 
                 self.before_unet_predict()
                 # do a prior pred if we have an unconditional image, we will swap out the giadance later

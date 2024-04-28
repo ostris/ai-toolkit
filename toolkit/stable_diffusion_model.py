@@ -685,6 +685,14 @@ class StableDiffusion:
                             is_generating_samples=True,
                         )
 
+                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter) and len(gen_config.extra_values) > 0:
+                        extra_values = torch.tensor([gen_config.extra_values], device=self.device_torch, dtype=self.torch_dtype)
+                        # apply extra values to the embeddings
+                        self.adapter.add_extra_values(extra_values, is_unconditional=False)
+                        self.adapter.add_extra_values(torch.zeros_like(extra_values), is_unconditional=True)
+                        pass # todo remove, for debugging
+
+
                     if self.refiner_unet is not None and gen_config.refiner_start_at < 1.0:
                         # if we have a refiner loaded, set the denoising end at the refiner start
                         extra['denoising_end'] = gen_config.refiner_start_at
