@@ -387,7 +387,7 @@ class IPAdapter(torch.nn.Module):
             cross_attn_dim = 4096 if is_pixart else sd.unet.config['cross_attention_dim']
             image_proj_model = MLPProjModelClipFace(
                 cross_attention_dim=cross_attn_dim,
-                id_embeddings_dim=1024,
+                id_embeddings_dim=self.image_encoder.config.projection_dim,
                 num_tokens=self.config.num_tokens,  # usually 4
             )
         elif adapter_config.type == 'ip+':
@@ -486,7 +486,21 @@ class IPAdapter(torch.nn.Module):
 
         attn_processor_names = []
 
+        blocks = []
+        transformer_blocks = []
         for name in attn_processor_keys:
+            name_split = name.split(".")
+            block_name = f"{name_split[0]}.{name_split[1]}"
+            transformer_idx = name_split.index("transformer_blocks") if "transformer_blocks" in name_split else -1
+            if transformer_idx >= 0:
+                transformer_name = ".".join(name_split[:2])
+                transformer_name += "." + ".".join(name_split[transformer_idx:transformer_idx + 2])
+                if transformer_name not in transformer_blocks:
+                    transformer_blocks.append(transformer_name)
+
+
+            if block_name not in blocks:
+                blocks.append(block_name)
             cross_attention_dim = None if name.endswith("attn1.processor") or name.endswith("attn.1") or name.endswith("attn1") else \
                 sd.unet.config['cross_attention_dim']
             if name.startswith("mid_block"):

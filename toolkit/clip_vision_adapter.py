@@ -41,20 +41,37 @@ class Embedder(nn.Module):
         self.layer_norm = nn.LayerNorm(input_dim)
         self.fc1 = nn.Linear(input_dim, mid_dim)
         self.gelu = nn.GELU()
-        self.fc2 = nn.Linear(mid_dim, output_dim * num_output_tokens)
+        # self.fc2 = nn.Linear(mid_dim, mid_dim)
+        self.fc2 = nn.Linear(mid_dim, mid_dim)
 
-        self.static_tokens = nn.Parameter(torch.randn(num_output_tokens, output_dim))
+        self.fc2.weight.data.zero_()
+
+        self.layer_norm2 = nn.LayerNorm(mid_dim)
+        self.fc3 = nn.Linear(mid_dim, mid_dim)
+        self.gelu2 = nn.GELU()
+        self.fc4 = nn.Linear(mid_dim, output_dim * num_output_tokens)
+
+        # set the weights to 0
+        self.fc3.weight.data.zero_()
+        self.fc4.weight.data.zero_()
+
+
+        # self.static_tokens = nn.Parameter(torch.zeros(num_output_tokens, output_dim))
+        # self.scaler = nn.Parameter(torch.zeros(num_output_tokens, output_dim))
 
     def forward(self, x):
+        if len(x.shape) == 2:
+            x = x.unsqueeze(1)
         x = self.layer_norm(x)
         x = self.fc1(x)
         x = self.gelu(x)
         x = self.fc2(x)
-        x = x.view(-1, self.num_output_tokens, self.output_dim)
+        x = self.layer_norm2(x)
+        x = self.fc3(x)
+        x = self.gelu2(x)
+        x = self.fc4(x)
 
-        # repeat the static tokens for each batch
-        static_tokens = torch.stack([self.static_tokens] * x.shape[0])
-        x = static_tokens + x
+        x = x.view(-1, self.num_output_tokens, self.output_dim)
 
         return x
 
@@ -88,6 +105,7 @@ class ClipVisionAdapter(torch.nn.Module):
 
         print(f"Adding {placeholder_tokens} tokens to tokenizer")
         print(f"Adding {self.config.num_tokens} tokens to tokenizer")
+
 
         for text_encoder, tokenizer in zip(self.text_encoder_list, self.tokenizer_list):
             num_added_tokens = tokenizer.add_tokens(placeholder_tokens)

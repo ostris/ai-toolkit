@@ -940,6 +940,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 batch.mask_tensor = double_up_tensor(batch.mask_tensor)
                 batch.control_tensor = double_up_tensor(batch.control_tensor)
 
+            noisy_latent_multiplier = self.train_config.noisy_latent_multiplier
+
+            if noisy_latent_multiplier != 1.0:
+                noisy_latents = noisy_latents * noisy_latent_multiplier
+
             # remove grads for these
             noisy_latents.requires_grad = False
             noisy_latents = noisy_latents.detach()

@@ -275,16 +275,18 @@ class SDTrainer(BaseSDTrainProcess):
 
             if self.train_config.inverted_mask_prior and prior_pred is not None and has_mask:
                 assert not self.train_config.train_turbo
-                # we need to make the noise prediction be a masked blending of noise and prior_pred
-                stretched_mask_multiplier = value_map(
-                    mask_multiplier,
-                    batch.file_items[0].dataset_config.mask_min_value,
-                    1.0,
-                    0.0,
-                    1.0
-                )
+                with torch.no_grad():
+                    # we need to make the noise prediction be a masked blending of noise and prior_pred
+                    stretched_mask_multiplier = value_map(
+                        mask_multiplier,
+                        batch.file_items[0].dataset_config.mask_min_value,
+                        1.0,
+                        0.0,
+                        1.0
+                    )
 
-                prior_mask_multiplier = 1.0 - stretched_mask_multiplier
+                    prior_mask_multiplier = 1.0 - stretched_mask_multiplier
+
 
                 # target_mask_multiplier = mask_multiplier
                 # mask_multiplier = 1.0

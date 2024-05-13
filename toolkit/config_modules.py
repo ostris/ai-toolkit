@@ -246,6 +246,7 @@ class TrainConfig:
         self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
+        self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
         self.latent_multiplier = kwargs.get('latent_multiplier', 1.0)
         self.negative_prompt = kwargs.get('negative_prompt', None)
         self.max_negative_prompts = kwargs.get('max_negative_prompts', 1)

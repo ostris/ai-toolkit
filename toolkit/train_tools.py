@@ -390,7 +390,7 @@ def sample_images(
 
 # https://www.crosslabs.org//blog/diffusion-with-offset-noise
 def apply_noise_offset(noise, noise_offset):
-    if noise_offset is None or noise_offset < 0.0000001:
+    if noise_offset is None or (noise_offset < 0.000001 and noise_offset > -0.000001):
         return noise
     noise = noise + noise_offset * torch.randn((noise.shape[0], noise.shape[1], 1, 1), device=noise.device)
     return noise

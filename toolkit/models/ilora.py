@@ -15,6 +15,30 @@ if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
 
 
+class ILoRAProjModule(torch.nn.Module):
+    def __init__(self, num_modules=1, dim=4, embeddings_dim=512):
+        super().__init__()
+
+        self.num_modules = num_modules
+        self.num_dim = dim
+        self.norm = torch.nn.LayerNorm(embeddings_dim)
+
+        self.proj = torch.nn.Sequential(
+            torch.nn.Linear(embeddings_dim, embeddings_dim * 2),
+            torch.nn.GELU(),
+            torch.nn.Linear(embeddings_dim * 2, num_modules * dim),
+        )
+        # Initialize the last linear layer weights near zero
+        torch.nn.init.uniform_(self.proj[2].weight, a=-0.01, b=0.01)
+        torch.nn.init.zeros_(self.proj[2].bias)
+
+    def forward(self, x):
+        x = self.norm(x)
+        x = self.proj(x)
+        x = x.reshape(-1, self.num_modules, self.num_dim)
+        return x
+
+
 class InstantLoRAMidModule(torch.nn.Module):
     def __init__(
             self,
@@ -54,7 +78,7 @@ class InstantLoRAMidModule(torch.nn.Module):
             raise e
         # apply tanh to limit values to -1 to 1
         # scaler = torch.tanh(scaler)
-        return x * (scaler + 1.0)
+        return x * scaler
 
 
 class InstantLoRAModule(torch.nn.Module):
@@ -92,20 +116,25 @@ class InstantLoRAModule(torch.nn.Module):
         #     num_blocks=1,
         # )
         # heads = 20
-        heads = 12
-        dim = 1280
-        output_dim = self.dim
-        self.resampler = Resampler(
-                dim=dim,
-                depth=4,
-                dim_head=64,
-                heads=heads,
-                num_queries=len(lora_modules),
-                embedding_dim=self.vision_hidden_size,
-                max_seq_len=self.vision_tokens,
-                output_dim=output_dim,
-                ff_mult=4
-            )
+        # heads = 12
+        # dim = 1280
+        # output_dim = self.dim
+        self.proj_module = ILoRAProjModule(
+            num_modules=len(lora_modules),
+            dim=self.dim,
+            embeddings_dim=self.vision_hidden_size,
+        )
+        # self.resampler = Resampler(
+        #         dim=dim,
+        #         depth=4,
+        #         dim_head=64,
+        #         heads=heads,
+        #         num_queries=len(lora_modules),
+        #         embedding_dim=self.vision_hidden_size,
+        #         max_seq_len=self.vision_tokens,
+        #         output_dim=output_dim,
+        #         ff_mult=4
+        #     )
 
         for idx, lora_module in enumerate(lora_modules):
             # add a new mid module that will take the original forward and add a vector to it
@@ -128,6 +157,6 @@ class InstantLoRAModule(torch.nn.Module):
         # expand token rank if only rank 2
         if len(img_embeds.shape) == 2:
             img_embeds = img_embeds.unsqueeze(1)
-        img_embeds = self.resampler(img_embeds)
+        img_embeds = self.proj_module(img_embeds)
         self.img_embeds = img_embeds
 
