@@ -39,7 +39,7 @@ from toolkit.pipelines import CustomStableDiffusionXLPipeline, CustomStableDiffu
     StableDiffusionKDiffusionXLPipeline, StableDiffusionXLRefinerPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, DDPMScheduler, \
     StableDiffusionXLAdapterPipeline, StableDiffusionAdapterPipeline, DiffusionPipeline, \
-    StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny
+    StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -142,7 +142,7 @@ class StableDiffusion:
 
         # to hold network if there is one
         self.network = None
-        self.adapter: Union['T2IAdapter', 'IPAdapter', 'ReferenceAdapter', None] = None
+        self.adapter: Union['ControlNetModel', 'T2IAdapter', 'IPAdapter', 'ReferenceAdapter', None] = None
         self.is_xl = model_config.is_xl
         self.is_v2 = model_config.is_v2
         self.is_ssd = model_config.is_ssd

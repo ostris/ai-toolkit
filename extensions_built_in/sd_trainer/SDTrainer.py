@@ -1086,6 +1086,7 @@ class SDTrainer(BaseSDTrainProcess):
                         is_training=True,
                         has_been_preprocessed=True,
                         quad_count=quad_count,
+                        batch_size=noisy_latents.shape[0]
                     )
 
                 with self.timer('encode_prompt'):

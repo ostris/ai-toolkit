@@ -705,10 +705,11 @@ class CustomAdapter(torch.nn.Module):
             is_training=False,
             has_been_preprocessed=False,
             quad_count=4,
+            batch_size=1,
     ) -> PromptEmbeds:
         if self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter':
             if tensors_0_1 is None:
-                tensors_0_1 = self.get_empty_clip_image(1)
+                tensors_0_1 = self.get_empty_clip_image(batch_size)
                 has_been_preprocessed = True
 
             with torch.no_grad():

@@ -78,7 +78,13 @@ class InstantLoRAMidModule(torch.nn.Module):
             raise e
         # apply tanh to limit values to -1 to 1
         # scaler = torch.tanh(scaler)
-        return x * scaler
+        try:
+            return x * scaler
+        except Exception as e:
+            print(e)
+            print(x.shape)
+            print(scaler.shape)
+            raise e
 
 
 class InstantLoRAModule(torch.nn.Module):
