@@ -529,6 +529,7 @@ class DatasetConfig:
         self.num_workers: int = kwargs.get('num_workers', 4)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
         self.extra_values: List[float] = kwargs.get('extra_values', [])
+        self.square_crop: bool = kwargs.get('square_crop', False)
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

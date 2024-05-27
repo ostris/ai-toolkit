@@ -365,14 +365,15 @@ class IPAdapter(torch.nn.Module):
                 input_size=preprocessor_input_size,
                 clip_input_size=self.image_encoder.config.image_size,
             )
-        if 'height' in self.clip_image_processor.size:
-            self.input_size = self.clip_image_processor.size['height']
-        elif hasattr(self.clip_image_processor, 'crop_size'):
-            self.input_size = self.clip_image_processor.crop_size['height']
-        elif 'shortest_edge' in self.clip_image_processor.size.keys():
-            self.input_size = self.clip_image_processor.size['shortest_edge']
-        else:
-            raise ValueError(f"unknown image processor size: {self.clip_image_processor.size}")
+        if not self.config.image_encoder_arch == 'safe':
+            if 'height' in self.clip_image_processor.size:
+                self.input_size = self.clip_image_processor.size['height']
+            elif hasattr(self.clip_image_processor, 'crop_size'):
+                self.input_size = self.clip_image_processor.crop_size['height']
+            elif 'shortest_edge' in self.clip_image_processor.size.keys():
+                self.input_size = self.clip_image_processor.size['shortest_edge']
+            else:
+                raise ValueError(f"unknown image processor size: {self.clip_image_processor.size}")
         self.current_scale = 1.0
         self.is_active = True
         is_pixart = sd.is_pixart

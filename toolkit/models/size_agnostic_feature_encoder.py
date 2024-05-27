@@ -20,11 +20,11 @@ class SAFEReducerBlock(nn.Module):
 
         self.reducer = nn.Sequential(
             nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(channels),
             activation(),
+            nn.BatchNorm2d(channels),
             nn.Conv2d(channels, channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(channels),
             activation(),
+            nn.BatchNorm2d(channels),
             nn.AvgPool2d(kernel_size=2, stride=2),
         )
         self.residual_shrink = nn.AvgPool2d(kernel_size=2, stride=2)
@@ -227,6 +227,7 @@ class SAFEVMConfig:
         self.reducer_channels = reducer_channels
         self.channels = channels
         self.downscale_factor = downscale_factor
+        self.image_size = 224
 
         self.hidden_size = num_vectors
         self.projection_dim = num_vectors
@@ -242,7 +243,9 @@ class SAFEVMReturn:
 class SAFEVisionModel(SizeAgnosticFeatureEncoder):
     def __init__(self, **kwargs):
         self.config = SAFEVMConfig(**kwargs)
-        super().__init__(**kwargs)
+        self.image_size = None
+        # super().__init__(**kwargs)
+        super(SAFEVisionModel, self).__init__(**kwargs)
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):

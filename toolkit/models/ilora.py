@@ -21,19 +21,24 @@ class ILoRAProjModule(torch.nn.Module):
 
         self.num_modules = num_modules
         self.num_dim = dim
-        self.norm = torch.nn.LayerNorm(embeddings_dim)
 
         self.proj = torch.nn.Sequential(
+            torch.nn.LayerNorm(embeddings_dim),
             torch.nn.Linear(embeddings_dim, embeddings_dim * 2),
             torch.nn.GELU(),
-            torch.nn.Linear(embeddings_dim * 2, num_modules * dim),
+            torch.nn.Linear(embeddings_dim * 2, embeddings_dim * 2),
+            torch.nn.LayerNorm(embeddings_dim * 2),
+
+            torch.nn.Linear(embeddings_dim * 2, embeddings_dim * 4),
+            torch.nn.GELU(),
+            torch.nn.Linear(embeddings_dim * 4, num_modules * dim),
+            torch.nn.LayerNorm(num_modules * dim),
         )
         # Initialize the last linear layer weights near zero
-        torch.nn.init.uniform_(self.proj[2].weight, a=-0.01, b=0.01)
-        torch.nn.init.zeros_(self.proj[2].bias)
+        torch.nn.init.uniform_(self.proj[-2].weight, a=-0.01, b=0.01)
+        torch.nn.init.zeros_(self.proj[-2].bias)
 
     def forward(self, x):
-        x = self.norm(x)
         x = self.proj(x)
         x = x.reshape(-1, self.num_modules, self.num_dim)
         return x
@@ -71,6 +76,8 @@ class InstantLoRAMidModule(torch.nn.Module):
             # reshape if needed
             if len(x.shape) == 3:
                 scaler = scaler.unsqueeze(1)
+            if len(x.shape) == 4:
+                scaler = scaler.unsqueeze(-1).unsqueeze(-1)
         except Exception as e:
             print(e)
             print(x.shape)

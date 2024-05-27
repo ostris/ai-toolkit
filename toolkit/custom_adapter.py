@@ -388,7 +388,10 @@ class CustomAdapter(torch.nn.Module):
             self.fuse_module.load_state_dict(state_dict['fuse_module'], strict=strict)
 
         if 'ilora' in state_dict:
-            self.ilora_module.load_state_dict(state_dict['ilora'], strict=strict)
+            try:
+                self.ilora_module.load_state_dict(state_dict['ilora'], strict=strict)
+            except Exception as e:
+                print(e)
 
         pass
 

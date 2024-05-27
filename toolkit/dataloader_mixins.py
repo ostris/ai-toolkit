@@ -203,7 +203,22 @@ class BucketsMixin:
             if file_item.has_point_of_interest:
                 # Attempt to process the poi if we can. It wont process if the image is smaller than the resolution
                 did_process_poi = file_item.setup_poi_bucket()
-            if not did_process_poi:
+            if self.dataset_config.square_crop:
+                # we scale first so smallest size matches resolution
+                scale_factor_x = resolution / width
+                scale_factor_y = resolution / height
+                scale_factor = max(scale_factor_x, scale_factor_y)
+                file_item.scale_to_width = math.ceil(width * scale_factor)
+                file_item.scale_to_height = math.ceil(height * scale_factor)
+                file_item.crop_width = resolution
+                file_item.crop_height = resolution
+                if width > height:
+                    file_item.crop_x = int(file_item.scale_to_width / 2 - resolution / 2)
+                    file_item.crop_y = 0
+                else:
+                    file_item.crop_x = 0
+                    file_item.crop_y = int(file_item.scale_to_height / 2 - resolution / 2)
+            elif not did_process_poi:
                 bucket_resolution = get_bucket_for_image_size(
                     width, height,
                     resolution=resolution,

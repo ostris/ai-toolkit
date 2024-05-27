@@ -48,28 +48,55 @@ dataset_config = DatasetConfig(
     buckets=True,
     bucket_tolerance=bucket_tolerance,
     # poi='person',
+    shuffle_augmentations=True,
     # augmentations=[
     #     {
-    #         'method': 'RandomBrightnessContrast',
-    #         'brightness_limit': (-0.3, 0.3),
-    #         'contrast_limit': (-0.3, 0.3),
-    #         'brightness_by_max': False,
-    #         'p': 1.0
+    #         'method': 'GaussianBlur',
+    #         'blur_limit': (1, 16),
+    #         'sigma_limit': (0, 8),
+    #         'p': 0.8
     #     },
     #     {
-    #         'method': 'HueSaturationValue',
-    #         'hue_shift_limit': (-0, 0),
-    #         'sat_shift_limit': (-40, 40),
-    #         'val_shift_limit': (-40, 40),
-    #         'p': 1.0
+    #         'method': 'ImageCompression',
+    #         'quality_lower': 10,
+    #         'quality_upper': 100,
+    #         'compression_type': 0,
+    #         'p': 0.8
     #     },
-        # {
-        #     'method': 'RGBShift',
-        #     'r_shift_limit': (-20, 20),
-        #     'g_shift_limit': (-20, 20),
-        #     'b_shift_limit': (-20, 20),
-        #     'p': 1.0
-        # },
+    #     {
+    #         'method': 'ImageCompression',
+    #         'quality_lower': 20,
+    #         'quality_upper': 100,
+    #         'compression_type': 1,
+    #         'p': 0.8
+    #     },
+    #     {
+    #         'method': 'RingingOvershoot',
+    #         'blur_limit': (3, 35),
+    #         'cutoff': (0.7, 1.96),
+    #         'p': 0.8
+    #     },
+    #     {
+    #         'method': 'GaussNoise',
+    #         'var_limit': (0, 300),
+    #         'per_channel': True,
+    #         'mean': 0.0,
+    #         'p': 0.8
+    #     },
+    #     {
+    #         'method': 'GlassBlur',
+    #         'sigma': 0.6,
+    #         'max_delta': 7,
+    #         'iterations': 2,
+    #         'mode': 'fast',
+    #         'p': 0.8
+    #     },
+    #     {
+    #         'method': 'Downscale',
+    #         'scale_max': 0.5,
+    #         'interpolation': 'cv2.INTER_CUBIC',
+    #         'p': 0.8
+    #     },
     # ]
 
 
@@ -100,7 +127,7 @@ for epoch in range(args.epochs):
 
         show_img(img)
 
-        # time.sleep(0.1)
+        # time.sleep(1.0)
     # if not last epoch
     if epoch < args.epochs - 1:
         trigger_dataloader_setup_epoch(dataloader)
