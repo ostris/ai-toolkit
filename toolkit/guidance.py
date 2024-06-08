@@ -240,7 +240,7 @@ def get_direct_guidance_loss(
 
     noise_pred_uncond, noise_pred_cond = torch.chunk(prediction, 2, dim=0)
 
-    guidance_scale = 1.0
+    guidance_scale = 1.25
     guidance_pred = noise_pred_uncond + guidance_scale * (
             noise_pred_cond - noise_pred_uncond
     )
@@ -585,6 +585,8 @@ def get_guided_tnt(
     prior_loss = prior_loss.mean([1, 2, 3])
 
     loss = prior_loss + this_loss - that_loss
+
+    loss = loss.mean()
 
     loss.backward()
 

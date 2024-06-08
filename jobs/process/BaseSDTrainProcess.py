@@ -10,7 +10,7 @@ from typing import Union, List, Optional
 
 import numpy as np
 import yaml
-from diffusers import T2IAdapter
+from diffusers import T2IAdapter, ControlNetModel
 from safetensors.torch import save_file, load_file
 # from lycoris.config import PRESET
 from torch.utils.data import DataLoader
@@ -143,7 +143,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # to hold network if there is one
         self.network: Union[Network, None] = None
-        self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, CustomAdapter, None] = None
+        self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, CustomAdapter, ControlNetModel, None] = None
         self.embedding: Union[Embedding, None] = None
 
         is_training_adapter = self.adapter_config is not None and self.adapter_config.train
@@ -368,6 +368,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         pass
 
     def save(self, step=None):
+        flush()
         if not os.path.exists(self.save_root):
             os.makedirs(self.save_root, exist_ok=True)
 
@@ -423,6 +424,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # add _lora to name
                     if self.adapter_config.type == 't2i':
                         adapter_name += '_t2i'
+                    elif self.adapter_config.type == 'control_net':
+                        adapter_name += '_cn'
                     elif self.adapter_config.type == 'clip':
                         adapter_name += '_clip'
                     elif self.adapter_config.type.startswith('ip'):
@@ -441,6 +444,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         meta=save_meta,
                         dtype=get_torch_dtype(self.save_config.dtype)
                     )
+                elif self.adapter_config.type == 'control_net':
+                    # save in diffusers format
+                    name_or_path = file_path.replace('.safetensors', '')
+                    # move it to the new dtype and cpu
+                    orig_device = self.adapter.device
+                    orig_dtype = self.adapter.dtype
+                    self.adapter = self.adapter.to(torch.device('cpu'), dtype=get_torch_dtype(self.save_config.dtype))
+                    self.adapter.save_pretrained(
+                        name_or_path,
+                        dtype=get_torch_dtype(self.save_config.dtype),
+                        safe_serialization=True
+                    )
+                    meta_path = os.path.join(name_or_path, 'aitk_meta.yaml')
+                    with open(meta_path, 'w') as f:
+                        yaml.dump(self.meta, f)
+                    # move it back
+                    self.adapter = self.adapter.to(orig_device, dtype=orig_dtype)
                 else:
                     save_ip_adapter_from_diffusers(
                         state_dict,
@@ -551,6 +571,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     paths = [p for p in paths if '_refiner' not in p]
                 if '_t2i' not in name:
                     paths = [p for p in paths if '_t2i' not in p]
+                if '_cn' not in name:
+                    paths = [p for p in paths if '_cn' not in p]
 
                 if len(paths) > 0:
                     latest_path = max(paths, key=os.path.getctime)
@@ -956,8 +978,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def setup_adapter(self):
         # t2i adapter
         is_t2i = self.adapter_config.type == 't2i'
+        is_control_net = self.adapter_config.type == 'control_net'
         if self.adapter_config.type == 't2i':
             suffix = 't2i'
+        elif self.adapter_config.type == 'control_net':
+            suffix = 'cn'
         elif self.adapter_config.type == 'clip':
             suffix = 'clip'
         elif self.adapter_config.type == 'reference':
@@ -990,6 +1015,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     downscale_factor=self.adapter_config.downscale_factor,
                     adapter_type=self.adapter_config.adapter_type,
                 )
+        elif is_control_net:
+            if self.adapter_config.name_or_path is None:
+                raise ValueError("ControlNet requires a name_or_path to load from currently")
+            load_from_path = self.adapter_config.name_or_path
+            if latest_save_path is not None:
+                load_from_path = latest_save_path
+            self.adapter = ControlNetModel.from_pretrained(
+                load_from_path,
+                torch_dtype=get_torch_dtype(self.train_config.dtype),
+            )
         elif self.adapter_config.type == 'clip':
             self.adapter = ClipVisionAdapter(
                 sd=self.sd,
@@ -1013,7 +1048,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 adapter_config=self.adapter_config,
             )
         self.adapter.to(self.device_torch, dtype=dtype)
-        if latest_save_path is not None:
+        if latest_save_path is not None and not is_control_net:
             # load adapter from path
             print(f"Loading adapter from {latest_save_path}")
             if is_t2i:
@@ -1040,8 +1075,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     dtype=dtype
                 )
                 self.adapter.load_state_dict(loaded_state_dict)
-            if self.adapter_config.train:
-                self.load_training_state_from_metadata(latest_save_path)
+        if latest_save_path is not None and self.adapter_config.train:
+            self.load_training_state_from_metadata(latest_save_path)
         # set trainable params
         self.sd.adapter = self.adapter
 

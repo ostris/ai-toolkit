@@ -860,7 +860,8 @@ class AugmentationFileItemDTOMixin:
         # only store the spatial transforms
         augmented_params['transforms'] = [t for t in augmented_params['transforms'] if t['__class_fullname__'].split('.')[-1] in spatial_transforms]
 
-        self.aug_replay_spatial_transforms = augmented_params
+        if self.dataset_config.replay_transforms:
+            self.aug_replay_spatial_transforms = augmented_params
 
         # convert back to RGB tensor
         augmented = cv2.cvtColor(augmented, cv2.COLOR_BGR2RGB)

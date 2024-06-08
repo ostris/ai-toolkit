@@ -129,13 +129,13 @@ class NetworkConfig:
                 self.conv = 4
 
 
-AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker']
+AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net']
 
 CLIPLayer = Literal['penultimate_hidden_states', 'image_embeds', 'last_hidden_state']
 
 class AdapterConfig:
     def __init__(self, **kwargs):
-        self.type: AdapterTypes = kwargs.get('type', 't2i')  # t2i, ip, clip
+        self.type: AdapterTypes = kwargs.get('type', 't2i')  # t2i, ip, clip, control_net
         self.in_channels: int = kwargs.get('in_channels', 3)
         self.channels: List[int] = kwargs.get('channels', [320, 640, 1280, 1280])
         self.num_res_blocks: int = kwargs.get('num_res_blocks', 2)
@@ -530,6 +530,8 @@ class DatasetConfig:
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
+        # apply same augmentations to control images. Usually want this true unless special case
+        self.replay_transforms: bool = kwargs.get('replay_transforms', True)
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

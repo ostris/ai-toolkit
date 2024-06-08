@@ -1,5 +1,5 @@
 import torch
-from transformers import Adafactor
+from transformers import Adafactor, AdamW
 
 
 def get_optimizer(
@@ -69,7 +69,7 @@ def get_optimizer(
         if 'relative_step' not in optimizer_params:
             optimizer_params['relative_step'] = False
         if 'scale_parameter' not in optimizer_params:
-            optimizer_params['scale_parameter'] = True
+            optimizer_params['scale_parameter'] = False
         if 'warmup_init' not in optimizer_params:
             optimizer_params['warmup_init'] = False
         optimizer = Adafactor(params, lr=float(learning_rate), eps=1e-6, **optimizer_params)

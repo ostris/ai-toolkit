@@ -158,7 +158,7 @@ def get_style_model_and_losses(
 ):
     # content_layers = ['conv_4']
     # style_layers = ['conv_1', 'conv_2', 'conv_3', 'conv_4', 'conv_5']
-    content_layers = ['conv2_2', 'conv3_2', 'conv4_2', 'conv5_2']
+    content_layers = ['conv2_2', 'conv3_2', 'conv4_2']
     style_layers = ['conv2_1', 'conv3_1', 'conv4_1']
     cnn = models.vgg19(pretrained=True).features.to(device, dtype=dtype).eval()
     # set all weights in the model to our dtype
