@@ -380,8 +380,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.update_training_metadata()
         filename = f'{self.job.name}{step_num}.safetensors'
         file_path = os.path.join(self.save_root, filename)
+
+        save_meta = copy.deepcopy(self.meta)
+        # get extra meta
+        if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
+            additional_save_meta = self.adapter.get_additional_save_metadata()
+            if additional_save_meta is not None:
+                for key, value in additional_save_meta.items():
+                    save_meta[key] = value
+
         # prepare meta
-        save_meta = get_meta_for_safetensors(self.meta, self.job.name)
+        save_meta = get_meta_for_safetensors(save_meta, self.job.name)
         if not self.is_fine_tuning:
             if self.network is not None:
                 lora_name = self.job.name
