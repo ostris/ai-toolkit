@@ -4,7 +4,6 @@ import torch
 import sys
 
 from PIL import Image
-from diffusers.models.unet_2d_condition import UNet2DConditionOutput
 from torch.nn import Parameter
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 

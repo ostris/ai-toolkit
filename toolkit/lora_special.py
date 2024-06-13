@@ -152,6 +152,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             train_unet: Optional[bool] = True,
             is_sdxl=False,
             is_v2=False,
+            is_v3=False,
             is_pixart: bool = False,
             use_bias: bool = False,
             is_lorm: bool = False,
@@ -200,6 +201,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.multiplier = multiplier
         self.is_sdxl = is_sdxl
         self.is_v2 = is_v2
+        self.is_v3 = is_v3
         self.is_pixart = is_pixart
         self.network_type = network_type
         if self.network_type.lower() == "dora":
@@ -233,7 +235,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                 target_replace_modules: List[torch.nn.Module],
         ) -> List[LoRAModule]:
             unet_prefix = self.LORA_PREFIX_UNET
-            if is_pixart:
+            if is_pixart or is_v3:
                 unet_prefix = f"lora_transformer"
 
             prefix = (
@@ -345,6 +347,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         target_modules = target_lin_modules
         if modules_dim is not None or self.conv_lora_dim is not None or conv_block_dims is not None:
             target_modules += target_conv_modules
+
+        if is_v3:
+            target_modules = ["SD3Transformer2DModel"]
 
         if train_unet:
             self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)

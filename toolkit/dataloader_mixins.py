@@ -1353,6 +1353,8 @@ class LatentCachingMixin:
                 file_item.latent_space_version = self.sd.model_config.latent_space_version
             elif self.sd.is_xl:
                 file_item.latent_space_version = 'sdxl'
+            elif self.sd.is_v3:
+                file_item.latent_space_version = 'sd3'
             else:
                 file_item.latent_space_version = 'sd1'
             file_item.is_caching_to_disk = to_disk

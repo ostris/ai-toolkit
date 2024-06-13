@@ -1,7 +1,7 @@
 torch
 torchvision
 safetensors
-diffusers==0.26.3
+diffusers
 transformers
 lycoris-lora==1.8.3
 flatten_json

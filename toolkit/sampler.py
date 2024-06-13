@@ -13,8 +13,11 @@ from diffusers import (
     HeunDiscreteScheduler,
     KDPM2DiscreteScheduler,
     KDPM2AncestralDiscreteScheduler,
-    LCMScheduler
+    LCMScheduler,
+    FlowMatchEulerDiscreteScheduler,
 )
+
+from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 
 from k_diffusion.external import CompVisDenoiser
 
@@ -112,6 +115,15 @@ def get_sampler(
         scheduler_cls = LCMScheduler
     elif sampler == "custom_lcm":
         scheduler_cls = CustomLCMScheduler
+    elif sampler == "flowmatch":
+        scheduler_cls = CustomFlowMatchEulerDiscreteScheduler
+        config_to_use = {
+            "_class_name": "FlowMatchEulerDiscreteScheduler",
+            "_diffusers_version": "0.29.0.dev0",
+            "num_train_timesteps": 1000,
+            "shift": 3.0
+        }
+
 
     config = copy.deepcopy(config_to_use)
     config.update(sched_init_args)

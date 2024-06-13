@@ -1244,6 +1244,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     conv_alpha=self.network_config.conv_alpha,
                     is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
                     is_v2=self.model_config.is_v2,
+                    is_v3=self.model_config.is_v3,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
                     dropout=self.network_config.dropout,
