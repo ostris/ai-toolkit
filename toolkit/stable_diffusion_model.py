@@ -201,7 +201,7 @@ class StableDiffusion:
                     model_path,
                     dtype=dtype,
                     device=self.device_torch,
-                    variant="fp16",
+                    # variant="fp16",
                     use_safetensors=True,
                     **load_args
                 )
@@ -389,7 +389,7 @@ class StableDiffusion:
                     load_safety_checker=False,
                     requires_safety_checker=False,
                     safety_checker=None,
-                    variant="fp16",
+                    # variant="fp16",
                     trust_remote_code=True,
                     **load_args
                 ).to(self.device_torch)
@@ -473,7 +473,7 @@ class StableDiffusion:
                     model_path,
                     dtype=dtype,
                     device=self.device_torch,
-                    variant="fp16",
+                    # variant="fp16",
                     use_safetensors=True,
                 ).to(self.device_torch)
             else:
@@ -1696,7 +1696,7 @@ class StableDiffusion:
                 model_path,
                 dtype=dtype,
                 device='cpu',
-                variant="fp16",
+                # variant="fp16",
                 use_safetensors=True,
             )
         else:
