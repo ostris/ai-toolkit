@@ -188,6 +188,10 @@ class AdapterConfig:
         # trains with a scaler to easy channel bias but merges it in on save
         self.merge_scaler: bool = kwargs.get('merge_scaler', False)
 
+        # for ilora
+        self.head_dim: int = kwargs.get('head_dim', 1024)
+        self.num_heads: int = kwargs.get('num_heads', 1)
+
 
 class EmbeddingConfig:
     def __init__(self, **kwargs):

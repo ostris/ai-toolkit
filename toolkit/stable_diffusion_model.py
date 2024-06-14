@@ -576,13 +576,11 @@ class StableDiffusion:
             if self.is_xl:
                 pipeline = Pipe(
                     vae=self.vae,
-                    transformer=self.unet,
+                    unet=self.unet,
                     text_encoder=self.text_encoder[0],
                     text_encoder_2=self.text_encoder[1],
-                    text_encoder_3=self.text_encoder[2],
                     tokenizer=self.tokenizer[0],
                     tokenizer_2=self.tokenizer[1],
-                    tokenizer_3=self.tokenizer[2],
                     scheduler=noise_scheduler,
                     **extra_args
                 ).to(self.device_torch)

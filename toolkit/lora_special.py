@@ -157,6 +157,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             use_bias: bool = False,
             is_lorm: bool = False,
             ignore_if_contains = None,
+            only_if_contains = None,
             parameter_threshold: float = 0.0,
             attn_only: bool = False,
             target_lin_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE,
@@ -186,6 +187,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if ignore_if_contains is None:
             ignore_if_contains = []
         self.ignore_if_contains = ignore_if_contains
+
+        self.only_if_contains: Union[List, None] = only_if_contains
+
         self.lora_dim = lora_dim
         self.alpha = alpha
         self.conv_lora_dim = conv_lora_dim
@@ -250,6 +254,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             loras = []
             skipped = []
             attached_modules = []
+            lora_shape_dict = {}
             for name, module in root_module.named_modules():
                 if module.__class__.__name__ in target_replace_modules:
                     for child_name, child_module in module.named_modules():
@@ -268,6 +273,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         if (is_linear or is_conv2d) and not skip:
                             lora_name = prefix + "." + name + "." + child_name
                             lora_name = lora_name.replace(".", "_")
+
+                            if self.only_if_contains is not None and not any([word in lora_name for word in self.only_if_contains]):
+                                continue
 
                             dim = None
                             alpha = None
@@ -316,6 +324,8 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                 use_bias=use_bias,
                             )
                             loras.append(lora)
+                            lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)
+                            ]
             return loras, skipped
 
         text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]

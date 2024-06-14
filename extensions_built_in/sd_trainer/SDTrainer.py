@@ -376,7 +376,8 @@ class SDTrainer(BaseSDTrainProcess):
                 # 3 just do mode for now?
                 # if args.weighting_scheme == "sigma_sqrt":
                 sigmas = self.sd.noise_scheduler.get_sigmas(timesteps, pred.ndim, dtype, self.device_torch)
-                weighting = (sigmas ** -2.0).float()
+                # weighting = (sigmas ** -2.0).float()
+                weighting = torch.ones_like(sigmas)
                 # elif args.weighting_scheme == "logit_normal":
                 #     # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
                 #     u = torch.normal(mean=args.logit_mean, std=args.logit_std, size=(bsz,), device=accelerator.device)
