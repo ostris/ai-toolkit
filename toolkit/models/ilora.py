@@ -284,6 +284,7 @@ class InstantLoRAModule(torch.nn.Module):
             hidden_size=head_dim,
             head_size=head_dim,
             num_mlp_layers=1,
+            num_heads=self.num_heads,
             output_size=self.output_size,
         )
 
