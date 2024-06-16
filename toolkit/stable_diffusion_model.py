@@ -11,7 +11,7 @@ from collections import OrderedDict
 
 import yaml
 from PIL import Image
-from diffusers.pipelines.pixart_alpha.pipeline_pixart_alpha import ASPECT_RATIO_1024_BIN, ASPECT_RATIO_512_BIN
+from diffusers.pipelines.pixart_alpha.pipeline_pixart_sigma import ASPECT_RATIO_1024_BIN, ASPECT_RATIO_512_BIN, ASPECT_RATIO_2048_BIN, ASPECT_RATIO_256_BIN
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 from safetensors.torch import save_file, load_file
 from torch.nn import Parameter
@@ -45,9 +45,8 @@ import diffusers
 from diffusers import \
     AutoencoderKL, \
     UNet2DConditionModel
-from diffusers import PixArtAlphaPipeline, DPMSolverMultistepScheduler
+from diffusers import PixArtAlphaPipeline, DPMSolverMultistepScheduler, PixArtSigmaPipeline
 from transformers import T5EncoderModel, BitsAndBytesConfig
-from toolkit.util.pixart_sigma_patch import pixart_sigma_init_patched_inputs, PixArtSigmaPipeline
 
 from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
 from toolkit.util.inverse_cfg import inverse_classifier_guidance
@@ -330,12 +329,6 @@ class StableDiffusion:
                 text_encoder.to = lambda *args, **kwargs: None
 
             if self.model_config.is_pixart_sigma:
-                # tmp patches for diffusers PixArtSigmaPipeline Implementation
-                print(
-                    "Changing _init_patched_inputs method of diffusers.models.Transformer2DModel "
-                    "using scripts.diffusers_patches.pixart_sigma_init_patched_inputs")
-                setattr(Transformer2DModel, '_init_patched_inputs', pixart_sigma_init_patched_inputs)
-
                 # load the transformer only from the save
                 transformer = Transformer2DModel.from_pretrained(
                     model_path,
@@ -606,7 +599,7 @@ class StableDiffusion:
                     tokenizer=self.tokenizer,
                     scheduler=noise_scheduler,
                     **extra_args
-                ).to(self.device_torch)
+                )
 
             else:
                 pipeline = Pipe(
@@ -1239,11 +1232,20 @@ class StableDiffusion:
 
                 height = h * VAE_SCALE_FACTOR
                 width = w * VAE_SCALE_FACTOR
-                aspect_ratio_bin = (
-                    ASPECT_RATIO_1024_BIN if self.unet.config.sample_size == 128 else ASPECT_RATIO_512_BIN
-                )
+
+
+                if self.pipeline.transformer.config.sample_size == 256:
+                    aspect_ratio_bin = ASPECT_RATIO_2048_BIN
+                elif self.pipeline.transformer.config.sample_size == 128:
+                    aspect_ratio_bin = ASPECT_RATIO_1024_BIN
+                elif self.pipeline.transformer.config.sample_size == 64:
+                    aspect_ratio_bin = ASPECT_RATIO_512_BIN
+                elif self.pipeline.transformer.config.sample_size == 32:
+                    aspect_ratio_bin = ASPECT_RATIO_256_BIN
+                else:
+                    raise ValueError("Invalid sample size")
                 orig_height, orig_width = height, width
-                height, width = self.pipeline.classify_height_width_bin(height, width, ratios=aspect_ratio_bin)
+                height, width = self.pipeline.image_processor.classify_height_width_bin(height, width, ratios=aspect_ratio_bin)
 
                 added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
                 if self.unet.config.sample_size == 128:

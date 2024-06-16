@@ -361,6 +361,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if is_v3:
             target_modules = ["SD3Transformer2DModel"]
 
+        if is_pixart:
+            target_modules = ["PixArtTransformer2DModel"]
+
         if train_unet:
             self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)
         else:
