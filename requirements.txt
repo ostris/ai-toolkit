@@ -23,6 +23,5 @@ prodigyopt
 controlnet_aux==0.0.7
 python-dotenv
 bitsandbytes
-xformers
 hf_transfer
 lpips

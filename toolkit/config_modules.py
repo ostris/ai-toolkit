@@ -372,6 +372,8 @@ class ModelConfig:
 
         # for text encoder quant. Only works with pixart currently
         self.text_encoder_bits = kwargs.get('text_encoder_bits', 8)  # 16, 8, 4
+        self.unet_path = kwargs.get("unet_path", None)
+        self.unet_sample_size = kwargs.get("unet_sample_size", None)
 
 
 class ReferenceDatasetConfig:
