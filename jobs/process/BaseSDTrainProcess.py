@@ -589,16 +589,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return latest_path
 
     def load_training_state_from_metadata(self, path):
+        meta = None
         # if path is folder, then it is diffusers
         if os.path.isdir(path):
             meta_path = os.path.join(path, 'aitk_meta.yaml')
             # load it
-            with open(meta_path, 'r') as f:
-                meta = yaml.load(f, Loader=yaml.FullLoader)
+            if os.path.exists(meta_path):
+                with open(meta_path, 'r') as f:
+                    meta = yaml.load(f, Loader=yaml.FullLoader)
         else:
             meta = load_metadata_from_safetensors(path)
         # if 'training_info' in Orderdict keys
-        if 'training_info' in meta and 'step' in meta['training_info'] and self.train_config.start_step is None:
+        if meta is not None and 'training_info' in meta and 'step' in meta['training_info'] and self.train_config.start_step is None:
             self.step_num = meta['training_info']['step']
             if 'epoch' in meta['training_info']:
                 self.epoch_num = meta['training_info']['epoch']

@@ -333,7 +333,7 @@ class IPAdapter(torch.nn.Module):
         if not self.config.train_image_encoder:
             # compile it
             print('Compiling image encoder')
-            torch.compile(self.image_encoder, fullgraph=True)
+            #torch.compile(self.image_encoder, fullgraph=True)
 
         self.input_size = self.image_encoder.config.image_size
 
