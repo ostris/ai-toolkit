@@ -8,7 +8,7 @@ from typing import Union, List, Literal, Iterator
 import sys
 import os
 from collections import OrderedDict
-
+import copy
 import yaml
 from PIL import Image
 from diffusers.pipelines.pixart_alpha.pipeline_pixart_sigma import ASPECT_RATIO_1024_BIN, ASPECT_RATIO_512_BIN, ASPECT_RATIO_2048_BIN, ASPECT_RATIO_256_BIN
@@ -423,6 +423,8 @@ class StableDiffusion:
         self.vae: 'AutoencoderKL' = pipe.vae.to(self.device_torch, dtype=dtype)
         self.vae.eval()
         self.vae.requires_grad_(False)
+        VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        self.vae_scale_factor = VAE_SCALE_FACTOR
         self.unet.to(self.device_torch, dtype=dtype)
         self.unet.requires_grad_(False)
         self.unet.eval()
@@ -438,6 +440,19 @@ class StableDiffusion:
         self.pipeline = pipe
         self.load_refiner()
         self.is_loaded = True
+
+        if self.is_pixart and self.vae_scale_factor == 16:
+            # TODO make our own pipeline?
+            # we generate an image 2x larger, so we need to copy the sizes from larger ones down
+            # ASPECT_RATIO_1024_BIN, ASPECT_RATIO_512_BIN, ASPECT_RATIO_2048_BIN, ASPECT_RATIO_256_BIN
+            for key in ASPECT_RATIO_256_BIN.keys():
+                ASPECT_RATIO_256_BIN[key] = [ASPECT_RATIO_256_BIN[key][0] * 2, ASPECT_RATIO_256_BIN[key][1] * 2]
+            for key in ASPECT_RATIO_512_BIN.keys():
+                ASPECT_RATIO_512_BIN[key] = [ASPECT_RATIO_512_BIN[key][0] * 2, ASPECT_RATIO_512_BIN[key][1] * 2]
+            for key in ASPECT_RATIO_1024_BIN.keys():
+                ASPECT_RATIO_1024_BIN[key] = [ASPECT_RATIO_1024_BIN[key][0] * 2, ASPECT_RATIO_1024_BIN[key][1] * 2]
+            for key in ASPECT_RATIO_2048_BIN.keys():
+                ASPECT_RATIO_2048_BIN[key] = [ASPECT_RATIO_2048_BIN[key][0] * 2, ASPECT_RATIO_2048_BIN[key][1] * 2]
 
     def te_train(self):
         if isinstance(self.text_encoder, list):
@@ -1250,7 +1265,7 @@ class StableDiffusion:
                 height, width = self.pipeline.image_processor.classify_height_width_bin(height, width, ratios=aspect_ratio_bin)
 
                 added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
-                if self.unet.config.sample_size == 128:
+                if self.unet.config.sample_size == 128 or (self.vae_scale_factor == 16 and self.unet.config.sample_size == 64):
                     resolution = torch.tensor([height, width]).repeat(batch_size, 1)
                     aspect_ratio = torch.tensor([float(height / width)]).repeat(batch_size, 1)
                     resolution = resolution.to(dtype=text_embeddings.text_embeds.dtype, device=self.device_torch)

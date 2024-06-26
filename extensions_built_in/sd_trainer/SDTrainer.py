@@ -989,7 +989,7 @@ class SDTrainer(BaseSDTrainProcess):
                 # training with assistance, we want it low
                 # adapter_strength_min = 0.4
                 # adapter_strength_max = 0.7
-                adapter_strength_min = 0.9
+                adapter_strength_min = 0.5
                 adapter_strength_max = 1.1
 
             adapter_conditioning_scale = torch.rand(
