@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional, Literal, Union, TYPE_CHECKING
+from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
@@ -133,6 +133,7 @@ AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'cont
 
 CLIPLayer = Literal['penultimate_hidden_states', 'image_embeds', 'last_hidden_state']
 
+
 class AdapterConfig:
     def __init__(self, **kwargs):
         self.type: AdapterTypes = kwargs.get('type', 't2i')  # t2i, ip, clip, control_net
@@ -248,7 +249,7 @@ class TrainConfig:
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
         self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
-        self.adapter_assist_type: Optional[str] = kwargs.get('adapter_assist_type', 't2i') # t2i, control_net
+        self.adapter_assist_type: Optional[str] = kwargs.get('adapter_assist_type', 't2i')  # t2i, control_net
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
@@ -331,6 +332,13 @@ class TrainConfig:
         # applies negative loss on the prior to encourage network to diverge from it
         self.do_prior_divergence = kwargs.get('do_prior_divergence', False)
 
+        ema_config: Union[Dict, None] = kwargs.get('ema_config', None)
+        if ema_config is not None:
+            ema_config['use_ema'] = True
+        else:
+            ema_config = {'use_ema': False}
+
+        self.ema_config: EMAConfig = EMAConfig(**ema_config)
 
 
 class ModelConfig:
@@ -374,6 +382,12 @@ class ModelConfig:
         self.text_encoder_bits = kwargs.get('text_encoder_bits', 8)  # 16, 8, 4
         self.unet_path = kwargs.get("unet_path", None)
         self.unet_sample_size = kwargs.get("unet_sample_size", None)
+
+
+class EMAConfig:
+    def __init__(self, **kwargs):
+        self.use_ema: bool = kwargs.get('use_ema', False)
+        self.ema_decay: float = kwargs.get('ema_decay', 0.999)
 
 
 class ReferenceDatasetConfig:
@@ -483,7 +497,7 @@ class DatasetConfig:
         self.token_dropout_rate: float = float(kwargs.get('token_dropout_rate', 0.0))
         self.shuffle_tokens: bool = kwargs.get('shuffle_tokens', False)
         self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
-        self.keep_tokens: int = kwargs.get('keep_tokens', 0) # #of first tokens to always keep unless caption dropped
+        self.keep_tokens: int = kwargs.get('keep_tokens', 0)  # #of first tokens to always keep unless caption dropped
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])
