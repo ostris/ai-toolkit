@@ -477,6 +477,7 @@ class ToolkitNetworkMixin:
             v = v.detach().clone().to("cpu").to(dtype)
             save_key = save_keymap[key] if key in save_keymap else key
             save_dict[save_key] = v
+            del state_dict[key]
 
         if extra_state_dict is not None:
             # add extra items to state dict
