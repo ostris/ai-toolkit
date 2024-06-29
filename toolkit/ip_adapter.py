@@ -410,7 +410,7 @@ class IPAdapter(torch.nn.Module):
 
             if is_pixart:
                 # heads = 20
-                heads = 12
+                heads = 20
                 # dim = 4096
                 dim = 1280
                 output_dim = 4096
