@@ -25,3 +25,4 @@ python-dotenv
 bitsandbytes
 hf_transfer
 lpips
+pytorch_fid

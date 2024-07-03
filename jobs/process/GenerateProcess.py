@@ -47,7 +47,7 @@ class GenerateConfig:
 
         self.random_prompts = kwargs.get('random_prompts', False)
         self.max_random_per_prompt = kwargs.get('max_random_per_prompt', 1)
-        self.max_images = kwargs.get('max_prompts', 10000)
+        self.max_images = kwargs.get('max_images', 10000)
 
         if self.random_prompts:
             self.prompts = []

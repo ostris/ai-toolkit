@@ -123,6 +123,8 @@ def get_sampler(
             "num_train_timesteps": 1000,
             "shift": 3.0
         }
+    else:
+        raise ValueError(f"Sampler {sampler} not supported")
 
 
     config = copy.deepcopy(config_to_use)
