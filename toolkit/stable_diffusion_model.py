@@ -309,6 +309,9 @@ class StableDiffusion:
             main_model_path = "PixArt-alpha/PixArt-XL-2-1024-MS"
             if self.model_config.is_pixart_sigma:
                 main_model_path = "PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers"
+
+            main_model_path = model_path
+
             # load the TE in 8bit mode
             text_encoder = T5EncoderModel.from_pretrained(
                 main_model_path,

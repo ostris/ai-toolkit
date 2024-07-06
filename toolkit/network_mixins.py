@@ -289,7 +289,13 @@ class ToolkitModuleMixin:
             scaled_lora_weight = lora_weight * scale
             scaled_lora_output = scaled_lora_output + self.apply_dora(lx, scaled_lora_weight)
 
-        x = org_forwarded + scaled_lora_output
+        try:
+            x = org_forwarded + scaled_lora_output
+        except RuntimeError as e:
+            print(e)
+            print(org_forwarded.size())
+            print(scaled_lora_output.size())
+            raise e
         return x
 
     def enable_gradient_checkpointing(self: Module):

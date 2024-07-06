@@ -17,102 +17,34 @@ if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
 
 
-class MLP(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_dim, dropout=0.1, use_residual=True):
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward):
         super().__init__()
-        if use_residual:
-            assert in_dim == out_dim
-        self.layernorm = nn.LayerNorm(in_dim)
-        self.fc1 = nn.Linear(in_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, out_dim)
-        self.dropout = nn.Dropout(dropout)
-        self.use_residual = use_residual
-        self.act_fn = nn.GELU()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, batch_first=True)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Linear(dim_feedforward, d_model)
+        )
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
 
-    def forward(self, x):
-        residual = x
-        x = self.layernorm(x)
-        x = self.fc1(x)
-        x = self.act_fn(x)
-        x = self.fc2(x)
-        x = self.dropout(x)
-        if self.use_residual:
-            x = x + residual
+    def forward(self, x, cross_attn_input):
+        # Self-attention
+        attn_output, _ = self.self_attn(x, x, x)
+        x = self.norm1(x + attn_output)
+
+        # Cross-attention
+        cross_attn_output, _ = self.cross_attn(x, cross_attn_input, cross_attn_input)
+        x = self.norm2(x + cross_attn_output)
+
+        # Feed-forward
+        ff_output = self.feed_forward(x)
+        x = self.norm3(x + ff_output)
+
         return x
-
-class LoRAGenerator(torch.nn.Module):
-    def __init__(
-            self,
-            input_size: int = 768,  # projection dimension
-            hidden_size: int = 768,
-            head_size: int = 512,
-            num_heads: int = 1,
-            num_mlp_layers: int = 1,
-            output_size: int = 768,
-            dropout: float = 0.0
-    ):
-        super().__init__()
-        self.input_size = input_size
-        self.num_heads = num_heads
-        self.simple = False
-
-        self.output_size = output_size
-
-        if self.simple:
-            self.head = nn.Linear(input_size, head_size, bias=False)
-        else:
-            self.lin_in = nn.Linear(input_size, hidden_size)
-
-            self.mlp_blocks = nn.Sequential(*[
-                MLP(hidden_size, hidden_size, hidden_size, dropout=dropout, use_residual=True) for _ in range(num_mlp_layers)
-            ])
-            self.head = nn.Linear(hidden_size, head_size, bias=False)
-        self.norm = nn.LayerNorm(head_size)
-
-        if num_heads == 1:
-            self.output = nn.Linear(head_size, self.output_size)
-            # for each output block. multiply weights by 0.01
-            with torch.no_grad():
-                self.output.weight.data *= 0.01
-        else:
-            head_output_size = output_size // num_heads
-            self.outputs = nn.ModuleList([nn.Linear(head_size, head_output_size) for _ in range(num_heads)])
-            # for each output block. multiply weights by 0.01
-            with torch.no_grad():
-                for output in self.outputs:
-                    output.weight.data *= 0.01
-
-    # allow get device
-    @property
-    def device(self):
-        return next(self.parameters()).device
-
-    @property
-    def dtype(self):
-        return next(self.parameters()).dtype
-
-    def forward(self, embedding):
-        if len(embedding.shape) == 2:
-            embedding = embedding.unsqueeze(1)
-
-        x = embedding
-
-        if not self.simple:
-            x = self.lin_in(embedding)
-            x = self.mlp_blocks(x)
-        x = self.head(x)
-        x = self.norm(x)
-
-        if self.num_heads == 1:
-            x = self.output(x)
-        else:
-            out_chunks = torch.chunk(x, self.num_heads, dim=1)
-            x = []
-            for out_layer, chunk in zip(self.outputs, out_chunks):
-                x.append(out_layer(chunk))
-            x = torch.cat(x, dim=-1)
-
-        return x.squeeze(1)
 
 
 class InstantLoRAMidModule(torch.nn.Module):
@@ -156,10 +88,10 @@ class InstantLoRAMidModule(torch.nn.Module):
             weight_chunk = weight_chunk.view(self.down_shape)
             # check if is conv or linear
             if len(weight_chunk.shape) == 4:
-                org_module = self.lora_module_ref().orig_module_ref()
-                stride = org_module.stride
-                padding = org_module.padding
-                x_chunk = nn.functional.conv2d(x_chunk, weight_chunk, padding=padding, stride=stride)
+                padding = 0
+                if weight_chunk.shape[-1] == 3:
+                    padding = 1
+                x_chunk = nn.functional.conv2d(x_chunk, weight_chunk, padding=padding)
             else:
                 # run a simple linear layer with the down weight
                 x_chunk = x_chunk @ weight_chunk.T
@@ -202,25 +134,26 @@ class InstantLoRAMidModule(torch.nn.Module):
         return x
 
 
+# Initialize the network
+# num_blocks = 8
+# d_model = 1024  # Adjust as needed
+# nhead = 16  # Adjust as needed
+# dim_feedforward = 4096  # Adjust as needed
+# latent_dim = 1695744
 
-
-class InstantLoRAModule(torch.nn.Module):
+class LoRAFormer(torch.nn.Module):
     def __init__(
             self,
-            vision_hidden_size: int,
-            vision_tokens: int,
-            head_dim: int,
-            num_heads: int, # number of heads in the resampler
-            sd: 'StableDiffusion'
+            num_blocks,
+            d_model=1024,
+            nhead=16,
+            dim_feedforward=4096,
+            sd: 'StableDiffusion'=None,
     ):
-        super(InstantLoRAModule, self).__init__()
+        super(LoRAFormer, self).__init__()
         # self.linear = torch.nn.Linear(2, 1)
         self.sd_ref = weakref.ref(sd)
         self.dim = sd.network.lora_dim
-        self.vision_hidden_size = vision_hidden_size
-        self.vision_tokens = vision_tokens
-        self.head_dim = head_dim
-        self.num_heads = num_heads
 
         # stores the projection vector. Grabbed by modules
         self.img_embeds: List[torch.Tensor] = None
@@ -268,33 +201,13 @@ class InstantLoRAModule(torch.nn.Module):
 
         self.output_size = output_size
 
-        # if not evenly divisible, error
-        if self.output_size % self.num_heads != 0:
-            raise ValueError("Output size must be divisible by the number of heads")
-
-        self.head_output_size = self.output_size // self.num_heads
-
-        if vision_tokens > 1:
-            self.resampler = Resampler(
-                dim=vision_hidden_size,
-                depth=4,
-                dim_head=64,
-                heads=12,
-                num_queries=num_heads,  # output tokens
-                embedding_dim=vision_hidden_size,
-                max_seq_len=vision_tokens,
-                output_dim=head_dim,
-                ff_mult=4
-            )
-
-        self.proj_module = LoRAGenerator(
-            input_size=head_dim,
-            hidden_size=head_dim,
-            head_size=head_dim,
-            num_mlp_layers=1,
-            num_heads=self.num_heads,
-            output_size=self.output_size,
-        )
+        self.latent = nn.Parameter(torch.randn(1, output_size))
+        self.latent_proj = nn.Linear(output_size, d_model)
+        self.blocks = nn.ModuleList([
+            TransformerBlock(d_model, nhead, dim_feedforward)
+            for _ in range(num_blocks)
+        ])
+        self.final_proj = nn.Linear(d_model, output_size)
 
         self.migrate_weight_mapping()
 

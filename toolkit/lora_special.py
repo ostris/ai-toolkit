@@ -1,6 +1,7 @@
 import copy
 import json
 import math
+import weakref
 import os
 import re
 import sys
@@ -59,6 +60,7 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         ToolkitModuleMixin.__init__(self, network=network)
         torch.nn.Module.__init__(self)
         self.lora_name = lora_name
+        self.orig_module_ref = weakref.ref(org_module)
         self.scalar = torch.tensor(1.0)
         # check if parent has bias. if not force use_bias to False
         if org_module.bias is None:
