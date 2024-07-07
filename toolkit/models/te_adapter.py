@@ -31,7 +31,7 @@ class TEAdapterCaptionProjection(nn.Module):
         in_features = caption_channels
         self.adapter_ref: weakref.ref = weakref.ref(adapter)
         sd = adapter.sd_ref()
-        self.parent_module_ref = weakref.ref(sd.transformer.caption_projection)
+        self.parent_module_ref = weakref.ref(sd.unet.caption_projection)
         parent_module = self.parent_module_ref()
         self.linear_1 = nn.Linear(
             in_features=in_features,
