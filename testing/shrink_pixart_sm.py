@@ -2,8 +2,8 @@ import torch
 from safetensors.torch import load_file, save_file
 from collections import OrderedDict
 
-model_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-1024_tiny/transformer/diffusion_pytorch_model_orig.safetensors"
-output_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-1024_tiny/transformer/diffusion_pytorch_model.safetensors"
+model_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_tiny/transformer/diffusion_pytorch_model.orig.safetensors"
+output_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_tiny/transformer/diffusion_pytorch_model.safetensors"
 
 state_dict = load_file(model_path)
 
@@ -33,15 +33,16 @@ block_names = ['transformer_blocks.{idx}.attn1.to_k.bias', 'transformer_blocks.{
 
 current_idx = 0
 for i in range(28):
-    if i not in [0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 27]:
+    if i not in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]:
         # todo merge in with previous block
         for name in block_names:
-            try:
-                new_state_dict_key = name.format(idx=current_idx - 1)
-                old_state_dict_key = name.format(idx=i)
-                new_state_dict[new_state_dict_key] = (new_state_dict[new_state_dict_key] * 0.5) + (state_dict[old_state_dict_key] * 0.5)
-            except KeyError:
-                raise KeyError(f"KeyError: {name.format(idx=current_idx)}")
+            continue
+            # try:
+            #     new_state_dict_key = name.format(idx=current_idx - 1)
+            #     old_state_dict_key = name.format(idx=i)
+            #     new_state_dict[new_state_dict_key] = (new_state_dict[new_state_dict_key] * 0.5) + (state_dict[old_state_dict_key] * 0.5)
+            # except KeyError:
+            #     raise KeyError(f"KeyError: {name.format(idx=current_idx)}")
     else:
         for name in block_names:
             new_state_dict[name.format(idx=current_idx)] = state_dict[name.format(idx=i)]

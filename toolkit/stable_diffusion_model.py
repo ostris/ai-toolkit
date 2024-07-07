@@ -1775,16 +1775,16 @@ class StableDiffusion:
         # saving in diffusers format
         if not output_file.endswith('.safetensors'):
             # diffusers
-            if self.is_pixart:
-                self.unet.save_pretrained(
-                    save_directory=output_file,
-                    safe_serialization=True,
-                )
-            else:
-                self.pipeline.save_pretrained(
-                    save_directory=output_file,
-                    safe_serialization=True,
-                )
+            # if self.is_pixart:
+            #     self.unet.save_pretrained(
+            #         save_directory=output_file,
+            #         safe_serialization=True,
+            #     )
+            # else:
+            self.pipeline.save_pretrained(
+                save_directory=output_file,
+                safe_serialization=True,
+            )
             # save out meta config
             meta_path = os.path.join(output_file, 'aitk_meta.yaml')
             with open(meta_path, 'w') as f:
