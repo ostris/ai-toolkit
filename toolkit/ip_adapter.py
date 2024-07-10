@@ -394,7 +394,7 @@ class IPAdapter(torch.nn.Module):
         elif adapter_config.type == 'ip+':
             heads = 12 if not sd.is_xl else 20
             dim = sd.unet.config['cross_attention_dim'] if not sd.is_xl else 1280
-            embedding_dim = self.image_encoder.config.hidden_size if not self.config.image_encoder_arch.startswith(
+            embedding_dim = self.image_encoder.config.target_hidden_size if not self.config.image_encoder_arch.startswith(
                 'convnext') else \
                 self.image_encoder.config.hidden_sizes[-1]
 
@@ -436,7 +436,7 @@ class IPAdapter(torch.nn.Module):
             if hasattr(self.image_encoder.config, 'hidden_sizes'):
                 embedding_dim = self.image_encoder.config.hidden_sizes[-1]
             else:
-                embedding_dim = self.image_encoder.config.hidden_size
+                embedding_dim = self.image_encoder.config.target_hidden_size
 
             image_encoder_state_dict = self.image_encoder.state_dict()
             # max_seq_len = CLIP tokens + CLS token

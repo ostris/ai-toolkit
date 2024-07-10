@@ -270,6 +270,10 @@ class SDTrainer(BaseSDTrainProcess):
             noise_pred = noise_pred * self.train_config.pred_scaler
 
         target = None
+
+        if self.train_config.target_noise_multiplier != 1.0:
+            noise = noise * self.train_config.target_noise_multiplier
+
         if self.train_config.correct_pred_norm or (self.train_config.inverted_mask_prior and prior_pred is not None and has_mask):
             if self.train_config.correct_pred_norm and not is_reg:
                 with torch.no_grad():

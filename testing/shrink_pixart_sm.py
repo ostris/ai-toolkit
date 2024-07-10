@@ -2,62 +2,83 @@ import torch
 from safetensors.torch import load_file, save_file
 from collections import OrderedDict
 
-model_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_tiny/transformer/diffusion_pytorch_model.orig.safetensors"
-output_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_tiny/transformer/diffusion_pytorch_model.safetensors"
-
-state_dict = load_file(model_path)
-
 meta = OrderedDict()
-meta["format"] = "pt"
+meta['format'] = "pt"
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def reduce_weight(weight, target_size):
+    weight = weight.to(device, torch.float32)
+    original_shape = weight.shape
+    flattened = weight.view(-1, original_shape[-1])
+
+    if flattened.shape[1] <= target_size:
+        return weight
+
+    U, S, V = torch.svd(flattened)
+    reduced = torch.mm(U[:, :target_size], torch.diag(S[:target_size]))
+
+    if reduced.shape[1] < target_size:
+        padding = torch.zeros(reduced.shape[0], target_size - reduced.shape[1], device=device)
+        reduced = torch.cat((reduced, padding), dim=1)
+
+    return reduced.view(original_shape[:-1] + (target_size,))
+
+
+def reduce_bias(bias, target_size):
+    bias = bias.to(device, torch.float32)
+    original_size = bias.shape[0]
+
+    if original_size <= target_size:
+        return torch.nn.functional.pad(bias, (0, target_size - original_size))
+    else:
+        return bias.view(-1, original_size // target_size).mean(dim=1)[:target_size]
+
+
+# Load your original state dict
+state_dict = load_file(
+    "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_t5large_raw/transformer/diffusion_pytorch_model.orig.safetensors")
+
+# Create a new state dict for the reduced model
 new_state_dict = {}
 
-# Move non-blocks over
+source_hidden_size = 1152
+target_hidden_size = 1024
+
 for key, value in state_dict.items():
-    if not key.startswith("transformer_blocks."):
-        new_state_dict[key] = value
+    value = value.to(device, torch.float32)
+    if 'weight' in key or 'scale_shift_table' in key:
+        if value.shape[0] == source_hidden_size:
+            value = value[:target_hidden_size]
+        elif value.shape[0] == source_hidden_size * 4:
+            value = value[:target_hidden_size * 4]
+        elif value.shape[0] == source_hidden_size * 6:
+            value = value[:target_hidden_size * 6]
 
-block_names = ['transformer_blocks.{idx}.attn1.to_k.bias', 'transformer_blocks.{idx}.attn1.to_k.weight',
-               'transformer_blocks.{idx}.attn1.to_out.0.bias', 'transformer_blocks.{idx}.attn1.to_out.0.weight',
-               'transformer_blocks.{idx}.attn1.to_q.bias', 'transformer_blocks.{idx}.attn1.to_q.weight',
-               'transformer_blocks.{idx}.attn1.to_v.bias', 'transformer_blocks.{idx}.attn1.to_v.weight',
-               'transformer_blocks.{idx}.attn2.to_k.bias', 'transformer_blocks.{idx}.attn2.to_k.weight',
-               'transformer_blocks.{idx}.attn2.to_out.0.bias', 'transformer_blocks.{idx}.attn2.to_out.0.weight',
-               'transformer_blocks.{idx}.attn2.to_q.bias', 'transformer_blocks.{idx}.attn2.to_q.weight',
-               'transformer_blocks.{idx}.attn2.to_v.bias', 'transformer_blocks.{idx}.attn2.to_v.weight',
-               'transformer_blocks.{idx}.ff.net.0.proj.bias', 'transformer_blocks.{idx}.ff.net.0.proj.weight',
-               'transformer_blocks.{idx}.ff.net.2.bias', 'transformer_blocks.{idx}.ff.net.2.weight',
-               'transformer_blocks.{idx}.scale_shift_table']
+        if len(value.shape) > 1 and value.shape[
+            1] == source_hidden_size and 'attn2.to_k.weight' not in key and 'attn2.to_v.weight' not in key:
+            value = value[:, :target_hidden_size]
+        elif len(value.shape) > 1 and value.shape[1] == source_hidden_size * 4:
+            value = value[:, :target_hidden_size * 4]
 
-# New block idx 0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 27
+    elif 'bias' in key:
+        if value.shape[0] == source_hidden_size:
+            value = value[:target_hidden_size]
+        elif value.shape[0] == source_hidden_size * 4:
+            value = value[:target_hidden_size * 4]
+        elif value.shape[0] == source_hidden_size * 6:
+            value = value[:target_hidden_size * 6]
 
-current_idx = 0
-for i in range(28):
-    if i not in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]:
-        # todo merge in with previous block
-        for name in block_names:
-            continue
-            # try:
-            #     new_state_dict_key = name.format(idx=current_idx - 1)
-            #     old_state_dict_key = name.format(idx=i)
-            #     new_state_dict[new_state_dict_key] = (new_state_dict[new_state_dict_key] * 0.5) + (state_dict[old_state_dict_key] * 0.5)
-            # except KeyError:
-            #     raise KeyError(f"KeyError: {name.format(idx=current_idx)}")
-    else:
-        for name in block_names:
-            new_state_dict[name.format(idx=current_idx)] = state_dict[name.format(idx=i)]
-        current_idx += 1
+    new_state_dict[key] = value
 
-
-# make sure they are all fp16 and on cpu
+# Move all to CPU and convert to float16
 for key, value in new_state_dict.items():
-    new_state_dict[key] = value.to(torch.float16).cpu()
+    new_state_dict[key] = value.cpu().to(torch.float16)
 
-# save the new state dict
-save_file(new_state_dict, output_path, metadata=meta)
+# Save the new state dict
+save_file(new_state_dict,
+          "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_t5large_raw/transformer/diffusion_pytorch_model.safetensors",
+          metadata=meta)
 
-new_param_count = sum([v.numel() for v in new_state_dict.values()])
-old_param_count = sum([v.numel() for v in state_dict.values()])
-
-print(f"Old param count: {old_param_count:,}")
-print(f"New param count: {new_param_count:,}")
+print("Done!")

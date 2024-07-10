@@ -251,6 +251,7 @@ class TrainConfig:
         self.adapter_assist_name_or_path: Optional[str] = kwargs.get('adapter_assist_name_or_path', None)
         self.adapter_assist_type: Optional[str] = kwargs.get('adapter_assist_type', 't2i')  # t2i, control_net
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
+        self.target_noise_multiplier = kwargs.get('target_noise_multiplier', 1.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
         self.latent_multiplier = kwargs.get('latent_multiplier', 1.0)

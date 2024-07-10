@@ -246,7 +246,7 @@ class TEAdapter(torch.nn.Module):
         if self.adapter_ref().config.text_encoder_arch == "t5":
             self.token_size = self.te_ref().config.d_model
         else:
-            self.token_size = self.te_ref().config.hidden_size
+            self.token_size = self.te_ref().config.target_hidden_size
 
         # add text projection if is sdxl
         self.text_projection = None

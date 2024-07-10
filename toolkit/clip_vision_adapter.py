@@ -166,7 +166,7 @@ class ClipVisionAdapter(torch.nn.Module):
         if hasattr(self.image_encoder.config, 'hidden_sizes'):
             embedding_dim = self.image_encoder.config.hidden_sizes[-1]
         else:
-            embedding_dim = self.image_encoder.config.hidden_size
+            embedding_dim = self.image_encoder.config.target_hidden_size
 
         if self.config.clip_layer == 'image_embeds':
             in_tokens = 1
@@ -308,15 +308,15 @@ class ClipVisionAdapter(torch.nn.Module):
             # add it to the text encoder
             self.set_vec(image_prompt_embeds[0], text_encoder_idx=0)
         elif len(self.text_encoder_list) == 2:
-            if self.text_encoder_list[0].config.hidden_size + self.text_encoder_list[1].config.hidden_size != \
+            if self.text_encoder_list[0].config.target_hidden_size + self.text_encoder_list[1].config.target_hidden_size != \
                     image_prompt_embeds.shape[2]:
                 raise ValueError("Something went wrong. The embeddings do not match the text encoder sizes")
             # sdxl variants
             # image_prompt_embeds = 2048
             # te1 = 768
             # te2 = 1280
-            te1_embeds = image_prompt_embeds[:, :, :self.text_encoder_list[0].config.hidden_size]
-            te2_embeds = image_prompt_embeds[:, :,  self.text_encoder_list[0].config.hidden_size:]
+            te1_embeds = image_prompt_embeds[:, :, :self.text_encoder_list[0].config.target_hidden_size]
+            te2_embeds = image_prompt_embeds[:, :, self.text_encoder_list[0].config.target_hidden_size:]
             self.set_vec(te1_embeds[0], text_encoder_idx=0)
             self.set_vec(te2_embeds[0], text_encoder_idx=1)
         else:

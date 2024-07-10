@@ -11,10 +11,10 @@ import json
 # te_path = "google/flan-t5-xl"
 # te_aug_path = "/mnt/Train/out/ip_adapter/t5xx_sd15_v1/t5xx_sd15_v1_000032000.safetensors"
 # output_path = "/home/jaret/Dev/models/hf/kl-f16-d42_sd15_t5xl_raw"
-model_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-1024-MS"
-te_path = "google/flan-t5-base"
-te_aug_path = "/home/jaret/Dev/models/tmp/pixart_sigma_t5base_000227500.safetensors"
-output_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_t5base_raw"
+model_path = "PixArt-alpha/PixArt-Sigma-XL-2-1024-MS"
+te_path = "google/flan-t5-large"
+te_aug_path = "/home/jaret/Dev/models/tmp/pixart_sigma_t5l_000034000.safetensors"
+output_path = "/home/jaret/Dev/models/hf/PixArt-Sigma-XL-2-512_MS_t5large_raw"
 
 
 print("Loading te adapter")
