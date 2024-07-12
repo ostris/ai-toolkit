@@ -53,6 +53,50 @@ resolutions_1024: List[BucketResolution] = [
     {"width": 512, "height": 2048},
 ]
 
+# Even numbers so they can be patched easier
+resolutions_dit_1024: List[BucketResolution] = [
+    # Base resolution
+    {"width": 1024, "height": 1024},
+    # widescreen
+    {"width": 2048, "height": 512},
+    {"width": 1792, "height": 576},
+    {"width": 1728, "height": 576},
+    {"width": 1664, "height": 576},
+    {"width": 1600, "height": 640},
+    {"width": 1536, "height": 640},
+    {"width": 1472, "height": 704},
+    {"width": 1408, "height": 704},
+    {"width": 1344, "height": 704},
+    {"width": 1344, "height": 768},
+    {"width": 1280, "height": 768},
+    {"width": 1216, "height": 832},
+    {"width": 1152, "height": 832},
+    {"width": 1152, "height": 896},
+    {"width": 1088, "height": 896},
+    {"width": 1088, "height": 960},
+    {"width": 1024, "height": 960},
+    # portrait
+    {"width": 960, "height": 1024},
+    {"width": 960, "height": 1088},
+    {"width": 896, "height": 1088},
+    {"width": 896, "height": 1152},  # 2:3
+    {"width": 832, "height": 1152},
+    {"width": 832, "height": 1216},
+    {"width": 768, "height": 1280},
+    {"width": 768, "height": 1344},
+    {"width": 704, "height": 1408},
+    {"width": 704, "height": 1472},
+    {"width": 640, "height": 1536},
+    {"width": 640, "height": 1600},
+    {"width": 576, "height": 1664},
+    {"width": 576, "height": 1728},
+    {"width": 576, "height": 1792},
+    {"width": 512, "height": 1856},
+    {"width": 512, "height": 1920},
+    {"width": 512, "height": 1984},
+    {"width": 512, "height": 2048},
+]
+
 
 def get_bucket_sizes(resolution: int = 512, divisibility: int = 8) -> List[BucketResolution]:
     # determine scaler form 1024 to resolution

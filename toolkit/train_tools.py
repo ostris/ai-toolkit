@@ -30,7 +30,7 @@ from diffusers import (
 from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipeline
 import torch
 import re
-from transformers import T5Tokenizer, T5EncoderModel
+from transformers import T5Tokenizer, T5EncoderModel, UMT5EncoderModel
 
 SCHEDULER_LINEAR_START = 0.00085
 SCHEDULER_LINEAR_END = 0.0120
@@ -723,6 +723,48 @@ def encode_prompts_pixart(
     prompt_embeds = text_encoder(text_input_ids, attention_mask=prompt_attention_mask)
 
     return prompt_embeds.last_hidden_state, prompt_attention_mask
+
+
+def encode_prompts_auraflow(
+        tokenizer: 'T5Tokenizer',
+        text_encoder: 'UMT5EncoderModel',
+        prompts: list[str],
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
+):
+    if max_length is None:
+        max_length = 256
+
+    if dropout_prob > 0.0:
+        # randomly drop out prompts
+        prompts = [
+            prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompts
+        ]
+
+    device = text_encoder.device
+
+    text_inputs = tokenizer(
+        prompts,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length",
+        return_tensors="pt",
+    )
+    text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+    text_input_ids = text_inputs["input_ids"]
+    untruncated_ids = tokenizer(prompts, padding="longest", return_tensors="pt").input_ids
+
+    if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+            text_input_ids, untruncated_ids
+    ):
+        removed_text = tokenizer.batch_decode(untruncated_ids[:, max_length - 1: -1])
+
+    prompt_embeds = text_encoder(**text_inputs)[0]
+    prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_embeds.shape)
+    prompt_embeds = prompt_embeds * prompt_attention_mask
+
+    return prompt_embeds, prompt_attention_mask
 
 
 # for XL

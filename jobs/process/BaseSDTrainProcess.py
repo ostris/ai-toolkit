@@ -1287,6 +1287,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_v2=self.model_config.is_v2,
                     is_v3=self.model_config.is_v3,
                     is_pixart=self.model_config.is_pixart,
+                    is_auraflow=self.model_config.is_auraflow,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
                     dropout=self.network_config.dropout,

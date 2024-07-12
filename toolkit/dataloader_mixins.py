@@ -1355,6 +1355,10 @@ class LatentCachingMixin:
                 file_item.latent_space_version = 'sdxl'
             elif self.sd.is_v3:
                 file_item.latent_space_version = 'sd3'
+            elif self.sd.is_auraflow:
+                file_item.latent_space_version = 'sdxl'
+            elif self.sd.model_config.is_pixart_sigma:
+                file_item.latent_space_version = 'sdxl'
             else:
                 file_item.latent_space_version = 'sd1'
             file_item.is_caching_to_disk = to_disk

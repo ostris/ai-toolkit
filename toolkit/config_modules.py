@@ -350,6 +350,7 @@ class ModelConfig:
         self.is_xl: bool = kwargs.get('is_xl', False)
         self.is_pixart: bool = kwargs.get('is_pixart', False)
         self.is_pixart_sigma: bool = kwargs.get('is_pixart_sigma', False)
+        self.is_auraflow: bool = kwargs.get('is_auraflow', False)
         self.is_v3: bool = kwargs.get('is_v3', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
@@ -381,7 +382,7 @@ class ModelConfig:
             self.is_xl = True
 
         # for text encoder quant. Only works with pixart currently
-        self.text_encoder_bits = kwargs.get('text_encoder_bits', 8)  # 16, 8, 4
+        self.text_encoder_bits = kwargs.get('text_encoder_bits', 16)  # 16, 8, 4
         self.unet_path = kwargs.get("unet_path", None)
         self.unet_sample_size = kwargs.get("unet_sample_size", None)
 
