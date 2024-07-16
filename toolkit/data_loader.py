@@ -433,7 +433,15 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
             ])
 
         # this might take a while
+        print(f"Dataset: {self.dataset_path}")
         print(f"  -  Preprocessing image dimensions")
+        dataset_size_file = os.path.join(self.dataset_path, '.aitk_size.json')
+        if os.path.exists(dataset_size_file):
+            with open(dataset_size_file, 'r') as f:
+                self.size_database = json.load(f)
+        else:
+            self.size_database = {}
+
         bad_count = 0
         for file in tqdm(file_list):
             try:
@@ -442,6 +450,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                     path=file,
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,
+                    size_database=self.size_database,
                 )
                 self.file_list.append(file_item)
             except Exception as e:
@@ -449,6 +458,10 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                 print(f"Error processing image: {file}")
                 print(e)
                 bad_count += 1
+
+        # save the size database
+        with open(dataset_size_file, 'w') as f:
+            json.dump(self.size_database, f)
 
         print(f"  -  Found {len(self.file_list)} images")
         # print(f"  -  Found {bad_count} images that are too small")

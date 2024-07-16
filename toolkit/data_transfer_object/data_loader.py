@@ -1,3 +1,4 @@
+import os
 import weakref
 from _weakref import ReferenceType
 from typing import TYPE_CHECKING, List, Union
@@ -40,16 +41,22 @@ class FileItemDTO(
     ArgBreakMixin,
 ):
     def __init__(self, *args, **kwargs):
-        self.path = kwargs.get('path', None)
+        self.path = kwargs.get('path', '')
         self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
-        # process width and height
-        try:
-            w, h = image_utils.get_image_size(self.path)
-        except image_utils.UnknownImageFormat:
-            print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
-                       f'This process is faster for png, jpeg')
-            img = exif_transpose(Image.open(self.path))
-            h, w = img.size
+        size_database = kwargs.get('size_database', {})
+        filename = os.path.basename(self.path)
+        if filename in size_database:
+            w, h = size_database[filename]
+        else:
+            # process width and height
+            try:
+                w, h = image_utils.get_image_size(self.path)
+            except image_utils.UnknownImageFormat:
+                print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
+                           f'This process is faster for png, jpeg')
+                img = exif_transpose(Image.open(self.path))
+                h, w = img.size
+            size_database[filename] = (w, h)
         self.width: int = w
         self.height: int = h
         self.dataloader_transforms = kwargs.get('dataloader_transforms', None)

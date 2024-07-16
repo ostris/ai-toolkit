@@ -187,7 +187,7 @@ for epoch in range(args.epochs):
         batch: 'DataLoaderBatchDTO'
         img_batch = batch.tensor
 
-        img_batch = color_block_imgs(img_batch, neg1_1=True)
+        # img_batch = color_block_imgs(img_batch, neg1_1=True)
 
         chunks = torch.chunk(img_batch, batch_size, dim=0)
         # put them so they are size by side
@@ -208,9 +208,9 @@ for epoch in range(args.epochs):
         # convert to image
         img = transforms.ToPILImage()(big_img)
 
-        show_img(img)
+        # show_img(img)
 
-        time.sleep(1.0)
+        # time.sleep(1.0)
     # if not last epoch
     if epoch < args.epochs - 1:
         trigger_dataloader_setup_epoch(dataloader)
