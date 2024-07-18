@@ -394,7 +394,7 @@ class IPAdapter(torch.nn.Module):
         elif adapter_config.type == 'ip+':
             heads = 12 if not sd.is_xl else 20
             dim = sd.unet.config['cross_attention_dim'] if not sd.is_xl else 1280
-            embedding_dim = self.image_encoder.config.target_hidden_size if not self.config.image_encoder_arch.startswith(
+            embedding_dim = self.image_encoder.config.hidden_size if not self.config.image_encoder_arch.startswith(
                 'convnext') else \
                 self.image_encoder.config.hidden_sizes[-1]
 
@@ -964,7 +964,10 @@ class IPAdapter(torch.nn.Module):
 
     def get_non_scaler_parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         if self.config.train_only_image_encoder:
-            yield from self.image_encoder.parameters(recurse)
+            if self.config.train_only_image_encoder_positional_embedding:
+                yield from self.image_encoder.vision_model.embeddings.position_embedding.parameters(recurse)
+            else:
+                yield from self.image_encoder.parameters(recurse)
             return
         if self.config.train_scaler:
             # no params
