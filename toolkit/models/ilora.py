@@ -268,6 +268,10 @@ class InstantLoRAModule(torch.nn.Module):
 
         self.output_size = output_size
 
+        number_formatted_output_size = "{:,}".format(output_size)
+
+        print(f" ILORA output size: {number_formatted_output_size}")
+
         # if not evenly divisible, error
         if self.output_size % self.num_heads != 0:
             raise ValueError("Output size must be divisible by the number of heads")
@@ -284,6 +288,7 @@ class InstantLoRAModule(torch.nn.Module):
                 embedding_dim=vision_hidden_size,
                 max_seq_len=vision_tokens,
                 output_dim=head_dim,
+                apply_pos_emb=True,  # this is new
                 ff_mult=4
             )
 

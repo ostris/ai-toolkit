@@ -382,6 +382,7 @@ class TEAdapter(torch.nn.Module):
     def encode_text(self, text):
         te: T5EncoderModel = self.te_ref()
         tokenizer: T5Tokenizer = self.tokenizer_ref()
+        attn_mask_float = None
 
         # input_ids = tokenizer(
         #     text,
@@ -424,13 +425,18 @@ class TEAdapter(torch.nn.Module):
             attn_mask_float = attention_mask.to(embeds.device, dtype=embeds.dtype)
         if self.text_projection is not None:
             # pool the output of embeds ignoring 0 in the attention mask
-            pooled_output = embeds * attn_mask_float.unsqueeze(-1)
+            if attn_mask_float is not None:
+                pooled_output = embeds * attn_mask_float.unsqueeze(-1)
+            else:
+                pooled_output = embeds
 
             # reduce along dim 1 while maintaining batch and dim 2
             pooled_output_sum = pooled_output.sum(dim=1)
-            attn_mask_sum = attn_mask_float.sum(dim=1).unsqueeze(-1)
 
-            pooled_output = pooled_output_sum / attn_mask_sum
+            if attn_mask_float is not None:
+                attn_mask_sum = attn_mask_float.sum(dim=1).unsqueeze(-1)
+
+                pooled_output = pooled_output_sum / attn_mask_sum
 
             pooled_embeds = self.text_projection(pooled_output)
 
