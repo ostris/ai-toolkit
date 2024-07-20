@@ -400,10 +400,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
 
         # check if dataset_path is a folder or json
         if os.path.isdir(self.dataset_path):
-            file_list = [
-                os.path.join(self.dataset_path, file) for file in os.listdir(self.dataset_path) if
-                file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
-            ]
+            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:

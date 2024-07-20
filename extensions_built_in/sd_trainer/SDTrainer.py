@@ -1520,9 +1520,9 @@ class SDTrainer(BaseSDTrainProcess):
                     # I spent weeks on fighting this. DON'T DO IT
                     # with fsdp_overlap_step_with_backward():
                     # if self.is_bfloat:
-                    loss.backward()
+                    # loss.backward()
                     # else:
-                    #     self.scaler.scale(loss).backward()
+                    self.scaler.scale(loss).backward()
         # flush()
 
         if not self.is_grad_accumulation_step:
