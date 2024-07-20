@@ -194,6 +194,9 @@ class AdapterConfig:
         # for ilora
         self.head_dim: int = kwargs.get('head_dim', 1024)
         self.num_heads: int = kwargs.get('num_heads', 1)
+        self.ilora_down: bool = kwargs.get('ilora_down', True)
+        self.ilora_mid: bool = kwargs.get('ilora_mid', True)
+        self.ilora_up: bool = kwargs.get('ilora_up', True)
 
 
 class EmbeddingConfig:

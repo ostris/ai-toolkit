@@ -148,7 +148,8 @@ class CustomAdapter(torch.nn.Module):
                 vision_hidden_size=vision_hidden_size,
                 head_dim=self.config.head_dim,
                 num_heads=self.config.num_heads,
-                sd=self.sd_ref()
+                sd=self.sd_ref(),
+                config=self.config
             )
         elif self.adapter_type == 'text_encoder':
             if self.config.text_encoder_arch == 't5':
