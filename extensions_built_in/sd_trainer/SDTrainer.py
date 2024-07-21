@@ -1371,9 +1371,9 @@ class SDTrainer(BaseSDTrainProcess):
                 prior_pred = None
 
                 do_reg_prior = False
-                if is_reg and (self.network is not None or self.adapter is not None):
-                    # we are doing a reg image and we have a network or adapter
-                    do_reg_prior = True
+                # if is_reg and (self.network is not None or self.adapter is not None):
+                #     # we are doing a reg image and we have a network or adapter
+                #     do_reg_prior = True
 
                 do_inverted_masked_prior = False
                 if self.train_config.inverted_mask_prior and batch.mask_tensor is not None:
