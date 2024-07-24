@@ -80,6 +80,7 @@ class GenerateProcess(BaseProcess):
         self.model_config = ModelConfig(**self.get_conf('model', required=True))
         self.device = self.get_conf('device', self.job.device)
         self.generate_config = GenerateConfig(**self.get_conf('generate', required=True))
+        self.torch_dtype = get_torch_dtype(self.get_conf('dtype', 'float16'))
 
         self.progress_bar = None
         self.sd = StableDiffusion(
@@ -87,49 +88,57 @@ class GenerateProcess(BaseProcess):
             model_config=self.model_config,
             dtype=self.model_config.dtype,
         )
+
         print(f"Using device {self.device}")
 
+    def clean_prompt(self, prompt: str):
+        # remove any non alpha numeric characters or ,'" from prompt
+        return ''.join(e for e in prompt if e.isalnum() or e in ", '\"")
+
     def run(self):
-        super().run()
-        print("Loading model...")
-        self.sd.load_model()
+        with torch.no_grad():
+            super().run()
+            print("Loading model...")
+            self.sd.load_model()
+            self.sd.pipeline.to(self.device, self.torch_dtype)
 
-        print("Compiling model...")
-        # self.sd.unet = torch.compile(self.sd.unet, mode="reduce-overhead", fullgraph=True)
-        if self.generate_config.compile:
-            self.sd.unet = torch.compile(self.sd.unet, mode="reduce-overhead")
+            print("Compiling model...")
+            # self.sd.unet = torch.compile(self.sd.unet, mode="reduce-overhead", fullgraph=True)
+            if self.generate_config.compile:
+                self.sd.unet = torch.compile(self.sd.unet, mode="reduce-overhead")
 
-        print(f"Generating {len(self.generate_config.prompts)} images")
-        # build prompt image configs
-        prompt_image_configs = []
-        for prompt in self.generate_config.prompts:
-            width = self.generate_config.width
-            height = self.generate_config.height
+            print(f"Generating {len(self.generate_config.prompts)} images")
+            # build prompt image configs
+            prompt_image_configs = []
+            for prompt in self.generate_config.prompts:
+                width = self.generate_config.width
+                height = self.generate_config.height
+                prompt = self.clean_prompt(prompt)
 
-            if self.generate_config.size_list is not None:
-                # randomly select a size
-                width, height = random.choice(self.generate_config.size_list)
+                if self.generate_config.size_list is not None:
+                    # randomly select a size
+                    width, height = random.choice(self.generate_config.size_list)
 
-            prompt_image_configs.append(GenerateImageConfig(
-                prompt=prompt,
-                prompt_2=self.generate_config.prompt_2,
-                width=width,
-                height=height,
-                num_inference_steps=self.generate_config.sample_steps,
-                guidance_scale=self.generate_config.guidance_scale,
-                negative_prompt=self.generate_config.neg,
-                negative_prompt_2=self.generate_config.neg_2,
-                seed=self.generate_config.seed,
-                guidance_rescale=self.generate_config.guidance_rescale,
-                output_ext=self.generate_config.ext,
-                output_folder=self.output_folder,
-                add_prompt_file=self.generate_config.prompt_file
-            ))
-        # generate images
-        self.sd.generate_images(prompt_image_configs, sampler=self.generate_config.sampler)
+                prompt_image_configs.append(GenerateImageConfig(
+                    prompt=prompt,
+                    prompt_2=self.generate_config.prompt_2,
+                    width=width,
+                    height=height,
+                    num_inference_steps=self.generate_config.sample_steps,
+                    guidance_scale=self.generate_config.guidance_scale,
+                    negative_prompt=self.generate_config.neg,
+                    negative_prompt_2=self.generate_config.neg_2,
+                    seed=self.generate_config.seed,
+                    guidance_rescale=self.generate_config.guidance_rescale,
+                    output_ext=self.generate_config.ext,
+                    output_folder=self.output_folder,
+                    add_prompt_file=self.generate_config.prompt_file
+                ))
+            # generate images
+            self.sd.generate_images(prompt_image_configs, sampler=self.generate_config.sampler)
 
-        print("Done generating images")
-        # cleanup
-        del self.sd
-        gc.collect()
-        torch.cuda.empty_cache()
+            print("Done generating images")
+            # cleanup
+            del self.sd
+            gc.collect()
+            torch.cuda.empty_cache()

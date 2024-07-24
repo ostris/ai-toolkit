@@ -266,6 +266,8 @@ class TrainConfig:
         self.reg_weight = kwargs.get('reg_weight', 1.0)
         self.num_train_timesteps = kwargs.get('num_train_timesteps', 1000)
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
+        # automatically adapte the vae scaling based on the image norm
+        self.adaptive_scaling_factor = kwargs.get('adaptive_scaling_factor', False)
 
         # dropout that happens before encoding. It functions independently per text encoder
         self.prompt_dropout_prob = kwargs.get('prompt_dropout_prob', 0.0)

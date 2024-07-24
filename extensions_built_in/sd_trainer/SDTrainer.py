@@ -483,6 +483,7 @@ class SDTrainer(BaseSDTrainProcess):
             noise=noise,
             sd=self.sd,
             unconditional_embeds=unconditional_embeds,
+            scaler=self.scaler,
             **kwargs
         )
 

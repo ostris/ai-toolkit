@@ -739,6 +739,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # add to noise
             noise += noise_shift
 
+        # standardize the noise
+        std = noise.std(dim=(2, 3), keepdim=True)
+        normalizer = 1 / (std + 1e-6)
+        noise = noise * normalizer
+
         return noise
 
     def process_general_training_batch(self, batch: 'DataLoaderBatchDTO'):
@@ -975,13 +980,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 noise = noise * noise_multiplier
 
-                latents = latents * self.train_config.latent_multiplier
+                latent_multiplier = self.train_config.latent_multiplier
+
+                # handle adaptive scaling mased on std
+                if self.train_config.adaptive_scaling_factor:
+                    std = latents.std(dim=(2, 3), keepdim=True)
+                    normalizer = 1 / (std + 1e-6)
+                    latent_multiplier = normalizer
+
+                latents = latents * latent_multiplier
+                batch.latents = latents
 
                 # normalize latents to a mean of 0 and an std of 1
                 # mean_zero_latents = latents - latents.mean()
                 # latents = mean_zero_latents / mean_zero_latents.std()
-
-
 
                 if batch.unconditional_latents is not None:
                     batch.unconditional_latents = batch.unconditional_latents * self.train_config.latent_multiplier

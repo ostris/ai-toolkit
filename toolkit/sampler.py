@@ -41,9 +41,12 @@ sd_config = {
     "prediction_type": "epsilon",
     "sample_max_value": 1.0,
     "set_alpha_to_one": False,
-    "skip_prk_steps": False,
-    "steps_offset": 1,
-    "timestep_spacing": "trailing",
+    # "skip_prk_steps": False,  # for training
+    "skip_prk_steps": True,
+    # "steps_offset": 1,
+    "steps_offset": 0,
+    # "timestep_spacing": "trailing", # for training
+    "timestep_spacing": "leading",
     "trained_betas": None
 }
 

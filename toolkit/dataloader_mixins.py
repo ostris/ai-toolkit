@@ -387,7 +387,7 @@ class CaptionProcessingDTOMixin:
 
         # join back together
         caption = ', '.join(token_list)
-        caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
+        # caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
 
         if self.dataset_config.random_triggers:
             num_triggers = self.dataset_config.random_triggers_max

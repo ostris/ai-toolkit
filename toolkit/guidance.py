@@ -407,6 +407,7 @@ def get_guided_loss_polarity(
         batch: 'DataLoaderBatchDTO',
         noise: torch.Tensor,
         sd: 'StableDiffusion',
+        scaler=None,
         **kwargs
 ):
     dtype = get_torch_dtype(sd.torch_dtype)
@@ -473,7 +474,10 @@ def get_guided_loss_polarity(
 
     loss = loss.mean([1, 2, 3])
     loss = loss.mean()
-    loss.backward()
+    if scaler is not None:
+        scaler.scale(loss).backward()
+    else:
+        loss.backward()
 
     # detach it so parent class can run backward on no grads without throwing error
     loss = loss.detach()
@@ -590,6 +594,7 @@ def get_guidance_loss(
         unconditional_embeds: Optional[PromptEmbeds] = None,
         mask_multiplier=None,
         prior_pred=None,
+        scaler=None,
         **kwargs
 ):
     # TODO add others and process individual batch items separately
@@ -621,6 +626,7 @@ def get_guidance_loss(
             batch,
             noise,
             sd,
+            scaler=scaler,
             **kwargs
         )
     elif guidance_type == "tnt":
