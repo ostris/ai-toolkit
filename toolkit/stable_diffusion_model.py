@@ -27,7 +27,6 @@ from library.model_util import convert_unet_state_dict_to_sd, convert_text_encod
 from toolkit import train_tools
 from toolkit.config_modules import ModelConfig, GenerateImageConfig
 from toolkit.metadata import get_meta_for_safetensors
-from toolkit.models.auraflow import patch_auraflow_pos_embed
 from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter

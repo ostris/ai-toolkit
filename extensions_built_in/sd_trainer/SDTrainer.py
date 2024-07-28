@@ -454,6 +454,13 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss + self.adapter.additional_loss.mean()
             self.adapter.additional_loss = None
 
+        if self.train_config.target_norm_std:
+            # seperate out the batch and channels
+            pred_std = noise_pred.std([2, 3], keepdim=True)
+            norm_std_loss = torch.abs(1.0 - pred_std).mean()
+            loss = loss + norm_std_loss
+
+
         return loss
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):

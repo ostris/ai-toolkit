@@ -751,7 +751,6 @@ def encode_prompts_auraflow(
         padding="max_length",
         return_tensors="pt",
     )
-    text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
     text_input_ids = text_inputs["input_ids"]
     untruncated_ids = tokenizer(prompts, padding="longest", return_tensors="pt").input_ids
 
@@ -760,6 +759,7 @@ def encode_prompts_auraflow(
     ):
         removed_text = tokenizer.batch_decode(untruncated_ids[:, max_length - 1: -1])
 
+    text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
     prompt_embeds = text_encoder(**text_inputs)[0]
     prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_embeds.shape)
     prompt_embeds = prompt_embeds * prompt_attention_mask

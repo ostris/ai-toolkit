@@ -352,6 +352,9 @@ class TrainConfig:
 
         self.ema_config: EMAConfig = EMAConfig(**ema_config)
 
+        # adds an additional loss to the network to encourage it output a normalized standard deviation
+        self.target_norm_std = kwargs.get('target_norm_std', None)
+
 
 class ModelConfig:
     def __init__(self, **kwargs):
