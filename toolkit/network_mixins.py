@@ -516,6 +516,9 @@ class ToolkitNetworkMixin:
         load_sd = OrderedDict()
         for key, value in weights_sd.items():
             load_key = keymap[key] if key in keymap else key
+            # replace old double __ with single _
+            if self.is_pixart:
+                load_key = load_key.replace('__', '_')
             load_sd[load_key] = value
 
         # extract extra items from state dict

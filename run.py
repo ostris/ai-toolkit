@@ -1,5 +1,5 @@
 import os
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+# os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 import sys
 from typing import Union, OrderedDict
 from dotenv import load_dotenv

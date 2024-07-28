@@ -51,6 +51,9 @@ resolutions_1024: List[BucketResolution] = [
     {"width": 512, "height": 1920},
     {"width": 512, "height": 1984},
     {"width": 512, "height": 2048},
+    # extra wides
+    {"width": 8192, "height": 128},
+    {"width": 128, "height": 8192},
 ]
 
 # Even numbers so they can be patched easier

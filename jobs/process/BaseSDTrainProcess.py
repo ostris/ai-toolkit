@@ -1331,6 +1331,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_lorm=is_lorm,
                     network_config=self.network_config,
                     network_type=self.network_config.type,
+                    transformer_only=self.network_config.transformer_only,
                     **network_kwargs
                 )
 
