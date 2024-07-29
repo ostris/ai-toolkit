@@ -8,7 +8,7 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, T5En
 
 from toolkit.models.clip_fusion import CLIPFusionModule
 from toolkit.models.clip_pre_processor import CLIPImagePreProcessor
-from toolkit.models.ilora2 import InstantLoRAModule
+from toolkit.models.ilora import InstantLoRAModule
 from toolkit.models.single_value_adapter import SingleValueAdapter
 from toolkit.models.te_adapter import TEAdapter
 from toolkit.models.te_aug_adapter import TEAugAdapter
