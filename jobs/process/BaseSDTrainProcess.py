@@ -24,7 +24,7 @@ from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
-from toolkit.image_utils import show_tensors, show_latents
+from toolkit.image_utils import show_tensors, show_latents, reduce_contrast
 from toolkit.ip_adapter import IPAdapter
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.lorm import convert_diffusers_unet_to_lorm, count_parameters, print_lorm_extract_details, \
@@ -811,7 +811,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     imgs = batch.tensor
                     imgs = imgs.to(self.device_torch, dtype=dtype)
                     if self.train_config.img_multiplier is not None:
-                        imgs = imgs * self.train_config.img_multiplier
+                        # do it ad contrast
+                        imgs = reduce_contrast(imgs, self.train_config.img_multiplier)
                 if batch.latents is not None:
                     latents = batch.latents.to(self.device_torch, dtype=dtype)
                     batch.latents = latents

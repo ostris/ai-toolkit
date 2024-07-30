@@ -495,6 +495,19 @@ def on_exit():
         cv2.destroyAllWindows()
 
 
+def reduce_contrast(tensor, factor):
+    # Ensure factor is between 0 and 1
+    factor = max(0, min(factor, 1))
+
+    # Calculate the mean of the tensor
+    mean = torch.mean(tensor)
+
+    # Reduce contrast
+    adjusted_tensor = (tensor - mean) * factor + mean
+
+    # Clip values to ensure they stay within -1 to 1 range
+    return torch.clamp(adjusted_tensor, -1.0, 1.0)
+
 atexit.register(on_exit)
 
 if __name__ == "__main__":
