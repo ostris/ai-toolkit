@@ -154,6 +154,7 @@ class AdapterConfig:
         if num_tokens is None and self.type.startswith('ip'):
             if self.type == 'ip+':
                 num_tokens = 16
+                num_tokens = 16
             elif self.type == 'ip':
                 num_tokens = 4
 

@@ -760,11 +760,15 @@ class ClipImageFileItemDTOMixin:
             # do a flip
             img = img.transpose(Image.FLIP_TOP_BOTTOM)
 
-        # image must be square. If it is not, we will resize/squish it so it is, that way we don't crop out data
         if img.width != img.height:
-            # resize to the smallest dimension
             min_size = min(img.width, img.height)
-            img = img.resize((min_size, min_size), Image.BICUBIC)
+            if self.dataset_config.square_crop:
+                # center crop to a square
+                img = transforms.CenterCrop(min_size)(img)
+            else:
+                # image must be square. If it is not, we will resize/squish it so it is, that way we don't crop out data
+                # resize to the smallest dimension
+                img = img.resize((min_size, min_size), Image.BICUBIC)
 
         if self.has_clip_augmentations:
             self.clip_image_tensor = self.augment_clip_image(img, transform=None)
