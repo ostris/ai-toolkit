@@ -367,6 +367,7 @@ class ModelConfig:
         self.is_pixart_sigma: bool = kwargs.get('is_pixart_sigma', False)
         self.is_auraflow: bool = kwargs.get('is_auraflow', False)
         self.is_v3: bool = kwargs.get('is_v3', False)
+        self.is_flux: bool = kwargs.get('is_flux', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
         self.is_ssd: bool = kwargs.get('is_ssd', False)
@@ -404,6 +405,9 @@ class ModelConfig:
         self.vae_dtype = kwargs.get("vae_dtype", self.dtype)
         self.te_device = kwargs.get("te_device", None)
         self.te_dtype = kwargs.get("te_dtype", self.dtype)
+
+        # only for flux for now
+        self.quantize = kwargs.get("quantize", False)
         pass
 
 
