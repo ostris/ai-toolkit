@@ -27,3 +27,4 @@ hf_transfer
 lpips
 pytorch_fid
 optimum-quanto
+sentencepiece
