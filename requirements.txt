@@ -1,7 +1,7 @@
 torch
 torchvision
 safetensors
-diffusers
+git+https://github.com/huggingface/diffusers.git
 transformers
 lycoris-lora==1.8.3
 flatten_json
@@ -26,3 +26,4 @@ bitsandbytes
 hf_transfer
 lpips
 pytorch_fid
+optimum-quanto
