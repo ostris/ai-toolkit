@@ -327,6 +327,11 @@ class SDTrainer(BaseSDTrainProcess):
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
+
+        elif self.sd.is_rectified_flow:
+            # only if preconditioning model outputs
+            # if not preconditioning, (target = noise - batch.latents) is used
+            target = batch.latents.detach()
         else:
             target = noise
 
@@ -373,26 +378,10 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss_per_element
         else:
             # handle flow matching ref https://github.com/huggingface/diffusers/blob/ec068f9b5bf7c65f93125ec889e0ff1792a00da1/examples/dreambooth/train_dreambooth_lora_sd3.py#L1485C17-L1495C100
-            if self.sd.is_v3:
-                target = noisy_latents.detach()
-                bsz = pred.shape[0]
-                # todo implement others
-                # weighing_scheme =
-                # 3 just do mode for now?
-                # if args.weighting_scheme == "sigma_sqrt":
+            if self.sd.is_rectified_flow and prior_pred is None:
+                # outputs should be preprocessed latents
                 sigmas = self.sd.noise_scheduler.get_sigmas(timesteps, pred.ndim, dtype, self.device_torch)
-                # weighting = (sigmas ** -2.0).float()
                 weighting = torch.ones_like(sigmas)
-                # elif args.weighting_scheme == "logit_normal":
-                #     # See 3.1 in the SD3 paper ($rf/lognorm(0.00,1.00)$).
-                #     u = torch.normal(mean=args.logit_mean, std=args.logit_std, size=(bsz,), device=accelerator.device)
-                #     weighting = torch.nn.functional.sigmoid(u)
-                # elif args.weighting_scheme == "mode":
-                # mode_scale = 1.29
-                # See sec 3.1 in the SD3 paper (20).
-                # u = torch.rand(size=(bsz,), device=pred.device)
-                # weighting = 1 - u - mode_scale * (torch.cos(math.pi * u / 2) ** 2 - 1 + u)
-
                 loss = (weighting.float() * (pred.float() - target.float()) ** 2).reshape(target.shape[0], -1)
 
             elif self.train_config.loss_type == "mae":
