@@ -330,7 +330,12 @@ class SDTrainer(BaseSDTrainProcess):
 
         elif self.sd.is_rectified_flow:
             # only if preconditioning model outputs
-            # if not preconditioning, (target = noise - batch.latents) is used
+            # if not preconditioning, (target = noise - batch.latents)
+
+
+            # target = noise - batch.latents
+
+            # if preconditioning outputs, target latents
             target = batch.latents.detach()
         else:
             target = noise
