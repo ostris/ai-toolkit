@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+echo "Docker builds from the repo, not this dir. Make sure changes are pushed to the repo."
+# wait 2 seconds
+sleep 2
+docker build --build-arg CACHEBUST=$(date +%s) -t aitoolkit:latest -f docker/Dockerfile .
+docker tag aitoolkit:latest ostris/aitoolkit:latest
+docker push ostris/aitoolkit:latest

@@ -468,8 +468,8 @@ class StableDiffusion:
                 transformer_path,
                 subfolder=subfolder,
                 torch_dtype=dtype,
-                low_cpu_mem_usage=False,
-                device_map=None
+                # low_cpu_mem_usage=False,
+                # device_map=None
             )
             transformer.to(self.device_torch, dtype=dtype)
             flush()
