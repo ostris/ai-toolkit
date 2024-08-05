@@ -370,6 +370,7 @@ class ModelConfig:
         self.is_flux: bool = kwargs.get('is_flux', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
+        self.use_flux_cfg = kwargs.get('use_flux_cfg', False)
         self.is_ssd: bool = kwargs.get('is_ssd', False)
         self.is_vega: bool = kwargs.get('is_vega', False)
         self.is_v_pred: bool = kwargs.get('is_v_pred', False)

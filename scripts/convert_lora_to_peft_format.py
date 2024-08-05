@@ -78,8 +78,12 @@ for key, value in state_dict.items():
     new_key = new_key.replace('lora_up', 'lora_B')
     new_key = new_key.replace('_lora', '.lora')
     new_key = new_key.replace('attn_', 'attn.')
+    new_key = new_key.replace('ff_', 'ff.')
+    new_key = new_key.replace('context_net_', 'context.net.')
+    new_key = new_key.replace('0_proj', '0.proj')
     new_key = new_key.replace('norm_linear', 'norm.linear')
     new_key = new_key.replace('norm_out_linear', 'norm_out.linear')
+    new_key = new_key.replace('to_out_', 'to_out.')
 
     new_state_dict[new_key] = new_val.to(orig_dtype)
 
