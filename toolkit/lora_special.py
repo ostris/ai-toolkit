@@ -124,6 +124,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
     UNET_TARGET_REPLACE_MODULE_CONV2D_3X3 = ["UNet2DConditionModel"]
     TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
     LORA_PREFIX_UNET = "lora_unet"
+    PEFT_PREFIX_UNET = "unet"
     LORA_PREFIX_TEXT_ENCODER = "lora_te"
 
     # SDXL: must starts with LORA_PREFIX_TEXT_ENCODER
@@ -171,6 +172,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             network_type: str = "lora",
             full_train_in_out: bool = False,
             transformer_only: bool = False,
+            peft_format: bool = False,
             **kwargs
     ) -> None:
         """
@@ -223,6 +225,17 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             self.module_class = DoRAModule
             module_class = DoRAModule
 
+        self.peft_format = peft_format
+
+        # always do peft for flux only for now
+        if self.is_flux:
+            self.peft_format = True
+
+        if self.peft_format:
+            # no alpha for peft
+            self.alpha = self.lora_dim
+            self.conv_alpha = self.conv_lora_dim
+
         self.full_train_in_out = full_train_in_out
 
         if modules_dim is not None:
@@ -252,8 +265,12 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                 target_replace_modules: List[torch.nn.Module],
         ) -> List[LoRAModule]:
             unet_prefix = self.LORA_PREFIX_UNET
+            if self.peft_format:
+                unet_prefix = self.PEFT_PREFIX_UNET
             if is_pixart or is_v3 or is_auraflow or is_flux:
                 unet_prefix = f"lora_transformer"
+                if self.peft_format:
+                    unet_prefix = "transformer"
 
             prefix = (
                 unet_prefix
@@ -282,7 +299,12 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         lora_name = ".".join(lora_name)
                         # if it doesnt have a name, it wil have two dots
                         lora_name.replace("..", ".")
-                        lora_name = lora_name.replace(".", "_")
+                        if self.peft_format:
+                            # we replace this on saving
+                            lora_name = lora_name.replace(".", "$$")
+                        else:
+                            lora_name = lora_name.replace(".", "_")
+
 
                         skip = False
                         if any([word in child_name for word in self.ignore_if_contains]):

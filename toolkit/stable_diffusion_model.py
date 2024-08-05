@@ -616,7 +616,17 @@ class StableDiffusion:
         if self.model_config.lora_path is not None:
             pipe.load_lora_weights(self.model_config.lora_path, adapter_name="lora1")
             pipe.fuse_lora()
-            self.unet.fuse_lora()
+            # unfortunately, not an easier way with peft
+            pipe.unload_lora_weights()
+
+        if self.model_config.assistant_lora_path is not None:
+            if self.model_config.lora_path is not None:
+                raise ValueError("Cannot have both lora and assistant lora")
+            print("Loading assistant lora")
+            pipe.load_lora_weights(self.model_config.assistant_lora_path, adapter_name="assistant_lora")
+            pipe.fuse_lora(lora_scale=1.0)
+            # unfortunately, not an easier way with peft
+            pipe.unload_lora_weights()
 
         self.tokenizer = tokenizer
         self.text_encoder = text_encoder
@@ -690,7 +700,15 @@ class StableDiffusion:
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
         merge_multiplier = 1.0
-        # sample_folder = os.path.join(self.save_root, 'samples')
+
+        # if using assistant, unfuse it
+        if self.model_config.assistant_lora_path is not None:
+            print("Unloading asistant lora")
+            # unfortunately, not an easier way with peft
+            self.pipeline.load_lora_weights(self.model_config.assistant_lora_path, adapter_name="assistant_lora")
+            self.pipeline.fuse_lora(lora_scale=-1.0)
+            self.pipeline.unload_lora_weights()
+
         if self.network is not None:
             self.network.eval()
             network = self.network
@@ -1161,6 +1179,14 @@ class StableDiffusion:
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])
+
+        # refuse loras
+        if self.model_config.assistant_lora_path is not None:
+            print("Loading asistant lora")
+            # unfortunately, not an easier way with peft
+            self.pipeline.load_lora_weights(self.model_config.assistant_lora_path, adapter_name="assistant_lora")
+            self.pipeline.fuse_lora(lora_scale=1.0)
+            self.pipeline.unload_lora_weights()
 
     def get_latent_noise(
             self,

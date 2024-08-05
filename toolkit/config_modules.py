@@ -379,6 +379,8 @@ class ModelConfig:
         self._original_refiner_name_or_path = self.refiner_name_or_path
         self.refiner_start_at = kwargs.get('refiner_start_at', 0.5)
         self.lora_path = kwargs.get('lora_path', None)
+        # mainly for decompression loras for distilled models
+        self.assistant_lora_path = kwargs.get('assistant_lora_path', None)
         self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now
