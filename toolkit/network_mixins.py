@@ -4,6 +4,7 @@ from collections import OrderedDict
 from typing import Optional, Union, List, Type, TYPE_CHECKING, Dict, Any, Literal
 
 import torch
+from optimum.quanto import QTensor
 from torch import nn
 import weakref
 
@@ -258,7 +259,12 @@ class ToolkitModuleMixin:
         #     return self.dora_forward(x, *args, **kwargs)
 
         org_forwarded = self.org_forward(x, *args, **kwargs)
-        lora_output = self._call_forward(x)
+
+        if isinstance(x, QTensor):
+            x = x.dequantize()
+        # always cast to float32
+        lora_input = x.float()
+        lora_output = self._call_forward(lora_input)
         multiplier = self.network_ref().torch_multiplier
 
         lora_output_batch_size = lora_output.size(0)
@@ -269,6 +275,7 @@ class ToolkitModuleMixin:
             multiplier = multiplier.repeat_interleave(num_interleaves)
 
         scaled_lora_output = broadcast_and_multiply(lora_output, multiplier)
+        scaled_lora_output = scaled_lora_output.to(org_forwarded.dtype)
 
         if self.__class__.__name__ == "DoRAModule":
             # ref https://github.com/huggingface/peft/blob/1e6d1d73a0850223b0916052fd8d2382a90eae5a/src/peft/tuners/lora/layer.py#L417
@@ -320,8 +327,18 @@ class ToolkitModuleMixin:
 
         # extract weight from org_module
         org_sd = self.org_module[0].state_dict()
-        orig_dtype = org_sd["weight"].dtype
-        weight = org_sd["weight"].float()
+        # todo find a way to merge in weights when doing quantized model
+        if 'weight._data' in org_sd:
+            # quantized weight
+            return
+
+        weight_key = "weight"
+        if 'weight._data' in org_sd:
+            # quantized weight
+            weight_key = "weight._data"
+
+        orig_dtype = org_sd[weight_key].dtype
+        weight = org_sd[weight_key].float()
 
         multiplier = merge_weight
         scale = self.scale
@@ -348,7 +365,7 @@ class ToolkitModuleMixin:
             weight = weight + multiplier * conved * scale
 
         # set weight to org_module
-        org_sd["weight"] = weight.to(orig_dtype)
+        org_sd[weight_key] = weight.to(orig_dtype)
         self.org_module[0].load_state_dict(org_sd)
 
     def setup_lorm(self: Module, state_dict: Optional[Dict[str, Any]] = None):
@@ -523,12 +540,16 @@ class ToolkitNetworkMixin:
         keymap = self.get_keymap(force_weight_mapping)
         keymap = {} if keymap is None else keymap
 
-        if os.path.splitext(file)[1] == ".safetensors":
-            from safetensors.torch import load_file
+        if isinstance(file, str):
+            if os.path.splitext(file)[1] == ".safetensors":
+                from safetensors.torch import load_file
 
-            weights_sd = load_file(file)
+                weights_sd = load_file(file)
+            else:
+                weights_sd = torch.load(file, map_location="cpu")
         else:
-            weights_sd = torch.load(file, map_location="cpu")
+            # probably a state dict
+            weights_sd = file
 
         load_sd = OrderedDict()
         for key, value in weights_sd.items():

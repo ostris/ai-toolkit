@@ -520,7 +520,7 @@ class DatasetConfig:
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
         self.scale: float = kwargs.get('scale', 1.0)
-        self.buckets: bool = kwargs.get('buckets', False)
+        self.buckets: bool = kwargs.get('buckets', True)
         self.bucket_tolerance: int = kwargs.get('bucket_tolerance', 64)
         self.is_reg: bool = kwargs.get('is_reg', False)
         self.network_weight: float = float(kwargs.get('network_weight', 1.0))

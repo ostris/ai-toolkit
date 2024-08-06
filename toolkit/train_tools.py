@@ -52,6 +52,8 @@ def get_torch_dtype(dtype_str):
         return torch.float16
     if dtype_str == "bf16" or dtype_str == "bfloat16":
         return torch.bfloat16
+    if dtype_str == "8bit" or dtype_str == "e4m3fn" or dtype_str == "float8":
+        return torch.float8_e4m3fn
     return dtype_str
 
 

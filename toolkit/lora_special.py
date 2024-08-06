@@ -28,12 +28,14 @@ RE_UPDOWN = re.compile(r"(up|down)_blocks_(\d+)_(resnets|upsamplers|downsamplers
 # diffusers specific stuff
 LINEAR_MODULES = [
     'Linear',
-    'LoRACompatibleLinear'
+    'LoRACompatibleLinear',
+    'QLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
     'Conv2d',
-    'LoRACompatibleConv'
+    'LoRACompatibleConv',
+    'QConv2d',
 ]
 
 class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):

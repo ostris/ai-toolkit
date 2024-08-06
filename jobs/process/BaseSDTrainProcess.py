@@ -1353,7 +1353,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     **network_kwargs
                 )
 
-                self.network.force_to(self.device_torch, dtype=dtype)
+
+                # todo switch everything to proper mixed precision like this
+                self.network.force_to(self.device_torch, dtype=torch.float32)
                 # give network to sd so it can use it
                 self.sd.network = self.network
                 self.network._update_torch_multiplier()
@@ -1364,6 +1366,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_text_encoder,
                     self.train_config.train_unet
                 )
+
+                # we cannot merge in if quantized
+                if self.model_config.quantize:
+                    # todo find a way around this
+                    self.network.can_merge_in = False
 
                 if is_lorm:
                     self.network.is_lorm = True
