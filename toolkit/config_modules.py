@@ -418,6 +418,8 @@ class EMAConfig:
     def __init__(self, **kwargs):
         self.use_ema: bool = kwargs.get('use_ema', False)
         self.ema_decay: float = kwargs.get('ema_decay', 0.999)
+        # feeds back the decay difference into the parameter
+        self.use_feedback: bool = kwargs.get('use_feedback', False)
 
 
 class ReferenceDatasetConfig:

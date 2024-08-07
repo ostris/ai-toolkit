@@ -582,7 +582,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     params.append(param)
             self.ema = ExponentialMovingAverage(
                 params,
-                self.train_config.ema_config.ema_decay
+                self.train_config.ema_config.ema_decay,
+                use_feedback=self.train_config.ema_config.use_feedback,
             )
 
     def before_dataset_load(self):
