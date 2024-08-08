@@ -906,6 +906,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.sd.noise_scheduler.set_timesteps(
                         num_train_timesteps, device=self.device_torch, original_inference_steps=num_train_timesteps
                     )
+                elif self.train_config.noise_scheduler == 'flowmatch':
+                    self.sd.noise_scheduler.set_train_timesteps(
+                        num_train_timesteps, device=self.device_torch
+                    )
                 else:
                     self.sd.noise_scheduler.set_timesteps(
                         num_train_timesteps, device=self.device_torch
