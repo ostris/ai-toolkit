@@ -1,21 +1,9 @@
 # AI Toolkit by Ostris
 
-## Special Thanks
-I want to give a special thanks to Huggingface for their amazing work, and their continued support of
-my work. This repo would not be possible without them. 
-
-
 ## IMPORTANT NOTE - READ THIS
-This is an active WIP repo that is not ready for others to use. And definitely not ready for non developers to use.
-I am making major breaking changes and pushing straight to master until I have it in a planned state. I have big changes
-planned for config files and the general structure. I may change how training works entirely. You are welcome to use
-but keep that in mind. If more people start to use it, I will follow better branch checkout standards, but for now
-this is my personal active experiment.
-
-Report bugs as you find them, but not knowing how to train ML models, setup an environment, or use python is not a bug.
-I will make all of this more user-friendly eventually
-
-I will make a better readme later.
+This is my research repo. I do a lot of experiments in it and it is possible that I will break things.
+If something breaks, checkout an earlier commit. This repo can train a lot of things, and it is
+hard to keep up with all of them.
 
 ## Installation
 
@@ -51,13 +39,49 @@ pip install torch --use-pep517 --extra-index-url https://download.pytorch.org/wh
 pip install -r requirements.txt
 ```
 
+## FLUX.1 Training
+
+### WIP. I am updating docs and optimizing as fast as I can. If there are bugs open a ticket. Not knowing how to get it to work is NOT a bug. Be paitient as I continue to develop it.
+
+Training currently only works with FLUX.1-dev. Which means anything you train will inherit the
+non commercial license. It is also a gated model, so you need to accept the license on HF before using it.
+Otherwise, this will fail. Here are the required steps to setup a license.
+
+### Requirements
+You currently need a dedicated GPU with **at least 24GB of VRAM** to train FLUX.1. If you are using it as your GPU to control 
+your monitors, it will probably not fit as that takes up some ram. I may be able to get this lower, but for now,
+It won't work. It may not work on Windows, I have only tested on linux for now. This is still extremely experimental
+and a lot of quantizing and tricks had to happen to get it to fit on 24GB at all. 
+
+1. Sign into HF and accept the model access here [black-forest-labs/FLUX.1-dev](https://huggingface.co/black-forest-labs/FLUX.1-dev)
+2. Make a file named `.env` in the root on this folder
+3. [Get a READ key from huggingface](https://huggingface.co/settings/tokens/new?) and add it to the `.env` file like so `HF_TOKEN=your_key_here`
+
+### Training
+1. Copy the example config file located at `config/examples/train_lora_flux_24gb.yaml` to the `config` folder and rename it to `whatever_you_want.yml`
+2. Edit the file following the comments in the file
+3. Run the file like so `python3 run.py config/whatever_you_want.yml`
+
+A folder with the name and the training folder from the config file will be created when you start. It will have all 
+checkpoints and images in it. You can stop the training at any time using ctrl+c and when you resume, it will pick back up
+from the last checkpoint.
+
+IMPORTANT. If you press crtl+c while it is saving, it will likely corrupt that checkpoint. So wait until it is done saving
+
+### Need help?
+
+Please do not open a bug report unless it is a bug in the code. You are welcome to [Join my Discord](https://discord.gg/SzVB3wYvxF)
+and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
+and I will answer when I can.
+
+### Training in the cloud
+Coming very soon. Getting base out then will have a notebook that makes all that work. 
 
 ---
 
-## Current Tools
+## EVERYTHING BELOW THIS LINE IS OUTDATED 
 
-I have so many hodge podge scripts I am going to be moving over to this that I use in my ML work. But this is what is
-here so far.
+It may still work like that, but I have not tested it in a while.
 
 ---
 

@@ -128,7 +128,7 @@ class NetworkConfig:
             if self.lorm_config.do_conv:
                 self.conv = 4
 
-        self.transformer_only = kwargs.get('transformer_only', False)
+        self.transformer_only = kwargs.get('transformer_only', True)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net']

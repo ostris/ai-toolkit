@@ -1349,7 +1349,6 @@ class FluxWithCFGPipeline(FluxPipeline):
 
                 noise_pred_text = self.transformer(
                     hidden_states=latents,
-                    # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                     timestep=timestep / 1000,
                     guidance=guidance,
                     pooled_projections=pooled_prompt_embeds,
@@ -1363,7 +1362,6 @@ class FluxWithCFGPipeline(FluxPipeline):
                 # todo combine these
                 noise_pred_uncond = self.transformer(
                     hidden_states=latents,
-                    # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
                     timestep=timestep / 1000,
                     guidance=guidance,
                     pooled_projections=negative_pooled_prompt_embeds,
@@ -1375,8 +1373,6 @@ class FluxWithCFGPipeline(FluxPipeline):
                 )[0]
 
                 noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
-
-
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
