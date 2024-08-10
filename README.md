@@ -79,6 +79,19 @@ Coming very soon. Getting base out then will have a notebook that makes all that
 
 ---
 
+## Dataset Preparation
+
+Datasets generally need to be a folder containing images and associated text files. Currently, the only supported
+formats are jpg, jpeg, and png. Webp currently has issues. The text files should be named the same as the images
+but with a `.txt` extension. For example `image22.jpg` and `image2.txt`. The text file should contain only the caption.
+You can add the word `[trigger]` in the caption file and if you have `trigger_word` in your config, it will be automatically
+replaced. 
+
+Images are never upscaled but they are downscaled and placed in buckets for batching. **You do not need to crop/resize your images**.
+The loader will automatically resize them and can handle varying aspect ratios. 
+
+---
+
 ## EVERYTHING BELOW THIS LINE IS OUTDATED 
 
 It may still work like that, but I have not tested it in a while.
