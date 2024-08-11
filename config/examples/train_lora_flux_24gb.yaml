@@ -31,7 +31,6 @@ config:
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
           resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions
-          num_workers: 0
       train:
         batch_size: 1
         steps: 4000  # total number of steps to train 500 - 4000 is a good range
