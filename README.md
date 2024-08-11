@@ -7,7 +7,10 @@ hard to keep up with all of them.
 
 ## Support my work
 
-My work would not be possible without the amazing support of [Glif](https://glif.app/). 
+My work on this project would not be possible without the amazing support of [Glif](https://glif.app/) and everyone on the 
+team. If you want to support me, support Glif. [Join the site](https://glif.app/), 
+[Join us on Discord](https://discord.com/invite/nuR9zZ2nsh), [follow us on Twitter](https://x.com/heyglif)
+and come make some cool stuff with us
 
 ## Installation
 
