@@ -5,6 +5,10 @@ This is my research repo. I do a lot of experiments in it and it is possible tha
 If something breaks, checkout an earlier commit. This repo can train a lot of things, and it is
 hard to keep up with all of them.
 
+## Support my work
+
+My work would not be possible without the amazing support of [Glif](https://glif.app/). 
+
 ## Installation
 
 Requirements:
@@ -43,15 +47,20 @@ pip install -r requirements.txt
 
 ### WIP. I am updating docs and optimizing as fast as I can. If there are bugs open a ticket. Not knowing how to get it to work is NOT a bug. Be paitient as I continue to develop it.
 
-Training currently only works with FLUX.1-dev. Which means anything you train will inherit the
-non commercial license. It is also a gated model, so you need to accept the license on HF before using it.
-Otherwise, this will fail. Here are the required steps to setup a license.
 
 ### Requirements
-You currently need a dedicated GPU with **at least 24GB of VRAM** to train FLUX.1. If you are using it as your GPU to control 
-your monitors, it will probably not fit as that takes up some ram. I may be able to get this lower, but for now,
-It won't work. It may not work on Windows, I have only tested on linux for now. This is still extremely experimental
+You currently need a GPU with **at least 24GB of VRAM** to train FLUX.1. If you are using it as your GPU to control 
+your monitors, you probably need to set the flag `low_vram: true` in the config file under `model:`. This will quantize
+the model on CPU and should allow it to train with monitors attached. Users have gotten it to work on Windows with WSL,
+but there are some reports of a bug when running on windows natively. 
+I have only tested on linux for now. This is still extremely experimental
 and a lot of quantizing and tricks had to happen to get it to fit on 24GB at all. 
+
+### Model License
+
+Training currently only works with FLUX.1-dev. Which means anything you train will inherit the
+non-commercial license. It is also a gated model, so you need to accept the license on HF before using it.
+Otherwise, this will fail. Here are the required steps to setup a license.
 
 1. Sign into HF and accept the model access here [black-forest-labs/FLUX.1-dev](https://huggingface.co/black-forest-labs/FLUX.1-dev)
 2. Make a file named `.env` in the root on this folder

@@ -411,6 +411,7 @@ class ModelConfig:
 
         # only for flux for now
         self.quantize = kwargs.get("quantize", False)
+        self.low_vram = kwargs.get("low_vram", False)
         pass
 
 

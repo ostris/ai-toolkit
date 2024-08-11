@@ -25,16 +25,16 @@ config:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
         # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
         # images will automatically be resized and bucketed into the resolution specified
-        - folder_path: "/mnt/Datasets/1920s_illustrations"
-#        - folder_path: "/path/to/images/folder"
+        - folder_path: "/path/to/images/folder"
           caption_ext: "txt"
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
           resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions
+          num_workers: 0
       train:
         batch_size: 1
-        steps: 4000  # total number of steps to train
+        steps: 4000  # total number of steps to train 500 - 4000 is a good range
         gradient_accumulation_steps: 1
         train_unet: true
         train_text_encoder: false  # probably won't work with flux
@@ -43,6 +43,8 @@ config:
         noise_scheduler: "flowmatch" # for training only
         optimizer: "adamw8bit"
         lr: 4e-4
+        # uncomment this to skip the pre training sample
+#        skip_first_sample: true
 
         # ema will smooth out learning, but could slow it down. Recommended to leave on.
         ema_config:
@@ -56,6 +58,7 @@ config:
         name_or_path: "black-forest-labs/FLUX.1-dev"
         is_flux: true
         quantize: true  # run 8bit mixed precision
+#        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
         sample_every: 250 # sample every this many steps
@@ -66,7 +69,7 @@ config:
 #          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
           - "woman with red hair, playing chess at the park, bomb going off in the background"
           - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
-          - "a horse in a night club dancing, fish eye lens, smoke machine, lazer lights, holding a martini, large group"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
           - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
           - "a bear building a log cabin in the snow covered mountains"
           - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
