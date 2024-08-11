@@ -55,4 +55,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         # Sort the timesteps in descending order
         timesteps, _ = torch.sort(timesteps, descending=True)
 
+        self.timesteps = timesteps.to(device=device)
+
         return timesteps
