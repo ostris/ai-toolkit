@@ -39,7 +39,7 @@ cd ai-toolkit
 git submodule update --init --recursive
 python -m venv venv
 .\venv\Scripts\activate
-pip install torch --use-pep517 --extra-index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
