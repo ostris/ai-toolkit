@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 ## FLUX.1 Training
 
-### WIP. I am updating docs and optimizing as fast as I can. If there are bugs open a ticket. Not knowing how to get it to work is NOT a bug. Be paitient as I continue to develop it.
+### WIP. I am updating docs and optimizing as fast as I can. If there are bugs open a ticket. Not knowing how to get it to work is NOT a bug. Be patient as I continue to develop it.
 
 
 ### Requirements
