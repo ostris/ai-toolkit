@@ -465,6 +465,11 @@ class StableDiffusion:
             if os.path.exists(transformer_path):
                 subfolder = None
                 transformer_path = os.path.join(transformer_path, 'transformer')
+                # check if the path is a full checkpoint.
+                te_folder_path = os.path.join(model_path, 'text_encoder')
+                # if we have the te, this folder is a full checkpoint, use it as the base
+                if os.path.exists(te_folder_path):
+                    base_model_path = model_path
 
             transformer = FluxTransformer2DModel.from_pretrained(
                 transformer_path,
