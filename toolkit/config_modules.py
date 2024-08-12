@@ -357,6 +357,7 @@ class TrainConfig:
         self.target_norm_std = kwargs.get('target_norm_std', None)
         self.target_norm_std_value = kwargs.get('target_norm_std_value', 1.0)
         self.linear_timesteps = kwargs.get('linear_timesteps', False)
+        self.disable_sampling = kwargs.get('disable_sampling', False)
 
 
 class ModelConfig:

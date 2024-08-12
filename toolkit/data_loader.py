@@ -437,7 +437,10 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         # this might take a while
         print(f"Dataset: {self.dataset_path}")
         print(f"  -  Preprocessing image dimensions")
-        dataset_size_file = os.path.join(self.dataset_path, '.aitk_size.json')
+        dataset_folder = self.dataset_path
+        if not os.path.isdir(self.dataset_path):
+            dataset_folder = os.path.dirname(dataset_folder)
+        dataset_size_file = os.path.join(dataset_folder, '.aitk_size.json')
         if os.path.exists(dataset_size_file):
             with open(dataset_size_file, 'r') as f:
                 self.size_database = json.load(f)
