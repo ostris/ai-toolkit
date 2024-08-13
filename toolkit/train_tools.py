@@ -640,8 +640,8 @@ def add_all_snr_to_noise_scheduler(noise_scheduler, device):
             all_snr.requires_grad = False
         noise_scheduler.all_snr = all_snr.to(device)
     except Exception as e:
-        print(e)
-        print("Failed to add all_snr to noise_scheduler")
+        # just move on
+        pass
 
 
 def get_all_snr(noise_scheduler, device):
