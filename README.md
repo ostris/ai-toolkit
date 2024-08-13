@@ -7,6 +7,11 @@ hard to keep up with all of them.
 
 ## Support my work
 
+<a href="https://glif.app" target="_blank">
+<img src="https://raw.githubusercontent.com/ostris/ai-toolkit/main/assets/glif.svg" width="256" height="auto">
+</a>
+
+
 My work on this project would not be possible without the amazing support of [Glif](https://glif.app/) and everyone on the 
 team. If you want to support me, support Glif. [Join the site](https://glif.app/), 
 [Join us on Discord](https://discord.com/invite/nuR9zZ2nsh), [follow us on Twitter](https://x.com/heyglif)
