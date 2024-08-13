@@ -8,7 +8,7 @@ hard to keep up with all of them.
 ## Support my work
 
 <a href="https://glif.app" target="_blank">
-<img src="https://raw.githubusercontent.com/ostris/ai-toolkit/main/assets/glif.svg" width="256" height="auto">
+<img alt="glif.app" src="https://raw.githubusercontent.com/ostris/ai-toolkit/main/assets/glif.svg?v=1" width="256" height="auto">
 </a>
 
 
