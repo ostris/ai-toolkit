@@ -236,7 +236,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if self.peft_format:
             # no alpha for peft
             self.alpha = self.lora_dim
+            alpha = self.alpha
             self.conv_alpha = self.conv_lora_dim
+            conv_alpha = self.conv_alpha
 
         self.full_train_in_out = full_train_in_out
 
