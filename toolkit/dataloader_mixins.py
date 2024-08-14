@@ -1362,7 +1362,7 @@ class LatentCachingMixin:
             elif self.sd.is_auraflow:
                 file_item.latent_space_version = 'sdxl'
             elif self.sd.is_flux:
-                file_item.latent_space_version = 'flux'
+                file_item.latent_space_version = 'flux1'
             elif self.sd.model_config.is_pixart_sigma:
                 file_item.latent_space_version = 'sdxl'
             else:
