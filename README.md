@@ -100,7 +100,7 @@ Coming very soon. Getting base out then will have a notebook that makes all that
 
 Datasets generally need to be a folder containing images and associated text files. Currently, the only supported
 formats are jpg, jpeg, and png. Webp currently has issues. The text files should be named the same as the images
-but with a `.txt` extension. For example `image22.jpg` and `image2.txt`. The text file should contain only the caption.
+but with a `.txt` extension. For example `image2.jpg` and `image2.txt`. The text file should contain only the caption.
 You can add the word `[trigger]` in the caption file and if you have `trigger_word` in your config, it will be automatically
 replaced. 
 
