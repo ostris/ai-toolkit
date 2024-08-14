@@ -175,6 +175,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             full_train_in_out: bool = False,
             transformer_only: bool = False,
             peft_format: bool = False,
+            is_assistant_adapter: bool = False,
             **kwargs
     ) -> None:
         """
@@ -223,6 +224,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.is_auraflow = is_auraflow
         self.is_flux = is_flux
         self.network_type = network_type
+        self.is_assistant_adapter = is_assistant_adapter
         if self.network_type.lower() == "dora":
             self.module_class = DoRAModule
             module_class = DoRAModule
