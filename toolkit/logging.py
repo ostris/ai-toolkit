@@ -18,7 +18,7 @@ class EmptyLogger:
         pass
 
     def add_log_image(self, *args, **kwargs):
-        return None
+        pass
     
     def finish(self):
         pass
@@ -36,19 +36,20 @@ class WandbLogger(EmptyLogger):
         import wandb
         run = wandb.init(project=self.project, name=self.run_name, config=self.config)
         self.run = run
-        self.wandb = wandb
+        self._log = wandb.log
+        self._image = wandb.Image
 
     def log(self, *args, **kwargs):
-        self.wandb.log(*args, **kwargs, commit=False)
+        self._log(*args, **kwargs, commit=False)
     
     def commit(self):
         if len(self.image_stack) > 0:
-            self.wandb.log(self.image_stack, commit=False)
-        self.image_stack = {}
-        self.wandb.log(commit=True)
+            self._log(self.image_stack, commit=False)
+            self.image_stack = {}
+        self._log({}, commit=True)
 
     def add_log_image(self, image: Image, id, caption: str | None = None, *args, **kwargs):
-        self.image_stack[f"sample_{id}"] = self.wandb.Image(image=image, caption=caption, *args, **kwargs)
+        self.image_stack[f"sample_{id}"] = self._image(image, caption=caption, *args, **kwargs)
     
     def finish(self):
         self.run.finish()
