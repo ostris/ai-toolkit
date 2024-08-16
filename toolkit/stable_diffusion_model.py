@@ -1289,6 +1289,8 @@ class StableDiffusion:
             else:
                 self.assistant_lora.is_active = True
 
+        flush()
+
     def get_latent_noise(
             self,
             height=None,
