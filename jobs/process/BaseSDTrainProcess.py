@@ -567,7 +567,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return params
 
     def hook_before_train_loop(self):
-        pass
+        self.logger.start()
 
     def ensure_params_requires_grad(self):
         # get param groups
@@ -1626,7 +1626,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # TRAIN LOOP
         ###################################################################
 
-        self.logger.start() # start logging
 
         start_step_num = self.step_num
         did_first_flush = False
