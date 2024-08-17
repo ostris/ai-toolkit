@@ -64,9 +64,9 @@ but there are some reports of a bug when running on windows natively.
 I have only tested on linux for now. This is still extremely experimental
 and a lot of quantizing and tricks had to happen to get it to fit on 24GB at all. 
 
-### Model License
+### FLUX.1-dev
 
-Training currently only works with FLUX.1-dev. Which means anything you train will inherit the
+FLUX.1-dev has a non-commercial license. Which means anything you train will inherit the
 non-commercial license. It is also a gated model, so you need to accept the license on HF before using it.
 Otherwise, this will fail. Here are the required steps to setup a license.
 
@@ -74,10 +74,34 @@ Otherwise, this will fail. Here are the required steps to setup a license.
 2. Make a file named `.env` in the root on this folder
 3. [Get a READ key from huggingface](https://huggingface.co/settings/tokens/new?) and add it to the `.env` file like so `HF_TOKEN=your_key_here`
 
+### FLUX.1-schnell
+
+FLUX.1-schnell is Apache 2.0. Anything trained on it can be licensed however you want and it does not require a HF_TOKEN to train.
+However, it does require a special adapter to train with it, [ostris/FLUX.1-schnell-training-adapter](https://huggingface.co/ostris/FLUX.1-schnell-training-adapter).
+It is also highly experimental. For best overall quality, training on FLUX.1-dev is recommended.
+
+To use it, You just need to add the assistant to the `model` section of your config file like so:
+
+```yaml
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-schnell"
+        assistant_lora_path: "ostris/FLUX.1-schnell-training-adapter"
+        is_flux: true
+        quantize: true
+```
+
+You also need to adjust your sample steps since schnell does not require as many
+
+```yaml
+      sample:
+        guidance_scale: 1  # schnell does not do guidance
+        sample_steps: 4  # 1 - 4 works well
+```
+
 ### Training
-1. Copy the example config file located at `config/examples/train_lora_flux_24gb.yaml` to the `config` folder and rename it to `whatever_you_want.yml`
+1. Copy the example config file located at `config/examples/train_lora_flux_24gb.yaml` (`config/examples/train_lora_flux_schnell_24gb.yaml` for schnell) to the `config` folder and rename it to `whatever_you_want.yml`
 2. Edit the file following the comments in the file
-3. Run the file like so `python3 run.py config/whatever_you_want.yml`
+3. Run the file like so `python run.py config/whatever_you_want.yml`
 
 A folder with the name and the training folder from the config file will be created when you start. It will have all 
 checkpoints and images in it. You can stop the training at any time using ctrl+c and when you resume, it will pick back up
@@ -120,7 +144,7 @@ pip install --upgrade accelerate transformers diffusers huggingface_hub  #Option
 - Drag and drop your dataset folder in the root, containing the .jpg and .txt files
 
 ### 3. Training
-- Copy the example config file located at ```config/examples/train_lora_flux_24gb.yaml``` to the config folder and rename it to ```whatever_you_want.yml```
+- Copy an example config file located at ```config/examples``` to the config folder and rename it to ```whatever_you_want.yml```
 - Edit the config following the comments in the file
 - Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "workspace/ai-toolkit/your-dataset"```
 - Run the file: ```python run.py config/whatever_you_want.yml```
@@ -132,6 +156,7 @@ pip install --upgrade accelerate transformers diffusers huggingface_hub  #Option
 ### Training in the cloud
 Coming very soon. Getting base out then will have a notebook that makes all that work. 
 -->
+
 ---
 
 ## Dataset Preparation
