@@ -95,8 +95,8 @@ and I will answer when I can.
 Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
 > You need a minimum of 24GB VRAM, pick a GPU by your preference.
 
-#### Example config ($0.7/hr):
-- 2x A40 (96 GB VRAM)
+#### Example config ($0.5/hr):
+- 1x A40 (48 GB VRAM)
 - 19 vCPU 100 GB RAM
 
 #### Custom overrides (you need some storage to clone FLUX.1, store datasets, store trained models and samples):
