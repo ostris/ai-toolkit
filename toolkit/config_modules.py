@@ -13,6 +13,7 @@ SaveFormat = Literal['safetensors', 'diffusers']
 
 if TYPE_CHECKING:
     from toolkit.guidance import GuidanceType
+    from toolkit.logging import EmptyLogger
 
 
 class SaveConfig:
@@ -640,7 +641,7 @@ class GenerateImageConfig:
             extra_kwargs: dict = None,  # extra data to save with prompt file
             refiner_start_at: float = 0.5,  # start at this percentage of a step. 0.0 to 1.0 . 1.0 is the end
             extra_values: List[float] = None,  # extra values to save with prompt file
-            logger: Optional[object] = None,
+            logger: Optional[EmptyLogger] = None,
     ):
         self.width: int = width
         self.height: int = height
