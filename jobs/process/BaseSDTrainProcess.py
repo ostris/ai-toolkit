@@ -1800,6 +1800,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.pipeline.disable_freeu()
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
+            self.logger.commit()
         print("")
         self.save()
         self.logger.finish()
