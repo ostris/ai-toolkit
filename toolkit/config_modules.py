@@ -14,7 +14,8 @@ SaveFormat = Literal['safetensors', 'diffusers']
 if TYPE_CHECKING:
     from toolkit.guidance import GuidanceType
     from toolkit.logging import EmptyLogger
-
+else:
+    EmptyLogger = None
 
 class SaveConfig:
     def __init__(self, **kwargs):
