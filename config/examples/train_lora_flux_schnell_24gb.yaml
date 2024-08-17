@@ -47,7 +47,7 @@ config:
 #        skip_first_sample: true
         # uncomment to completely disable sampling
 #        disable_sampling: true
-        # uncomment to use new vell curved weighting. Experimental but may produce better results
+        # uncomment to use new bell curved weighting. Experimental but may produce better results
 #        linear_timesteps: true
 
         # ema will smooth out learning, but could slow it down. Recommended to leave on.
@@ -59,9 +59,11 @@ config:
         dtype: bf16
       model:
         # huggingface model name or path
-        name_or_path: "black-forest-labs/FLUX.1-dev"
+        name_or_path: "black-forest-labs/FLUX.1-schnell"
+        assistant_lora_path: "ostris/FLUX.1-schnell-training-adapter" # Required for flux schnell training
         is_flux: true
         quantize: true  # run 8bit mixed precision
+        # low_vram is painfully slow to fuse in the adapter avoid it unless absolutely necessary
 #        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
@@ -84,8 +86,8 @@ config:
         neg: ""  # not used on flux
         seed: 42
         walk_seed: true
-        guidance_scale: 4
-        sample_steps: 20
+        guidance_scale: 1  # schnell does not do guidance
+        sample_steps: 4  # 1 - 4 works well
 # you can add any additional meta info here. [name] is replaced with config name at top
 meta:
   name: "[name]"
