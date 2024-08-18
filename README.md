@@ -115,7 +115,7 @@ Please do not open a bug report unless it is a bug in the code. You are welcome 
 and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
 and I will answer when I can.
 
-## Training in RunPod cloud
+### Training in RunPod cloud
 Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
 > You need a minimum of 24GB VRAM, pick a GPU by your preference.
 
@@ -124,9 +124,8 @@ Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22
 - 19 vCPU 100 GB RAM
 
 #### Custom overrides (you need some storage to clone FLUX.1, store datasets, store trained models and samples):
-- 120 GB Disk
-- 120 GB Pod Volume
-- Set Environment Variable: ```HF_TOKEN=hf_...``` (as we can't create .env files in RunPod)
+- ~120 GB Disk
+- ~120 GB Pod Volume
 - Start Jupyter Notebook
 
 ### 1. Setup
@@ -138,15 +137,20 @@ python -m venv venv
 source venv/bin/activate
 pip install torch
 pip install -r requirements.txt
-pip install --upgrade accelerate transformers diffusers huggingface_hub  #Optional, run it if you run into issues
+pip install --upgrade accelerate transformers diffusers huggingface_hub #Optional, run it if you run into issues
 ```
 ### 2. Upload your dataset
-- Drag and drop your dataset folder in the root, containing the .jpg and .txt files
+- Create a new folder in the root, name it `dataset` or whatever you like
+- Drag and drop your .jpg and .txt files inside the newly created dataset folder
 
-### 3. Training
+### 3. Login into Hugging Face with an Access Token
+- Get a READ token from [here](https://huggingface.co/settings/tokens)
+- Run ```huggingface-cli login``` and paste your token
+
+### 4. Training
 - Copy an example config file located at ```config/examples``` to the config folder and rename it to ```whatever_you_want.yml```
 - Edit the config following the comments in the file
-- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "workspace/ai-toolkit/your-dataset"```
+- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "/workspace/ai-toolkit/your-dataset"```
 - Run the file: ```python run.py config/whatever_you_want.yml```
 
 ### Screenshot from RunPod
