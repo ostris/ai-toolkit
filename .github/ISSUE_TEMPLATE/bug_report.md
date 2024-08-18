@@ -1,6 +1,6 @@
 ---
 name: Bug Report
-about: For bugs only
+about: For bugs only. Not for feature requests or questions.
 title: ''
 labels: ''
 assignees: ''
