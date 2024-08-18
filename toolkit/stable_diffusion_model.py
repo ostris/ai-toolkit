@@ -557,6 +557,7 @@ class StableDiffusion:
                     )
                     pipe.load_lora_weights(double_transformer_lora, adapter_name=f"lora1_double")
                     pipe.fuse_lora()
+                    pipe.unload_lora_weights()
                     transformer.transformer_blocks = transformer.transformer_blocks.to(
                         'cpu', dtype=dtype
                     )
@@ -567,6 +568,7 @@ class StableDiffusion:
                     )
                     pipe.load_lora_weights(single_transformer_lora, adapter_name=f"lora1_single")
                     pipe.fuse_lora()
+                    pipe.unload_lora_weights()
                     transformer.single_transformer_blocks = transformer.single_transformer_blocks.to(
                         'cpu', dtype=dtype
                     )
