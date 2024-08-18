@@ -3,59 +3,74 @@ from PIL import Image
 
 from toolkit.config_modules import LoggingConfig
 
-
+# Base logger class
+# This class does nothing, it's just a placeholder
 class EmptyLogger:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
+    # start logging the training
     def start(self):
         pass
-
+    
+    # collect the log to send
     def log(self, *args, **kwargs):
         pass
-
+    
+    # send the log
     def commit(self):
         pass
 
-    def add_log_image(self, *args, **kwargs):
+    # log image
+    def log_image(self, *args, **kwargs):
         pass
-    
+
+    # finish logging
     def finish(self):
         pass
 
-
+# Wandb logger class
+# This class logs the data to wandb
 class WandbLogger(EmptyLogger):
-    image_stack = {}
-
     def __init__(self, project: str, run_name: str | None, config: OrderedDict) -> None:
         self.project = project
         self.run_name = run_name
         self.config = config
-    
+
     def start(self):
         import wandb
+        # send the whole config to wandb
         run = wandb.init(project=self.project, name=self.run_name, config=self.config)
         self.run = run
-        self._log = wandb.log
-        self._image = wandb.Image
+        self._log = wandb.log # log function
+        self._image = wandb.Image # image object
 
     def log(self, *args, **kwargs):
+        # when commit is False, wandb increments the step,
+        # but we don't want that to happen, so we set commit=False
         self._log(*args, **kwargs, commit=False)
-    
+
     def commit(self):
-        if len(self.image_stack) > 0:
-            self._log(self.image_stack, commit=False)
-            self.image_stack = {}
+        # after overall one step is done, we commit the log
+        # by log empty object with commit=True
         self._log({}, commit=True)
 
-    def add_log_image(self, image: Image, id, caption: str | None = None, *args, **kwargs):
-        self.image_stack[f"sample_{id}"] = self._image(image, caption=caption, *args, **kwargs)
-    
+    def log_image(
+        self,
+        image: Image,
+        id,  # sample index
+        caption: str | None = None,  # positive prompt
+        *args,
+        **kwargs,
+    ):
+        # create a wandb image object and log it
+        image = self._image(image, caption=caption, *args, **kwargs)
+        self._log({f"sample_{id}": image}, commit=False)
+
     def finish(self):
         self.run.finish()
 
-
-
+# create logger based on the logging config
 def create_logger(logging_config: LoggingConfig, all_config: OrderedDict):
     if logging_config.use_wandb:
         project_name = logging_config.project_name
@@ -63,6 +78,3 @@ def create_logger(logging_config: LoggingConfig, all_config: OrderedDict):
         return WandbLogger(project=project_name, run_name=run_name, config=all_config)
     else:
         return EmptyLogger()
-        
-
-

@@ -850,4 +850,4 @@ class GenerateImageConfig:
         if self.logger is None:
             return
 
-        self.logger.add_log_image(image, count, self.prompt)
+        self.logger.log_image(image, count, self.prompt)
