@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Read Before Reporting an Issue
-    url: https://github.com/ostris/ai-toolkit/blob/main/.github/ISSUE_TEMPLATE/before_reporting.md
-    about: Please read this important information before submitting an issue.
+  - name: Ask in the Discord BEFORE opening an issue
+    url: https://discord.com/invite/nuR9zZ2nsh
+    about: Please ask in the discord before opening a github issue.

@@ -1,22 +1,20 @@
+---
 name: Bug Report
-description: File a bug report
-title: "[Bug]: "
-labels: 
-  - bug
-body:
-  - type: markdown
-    attributes:
-      value: >
-        Thanks for taking the time to fill out this bug report!
-        
-        Before submitting, please make sure you've read our [important information about reporting issues](link-to-before_reporting.md).
-  - type: checkboxes
-    id: terms
-    attributes:
-      label: Preflight Checklist
-      description: Please ensure you've completed these before submitting
-      options:
-        - label: I have verified this is an actual bug by asking in the Discord
-          required: true
-        - label: I understand that GitHub issues are ONLY for verified bugs in the code
-          required: true
+about: For bugs only
+title: ''
+labels: ''
+assignees: ''
+---
+
+## This is for bugs only
+
+Did you already ask [in the discord](https://discord.com/invite/nuR9zZ2nsh)?
+
+Yes/No
+
+You verified that this is a bug and not a feature request or question by asking [in the discord](https://discord.com/invite/nuR9zZ2nsh)?
+
+Yes/No
+
+## Describe the bug
+
