@@ -545,11 +545,9 @@ class StableDiffusion:
                     double_block_key = "transformer.transformer_blocks."
                     for key, value in lora_state_dict.items():
                         if single_block_key in key:
-                            new_key = key.replace(single_block_key, "")
-                            single_transformer_lora[new_key] = value
+                            single_transformer_lora[key] = value
                         elif double_block_key in key:
-                            new_key = key.replace(double_block_key, "")
-                            double_transformer_lora[new_key] = value
+                            double_transformer_lora[key] = value
                         else:
                             raise ValueError(f"Unknown lora key: {key}. Cannot load this lora in low vram mode")
 
