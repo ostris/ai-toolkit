@@ -1857,9 +1857,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         tags = [
             "text-to-image",
         ]
-        if self.is_xl:
+        if self.model_config.is_xl:
             tags.append("stable-diffusion-xl")
-        if self.is_flux:
+        if self.model_config.is_flux:
             tags.append("flux")
         if self.network_config:
             tags.extend(
