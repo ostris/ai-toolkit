@@ -1840,65 +1840,65 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
 
 
-def _generate_readme(self, repo_id: str) -> str:
-    """Generates the content of the README.md file."""
+    def _generate_readme(self, repo_id: str) -> str:
+        """Generates the content of the README.md file."""
 
-    # Gather model info
-    base_model = self.model_config.name_or_path
-    instance_prompt = self.trigger_word if hasattr(self, "trigger_word") else None
-    if base_model == "black-forest-labs/FLUX.1-schnell":
-        license = "apache-2.0"
-    elif base_model == "black-forest-labs/FLUX.1-dev":
-        license = "other"
-        license_name = "flux-1-dev-non-commercial-license"
-        license_link = "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md"
-    else:
-        license = "creativeml-openrail-m"
-    tags = [
-        "text-to-image",
-    ]
-    if self.is_xl:
-        tags.append("stable-diffusion-xl")
-    if self.is_flux:
-        tags.append("flux")
-    if self.network_config:
-        tags.extend(
-            [
-                "lora",
-                "diffusers",
-                "template:sd-lora",
-            ]
-        )
-
-    # Generate the widget section
-    widgets = []
-    sample_image_paths = []
-    samples_dir = os.path.join(self.save_root, "samples")
-    for filename in os.listdir(samples_dir):
-        match = re.search(r"_(\d+)\.jpg$", filename)
-        if match:
-            index = int(match.group(1))
-            sample_image_paths.append((index, f"samples/{filename}"))
-
-    # Sort by numeric index
-    sample_image_paths.sort(key=lambda x: x[0])
-
-    # Create widgets
-    for i, prompt in enumerate(self.sample_config.prompts):
-        if i < len(sample_image_paths):
-            # Associate prompts with sample image paths based on the extracted index
-            _, image_path = sample_image_paths[i]
-            widgets.append(
-                {
-                    "text": prompt,
-                    "output": {
-                        "url": image_path
-                    },
-                }
+        # Gather model info
+        base_model = self.model_config.name_or_path
+        instance_prompt = self.trigger_word if hasattr(self, "trigger_word") else None
+        if base_model == "black-forest-labs/FLUX.1-schnell":
+            license = "apache-2.0"
+        elif base_model == "black-forest-labs/FLUX.1-dev":
+            license = "other"
+            license_name = "flux-1-dev-non-commercial-license"
+            license_link = "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md"
+        else:
+            license = "creativeml-openrail-m"
+        tags = [
+            "text-to-image",
+        ]
+        if self.is_xl:
+            tags.append("stable-diffusion-xl")
+        if self.is_flux:
+            tags.append("flux")
+        if self.network_config:
+            tags.extend(
+                [
+                    "lora",
+                    "diffusers",
+                    "template:sd-lora",
+                ]
             )
 
-    # Construct the README content
-    readme_content = f"""---
+        # Generate the widget section
+        widgets = []
+        sample_image_paths = []
+        samples_dir = os.path.join(self.save_root, "samples")
+        for filename in os.listdir(samples_dir):
+            match = re.search(r"_(\d+)\.jpg$", filename)
+            if match:
+                index = int(match.group(1))
+                sample_image_paths.append((index, f"samples/{filename}"))
+
+        # Sort by numeric index
+        sample_image_paths.sort(key=lambda x: x[0])
+
+        # Create widgets
+        for i, prompt in enumerate(self.sample_config.prompts):
+            if i < len(sample_image_paths):
+                # Associate prompts with sample image paths based on the extracted index
+                _, image_path = sample_image_paths[i]
+                widgets.append(
+                    {
+                        "text": prompt,
+                        "output": {
+                            "url": image_path
+                        },
+                    }
+                )
+
+        # Construct the README content
+        readme_content = f"""---
 tags:
 {yaml.dump(tags, indent=4).strip()}
 widget:
@@ -1924,4 +1924,4 @@ Weights for this model are available in Safetensors format.
 
 [Download](/{repo_id}/tree/main) them in the Files & versions tab.
 """
-    return readme_content
+        return readme_content
