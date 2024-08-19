@@ -1843,6 +1843,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             repo_id=repo_id,
             folder_path=self.save_root,
             token=token,
+            ignore_patterns=["**/*.yaml", "**/*.pt"],
             repo_type="model",
         )
 
