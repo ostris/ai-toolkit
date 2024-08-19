@@ -549,10 +549,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.print(f"Saved to {file_path}")
         self.clean_up_saves()
         self.post_save_hook(file_path)
-        
+
         if self.ema is not None:
             self.ema.train()
-        
         flush()
 
     # Called before the model is loaded
@@ -1883,7 +1882,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     #Here we only care about uploading the latest samples, the match with the # of steps
                     if steps == self.train_config.steps:
                         sample_image_paths.append((index, f"samples/{filename}"))
-                
+
             # Sort by numeric index
             sample_image_paths.sort(key=lambda x: x[0])
 
