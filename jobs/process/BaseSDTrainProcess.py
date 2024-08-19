@@ -18,7 +18,7 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
-from huggingface_hub import HfApi, Repository
+from huggingface_hub import HfApi, Repository, interpreter_login
 from huggingface_hub.utils import HfFolder
 
 from toolkit.basic import value_map
@@ -1795,9 +1795,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         print("")
         self.save()
         if self.save_config.push_to_hub:
+            if("HF_TOKEN" not in os.environ):
+                interpreter_login(new_session=False, write_permission=True)
             self.push_to_hub(
                 repo_id=self.save_config.hf_repo_id,
-                token=self.save_config.hf_token,
                 private=self.save_config.hf_private
             )
         del (
@@ -1815,16 +1816,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def push_to_hub(
     self,
     repo_id: str,
-    token: Optional[str] = None,
     private: bool = False,
-    ):
-        if token is None:
-            token = HfFolder.get_token()
-        if token is None:
-            raise ValueError(
-                "You must provide a Hugging Face token to push to the hub. You can either pass it as an argument or set the `HF_TOKEN` environment variable."
-            )
-        
+    ):  
         readme_content = self._generate_readme(repo_id)
         readme_path = os.path.join(self.save_root, "README.md")
         with open(readme_path, "w", encoding="utf-8") as f:
@@ -1835,15 +1828,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         api.create_repo(
             repo_id,
             private=private,
-            token=token,
             exist_ok=True
         )
 
         api.upload_folder(
             repo_id=repo_id,
             folder_path=self.save_root,
-            token=token,
-            ignore_patterns=["**/*.yaml", "**/*.pt"],
+            ignore_patterns=["*.yaml", "*.pt"],
             repo_type="model",
         )
 
@@ -1920,7 +1911,7 @@ license: {license}
 ---
 
 # {self.job.name}
-
+Model trained with [AI Toolkit by Ostris](https://github.com/ostris/ai-toolkit)
 <Gallery />
 
 ## Trigger words
