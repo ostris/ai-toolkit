@@ -1798,6 +1798,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.push_to_hub(
                 repo_id=self.save_config.hf_repo_id,
                 token=self.save_config.hf_token,
+                private=self.save_config.hf_private
             )
         del (
             self.sd,
@@ -1823,19 +1824,25 @@ class BaseSDTrainProcess(BaseTrainProcess):
             raise ValueError(
                 "You must provide a Hugging Face token to push to the hub. You can either pass it as an argument or set the `HF_TOKEN` environment variable."
             )
-
-        api = HfApi()
         
         readme_content = self._generate_readme(repo_id)
         readme_path = os.path.join(self.save_root, "README.md")
         with open(readme_path, "w", encoding="utf-8") as f:
             f.write(readme_content)
         
+        api = HfApi()
+
+        api.create_repo(
+            repo_id,
+            private=private,
+            token=token,
+            exist_ok=True
+        )
+
         api.upload_folder(
             repo_id=repo_id,
             folder_path=self.save_root,
             token=token,
-            private=private,
             repo_type="model",
         )
 
