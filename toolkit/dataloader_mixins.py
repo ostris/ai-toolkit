@@ -1385,8 +1385,13 @@ class LatentCachingMixin:
                 dtype = self.sd.torch_dtype
                 device = self.sd.device_torch
                 # add batch dimension
-                imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
-                latent = self.sd.encode_images(imgs).squeeze(0)
+                try:
+                    imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
+                    latent = self.sd.encode_images(imgs).squeeze(0)
+                except Exception as e:
+                    print(f"Error processing image: {file_item.path}")
+                    print(f"Error: {str(e)}")
+                    raise e
                 # save_latent
                 if to_disk:
                     state_dict = OrderedDict([
