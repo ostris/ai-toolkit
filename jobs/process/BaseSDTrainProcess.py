@@ -1874,34 +1874,35 @@ class BaseSDTrainProcess(BaseTrainProcess):
         widgets = []
         sample_image_paths = []
         samples_dir = os.path.join(self.save_root, "samples")
-        for filename in os.listdir(samples_dir):
-            match = re.search(r"_(\d+)\.jpg$", filename)
-            if match:
-                index = int(match.group(1))
-                sample_image_paths.append((index, f"samples/{filename}"))
+        if os.path.isdir(samples_dir):
+            for filename in os.listdir(samples_dir):
+                match = re.search(r"_(\d+)\.jpg$", filename)
+                if match:
+                    index = int(match.group(1))
+                    sample_image_paths.append((index, f"samples/{filename}"))
 
-        # Sort by numeric index
-        sample_image_paths.sort(key=lambda x: x[0])
+            # Sort by numeric index
+            sample_image_paths.sort(key=lambda x: x[0])
 
-        # Create widgets
-        for i, prompt in enumerate(self.sample_config.prompts):
-            if i < len(sample_image_paths):
-                # Associate prompts with sample image paths based on the extracted index
-                _, image_path = sample_image_paths[i]
-                widgets.append(
-                    {
-                        "text": prompt,
-                        "output": {
-                            "url": image_path
-                        },
-                    }
-                )
+            # Create widgets
+            for i, prompt in enumerate(self.sample_config.prompts):
+                if i < len(sample_image_paths):
+                    # Associate prompts with sample image paths based on the extracted index
+                    _, image_path = sample_image_paths[i]
+                    widgets.append(
+                        {
+                            "text": prompt,
+                            "output": {
+                                "url": image_path
+                            },
+                        }
+                    )
 
         # Construct the README content
         readme_content = f"""---
 tags:
 {yaml.dump(tags, indent=4).strip()}
-widget:
+{"widget:" if os.path.isdir(samples_dir) else ""}
 {yaml.dump(widgets, indent=4).strip()}
 base_model: {base_model}
 {"instance_prompt: " + instance_prompt if instance_prompt else ""}
