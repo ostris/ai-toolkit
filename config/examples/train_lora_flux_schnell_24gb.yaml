@@ -23,7 +23,7 @@ config:
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
         push_to_hub: false #change this to True to push your trained model to Hugging Face.
         # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
-#       hf_repo_id: your-username/your-model-name
+#       hf_repo_id: your-username/your-model-slug
 #       hf_private: true #whether the repo is private or public        
       datasets:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
