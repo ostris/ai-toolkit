@@ -21,6 +21,9 @@ config:
         dtype: float16 # precision to save
         save_every: 250 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
+        push_to_hub: false #change this to True to push your trained model to Hugging Face
+#       hf_repo_id: your-username/your-model-name
+#       hf_token: hf_Abcdefghijklmnopq # Use a write token
       datasets:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
         # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
@@ -33,6 +36,7 @@ config:
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
           resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions
+
       train:
         batch_size: 1
         steps: 2000  # total number of steps to train 500 - 4000 is a good range

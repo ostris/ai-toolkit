@@ -6,6 +6,7 @@ import random
 import shutil
 from collections import OrderedDict
 import os
+import re
 from typing import Union, List, Optional
 
 import numpy as np
@@ -17,6 +18,8 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
+from huggingface_hub import HfApi, Repository
+from huggingface_hub.utils import HfFolder
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
@@ -546,9 +549,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.print(f"Saved to {file_path}")
         self.clean_up_saves()
         self.post_save_hook(file_path)
-
+        
         if self.ema is not None:
             self.ema.train()
+        
         flush()
 
     # Called before the model is loaded
@@ -1790,7 +1794,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sample(self.step_num)
         print("")
         self.save()
-
+        if self.save_config.push_to_hub:
+            self.push_to_hub(
+                repo_id=self.save_config.hf_repo_id,
+                token=self.save_config.hf_token,
+            )
         del (
             self.sd,
             unet,
@@ -1802,3 +1810,118 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
 
         flush()
+
+    def push_to_hub(
+    self,
+    repo_id: str,
+    token: Optional[str] = None,
+    private: bool = False,
+    ):
+        if token is None:
+            token = HfFolder.get_token()
+        if token is None:
+            raise ValueError(
+                "You must provide a Hugging Face token to push to the hub. You can either pass it as an argument or set the `HF_TOKEN` environment variable."
+            )
+
+        api = HfApi()
+        
+        readme_content = self._generate_readme(repo_id)
+        readme_path = os.path.join(self.save_root, "README.md")
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(readme_content)
+        
+        api.upload_folder(
+            repo_id=repo_id,
+            folder_path=self.save_root,
+            token=token,
+            private=private,
+            repo_type="model",
+        )
+
+
+def _generate_readme(self, repo_id: str) -> str:
+    """Generates the content of the README.md file."""
+
+    # Gather model info
+    base_model = self.model_config.name_or_path
+    instance_prompt = self.trigger_word if hasattr(self, "trigger_word") else None
+    if base_model == "black-forest-labs/FLUX.1-schnell":
+        license = "apache-2.0"
+    elif base_model == "black-forest-labs/FLUX.1-dev":
+        license = "other"
+        license_name = "flux-1-dev-non-commercial-license"
+        license_link = "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md"
+    else:
+        license = "creativeml-openrail-m"
+    tags = [
+        "text-to-image",
+    ]
+    if self.is_xl:
+        tags.append("stable-diffusion-xl")
+    if self.is_flux:
+        tags.append("flux")
+    if self.network_config:
+        tags.extend(
+            [
+                "lora",
+                "diffusers",
+                "template:sd-lora",
+            ]
+        )
+
+    # Generate the widget section
+        widgets = []
+        sample_image_paths = []
+        samples_dir = os.path.join(self.save_root, "samples")
+        for filename in os.listdir(samples_dir):
+            match = re.search(r"_(\d+)\.jpg$", filename)
+            if match:
+                index = int(match.group(1))
+                sample_image_paths.append((index, f"samples/{filename}"))
+
+        # Sort by numeric index
+        sample_image_paths.sort(key=lambda x: x[0])
+
+        # Create widgets
+        for i, prompt in enumerate(self.sample_config.prompts):
+            if i < len(sample_image_paths):
+                # Associate prompts with sample image paths based on the extracted index
+                _, image_path = sample_image_paths[i]
+                widgets.append(
+                    {
+                        "text": prompt,
+                        "output": {
+                            "url": image_path
+                        },
+                    }
+                )
+
+    # Construct the README content
+    readme_content = f"""---
+tags:
+{yaml.dump(tags, indent=4).strip()}
+widget:
+{yaml.dump(widgets, indent=4).strip()}
+base_model: {base_model}
+{"instance_prompt: " + instance_prompt if instance_prompt else ""}
+license: {license}
+{'license_name: ' + license_name if license == "other" else ""}
+{'license_link: ' + license_link if license == "other" else ""}
+---
+
+# {self.job.name}
+
+<Gallery />
+
+## Trigger words
+
+{"You should use `" + instance_prompt + "` to trigger the image generation." if instance_prompt else "No trigger words defined."}
+
+## Download model
+
+Weights for this model are available in Safetensors format.
+
+[Download](/{repo_id}/tree/main) them in the Files & versions tab.
+"""
+    return readme_content
