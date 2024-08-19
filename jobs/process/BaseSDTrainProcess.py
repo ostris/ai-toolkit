@@ -1875,15 +1875,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         samples_dir = os.path.join(self.save_root, "samples")
         if os.path.isdir(samples_dir):
             for filename in os.listdir(samples_dir):
-                match = re.search(r"_(\d+)\.jpg$", filename)
+                #The filenames are structured as 1724085406830__00000500_0.jpg
+                #So here we capture the 2nd part (steps) and 3rd (index the matches the prompt)
+                match = re.search(r"__(\d+)_(\d+)\.jpg$", filename)
                 if match:
-                    index = int(match.group(1))
-                    sample_image_paths.append((index, f"samples/{filename}"))
-
+                    steps, index = int(match.group(1)), int(match.group(2))
+                    #Here we only care about uploading the latest samples, the match with the # of steps
+                    if steps == self.train_config.steps:
+                        sample_image_paths.append((index, f"samples/{filename}"))
+                
             # Sort by numeric index
             sample_image_paths.sort(key=lambda x: x[0])
 
-            # Create widgets
+            # Create widgets matching prompt with the index 
             for i, prompt in enumerate(self.sample_config.prompts):
                 if i < len(sample_image_paths):
                     # Associate prompts with sample image paths based on the extracted index
