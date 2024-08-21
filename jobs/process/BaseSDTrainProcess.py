@@ -1725,12 +1725,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 prog_bar_string = f"lr: {learning_rate:.1e}"
                 for key, value in loss_dict.items():
                     prog_bar_string += f" {key}: {value:.3e}"
-                
-                # log
-                self.logger.log({
-                    'learning_rate': learning_rate,
-                    'loss': loss_dict,
-                })
 
                 self.progress_bar.set_postfix_str(prog_bar_string)
 
@@ -1768,6 +1762,25 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                     self.writer.add_scalar(f"{key}", value, self.step_num)
                                 self.writer.add_scalar(f"lr", learning_rate, self.step_num)
                             self.progress_bar.unpause()
+                        
+                        # log to logger
+                        self.logger.log({
+                            'learning_rate': learning_rate,
+                        })
+                        for key, value in loss_dict.items():
+                            self.logger.log({
+                                f'loss/{key}': value,
+                            })
+                    elif self.logging_config.log_every is None: 
+                        # log every step
+                        self.logger.log({
+                            'learning_rate': learning_rate,
+                        })
+                        for key, value in loss_dict.items():
+                            self.logger.log({
+                                f'loss/{key}': value,
+                            })
+
 
                     if self.performance_log_every > 0 and self.step_num % self.performance_log_every == 0:
                         self.progress_bar.pause()
@@ -1777,7 +1790,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.progress_bar.unpause()
                 
                 # commit log
-                self.logger.commit()
+                self.logger.commit(step=self.step_num)
 
                 # sets progress bar to match out step
                 self.progress_bar.update(step - self.progress_bar.n)
@@ -1800,7 +1813,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.pipeline.disable_freeu()
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
-            self.logger.commit()
+            self.logger.commit(step=self.step_num)
         print("")
         self.save()
         self.logger.finish()

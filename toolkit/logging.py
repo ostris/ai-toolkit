@@ -1,4 +1,4 @@
-from typing import OrderedDict
+from typing import OrderedDict, Optional
 from PIL import Image
 
 from toolkit.config_modules import LoggingConfig
@@ -18,7 +18,7 @@ class EmptyLogger:
         pass
     
     # send the log
-    def commit(self):
+    def commit(self, step: Optional[int] = None):
         pass
 
     # log image
@@ -38,7 +38,11 @@ class WandbLogger(EmptyLogger):
         self.config = config
 
     def start(self):
-        import wandb
+        try:
+            import wandb
+        except ImportError:
+            raise ImportError("Failed to import wandb. Please install wandb by running `pip install wandb`")
+        
         # send the whole config to wandb
         run = wandb.init(project=self.project, name=self.run_name, config=self.config)
         self.run = run
@@ -50,10 +54,10 @@ class WandbLogger(EmptyLogger):
         # but we don't want that to happen, so we set commit=False
         self._log(*args, **kwargs, commit=False)
 
-    def commit(self):
+    def commit(self, step: Optional[int] = None):
         # after overall one step is done, we commit the log
         # by log empty object with commit=True
-        self._log({}, commit=True)
+        self._log({}, step=step, commit=True)
 
     def log_image(
         self,
