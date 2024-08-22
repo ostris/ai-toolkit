@@ -34,6 +34,7 @@ from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sampler import get_sampler
+from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.saving import save_ldm_model_from_diffusers, get_ldm_state_dict_from_diffusers
 from toolkit.sd_device_states_presets import empty_preset
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
@@ -178,7 +179,7 @@ class StableDiffusion:
         self.config_file = None
 
         self.is_flow_matching = False
-        if self.is_flux or self.is_v3 or self.is_auraflow:
+        if self.is_flux or self.is_v3 or self.is_auraflow or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
             self.is_flow_matching = True
 
         self.quantize_device = quantize_device if quantize_device is not None else self.device
