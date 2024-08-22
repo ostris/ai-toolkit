@@ -73,6 +73,7 @@ Otherwise, this will fail. Here are the required steps to setup a license.
 1. Sign into HF and accept the model access here [black-forest-labs/FLUX.1-dev](https://huggingface.co/black-forest-labs/FLUX.1-dev)
 2. Make a file named `.env` in the root on this folder
 3. [Get a READ key from huggingface](https://huggingface.co/settings/tokens/new?) and add it to the `.env` file like so `HF_TOKEN=your_key_here`
+4. To download the Flux.1-dev model, open and command prompt and CD to the folder you want to download to and run: git clone https://huggingface.co/black-forest-labs/FLUX.1-dev (or git lfs clone https://huggingface.co/black-forest-labs/FLUX.1-dev if you have git lfs installed, it is deprecated but works well and shows you the progress of large file downloads like the main Flux.1-dev model)
 
 ### FLUX.1-schnell
 
