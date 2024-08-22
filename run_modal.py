@@ -72,7 +72,8 @@ image = (
 )
 
 # mount for the entire ai-toolkit directory
-code_mount = modal.Mount.from_local_dir("/Users/martintomov/ai-toolkit-modal/ai-toolkit", remote_path="/root/ai-toolkit")
+# example: "/Users/username/ai-toolkit" is the local directory, "/root/ai-toolkit" is the remote directory
+code_mount = modal.Mount.from_local_dir("/Users/username/ai-toolkit", remote_path="/root/ai-toolkit")
 
 # create the Modal app with the necessary mounts and volumes
 app = modal.App(name="flux-lora-training", image=image, mounts=[code_mount], volumes={MOUNT_DIR: model_volume})
