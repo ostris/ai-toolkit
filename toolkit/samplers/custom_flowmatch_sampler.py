@@ -8,6 +8,7 @@ import torch
 class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.init_noise_sigma = 1.0
 
         with torch.no_grad():
             # create weights for timesteps
