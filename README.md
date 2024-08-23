@@ -115,7 +115,7 @@ Please do not open a bug report unless it is a bug in the code. You are welcome 
 and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
 and I will answer when I can.
 
-### Training in RunPod cloud
+## Training in RunPod
 Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
 > You need a minimum of 24GB VRAM, pick a GPU by your preference.
 
@@ -140,26 +140,72 @@ pip install -r requirements.txt
 pip install --upgrade accelerate transformers diffusers huggingface_hub #Optional, run it if you run into issues
 ```
 ### 2. Upload your dataset
-- Create a new folder in the root, name it `dataset` or whatever you like
-- Drag and drop your .jpg and .txt files inside the newly created dataset folder
+- Create a new folder in the root, name it `dataset` or whatever you like.
+- Drag and drop your .jpg, .jpeg, or .png images and .txt files inside the newly created dataset folder.
 
 ### 3. Login into Hugging Face with an Access Token
-- Get a READ token from [here](https://huggingface.co/settings/tokens)
-- Run ```huggingface-cli login``` and paste your token
+- Get a READ token from [here](https://huggingface.co/settings/tokens) and request access to Flux.1-dev model from [here](https://huggingface.co/black-forest-labs/FLUX.1-dev).
+- Run ```huggingface-cli login``` and paste your token.
 
 ### 4. Training
-- Copy an example config file located at ```config/examples``` to the config folder and rename it to ```whatever_you_want.yml```
-- Edit the config following the comments in the file
-- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "/workspace/ai-toolkit/your-dataset"```
-- Run the file: ```python run.py config/whatever_you_want.yml```
+- Copy an example config file located at ```config/examples``` to the config folder and rename it to ```whatever_you_want.yml```.
+- Edit the config following the comments in the file.
+- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "/workspace/ai-toolkit/your-dataset"```.
+- Run the file: ```python run.py config/whatever_you_want.yml```.
 
 ### Screenshot from RunPod
 <img width="1728" alt="RunPod Training Screenshot" src="https://github.com/user-attachments/assets/53a1b8ef-92fa-4481-81a7-bde45a14a7b5">
 
-<!---
-### Training in the cloud
-Coming very soon. Getting base out then will have a notebook that makes all that work. 
--->
+## Training in Modal
+
+### 1. Setup
+#### ai-toolkit:
+```
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+git submodule update --init --recursive
+python -m venv venv
+source venv/bin/activate
+pip install torch
+pip install -r requirements.txt
+pip install --upgrade accelerate transformers diffusers huggingface_hub #Optional, run it if you run into issues
+```
+#### Modal:
+- Run `pip install modal` to install the modal Python package.
+- Run `modal setup` to authenticate (if this doesn’t work, try `python -m modal setup`).
+
+#### Hugging Face:
+- Get a READ token from [here](https://huggingface.co/settings/tokens) and request access to Flux.1-dev model from [here](https://huggingface.co/black-forest-labs/FLUX.1-dev).
+- Run `huggingface-cli login` and paste your token.
+
+### 2. Upload your dataset
+- Drag and drop your dataset folder containing the .jpg, .jpeg, or .png images and .txt files in `ai-toolkit`.
+
+### 3. Configs
+- Copy an example config file located at ```config/examples/modal``` to the `config` folder and rename it to ```whatever_you_want.yml```.
+- Edit the config following the comments in the file, **<ins>be careful and follow the example `/root/ai-toolkit` paths</ins>**.
+
+### 4. Edit run_modal.py
+- Set your entire local `ai-toolkit` path at `code_mount = modal.Mount.from_local_dir` like:
+  
+   ```
+   code_mount = modal.Mount.from_local_dir("/Users/username/ai-toolkit", remote_path="/root/ai-toolkit")
+   ```
+- Choose a `GPU` and `Timeout` in `@app.function` _(default is A100 40GB and 2 hour timeout)_.
+
+### 5. Training
+- Run the config file in your terminal: `modal run run_modal.py --config-file-list-str=/root/ai-toolkit/config/whatever_you_want.yml`.
+- You can monitor your training in your local terminal, or on [modal.com](https://modal.com/).
+- Models, samples and optimizer will be stored in `Storage > flux-lora-models`.
+
+### 6. Saving the model
+- Check contents of the volume by running `modal volume ls flux-lora-models`. 
+- Download the content by running `modal volume get flux-lora-models your-model-name`.
+- Example: `modal volume get flux-lora-models my_first_flux_lora_v1`.
+
+### Screenshot from Modal
+
+<img width="1728" alt="Modal Traning Screenshot" src="https://github.com/user-attachments/assets/7497eb38-0090-49d6-8ad9-9c8ea7b5388b">
 
 ---
 
