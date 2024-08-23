@@ -26,7 +26,7 @@ def get_lr_scheduler(
             optimizer, **kwargs
         )
     elif name == "constant":
-        if 'facor' not in kwargs:
+        if 'factor' not in kwargs:
             kwargs['factor'] = 1.0
 
         return torch.optim.lr_scheduler.ConstantLR(optimizer, **kwargs)
