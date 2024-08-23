@@ -53,7 +53,9 @@ pip install -r requirements.txt
 
 ## FLUX.1 Training
 
-### WIP. I am updating docs and optimizing as fast as I can. If there are bugs open a ticket. Not knowing how to get it to work is NOT a bug. Be paitient as I continue to develop it.
+### Tutorial
+
+To get started quickly, check out [@araminta_k](https://x.com/araminta_k) tutorial on [Finetuning Flux Dev on a 3090](https://www.youtube.com/watch?v=HzGW_Kyermg) with 24GB VRAM.
 
 
 ### Requirements
@@ -111,7 +113,7 @@ IMPORTANT. If you press crtl+c while it is saving, it will likely corrupt that c
 
 ### Need help?
 
-Please do not open a bug report unless it is a bug in the code. You are welcome to [Join my Discord](https://discord.gg/SzVB3wYvxF)
+Please do not open a bug report unless it is a bug in the code. You are welcome to [Join my Discord](https://discord.gg/VXmU2f5WEU)
 and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
 and I will answer when I can.
 
