@@ -2,7 +2,7 @@
 
 ostris/ai-toolkit on https://modal.com
 Run training with the following command:
-modal run run_modal.py --config-file-list-str=/root/ai-toolkit/config/your-modal-config.yaml
+modal run run_modal.py --config-file-list-str=/root/ai-toolkit/config/whatever_you_want.yml
 
 '''
 
