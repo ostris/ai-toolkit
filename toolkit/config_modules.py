@@ -23,7 +23,9 @@ class SaveConfig:
         self.save_format: SaveFormat = kwargs.get('save_format', 'safetensors')
         if self.save_format not in ['safetensors', 'diffusers']:
             raise ValueError(f"save_format must be safetensors or diffusers, got {self.save_format}")
-
+        self.push_to_hub: bool = kwargs.get("push_to_hub", False)
+        self.hf_repo_id: Optional[str] = kwargs.get("hf_repo_id", None)
+        self.hf_private: Optional[str] = kwargs.get("hf_private", False)
 
 class LogingConfig:
     def __init__(self, **kwargs):
