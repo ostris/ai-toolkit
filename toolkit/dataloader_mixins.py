@@ -121,7 +121,7 @@ class CaptionMixin:
                     break
 
         if os.path.exists(prompt_path):
-            with open(prompt_path, 'r', encoding='utf-8') as f:
+            with open(prompt_path, 'r', encoding='utf-8', errors='ignore') as f:
                 prompt = f.read()
                 # check if is json
                 if prompt_path.endswith('.json'):
@@ -301,7 +301,7 @@ class CaptionProcessingDTOMixin:
             short_caption = None
 
             if os.path.exists(prompt_path):
-                with open(prompt_path, 'r', encoding='utf-8') as f:
+                with open(prompt_path, 'r', encoding='utf-8', errors='ignore') as f:
                     prompt = f.read()
                     short_caption = None
                     if prompt_path.endswith('.json'):
@@ -1127,7 +1127,7 @@ class PoiFileItemDTOMixin:
             caption_path = file_path_no_ext + '.json'
             if not os.path.exists(caption_path):
                 raise Exception(f"Error: caption file not found for poi: {caption_path}")
-            with open(caption_path, 'r', encoding='utf-8') as f:
+            with open(caption_path, 'r', encoding='utf-8', errors='ignore') as f:
                 json_data = json.load(f)
             if 'poi' not in json_data:
                 print(f"Warning: poi not found in caption file: {caption_path}")
