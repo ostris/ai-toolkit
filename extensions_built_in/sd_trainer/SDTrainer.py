@@ -62,6 +62,13 @@ class SDTrainer(BaseSDTrainProcess):
 
         self.is_bfloat = self.train_config.dtype == "bfloat16" or self.train_config.dtype == "bf16"
 
+        self.do_grad_scale = True
+        if self.is_fine_tuning:
+            self.do_grad_scale = False
+        if self.adapter_config is not None:
+            if self.adapter_config.train:
+                self.do_grad_scale = False
+
         if self.train_config.dtype in ["fp16", "float16"]:
             # patch the scaler to allow fp16 training
             org_unscale_grads = self.scaler._unscale_grads_
@@ -1519,7 +1526,7 @@ class SDTrainer(BaseSDTrainProcess):
                     # if self.is_bfloat:
                     # loss.backward()
                     # else:
-                    if self.is_fine_tuning:
+                    if not self.do_grad_scale:
                         loss.backward()
                     else:
                         self.scaler.scale(loss).backward()
@@ -1528,7 +1535,7 @@ class SDTrainer(BaseSDTrainProcess):
         if not self.is_grad_accumulation_step:
             # fix this for multi params
             if self.train_config.optimizer != 'adafactor':
-                if not self.is_fine_tuning:
+                if self.do_grad_scale:
                     self.scaler.unscale_(self.optimizer)
                 if isinstance(self.params[0], dict):
                     for i in range(len(self.params)):
@@ -1538,7 +1545,7 @@ class SDTrainer(BaseSDTrainProcess):
             # only step if we are not accumulating
             with self.timer('optimizer_step'):
                 # self.optimizer.step()
-                if self.is_fine_tuning:
+                if not self.do_grad_scale:
                     self.optimizer.step()
                 else:
                     self.scaler.step(self.optimizer)

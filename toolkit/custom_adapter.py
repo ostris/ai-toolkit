@@ -852,6 +852,9 @@ class CustomAdapter(torch.nn.Module):
                     if self.adapter_type == 'te_augmenter':
                         clip_image_embeds = self.te_augmenter(clip_image_embeds)
 
+                    if self.adapter_type == 'vision_direct':
+                        clip_image_embeds = self.vd_adapter(clip_image_embeds)
+
                     # save them to the conditional and unconditional
                     try:
                         self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
