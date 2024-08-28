@@ -436,7 +436,11 @@ class ImageProcessingDTOMixin:
             return
         try:
             img = Image.open(self.path)
+            pre_width, pre_height = img.size
             img = exif_transpose(img)
+            if pre_width != img.width or pre_height != img.height:
+                self.scale_to_height, self.scale_to_width = self.scale_to_width, self.scale_to_height
+            
         except Exception as e:
             print(f"Error: {e}")
             print(f"Error loading image: {self.path}")
@@ -453,7 +457,7 @@ class ImageProcessingDTOMixin:
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
-            print(
+            raise ValueError(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
         elif h > w and self.scale_to_height < self.scale_to_width:
             # throw error, they should match
