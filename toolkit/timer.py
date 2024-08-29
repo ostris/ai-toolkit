@@ -63,3 +63,29 @@ class Timer:
         else:
             # There was an exception, cancel the timer
             self.cancel(self.current_timer)
+
+
+class DummyTimer:
+    def __init__(self, name='Timer'):
+        self.name = name
+
+    def start(self, timer_name):
+        pass
+
+    def stop(self, timer_name):
+        pass
+
+    def print(self):
+        pass
+
+    def reset(self):
+        pass
+
+    def __call__(self, timer_name):
+        return self
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass

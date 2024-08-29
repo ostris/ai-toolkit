@@ -18,7 +18,7 @@ from toolkit.network_mixins import Network
 from toolkit.prompt_utils import PromptEmbeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.stable_diffusion_model import StableDiffusion, BlankNetwork
-from toolkit.timer import Timer
+from toolkit.timer import Timer, DummyTimer
 from toolkit.train_tools import get_torch_dtype, apply_learnable_snr_gos, apply_snr_weight
 
 from toolkit.config_modules import TrainConfig, AdapterConfig
@@ -40,6 +40,7 @@ class UnifiedTrainingModel(nn.Module):
             embedding: Optional[Embedding] = None,
             timer: Timer = None,
             trigger_word: Optional[str] = None,
+            gpu_ids: Optional[Union[int, list]] = None,
     ):
         super(UnifiedTrainingModel, self).__init__()
         self.sd: StableDiffusion = sd
@@ -52,6 +53,8 @@ class UnifiedTrainingModel(nn.Module):
         self.timer: Timer = timer
         self.trigger_word: Optional[str] = trigger_word
         self.device_torch = torch.device("cuda")
+        self.gpu_ids = gpu_ids
+        self.primary_gpu_id = self.gpu_ids[0]  # The first in the list is primary
 
         # misc config
         self.do_long_prompts = False
@@ -60,6 +63,16 @@ class UnifiedTrainingModel(nn.Module):
 
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
+
+
+        # register modules from sd
+        self.text_encoders = nn.ModuleList([self.sd.text_encoder] if not isinstance(self.sd.text_encoder, list) else self.sd.text_encoder)
+        self.unet = self.sd.unet
+        self.vae = self.sd.vae
+
+    def is_primary_gpu(self):
+        return torch.cuda.current_device() == self.primary_gpu_id
+
 
     def before_unet_predict(self):
         pass
@@ -808,6 +821,12 @@ class UnifiedTrainingModel(nn.Module):
 
 
     def forward(self, batch: DataLoaderBatchDTO):
+        if not self.is_primary_gpu():
+            # replace timer with dummy one
+            self.timer = DummyTimer()
+
+        self.device_torch = torch.cuda.current_device()
+
         self.timer.start('preprocess_batch')
         batch = self.preprocess_batch(batch)
         dtype = get_torch_dtype(self.train_config.dtype)
