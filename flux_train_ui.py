@@ -26,9 +26,6 @@ def load_captioning(uploaded_files, concept_sentence):
     uploaded_images = [file for file in uploaded_files if not file.endswith('.txt')]
     txt_files = [file for file in uploaded_files if file.endswith('.txt')]
     txt_files_dict = {os.path.splitext(os.path.basename(txt_file))[0]: txt_file for txt_file in txt_files}
-    print(txt_files)
-    print(txt_files_dict)
-    gr.Info("Images uploaded!")
     updates = []
     if len(uploaded_images) <= 1:
         raise gr.Error(
@@ -158,16 +155,18 @@ def start_training(
     use_more_advanced_options,
     more_advanced_options,
 ):
-    
+    push_to_hub = True
     if not lora_name:
         raise gr.Error("You forgot to insert your LoRA name! This name has to be unique.")
     try:
         if whoami()["auth"]["accessToken"]["role"] == "write" or "repo.write" in whoami()["auth"]["accessToken"]["fineGrained"]["scoped"][0]["permissions"]:
             gr.Info(f"Starting training locally {whoami()['name']}. Your LoRA will be available locally and in Hugging Face after it finishes.")
         else:
-            raise gr.Error(f"You logged in to Hugging Face with not enough permissions, you need a token that allows writing to {whoami()['name']} profile.")
-    except: 
-        raise gr.Error(f"You logged in to Hugging Face with not enough permissions, you need a token that allows writing to {whoami()['name']} profile.")
+            push_to_hub = False
+            gr.Warning("Started training locally. Your LoRa will only be available locally because you didn't login with a `write` token to Hugging Face")
+    except:
+        push_to_hub = False
+        gr.Warning("Started training locally. Your LoRa will only be available locally because you didn't login with a `write` token to Hugging Face")
             
     print("Started training")
     slugged_lora_name = slugify(lora_name)
@@ -185,13 +184,14 @@ def start_training(
     config["config"]["process"][0]["network"]["linear"] = int(rank)
     config["config"]["process"][0]["network"]["linear_alpha"] = int(rank)
     config["config"]["process"][0]["datasets"][0]["folder_path"] = dataset_folder
-    config["config"]["process"][0]["save"]["push_to_hub"] = True
-    try:
-        username = whoami()["name"]
-    except:
-        raise gr.Error("Error trying to retrieve your username. Are you sure you are logged in with Hugging Face?")
-    config["config"]["process"][0]["save"]["hf_repo_id"] = f"{username}/{slugged_lora_name}"
-    config["config"]["process"][0]["save"]["hf_private"] = True
+    config["config"]["process"][0]["save"]["push_to_hub"] = push_to_hub
+    if(push_to_hub):
+        try:
+            username = whoami()["name"]
+        except:
+            raise gr.Error("Error trying to retrieve your username. Are you sure you are logged in with Hugging Face?")
+        config["config"]["process"][0]["save"]["hf_repo_id"] = f"{username}/{slugged_lora_name}"
+        config["config"]["process"][0]["save"]["hf_private"] = True
     if concept_sentence:
         config["config"]["process"][0]["trigger_word"] = concept_sentence
     
@@ -220,7 +220,8 @@ def start_training(
     # Save the updated config
     # generate a random name for the config
     random_config_name = str(uuid.uuid4())
-    config_path = f"/tmp/{random_config_name}-{slugged_lora_name}.yaml"
+    os.makedirs("tmp", exist_ok=True)
+    config_path = f"tmp/{random_config_name}-{slugged_lora_name}.yaml"
     with open(config_path, "w") as f:
         yaml.dump(config, f)
     
@@ -375,6 +376,12 @@ with gr.Blocks(theme=theme, css=css) as demo:
         inputs=[images, concept_sentence],
         outputs=output_components
     )
+    
+    images.delete(
+        load_captioning,
+        inputs=[images, concept_sentence],
+        outputs=output_components
+    )
 
     images.clear(
         hide_captioning,
@@ -404,4 +411,4 @@ with gr.Blocks(theme=theme, css=css) as demo:
     do_captioning.click(fn=run_captioning, inputs=[images, concept_sentence] + caption_list, outputs=caption_list)
 
 if __name__ == "__main__":
-    demo.launch(share=True)
+    demo.launch(share=True, show_error=True)
