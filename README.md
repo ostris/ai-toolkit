@@ -53,6 +53,19 @@ pip install -r requirements.txt
 
 ## FLUX.1 Training
 
+### Gradio UI
+
+To get started training with a with a custom UI, you can do 
+```bash
+cd ai-toolkit #in case you are not yet in the ai-toolkit folder
+huggingface-cli login #provide a `write` token to publish your LoRA at the end
+python flux_train_ui.py
+```
+
+You will instantiate a UI that will let you upload your images, caption them, train and publish your LoRA
+![image](assets/lora_ease_ui.png)
+
+
 ### Tutorial
 
 To get started quickly, check out [@araminta_k](https://x.com/araminta_k) tutorial on [Finetuning Flux Dev on a 3090](https://www.youtube.com/watch?v=HzGW_Kyermg) with 24GB VRAM.
