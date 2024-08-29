@@ -104,9 +104,9 @@ def run_captioning(images, concept_sentence, *captions):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch_dtype = torch.float16
     model = AutoModelForCausalLM.from_pretrained(
-        "microsoft/Florence-2-large", torch_dtype=torch_dtype, trust_remote_code=True
+        "multimodalart/Florence-2-large-no-flash-attn", torch_dtype=torch_dtype, trust_remote_code=True
     ).to(device)
-    processor = AutoProcessor.from_pretrained("microsoft/Florence-2-large", trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained("multimodalart/Florence-2-large-no-flash-attn", trust_remote_code=True)
 
     captions = list(captions)
     for i, image_path in enumerate(images):
