@@ -30,3 +30,5 @@ optimum-quanto
 sentencepiece
 huggingface_hub
 peft
+gradio
+python-slugify
