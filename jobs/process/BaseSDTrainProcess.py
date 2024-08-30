@@ -1865,6 +1865,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     "lora",
                     "diffusers",
                     "template:sd-lora",
+                    "ai-toolkit",
                 ]
             )
 
@@ -1899,7 +1900,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             },
                         }
                     )
-
+        dtype = "torch.bfloat16" if self.model_config.is_flux else "torch.float16"
         # Construct the README content
         readme_content = f"""---
 tags:
@@ -1921,10 +1922,25 @@ Model trained with [AI Toolkit by Ostris](https://github.com/ostris/ai-toolkit)
 
 {"You should use `" + instance_prompt + "` to trigger the image generation." if instance_prompt else "No trigger words defined."}
 
-## Download model
+## Download model and use it with ComfyUI, AUTOMATIC1111, SD.Next, Invoke AI, etc.
 
 Weights for this model are available in Safetensors format.
 
 [Download](/{repo_id}/tree/main) them in the Files & versions tab.
+
+## Use it with the [🧨 diffusers library](https://github.com/huggingface/diffusers)
+
+```py
+from diffusers import AutoPipelineForText2Image
+import torch
+
+pipeline = AutoPipelineForText2Image.from_pretrained('{base_model}', torch_dtype={dtype}).to('cuda')
+pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}')
+image = pipeline('{instance_prompt if not widgets else self.sample_config.prompts[0]}').images[0]
+image.save("my_image.png")
+```
+
+For more details, including weighting, merging and fusing LoRAs, check the [documentation on loading LoRAs in diffusers](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters)
+
 """
         return readme_content
