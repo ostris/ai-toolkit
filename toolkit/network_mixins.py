@@ -175,6 +175,7 @@ class ToolkitModuleMixin:
                 lx = self.lora_down(x)
             except RuntimeError as e:
                 print(f"Error in {self.__class__.__name__} lora_down")
+                print(e)
 
         if isinstance(self.dropout, nn.Dropout) or isinstance(self.dropout, nn.Identity):
             lx = self.dropout(lx)

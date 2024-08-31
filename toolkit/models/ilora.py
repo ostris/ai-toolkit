@@ -136,6 +136,8 @@ class InstantLoRAMidModule(torch.nn.Module):
     def down_forward(self, x, *args, **kwargs):
         # get the embed
         self.embed = self.instant_lora_module_ref().img_embeds[self.index]
+        if x.dtype != self.embed.dtype:
+            x = x.to(self.embed.dtype)
         down_size = math.prod(self.down_shape)
         down_weight = self.embed[:, :down_size]
 
@@ -170,6 +172,8 @@ class InstantLoRAMidModule(torch.nn.Module):
 
     def up_forward(self, x, *args, **kwargs):
         self.embed = self.instant_lora_module_ref().img_embeds[self.index]
+        if x.dtype != self.embed.dtype:
+            x = x.to(self.embed.dtype)
         up_size = math.prod(self.up_shape)
         up_weight = self.embed[:, -up_size:]
 
@@ -211,7 +215,8 @@ class InstantLoRAModule(torch.nn.Module):
             vision_tokens: int,
             head_dim: int,
             num_heads: int, # number of heads in the resampler
-            sd: 'StableDiffusion'
+            sd: 'StableDiffusion',
+            config=None
     ):
         super(InstantLoRAModule, self).__init__()
         # self.linear = torch.nn.Linear(2, 1)
