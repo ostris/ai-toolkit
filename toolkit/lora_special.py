@@ -305,15 +305,15 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         lora_name = ".".join(lora_name)
                         # if it doesnt have a name, it wil have two dots
                         lora_name.replace("..", ".")
+                        clean_name = lora_name
                         if self.peft_format:
                             # we replace this on saving
                             lora_name = lora_name.replace(".", "$$")
                         else:
                             lora_name = lora_name.replace(".", "_")
 
-
                         skip = False
-                        if any([word in child_name for word in self.ignore_if_contains]):
+                        if any([word in clean_name for word in self.ignore_if_contains]):
                             skip = True
 
                         # see if it is over threshold
@@ -329,7 +329,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
                         if (is_linear or is_conv2d) and not skip:
 
-                            if self.only_if_contains is not None and not any([word in lora_name for word in self.only_if_contains]):
+                            if self.only_if_contains is not None and not any([word in clean_name for word in self.only_if_contains]):
                                 continue
 
                             dim = None
