@@ -53,20 +53,6 @@ pip install -r requirements.txt
 
 ## FLUX.1 Training
 
-### Gradio UI
-
-To get started training locally with a with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
-
-```bash
-cd ai-toolkit #in case you are not yet in the ai-toolkit folder
-huggingface-cli login #provide a `write` token to publish your LoRA at the end
-python flux_train_ui.py
-```
-
-You will instantiate a UI that will let you upload your images, caption them, train and publish your LoRA
-![image](assets/lora_ease_ui.png)
-
-
 ### Tutorial
 
 To get started quickly, check out [@araminta_k](https://x.com/araminta_k) tutorial on [Finetuning Flux Dev on a 3090](https://www.youtube.com/watch?v=HzGW_Kyermg) with 24GB VRAM.
@@ -130,6 +116,20 @@ IMPORTANT. If you press crtl+c while it is saving, it will likely corrupt that c
 Please do not open a bug report unless it is a bug in the code. You are welcome to [Join my Discord](https://discord.gg/VXmU2f5WEU)
 and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
 and I will answer when I can.
+
+## Gradio UI
+
+To get started training locally with a with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
+
+```bash
+cd ai-toolkit #in case you are not yet in the ai-toolkit folder
+huggingface-cli login #provide a `write` token to publish your LoRA at the end
+python flux_train_ui.py
+```
+
+You will instantiate a UI that will let you upload your images, caption them, train and publish your LoRA
+![image](assets/lora_ease_ui.png)
+
 
 ## Training in RunPod
 Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
