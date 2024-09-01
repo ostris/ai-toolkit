@@ -236,6 +236,54 @@ replaced.
 Images are never upscaled but they are downscaled and placed in buckets for batching. **You do not need to crop/resize your images**.
 The loader will automatically resize them and can handle varying aspect ratios. 
 
+
+## Training Specific Layers
+
+To train specific layers with LoRA, you can use the `only_if_contains` network kwargs. For instance, if you want to train only the 2 layers
+used by The Last Ben, [mentioned in this post](https://x.com/__TheBen/status/1829554120270987740), you can adjust your
+network kwargs like so:
+
+```yaml
+      network:
+        type: "lora"
+        linear: 128
+        linear_alpha: 128
+        network_kwargs:
+          only_if_contains:
+            - "transformer.single_transformer_blocks.7.proj_out"
+            - "transformer.single_transformer_blocks.20.proj_out"
+```
+
+The naming conventions of the layers are in diffusers format, so checking the state dict of a model will reveal 
+the suffix of the name of the layers you want to train. You can also use this method to only train specific groups of weights.
+For instance to only train the `single_transformer` for FLUX.1, you can use the following:
+
+```yaml
+      network:
+        type: "lora"
+        linear: 128
+        linear_alpha: 128
+        network_kwargs:
+          only_if_contains:
+            - "transformer.single_transformer_blocks."
+```
+
+You can also exclude layers by their names by using `ignore_if_contains` network kwarg. So to exclude all the single transformer blocks,
+
+
+```yaml
+      network:
+        type: "lora"
+        linear: 128
+        linear_alpha: 128
+        network_kwargs:
+          ignore_if_contains:
+            - "transformer.single_transformer_blocks."
+```
+
+`ignore_if_contains` takes priority over `only_if_contains`. So if a weight is covered by both,
+if will be ignored.
+
 ---
 
 ## EVERYTHING BELOW THIS LINE IS OUTDATED 
