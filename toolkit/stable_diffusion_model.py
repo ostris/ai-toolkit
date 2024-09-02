@@ -2001,7 +2001,8 @@ class StableDiffusion:
                 prompt,
                 truncate=not long_prompts,
                 max_length=512,
-                dropout_prob=dropout_prob
+                dropout_prob=dropout_prob,
+                attn_mask=self.model_config.attn_masking
             )
             pe = PromptEmbeds(
                 prompt_embeds
