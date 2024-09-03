@@ -1648,42 +1648,47 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_sample_step = self.sample_config.sample_every and self.step_num % self.sample_config.sample_every == 0
                 if self.train_config.disable_sampling:
                     is_sample_step = False
-                # don't do a reg step on sample or save steps as we dont want to normalize on those
-                if step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
-                    try:
-                        with self.timer('get_batch:reg'):
-                            batch = next(dataloader_iterator_reg)
-                    except StopIteration:
-                        with self.timer('reset_batch:reg'):
-                            # hit the end of an epoch, reset
-                            self.progress_bar.pause()
-                            dataloader_iterator_reg = iter(dataloader_reg)
-                            trigger_dataloader_setup_epoch(dataloader_reg)
 
-                        with self.timer('get_batch:reg'):
-                            batch = next(dataloader_iterator_reg)
-                        self.progress_bar.unpause()
-                    is_reg_step = True
-                elif dataloader is not None:
-                    try:
-                        with self.timer('get_batch'):
-                            batch = next(dataloader_iterator)
-                    except StopIteration:
-                        with self.timer('reset_batch'):
-                            # hit the end of an epoch, reset
-                            self.progress_bar.pause()
-                            dataloader_iterator = iter(dataloader)
-                            trigger_dataloader_setup_epoch(dataloader)
-                            self.epoch_num += 1
-                            if self.train_config.gradient_accumulation_steps == -1:
-                                # if we are accumulating for an entire epoch, trigger a step
-                                self.is_grad_accumulation_step = False
-                                self.grad_accumulation_step = 0
-                        with self.timer('get_batch'):
-                            batch = next(dataloader_iterator)
-                        self.progress_bar.unpause()
-                else:
-                    batch = None
+                batch_list = []
+
+                for b in range(self.train_config.gradient_accumulation):
+                    # don't do a reg step on sample or save steps as we dont want to normalize on those
+                    if step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
+                        try:
+                            with self.timer('get_batch:reg'):
+                                batch = next(dataloader_iterator_reg)
+                        except StopIteration:
+                            with self.timer('reset_batch:reg'):
+                                # hit the end of an epoch, reset
+                                self.progress_bar.pause()
+                                dataloader_iterator_reg = iter(dataloader_reg)
+                                trigger_dataloader_setup_epoch(dataloader_reg)
+
+                            with self.timer('get_batch:reg'):
+                                batch = next(dataloader_iterator_reg)
+                            self.progress_bar.unpause()
+                        is_reg_step = True
+                    elif dataloader is not None:
+                        try:
+                            with self.timer('get_batch'):
+                                batch = next(dataloader_iterator)
+                        except StopIteration:
+                            with self.timer('reset_batch'):
+                                # hit the end of an epoch, reset
+                                self.progress_bar.pause()
+                                dataloader_iterator = iter(dataloader)
+                                trigger_dataloader_setup_epoch(dataloader)
+                                self.epoch_num += 1
+                                if self.train_config.gradient_accumulation_steps == -1:
+                                    # if we are accumulating for an entire epoch, trigger a step
+                                    self.is_grad_accumulation_step = False
+                                    self.grad_accumulation_step = 0
+                            with self.timer('get_batch'):
+                                batch = next(dataloader_iterator)
+                            self.progress_bar.unpause()
+                    else:
+                        batch = None
+                    batch_list.append(batch)
 
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:
@@ -1701,7 +1706,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # flush()
             ### HOOK ###
-            loss_dict = self.hook_train_loop(batch)
+            loss_dict = self.hook_train_loop(batch_list)
             self.timer.stop('train_loop')
             if not did_first_flush:
                 flush()
