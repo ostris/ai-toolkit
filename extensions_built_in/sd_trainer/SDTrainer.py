@@ -1584,6 +1584,8 @@ class SDTrainer(BaseSDTrainProcess):
                     self.scaler.update()
 
                 self.optimizer.zero_grad(set_to_none=True)
+                if self.adapter and isinstance(self.adapter, CustomAdapter):
+                    self.adapter.post_weight_update()
             if self.ema is not None:
                 with self.timer('ema_update'):
                     self.ema.update()
