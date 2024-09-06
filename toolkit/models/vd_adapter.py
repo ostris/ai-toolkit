@@ -659,6 +659,6 @@ class VisionDirectAdapter(torch.nn.Module):
 
     def post_weight_update(self):
         # force block scaler to be mean of 1
-        if self.block_scaler is not None:
-            self.block_scaler.data = self.block_scaler.data / self.block_scaler.data.mean()
+        # if self.block_scaler is not None:
+        #     self.block_scaler.data = self.block_scaler.data / self.block_scaler.data.mean()
         pass
