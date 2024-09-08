@@ -86,9 +86,6 @@ if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
 
 import argparse
 
-with image.imports():
-    from toolkit.job import get_job
-
 def print_end_message(jobs_completed, jobs_failed):
     failure_string = f"{jobs_failed} failure{'' if jobs_failed == 1 else 's'}" if jobs_failed > 0 else ""
     completed_string = f"{jobs_completed} completed job{'' if jobs_completed == 1 else 's'}"
@@ -111,6 +108,7 @@ def print_end_message(jobs_completed, jobs_failed):
     timeout=7200  # 2 hours, increase or decrease if needed
 )
 def main(config_file_list_str: str, recover: bool = False, name: str = None):
+    from toolkit.job import get_job
     # convert the config file list from a string to a list
     config_file_list = config_file_list_str.split(",")
 
