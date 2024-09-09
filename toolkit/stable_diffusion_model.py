@@ -2215,11 +2215,11 @@ class StableDiffusion:
                 #         named_params[name] = param
 
                 # train the guidance embedding
-                if self.unet.config.guidance_embeds:
-                    transformer: FluxTransformer2DModel = self.unet
-                    for name, param in transformer.time_text_embed.named_parameters(recurse=True,
-                                                                                    prefix=f"{SD_PREFIX_UNET}"):
-                        named_params[name] = param
+                # if self.unet.config.guidance_embeds:
+                #     transformer: FluxTransformer2DModel = self.unet
+                #     for name, param in transformer.time_text_embed.named_parameters(recurse=True,
+                #                                                                     prefix=f"{SD_PREFIX_UNET}"):
+                #         named_params[name] = param
 
                 for name, param in self.unet.transformer_blocks.named_parameters(recurse=True,
                                                                                  prefix=f"{SD_PREFIX_UNET}"):
