@@ -294,7 +294,7 @@ It may still work like that, but I have not tested it in a while.
 
 ### Batch Image Generation
 
-An image generator that can take frompts from a config file or form a txt file and generate them to a 
+An image generator that can take prompts from a config file or form a txt file and generate them to a 
 folder. I mainly needed this for an SDXL test I am doing but added some polish to it so it can be used
 for generat batch image generation.
 It all runs off a config file, which you can find an example of in  `config/examples/generate.example.yaml`.
