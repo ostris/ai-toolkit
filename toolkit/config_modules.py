@@ -203,6 +203,8 @@ class AdapterConfig:
         self.ilora_mid: bool = kwargs.get('ilora_mid', True)
         self.ilora_up: bool = kwargs.get('ilora_up', True)
 
+        self.flux_only_double: bool = kwargs.get('flux_only_double', False)
+
 
 class EmbeddingConfig:
     def __init__(self, **kwargs):

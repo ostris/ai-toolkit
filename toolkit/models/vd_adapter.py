@@ -616,19 +616,28 @@ class VisionDirectAdapter(torch.nn.Module):
             for i, module in transformer.transformer_blocks.named_children():
                 module.attn.processor = attn_procs[f"transformer_blocks.{i}.attn"]
 
-            # do single blocks too even though they dont have cross attn
-            for i, module in transformer.single_transformer_blocks.named_children():
-                module.attn.processor = attn_procs[f"single_transformer_blocks.{i}.attn"]
+            if not self.config.flux_only_double:
+                # do single blocks too even though they dont have cross attn
+                for i, module in transformer.single_transformer_blocks.named_children():
+                    module.attn.processor = attn_procs[f"single_transformer_blocks.{i}.attn"]
 
-            self.adapter_modules = torch.nn.ModuleList(
-                [
-                    transformer.transformer_blocks[i].attn.processor for i in
-                    range(len(transformer.transformer_blocks))
-                ] + [
-                    transformer.single_transformer_blocks[i].attn.processor for i in
-                    range(len(transformer.single_transformer_blocks))
-                ]
-            )
+            if not self.config.flux_only_double:
+                self.adapter_modules = torch.nn.ModuleList(
+                    [
+                        transformer.transformer_blocks[i].attn.processor for i in
+                        range(len(transformer.transformer_blocks))
+                    ] + [
+                        transformer.single_transformer_blocks[i].attn.processor for i in
+                        range(len(transformer.single_transformer_blocks))
+                    ]
+                )
+            else:
+                self.adapter_modules = torch.nn.ModuleList(
+                    [
+                        transformer.transformer_blocks[i].attn.processor for i in
+                        range(len(transformer.transformer_blocks))
+                    ]
+                )
         else:
             sd.unet.set_attn_processor(attn_procs)
             self.adapter_modules = torch.nn.ModuleList(sd.unet.attn_processors.values())
