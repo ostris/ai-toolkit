@@ -4,7 +4,7 @@ from diffusers import FluxPipeline
 
 # Choose mode
 model_id = input(
-    "Choose mode: 0(black-forest-labs/FLUX.1-dev. You are supposed to have done the third step of 'https://github.com/monk-after-90s/ai-toolkit?tab=readme-ov-file#flux1-dev') \nor\n 1(black-forest-labs/FLUX.1-schnell)").strip()
+    "Choose mode: 0(black-forest-labs/FLUX.1-dev. You are supposed to have done as described in 'https://github.com/monk-after-90s/ai-toolkit?tab=readme-ov-file#flux1-dev') \nor\n 1(black-forest-labs/FLUX.1-schnell)").strip()
 if model_id == "0":
     model_id = "black-forest-labs/FLUX.1-dev"
 elif model_id == "1":
