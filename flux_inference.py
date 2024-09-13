@@ -13,7 +13,7 @@ else:
     raise ValueError("Invalid model id")
 
 pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
-lora_dir = input("""Enter either:
+lora_dir = input("""Enter lora weight path, either:
                     - A string, the *model id* (for example `google/ddpm-celebahq-256`) of a pretrained model hosted on
                       the Hub.
                     - A path to a *directory* (for example `./my_model_directory`) containing the model weights saved
