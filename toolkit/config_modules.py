@@ -426,7 +426,13 @@ class ModelConfig:
         self.te_dtype = kwargs.get("te_dtype", self.dtype)
 
         # only for flux for now
-        self.quantize = kwargs.get("quantize", False)
+        self.quantize = kwargs.get("quantize", False)        
+        self.quantization_type_transformer = kwargs.get("quantization_type_transformer", "qfloat8")
+        if self.quantization_type_transformer not in ["qint8", "qfloat8_e4m3fn", "qfloat8_e5m2", "qfloat8"]:
+            raise ValueError(f"quantization_type_transformers must be 'qfloat8' or 'qint8'. Got {self.quantization_type_transformer}")
+        self.quantization_type_t5 = kwargs.get("quantization_type_t5", "qfloat8")
+        if self.quantization_type_t5 not in ["qint8", "qfloat8_e4m3fn", "qfloat8_e5m2", "qfloat8"]:
+            raise ValueError(f"quantization_type_t5 must be 'qfloat8' or 'qint8'. Got {self.quantization_type_t5}")
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:

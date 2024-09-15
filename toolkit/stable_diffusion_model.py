@@ -59,7 +59,7 @@ from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjecti
 from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
 from huggingface_hub import hf_hub_download
 
-from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
+from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4, qint8, qfloat8_e4m3fn, qfloat8_e5m2
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -589,10 +589,20 @@ class StableDiffusion:
                     pipe.unload_lora_weights()
             flush()
 
-            if self.model_config.quantize:
-                quantization_type = qfloat8
-                print("Quantizing transformer")
-                quantize(transformer, weights=quantization_type)
+            if self.model_config.quantize:     
+                print(self.model_config.quantization_type_transformer)
+                if self.model_config.quantization_type_transformer == "qint8":
+                    transfermer_qtype = qint8
+                elif self.model_config.quantization_type_transformer == "qfloat8_e4m3fn":
+                    transfermer_qtype = qfloat8_e4m3fn
+                elif self.model_config.quantization_type_transformer == "qfloat8_e5m2":
+                    transfermer_qtype = qfloat8_e5m2
+                elif self.model_config.quantization_type_transformer == "qfloat8":
+                    transfermer_qtype = qfloat8
+                else:
+                    raise ValueError(f"Unknown quantization type: {self.model_config.quantization_type_transformer}")
+                print(f"Quantizing transformer - {self.model_config.quantization_type_transformer}")                                
+                quantize(transformer, weights=transfermer_qtype)
                 freeze(transformer)
                 transformer.to(self.device_torch)
             else:
@@ -613,8 +623,18 @@ class StableDiffusion:
             text_encoder_2.to(self.device_torch, dtype=dtype)
             flush()
 
-            print("Quantizing T5")
-            quantize(text_encoder_2, weights=qfloat8)
+            print(f"Quantizing T5 - {self.model_config.quantization_type_t5}")            
+            if self.model_config.quantization_type_t5 == "qint8":
+                quantization_type_t5 = qint8
+            elif self.model_config.quantization_type_t5 == "qfloat8_e4m3fn":
+                quantization_type_t5 = qfloat8_e4m3fn
+            elif self.model_config.quantization_type_t5 == "qfloat8_e5m2":
+                quantization_type_t5 = qfloat8_e5m2
+            elif self.model_config.quantization_type_t5 == "qfloat8":
+                quantization_type_t5 = qfloat8
+            else:
+                raise ValueError(f"Unknown quantization type: {self.model_config.quantization_type_t5}")               
+            quantize(text_encoder_2, weights=quantization_type_t5)
             freeze(text_encoder_2)
             flush()
 
