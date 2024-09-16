@@ -140,7 +140,7 @@ def get_bucket_for_image_size(
     if bucket_size_list is None:
         # if real resolution is smaller, use that instead
         real_resolution = get_resolution(width, height)
-        # Asegurarse de que resolution y real_resolution sean enteros
+        # Make sure that resolution and real_resolution are integers
         resolution = int(resolution)
         real_resolution = int(real_resolution)
         resolution = min(resolution, real_resolution)
