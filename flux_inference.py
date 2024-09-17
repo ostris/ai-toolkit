@@ -1,4 +1,6 @@
 # reference to https://github.com/black-forest-labs/flux?tab=readme-ov-file#diffusers-integration
+import uuid
+
 import torch
 from diffusers import FluxPipeline
 
@@ -20,7 +22,8 @@ lora_dir = input("""Enter lora weight path, either:
                       with [`ModelMixin.save_pretrained`].
                     - A [torch state
                       dict](https://pytorch.org/tutorials/beginner/saving_loading_models.html#what-is-a-state-dict)""").strip()
-weight_name = input("Weight file with the extension name 'safetensors':").strip() or None
+weight_name = input(
+    "Weight file with the extension name 'safetensors'(or maybe merely press enter without inputing anything):").strip() or None
 
 pipe.load_lora_weights(lora_dir,
                        weight_name=weight_name)
@@ -30,12 +33,19 @@ prompt = "undefined"
 seed = "undefined"
 num_inference_steps = "undefined"
 output_file = "undefined"
+output_file_left = None
+output_file_right = None
 while True:
     prompt = input(f"Prompt(default: {prompt}):").strip() or prompt
     seed = int(input(f"Random seed(default: {seed})(int):").strip() or seed)
     num_inference_steps = int(input(
         f"Number of inference steps(default: {num_inference_steps})(int, 28 is recommend):").strip() or num_inference_steps)
-    output_file = input(f"Output file name(default: {output_file}):").strip() or output_file
+    output_file = input(
+        f"Output file name or pattern(for example: `./output_imgs/kuikui_*.png`)(default: {output_file}):").strip() or output_file
+    if "*" in output_file:
+        output_file_left, output_file_right = output_file.split("*")
+        output_file = output_file.replace("*", str(uuid.uuid4()))
+
     print(
         f"Prompt: {prompt}\nRandom seed: {seed}\nNumber of inference steps: {num_inference_steps}\nOutput file name: {output_file}")
     image = pipe(
@@ -46,3 +56,4 @@ while True:
     ).images[0]
     image.save(output_file)
     print(f"Image saved to {output_file}")
+    output_file = output_file_left + str(uuid.uuid4()) + output_file_right
