@@ -58,4 +58,6 @@ while True:
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     image.save(output_file)
     print(f"Image saved to {output_file}")
-    output_file = output_file_left + str(uuid.uuid4()) + output_file_right
+
+    if output_file_left is not None and output_file_right is not None:
+        output_file = output_file_left + str(uuid.uuid4()) + output_file_right
