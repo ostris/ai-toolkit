@@ -1,6 +1,6 @@
 # reference to https://github.com/black-forest-labs/flux?tab=readme-ov-file#diffusers-integration
 import uuid
-
+from pathlib import Path
 import torch
 from diffusers import FluxPipeline
 
@@ -54,6 +54,8 @@ while True:
         num_inference_steps=num_inference_steps,
         generator=torch.Generator("cpu").manual_seed(seed)
     ).images[0]
+    # make parent dir
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     image.save(output_file)
     print(f"Image saved to {output_file}")
     output_file = output_file_left + str(uuid.uuid4()) + output_file_right
