@@ -1318,6 +1318,7 @@ class StableDiffusion:
                         ).images[0]
 
                     gen_config.save_image(img, i)
+                    gen_config.log_image(img, i)
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                     self.adapter.clear_memory()
