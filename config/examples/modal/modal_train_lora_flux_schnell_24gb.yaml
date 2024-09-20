@@ -6,7 +6,7 @@ config:
   process:
     - type: 'sd_trainer'
       # root folder to save training sessions/samples/weights
-      training_folder: "output"
+      training_folder: "/root/ai-toolkit/modal_output" # must match MOUNT_DIR from run_modal.py
       # uncomment to see performance stats in the terminal every N steps
 #      performance_log_every: 1000
       device: cuda:0
@@ -21,17 +21,14 @@ config:
         dtype: float16 # precision to save
         save_every: 250 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
-        push_to_hub: false #change this to True to push your trained model to Hugging Face.
-        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
-#       hf_repo_id: your-username/your-model-slug
-#       hf_private: true #whether the repo is private or public
       datasets:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
         # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
         # images will automatically be resized and bucketed into the resolution specified
         # on windows, escape back slashes with another backslash so
         # "C:\\path\\to\\images\\folder"
-        - folder_path: "/path/to/images/folder"
+        # your dataset must be placed in /ai-toolkit and /root is for modal to find the dir:
+        - folder_path: "/root/ai-toolkit/your-dataset"
           caption_ext: "txt"
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           shuffle_tokens: false  # shuffle caption order, split by commas
@@ -63,9 +60,14 @@ config:
         dtype: bf16
       model:
         # huggingface model name or path
-        name_or_path: "black-forest-labs/FLUX.1-dev"
+        # if you get an error, or get stuck while downloading,
+        # check https://github.com/ostris/ai-toolkit/issues/84, download the models locally and
+        # place them like "/root/ai-toolkit/FLUX.1-schnell" and "/root/ai-toolkit/FLUX.1-schnell-training-adapter"
+        name_or_path: "black-forest-labs/FLUX.1-schnell"
+        assistant_lora_path: "ostris/FLUX.1-schnell-training-adapter" # Required for flux schnell training
         is_flux: true
         quantize: true  # run 8bit mixed precision
+        # low_vram is painfully slow to fuse in the adapter avoid it unless absolutely necessary
 #        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
@@ -88,8 +90,8 @@ config:
         neg: ""  # not used on flux
         seed: 42
         walk_seed: true
-        guidance_scale: 4
-        sample_steps: 20
+        guidance_scale: 1  # schnell does not do guidance
+        sample_steps: 4  # 1 - 4 works well
 # you can add any additional meta info here. [name] is replaced with config name at top
 meta:
   name: "[name]"

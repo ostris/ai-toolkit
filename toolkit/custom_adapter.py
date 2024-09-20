@@ -402,7 +402,7 @@ class CustomAdapter(torch.nn.Module):
         if 'sv_adapter' in state_dict:
             self.single_value_adapter.load_state_dict(state_dict['sv_adapter'], strict=strict)
 
-        if 'vision_encoder' in state_dict and self.config.train_image_encoder:
+        if 'vision_encoder' in state_dict:
             self.vision_encoder.load_state_dict(state_dict['vision_encoder'], strict=strict)
 
         if 'fuse_module' in state_dict:
@@ -852,6 +852,9 @@ class CustomAdapter(torch.nn.Module):
                     if self.adapter_type == 'te_augmenter':
                         clip_image_embeds = self.te_augmenter(clip_image_embeds)
 
+                    if self.adapter_type == 'vision_direct':
+                        clip_image_embeds = self.vd_adapter(clip_image_embeds)
+
                     # save them to the conditional and unconditional
                     try:
                         self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
@@ -878,10 +881,14 @@ class CustomAdapter(torch.nn.Module):
             for attn_processor in self.te_adapter.adapter_modules:
                 yield from attn_processor.parameters(recurse)
         elif self.config.type == 'vision_direct':
-            for attn_processor in self.vd_adapter.adapter_modules:
-                yield from attn_processor.parameters(recurse)
-            if self.config.train_image_encoder:
-                yield from self.vision_encoder.parameters(recurse)
+            if self.config.train_scaler:
+                # only yield the self.block_scaler = torch.nn.Parameter(torch.tensor([1.0] * num_modules)
+                yield self.vd_adapter.block_scaler
+            else:
+                for attn_processor in self.vd_adapter.adapter_modules:
+                    yield from attn_processor.parameters(recurse)
+                if self.config.train_image_encoder:
+                    yield from self.vision_encoder.parameters(recurse)
         elif self.config.type == 'te_augmenter':
             yield from self.te_augmenter.parameters(recurse)
             if self.config.train_image_encoder:
@@ -906,3 +913,9 @@ class CustomAdapter(torch.nn.Module):
             additional['clip_layer'] = self.config.clip_layer
             additional['image_encoder_arch'] = self.config.head_dim
         return additional
+
+    def post_weight_update(self):
+        # do any kind of updates after the weight update
+        if self.config.type == 'vision_direct':
+            self.vd_adapter.post_weight_update()
+        pass

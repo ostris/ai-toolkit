@@ -34,6 +34,7 @@ from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sampler import get_sampler
+from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from toolkit.saving import save_ldm_model_from_diffusers, get_ldm_state_dict_from_diffusers
 from toolkit.sd_device_states_presets import empty_preset
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
@@ -56,7 +57,7 @@ from transformers import T5EncoderModel, BitsAndBytesConfig, UMT5EncoderModel, T
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjection
 
 from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
-from toolkit.util.inverse_cfg import inverse_classifier_guidance
+from huggingface_hub import hf_hub_download
 
 from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from typing import TYPE_CHECKING
@@ -178,11 +179,14 @@ class StableDiffusion:
         self.config_file = None
 
         self.is_flow_matching = False
-        if self.is_flux or self.is_v3 or self.is_auraflow:
+        if self.is_flux or self.is_v3 or self.is_auraflow or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
             self.is_flow_matching = True
 
         self.quantize_device = quantize_device if quantize_device is not None else self.device
         self.low_vram = self.model_config.low_vram
+
+        # merge in and preview active with -1 weight
+        self.invert_assistant_lora = False
 
     def load_model(self):
         if self.is_loaded:
@@ -493,9 +497,34 @@ class StableDiffusion:
                 transformer.to(torch.device(self.quantize_device), dtype=dtype)
             flush()
 
+            if self.model_config.assistant_lora_path is not None:
+                if self.model_config.lora_path:
+                    raise ValueError("Cannot load both assistant lora and lora at the same time")
+
+                if not self.is_flux:
+                    raise ValueError("Assistant lora is only supported for flux models currently")
+
+                # handle downloading from the hub if needed
+                if not os.path.exists(self.model_config.assistant_lora_path):
+                    print(f"Grabbing assistant lora from the hub: {self.model_config.assistant_lora_path}")
+                    new_lora_path = hf_hub_download(
+                        self.model_config.assistant_lora_path,
+                        filename="pytorch_lora_weights.safetensors"
+                    )
+                    # replace the path
+                    self.model_config.assistant_lora_path = new_lora_path
+
+                # for flux, we assume it is flux schnell. We cannot merge in the assistant lora and unmerge it on
+                # quantized weights so it had to process unmerged (slow). Since schnell samples in just 4 steps
+                # it is better to merge it in now, and sample slowly later, otherwise training is slowed in half
+                # so we will merge in now and sample with -1 weight later
+                self.invert_assistant_lora = True
+                # trigger it to get merged in
+                self.model_config.lora_path = self.model_config.assistant_lora_path
+
             if self.model_config.lora_path is not None:
-                # need the pipe to do this unfortunately for now
-                # we have to fuse in the weights before quantizing
+                print("Fusing in LoRA")
+                # need the pipe for peft
                 pipe: FluxPipeline = FluxPipeline(
                     scheduler=None,
                     text_encoder=None,
@@ -505,10 +534,60 @@ class StableDiffusion:
                     vae=None,
                     transformer=transformer,
                 )
-                pipe.load_lora_weights(self.model_config.lora_path, adapter_name="lora1")
-                pipe.fuse_lora()
-                # unfortunately, not an easier way with peft
-                pipe.unload_lora_weights()
+                if self.low_vram:
+                    # we cannot fuse the loras all at once without ooming in lowvram mode, so we have to do it in parts
+                    # we can do it on the cpu but it takes about 5-10 mins vs seconds on the gpu
+                    # we are going to separate it into the two transformer blocks one at a time
+
+                    lora_state_dict = load_file(self.model_config.lora_path)
+                    single_transformer_lora = {}
+                    single_block_key = "transformer.single_transformer_blocks."
+                    double_transformer_lora = {}
+                    double_block_key = "transformer.transformer_blocks."
+                    for key, value in lora_state_dict.items():
+                        if single_block_key in key:
+                            single_transformer_lora[key] = value
+                        elif double_block_key in key:
+                            double_transformer_lora[key] = value
+                        else:
+                            raise ValueError(f"Unknown lora key: {key}. Cannot load this lora in low vram mode")
+
+                    # double blocks
+                    transformer.transformer_blocks = transformer.transformer_blocks.to(
+                        torch.device(self.quantize_device), dtype=dtype
+                    )
+                    pipe.load_lora_weights(double_transformer_lora, adapter_name=f"lora1_double")
+                    pipe.fuse_lora()
+                    pipe.unload_lora_weights()
+                    transformer.transformer_blocks = transformer.transformer_blocks.to(
+                        'cpu', dtype=dtype
+                    )
+
+                    # single blocks
+                    transformer.single_transformer_blocks = transformer.single_transformer_blocks.to(
+                        torch.device(self.quantize_device), dtype=dtype
+                    )
+                    pipe.load_lora_weights(single_transformer_lora, adapter_name=f"lora1_single")
+                    pipe.fuse_lora()
+                    pipe.unload_lora_weights()
+                    transformer.single_transformer_blocks = transformer.single_transformer_blocks.to(
+                        'cpu', dtype=dtype
+                    )
+
+                    # cleanup
+                    del single_transformer_lora
+                    del double_transformer_lora
+                    del lora_state_dict
+                    flush()
+
+                else:
+                    # need the pipe to do this unfortunately for now
+                    # we have to fuse in the weights before quantizing
+                    pipe.load_lora_weights(self.model_config.lora_path, adapter_name="lora1")
+                    pipe.fuse_lora()
+                    # unfortunately, not an easier way with peft
+                    pipe.unload_lora_weights()
+            flush()
 
             if self.model_config.quantize:
                 quantization_type = qfloat8
@@ -677,6 +756,11 @@ class StableDiffusion:
             self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
                 self.model_config.assistant_lora_path, self)
 
+            if self.invert_assistant_lora:
+                # invert and disable during training
+                self.assistant_lora.multiplier = -1.0
+                self.assistant_lora.is_active = False
+
         if self.is_pixart and self.vae_scale_factor == 16:
             # TODO make our own pipeline?
             # we generate an image 2x larger, so we need to copy the sizes from larger ones down
@@ -743,12 +827,16 @@ class StableDiffusion:
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
         merge_multiplier = 1.0
-
+        flush()
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
-            print("Unloading asistant lora")
-            # unfortunately, not an easier way with peft
-            self.assistant_lora.is_active = False
+            print("Unloading assistant lora")
+            if self.invert_assistant_lora:
+                self.assistant_lora.is_active = True
+                # move weights on to the device
+                self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
+            else:
+                self.assistant_lora.is_active = False
 
         if self.network is not None:
             self.network.eval()
@@ -1036,8 +1124,8 @@ class StableDiffusion:
                         conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image)
                         unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image,
                                                                                                     True)
-                        conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds)
-                        unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds)
+                        conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds, is_unconditional=False)
+                        unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds, is_unconditional=True)
 
                     if self.adapter is not None and isinstance(self.adapter,
                                                                CustomAdapter) and validation_image is not None:
@@ -1258,9 +1346,15 @@ class StableDiffusion:
 
         # refuse loras
         if self.model_config.assistant_lora_path is not None:
-            print("Loading asistant lora")
-            # unfortunately, not an easier way with peft
-            self.assistant_lora.is_active = True
+            print("Loading assistant lora")
+            if self.invert_assistant_lora:
+                self.assistant_lora.is_active = False
+                # move weights off the device
+                self.assistant_lora.force_to('cpu', self.torch_dtype)
+            else:
+                self.assistant_lora.is_active = True
+
+        flush()
 
     def get_latent_noise(
             self,
@@ -1908,7 +2002,8 @@ class StableDiffusion:
                 prompt,
                 truncate=not long_prompts,
                 max_length=512,
-                dropout_prob=dropout_prob
+                dropout_prob=dropout_prob,
+                attn_mask=self.model_config.attn_masking
             )
             pe = PromptEmbeds(
                 prompt_embeds
@@ -2121,11 +2216,11 @@ class StableDiffusion:
                 #         named_params[name] = param
 
                 # train the guidance embedding
-                if self.unet.config.guidance_embeds:
-                    transformer: FluxTransformer2DModel = self.unet
-                    for name, param in transformer.time_text_embed.named_parameters(recurse=True,
-                                                                                    prefix=f"{SD_PREFIX_UNET}"):
-                        named_params[name] = param
+                # if self.unet.config.guidance_embeds:
+                #     transformer: FluxTransformer2DModel = self.unet
+                #     for name, param in transformer.time_text_embed.named_parameters(recurse=True,
+                #                                                                     prefix=f"{SD_PREFIX_UNET}"):
+                #         named_params[name] = param
 
                 for name, param in self.unet.transformer_blocks.named_parameters(recurse=True,
                                                                                  prefix=f"{SD_PREFIX_UNET}"):

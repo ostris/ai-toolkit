@@ -6,6 +6,7 @@ import random
 import shutil
 from collections import OrderedDict
 import os
+import re
 from typing import Union, List, Optional
 
 import numpy as np
@@ -17,6 +18,8 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
+from huggingface_hub import HfApi, Repository, interpreter_login
+from huggingface_hub.utils import HfFolder
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
@@ -912,7 +915,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.sd.noise_scheduler.set_train_timesteps(
                         num_train_timesteps,
                         device=self.device_torch,
-                        linear=self.train_config.linear_timesteps
+                        linear=self.train_config.linear_timesteps or self.train_config.linear_timesteps2
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(
@@ -1648,42 +1651,47 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_sample_step = self.sample_config.sample_every and self.step_num % self.sample_config.sample_every == 0
                 if self.train_config.disable_sampling:
                     is_sample_step = False
-                # don't do a reg step on sample or save steps as we dont want to normalize on those
-                if step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
-                    try:
-                        with self.timer('get_batch:reg'):
-                            batch = next(dataloader_iterator_reg)
-                    except StopIteration:
-                        with self.timer('reset_batch:reg'):
-                            # hit the end of an epoch, reset
-                            self.progress_bar.pause()
-                            dataloader_iterator_reg = iter(dataloader_reg)
-                            trigger_dataloader_setup_epoch(dataloader_reg)
 
-                        with self.timer('get_batch:reg'):
-                            batch = next(dataloader_iterator_reg)
-                        self.progress_bar.unpause()
-                    is_reg_step = True
-                elif dataloader is not None:
-                    try:
-                        with self.timer('get_batch'):
-                            batch = next(dataloader_iterator)
-                    except StopIteration:
-                        with self.timer('reset_batch'):
-                            # hit the end of an epoch, reset
-                            self.progress_bar.pause()
-                            dataloader_iterator = iter(dataloader)
-                            trigger_dataloader_setup_epoch(dataloader)
-                            self.epoch_num += 1
-                            if self.train_config.gradient_accumulation_steps == -1:
-                                # if we are accumulating for an entire epoch, trigger a step
-                                self.is_grad_accumulation_step = False
-                                self.grad_accumulation_step = 0
-                        with self.timer('get_batch'):
-                            batch = next(dataloader_iterator)
-                        self.progress_bar.unpause()
-                else:
-                    batch = None
+                batch_list = []
+
+                for b in range(self.train_config.gradient_accumulation):
+                    # don't do a reg step on sample or save steps as we dont want to normalize on those
+                    if step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
+                        try:
+                            with self.timer('get_batch:reg'):
+                                batch = next(dataloader_iterator_reg)
+                        except StopIteration:
+                            with self.timer('reset_batch:reg'):
+                                # hit the end of an epoch, reset
+                                self.progress_bar.pause()
+                                dataloader_iterator_reg = iter(dataloader_reg)
+                                trigger_dataloader_setup_epoch(dataloader_reg)
+
+                            with self.timer('get_batch:reg'):
+                                batch = next(dataloader_iterator_reg)
+                            self.progress_bar.unpause()
+                        is_reg_step = True
+                    elif dataloader is not None:
+                        try:
+                            with self.timer('get_batch'):
+                                batch = next(dataloader_iterator)
+                        except StopIteration:
+                            with self.timer('reset_batch'):
+                                # hit the end of an epoch, reset
+                                self.progress_bar.pause()
+                                dataloader_iterator = iter(dataloader)
+                                trigger_dataloader_setup_epoch(dataloader)
+                                self.epoch_num += 1
+                                if self.train_config.gradient_accumulation_steps == -1:
+                                    # if we are accumulating for an entire epoch, trigger a step
+                                    self.is_grad_accumulation_step = False
+                                    self.grad_accumulation_step = 0
+                            with self.timer('get_batch'):
+                                batch = next(dataloader_iterator)
+                            self.progress_bar.unpause()
+                    else:
+                        batch = None
+                    batch_list.append(batch)
 
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:
@@ -1701,7 +1709,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # flush()
             ### HOOK ###
-            loss_dict = self.hook_train_loop(batch)
+            loss_dict = self.hook_train_loop(batch_list)
             self.timer.stop('train_loop')
             if not did_first_flush:
                 flush()
@@ -1818,6 +1826,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.save()
         self.logger.finish()
 
+        if self.save_config.push_to_hub:
+            if("HF_TOKEN" not in os.environ):
+                interpreter_login(new_session=False, write_permission=True)
+            self.push_to_hub(
+                repo_id=self.save_config.hf_repo_id,
+                private=self.save_config.hf_private
+            )
         del (
             self.sd,
             unet,
@@ -1829,3 +1844,136 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
 
         flush()
+
+    def push_to_hub(
+    self,
+    repo_id: str,
+    private: bool = False,
+    ):  
+        readme_content = self._generate_readme(repo_id)
+        readme_path = os.path.join(self.save_root, "README.md")
+        with open(readme_path, "w", encoding="utf-8") as f:
+            f.write(readme_content)
+        
+        api = HfApi()
+
+        api.create_repo(
+            repo_id,
+            private=private,
+            exist_ok=True
+        )
+
+        api.upload_folder(
+            repo_id=repo_id,
+            folder_path=self.save_root,
+            ignore_patterns=["*.yaml", "*.pt"],
+            repo_type="model",
+        )
+
+
+    def _generate_readme(self, repo_id: str) -> str:
+        """Generates the content of the README.md file."""
+
+        # Gather model info
+        base_model = self.model_config.name_or_path
+        instance_prompt = self.trigger_word if hasattr(self, "trigger_word") else None
+        if base_model == "black-forest-labs/FLUX.1-schnell":
+            license = "apache-2.0"
+        elif base_model == "black-forest-labs/FLUX.1-dev":
+            license = "other"
+            license_name = "flux-1-dev-non-commercial-license"
+            license_link = "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md"
+        else:
+            license = "creativeml-openrail-m"
+        tags = [
+            "text-to-image",
+        ]
+        if self.model_config.is_xl:
+            tags.append("stable-diffusion-xl")
+        if self.model_config.is_flux:
+            tags.append("flux")
+        if self.network_config:
+            tags.extend(
+                [
+                    "lora",
+                    "diffusers",
+                    "template:sd-lora",
+                    "ai-toolkit",
+                ]
+            )
+
+        # Generate the widget section
+        widgets = []
+        sample_image_paths = []
+        samples_dir = os.path.join(self.save_root, "samples")
+        if os.path.isdir(samples_dir):
+            for filename in os.listdir(samples_dir):
+                #The filenames are structured as 1724085406830__00000500_0.jpg
+                #So here we capture the 2nd part (steps) and 3rd (index the matches the prompt)
+                match = re.search(r"__(\d+)_(\d+)\.jpg$", filename)
+                if match:
+                    steps, index = int(match.group(1)), int(match.group(2))
+                    #Here we only care about uploading the latest samples, the match with the # of steps
+                    if steps == self.train_config.steps:
+                        sample_image_paths.append((index, f"samples/{filename}"))
+
+            # Sort by numeric index
+            sample_image_paths.sort(key=lambda x: x[0])
+
+            # Create widgets matching prompt with the index 
+            for i, prompt in enumerate(self.sample_config.prompts):
+                if i < len(sample_image_paths):
+                    # Associate prompts with sample image paths based on the extracted index
+                    _, image_path = sample_image_paths[i]
+                    widgets.append(
+                        {
+                            "text": prompt,
+                            "output": {
+                                "url": image_path
+                            },
+                        }
+                    )
+        dtype = "torch.bfloat16" if self.model_config.is_flux else "torch.float16"
+        # Construct the README content
+        readme_content = f"""---
+tags:
+{yaml.dump(tags, indent=4).strip()}
+{"widget:" if os.path.isdir(samples_dir) else ""}
+{yaml.dump(widgets, indent=4).strip() if widgets else ""}
+base_model: {base_model}
+{"instance_prompt: " + instance_prompt if instance_prompt else ""}
+license: {license}
+{'license_name: ' + license_name if license == "other" else ""}
+{'license_link: ' + license_link if license == "other" else ""}
+---
+
+# {self.job.name}
+Model trained with [AI Toolkit by Ostris](https://github.com/ostris/ai-toolkit)
+<Gallery />
+
+## Trigger words
+
+{"You should use `" + instance_prompt + "` to trigger the image generation." if instance_prompt else "No trigger words defined."}
+
+## Download model and use it with ComfyUI, AUTOMATIC1111, SD.Next, Invoke AI, etc.
+
+Weights for this model are available in Safetensors format.
+
+[Download](/{repo_id}/tree/main) them in the Files & versions tab.
+
+## Use it with the [🧨 diffusers library](https://github.com/huggingface/diffusers)
+
+```py
+from diffusers import AutoPipelineForText2Image
+import torch
+
+pipeline = AutoPipelineForText2Image.from_pretrained('{base_model}', torch_dtype={dtype}).to('cuda')
+pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}')
+image = pipeline('{instance_prompt if not widgets else self.sample_config.prompts[0]}').images[0]
+image.save("my_image.png")
+```
+
+For more details, including weighting, merging and fusing LoRAs, check the [documentation on loading LoRAs in diffusers](https://huggingface.co/docs/diffusers/main/en/using-diffusers/loading_adapters)
+
+"""
+        return readme_content
