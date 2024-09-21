@@ -1968,7 +1968,7 @@ from diffusers import AutoPipelineForText2Image
 import torch
 
 pipeline = AutoPipelineForText2Image.from_pretrained('{base_model}', torch_dtype={dtype}).to('cuda')
-pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}')
+pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}.safetensors')
 image = pipeline('{instance_prompt if not widgets else self.sample_config.prompts[0]}').images[0]
 image.save("my_image.png")
 ```
