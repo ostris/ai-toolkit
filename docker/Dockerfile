@@ -20,6 +20,10 @@ RUN apt-get install -y tmux nvtop htop
 
 RUN pip install jupyterlab
 
+# mask workspace
+RUN mkdir /workspace
+
+
 # symlink app to workspace
 RUN ln -s /app/ai-toolkit /workspace/ai-toolkit
 
