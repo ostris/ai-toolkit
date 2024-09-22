@@ -377,6 +377,10 @@ class TrainConfig:
         self.linear_timesteps2 = kwargs.get('linear_timesteps2', False)
         self.disable_sampling = kwargs.get('disable_sampling', False)
 
+        # will cache a blank prompt or the trigger word, and unload the text encoder to cpu
+        # will make training faster and use less vram
+        self.unload_text_encoder = kwargs.get('unload_text_encoder', False)
+
 
 class ModelConfig:
     def __init__(self, **kwargs):

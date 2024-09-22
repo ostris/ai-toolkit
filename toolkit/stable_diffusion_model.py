@@ -2635,3 +2635,10 @@ class StableDiffusion:
             }
 
         self.set_device_state(state)
+
+    def text_encoder_to(self, *args, **kwargs):
+        if isinstance(self.text_encoder, list):
+            for encoder in self.text_encoder:
+                encoder.to(*args, **kwargs)
+        else:
+            self.text_encoder.to(*args, **kwargs)

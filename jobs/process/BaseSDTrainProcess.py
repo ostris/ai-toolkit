@@ -174,6 +174,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             train_adapter=is_training_adapter,
             train_embedding=self.embed_config is not None,
             train_refiner=self.train_config.train_refiner,
+            unload_text_encoder=self.train_config.unload_text_encoder
         )
 
         # fine_tuning here is for training actual SD network, not LoRA, embeddings, etc. it is (Dreambooth, etc)
@@ -1750,6 +1751,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
+                        if self.train_config.unload_text_encoder:
+                            # make sure the text encoder is unloaded
+                            self.sd.text_encoder_to('cpu')
+                        flush()
+
                         self.ensure_params_requires_grad()
                         self.progress_bar.unpause()
 
