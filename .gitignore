@@ -174,3 +174,4 @@ cython_debug/
 /extensions/*
 !/extensions/example
 /temp
+/wandb

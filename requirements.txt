@@ -13,7 +13,8 @@ invisible-watermark
 einops
 accelerate
 toml
-albumentations
+albumentations==1.4.15
+albucore==0.0.16
 pydantic
 omegaconf
 k-diffusion

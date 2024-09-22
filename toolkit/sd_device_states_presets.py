@@ -40,6 +40,7 @@ def get_train_sd_device_state_preset(
         train_adapter: bool = False,
         train_embedding: bool = False,
         train_refiner: bool = False,
+        unload_text_encoder: bool = False,
 ):
     preset = copy.deepcopy(empty_preset)
     if not cached_latents:
@@ -87,5 +88,10 @@ def get_train_sd_device_state_preset(
         preset['unet']['requires_grad'] = False
         preset['unet']['device'] = device
         preset['text_encoder']['device'] = device
+
+    if unload_text_encoder:
+        preset['text_encoder']['training'] = False
+        preset['text_encoder']['requires_grad'] = False
+        preset['text_encoder']['device'] = 'cpu'
 
     return preset

@@ -76,6 +76,9 @@ class SDTrainer(BaseSDTrainProcess):
                 return org_unscale_grads(optimizer, inv_scale, found_inf, True)
             self.scaler._unscale_grads_ = _unscale_grads_replacer
 
+        self.cached_blank_embeds: Optional[PromptEmbeds] = None
+        self.cached_trigger_embeds: Optional[PromptEmbeds] = None
+
 
     def before_model_load(self):
         pass
@@ -113,6 +116,8 @@ class SDTrainer(BaseSDTrainProcess):
             self.taesd.requires_grad_(False)
 
     def hook_before_train_loop(self):
+        super().hook_before_train_loop()
+        
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
         # move vae to device if we did not cache latents
@@ -152,6 +157,28 @@ class SDTrainer(BaseSDTrainProcess):
             else:
                 # single prompt
                 self.negative_prompt_pool = [self.train_config.negative_prompt]
+
+        # handle unload text encoder
+        if self.train_config.unload_text_encoder:
+            with torch.no_grad():
+                if self.train_config.train_text_encoder:
+                    raise ValueError("Cannot unload text encoder if training text encoder")
+                # cache embeddings
+
+                print("\n***** UNLOADING TEXT ENCODER *****")
+                print("This will train only with a blank prompt or trigger word, if set")
+                print("If this is not what you want, remove the unload_text_encoder flag")
+                print("***********************************")
+                print("")
+                self.sd.text_encoder_to(self.device_torch)
+                self.cached_blank_embeds = self.sd.encode_prompt("")
+                if self.trigger_word is not None:
+                    self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word)
+
+                # move back to cpu
+                self.sd.text_encoder_to('cpu')
+                flush()
+
 
     def process_output_for_turbo(self, pred, noisy_latents, timesteps, noise, batch):
         # to process turbo learning, we make one big step from our current timestep to the end
@@ -797,6 +824,8 @@ class SDTrainer(BaseSDTrainProcess):
             was_adapter_active = self.adapter.is_active
             self.adapter.is_active = False
 
+        if self.train_config.unload_text_encoder:
+            raise ValueError("Prior predictions currently do not support unloading text encoder")
         # do a prediction here so we can match its output with network multiplier set to 0.0
         with torch.no_grad():
             dtype = get_torch_dtype(self.train_config.dtype)
@@ -1181,7 +1210,30 @@ class SDTrainer(BaseSDTrainProcess):
 
                 with self.timer('encode_prompt'):
                     unconditional_embeds = None
-                    if grad_on_text_encoder:
+                    if self.train_config.unload_text_encoder:
+                        with torch.set_grad_enabled(False):
+                            embeds_to_use = self.cached_blank_embeds.clone().detach().to(
+                                self.device_torch, dtype=dtype
+                            )
+                            if self.cached_trigger_embeds is not None and not is_reg:
+                                embeds_to_use = self.cached_trigger_embeds.clone().detach().to(
+                                    self.device_torch, dtype=dtype
+                                )
+                            conditional_embeds = concat_prompt_embeds(
+                                [embeds_to_use] * noisy_latents.shape[0]
+                            )
+                            if self.train_config.do_cfg:
+                                unconditional_embeds = self.cached_blank_embeds.clone().detach().to(
+                                    self.device_torch, dtype=dtype
+                                )
+                                unconditional_embeds = concat_prompt_embeds(
+                                    [unconditional_embeds] * noisy_latents.shape[0]
+                                )
+
+                            if isinstance(self.adapter, CustomAdapter):
+                                self.adapter.is_unconditional_run = False
+
+                    elif grad_on_text_encoder:
                         with torch.set_grad_enabled(True):
                             if isinstance(self.adapter, CustomAdapter):
                                 self.adapter.is_unconditional_run = False
