@@ -117,6 +117,10 @@ class SDTrainer(BaseSDTrainProcess):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
+
+
+        if self.train_config.optimizer == 'schedulefree':
+            self.optimizer.train()
         
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
