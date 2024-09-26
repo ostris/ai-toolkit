@@ -913,10 +913,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         num_train_timesteps, device=self.device_torch, original_inference_steps=num_train_timesteps
                     )
                 elif self.train_config.noise_scheduler == 'flowmatch':
+                    linear_timesteps = any([
+                        self.train_config.linear_timesteps,
+                        self.train_config.linear_timesteps2,
+                        self.train_config.timestep_type == 'linear',
+                    ])
                     self.sd.noise_scheduler.set_train_timesteps(
                         num_train_timesteps,
                         device=self.device_torch,
-                        linear=self.train_config.linear_timesteps or self.train_config.linear_timesteps2
+                        linear=linear_timesteps
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(

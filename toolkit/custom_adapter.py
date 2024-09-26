@@ -445,8 +445,8 @@ class CustomAdapter(torch.nn.Module):
             return state_dict
         elif self.adapter_type == 'vision_direct':
             state_dict["dvadapter"] = self.vd_adapter.state_dict()
-            if self.config.train_image_encoder:
-                state_dict["vision_encoder"] = self.vision_encoder.state_dict()
+            # if self.config.train_image_encoder: # always return vision encoder
+            state_dict["vision_encoder"] = self.vision_encoder.state_dict()
             return state_dict
         elif self.adapter_type == 'single_value':
             state_dict["sv_adapter"] = self.single_value_adapter.state_dict()
@@ -889,6 +889,8 @@ class CustomAdapter(torch.nn.Module):
                     yield from attn_processor.parameters(recurse)
                 if self.config.train_image_encoder:
                     yield from self.vision_encoder.parameters(recurse)
+                if self.config.num_tokens:
+                    yield from self.vd_adapter.resampler.parameters(recurse)
         elif self.config.type == 'te_augmenter':
             yield from self.te_augmenter.parameters(recurse)
             if self.config.train_image_encoder:

@@ -55,7 +55,7 @@ class FileItemDTO(
                 print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
                            f'This process is faster for png, jpeg')
                 img = exif_transpose(Image.open(self.path))
-                h, w = img.size
+                w, h = img.size
             size_database[filename] = (w, h)
         self.width: int = w
         self.height: int = h

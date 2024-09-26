@@ -504,8 +504,11 @@ class StableDiffusion:
                 if not self.is_flux:
                     raise ValueError("Assistant lora is only supported for flux models currently")
 
-                # handle downloading from the hub if needed
-                if not os.path.exists(self.model_config.assistant_lora_path):
+                if os.path.isdir(self.model_config.assistant_lora_path):
+                    self.model_config.assistant_lora_path = os.path.join(
+                        self.model_config.assistant_lora_path, "pytorch_lora_weights.safetensors"
+                    )
+                elif not os.path.exists(self.model_config.assistant_lora_path):
                     print(f"Grabbing assistant lora from the hub: {self.model_config.assistant_lora_path}")
                     new_lora_path = hf_hub_download(
                         self.model_config.assistant_lora_path,
