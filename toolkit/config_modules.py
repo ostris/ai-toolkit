@@ -208,6 +208,7 @@ class AdapterConfig:
         self.ilora_up: bool = kwargs.get('ilora_up', True)
         
         self.pixtral_max_image_size: int = kwargs.get('pixtral_max_image_size', 512)
+        self.pixtral_random_image_size: int = kwargs.get('pixtral_random_image_size', False)
 
         self.flux_only_double: bool = kwargs.get('flux_only_double', False)
 

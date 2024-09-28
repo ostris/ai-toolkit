@@ -1,3 +1,4 @@
+import math
 import torch
 import sys
 
@@ -18,6 +19,7 @@ from toolkit.photomaker import PhotoMakerIDEncoder, FuseModule, PhotoMakerCLIPEn
 from toolkit.saving import load_ip_adapter_model, load_custom_adapter_model
 from toolkit.train_tools import get_torch_dtype
 from toolkit.models.pixtral_vision import PixtralVisionEncoderCompatible, PixtralVisionImagePreprocessorCompatible
+import random
 
 sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
@@ -767,6 +769,32 @@ class CustomAdapter(torch.nn.Module):
                     ).pixel_values
                 else:
                     clip_image = tensors_0_1
+                    
+                # if is pixtral
+                if self.config.image_encoder_arch == 'pixtral' and self.config.pixtral_random_image_size:
+                    # get the random size
+                    random_size = random.randint(256, self.config.pixtral_max_image_size)
+                    # images are already sized for max size, we have to fit them to the pixtral patch size to reduce / enlarge it farther.
+                    h, w = clip_image.shape[2], clip_image.shape[3]
+                    current_base_size = int(math.sqrt(w * h))
+                    ratio = current_base_size / random_size
+                    if ratio > 1:
+                        w = round(w / ratio)
+                        h = round(h / ratio)
+
+                    width_tokens = (w - 1) // self.image_processor.image_patch_size + 1
+                    height_tokens = (h - 1) // self.image_processor.image_patch_size + 1
+                    assert width_tokens > 0
+                    assert height_tokens > 0
+                    
+                    new_image_size = (
+                        width_tokens * self.image_processor.image_patch_size,
+                        height_tokens * self.image_processor.image_patch_size,
+                    )
+                    
+                    # resize the image
+                    clip_image = F.interpolate(clip_image, size=new_image_size, mode='bicubic', align_corners=False)
+                    
 
                 batch_size = clip_image.shape[0]
                 if self.adapter_type == 'vision_direct'  or self.adapter_type == 'te_augmenter':
