@@ -17,6 +17,7 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 from toolkit.basic import flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
 from toolkit.metadata import get_meta_for_safetensors
+from toolkit.models.pixtral_vision import PixtralVisionImagePreprocessorCompatible
 from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
 from PIL import Image, ImageFilter, ImageOps
@@ -733,6 +734,7 @@ class ClipImageFileItemDTOMixin:
         return self._clip_vision_embeddings_path
 
     def load_clip_image(self: 'FileItemDTO'):
+        is_dynamic_size_and_aspect = isinstance(self.clip_image_processor, PixtralVisionImagePreprocessorCompatible)
         if self.is_vision_clip_cached:
             self.clip_image_embeds = load_file(self.get_clip_vision_embeddings_path())
 
@@ -759,8 +761,24 @@ class ClipImageFileItemDTOMixin:
         if self.flip_y:
             # do a flip
             img = img.transpose(Image.FLIP_TOP_BOTTOM)
-
-        if img.width != img.height:
+            
+        if is_dynamic_size_and_aspect:
+            # just match the bucket size for now
+            if self.dataset_config.buckets:
+                # scale and crop based on file item
+                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+                # crop
+                img = img.crop((
+                    self.crop_x,
+                    self.crop_y,
+                    self.crop_x + self.crop_width,
+                    self.crop_y + self.crop_height
+                ))
+            else:
+                raise Exception("Control images not supported for non-bucket datasets")
+        
+        elif img.width != img.height:
             min_size = min(img.width, img.height)
             if self.dataset_config.square_crop:
                 # center crop to a square

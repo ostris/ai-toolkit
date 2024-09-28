@@ -1461,6 +1461,7 @@ class StableDiffusion:
             detach_unconditional=False,
             rescale_cfg=None,
             return_conditional_pred=False,
+            guidance_embedding_scale=1.0,
             **kwargs,
     ):
         conditional_pred = None
@@ -1736,10 +1737,12 @@ class StableDiffusion:
                         txt_ids = torch.zeros(bs, text_embeddings.text_embeds.shape[1], 3).to(self.device_torch)
 
                         # # handle guidance
-                        guidance_scale = 1.0  # ?
                         if self.unet.config.guidance_embeds:
-                            guidance = torch.tensor([guidance_scale], device=self.device_torch)
-                            guidance = guidance.expand(latents.shape[0])
+                            if isinstance(guidance_scale, list):
+                                guidance = torch.tensor(guidance_scale, device=self.device_torch)
+                            else:
+                                guidance = torch.tensor([guidance_scale], device=self.device_torch)
+                                guidance = guidance.expand(latents.shape[0])
                         else:
                             guidance = None
 
