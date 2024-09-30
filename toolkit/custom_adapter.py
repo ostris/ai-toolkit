@@ -744,6 +744,7 @@ class CustomAdapter(torch.nn.Module):
             batch_size=1,
     ) -> PromptEmbeds:
         if self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter':
+            skip_unconditional = self.sd_ref().is_flux
             if tensors_0_1 is None:
                 tensors_0_1 = self.get_empty_clip_image(batch_size)
                 has_been_preprocessed = True
@@ -797,7 +798,7 @@ class CustomAdapter(torch.nn.Module):
                     
 
                 batch_size = clip_image.shape[0]
-                if self.adapter_type == 'vision_direct'  or self.adapter_type == 'te_augmenter':
+                if (self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter') and not skip_unconditional:
                     # add an unconditional so we can save it
                     unconditional = self.get_empty_clip_image(batch_size, shape=clip_image.shape).to(
                         clip_image.device, dtype=clip_image.dtype
@@ -895,7 +896,10 @@ class CustomAdapter(torch.nn.Module):
 
                     # save them to the conditional and unconditional
                     try:
-                        self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
+                        if skip_unconditional:
+                            self.unconditional_embeds, self.conditional_embeds = None, clip_image_embeds
+                        else:
+                            self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
                     except ValueError:
                         raise ValueError(f"could not split the clip image embeds into 2. Got shape: {clip_image_embeds.shape}")
 
