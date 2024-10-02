@@ -5,6 +5,7 @@ from diffusers import FluxPipeline
 from PIL import Image
 from io import BytesIO
 import argparse
+import openai  # 假设已经安装了openai库
 
 # 设置命令行参数解析
 parser = argparse.ArgumentParser(description='图像生成器参数设置')
@@ -20,6 +21,14 @@ parser.add_argument('--lora_dir', type=str, default="antas/fenglin-flux-lora",
                       dict](https://pytorch.org/tutorials/beginner/saving_loading_models.html#what-is-a-state-dict)""")
 parser.add_argument('--trigger_word', type=str, default="fenglin",
                     help='触发词')
+parser.add_argument('--use_ai_assist', action='store_true',
+                    help='是否启用AI辅助提示词功能，默认不启用')
+parser.add_argument('--openai_base_url', type=str, default=None,
+                    help='OpenAI API基础URL，以“/v1”结尾')
+parser.add_argument('--openai_api_key', type=str, default=None,
+                    help='OpenAI API密钥')
+parser.add_argument('--model', type=str, default="gpt-4o-mini",
+                    help='使用的LLM模型名称')
 
 args = parser.parse_args()
 
@@ -27,6 +36,27 @@ args = parser.parse_args()
 model_id = args.model_id
 lora_dir = args.lora_dir
 trigger_word = args.trigger_word
+use_ai_assist = args.use_ai_assist
+openai_base_url = args.openai_base_url
+openai_api_key = args.openai_api_key
+model_name = args.model
+
+if use_ai_assist:
+    openai.api_base = openai_base_url
+    openai.api_key = openai_api_key
+
+
+def refine_prompt_with_ai(prompt):
+    """使用OpenAI API润色prompt"""
+    response = openai.ChatCompletion.create(
+        model=model_name,
+        messages=[
+            {"role": "system",
+             "content": "Return an English version of text-to-image prompts for Stable Diffusion based on user prompts"},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response['choices'][0]['message']['content'].strip()
 
 
 def generate_image(prompt, seed, num_inference_steps):
@@ -36,7 +66,11 @@ def generate_image(prompt, seed, num_inference_steps):
     if seed < -1 or seed == 0:
         raise ValueError("随机种子必须为-1或正整数")
 
-    image = pipe(prompt + ", " + trigger_word,
+    if use_ai_assist:
+        prompt = refine_prompt_with_ai(prompt)
+    prompt = prompt + ", " + trigger_word
+    print(f"{prompt=}")
+    image = pipe(prompt,
                  output_type="pil",
                  num_inference_steps=num_inference_steps,
                  generator=torch.Generator("cpu").manual_seed(seed)).images[0]
@@ -64,7 +98,7 @@ if __name__ == '__main__':
         inputs=[
             gr.Textbox(label="提示文本", placeholder="请输入提示文本"),
             gr.Number(label="随机种子", value=1, precision=0,
-                      info="只能输入-1（随机）或正整数，固定的提示文本和固定的正数随机种子会生成同样的图片"),
+                      info="只能输入-1（随机）或正整数"),
             gr.Slider(label="推理步数", minimum=1, maximum=100, step=1, value=32)
         ],
         outputs=gr.Image(type="pil", format="png"),  # 使用 PIL Image 类型并指定格式为 png
