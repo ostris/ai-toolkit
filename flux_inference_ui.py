@@ -106,4 +106,4 @@ if __name__ == '__main__':
         description="请输入提示文本、随机种子及推理步数以生成图片。"
     )
     # 启动 Gradio 应用
-    iface.launch(share=True)
+    iface.launch()
