@@ -4,12 +4,29 @@ import torch
 from diffusers import FluxPipeline
 from PIL import Image
 from io import BytesIO
+import argparse
 
-# 预训练模型和 LoRA 权重路径
-model_id = "black-forest-labs/FLUX.1-dev"
-lora_dir = "antas/fenglin-flux-lora"
-# trigger word
-trigger_word = "fenglin"
+# 设置命令行参数解析
+parser = argparse.ArgumentParser(description='图像生成器参数设置')
+parser.add_argument('--model_id', type=str, default="black-forest-labs/FLUX.1-dev",
+                    help='预训练模型的ID，默认“black-forest-labs/FLUX.1-dev”，可选“black-forest-labs/FLUX.1-dev”或者“black-forest-labs/FLUX.1-schnell”')
+parser.add_argument('--lora_dir', type=str, default="antas/fenglin-flux-lora",
+                    help="""Enter lora weight path, either:
+                    - A string, the *model id* (for example `google/ddpm-celebahq-256`) of a pretrained model hosted on
+                      the Hub.
+                    - A path to a *directory* (for example `./my_model_directory`) containing the model weights saved
+                      with [`ModelMixin.save_pretrained`].
+                    - A [torch state
+                      dict](https://pytorch.org/tutorials/beginner/saving_loading_models.html#what-is-a-state-dict)""")
+parser.add_argument('--trigger_word', type=str, default="fenglin",
+                    help='触发词')
+
+args = parser.parse_args()
+
+# 从命令行获取参数值
+model_id = args.model_id
+lora_dir = args.lora_dir
+trigger_word = args.trigger_word
 
 
 def generate_image(prompt, seed, num_inference_steps):
@@ -40,6 +57,7 @@ if __name__ == '__main__':
     pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
     pipe.load_lora_weights(lora_dir, weight_name="fenglin-flux-lora.safetensors")
     pipe.enable_model_cpu_offload()
+
     # 创建 Gradio 界面
     iface = gr.Interface(
         fn=generate_image,
