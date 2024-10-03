@@ -5,7 +5,7 @@ from diffusers import FluxPipeline
 from PIL import Image
 from io import BytesIO
 import argparse
-import openai  # 假设已经安装了openai库
+import openai
 
 # 设置命令行参数解析
 parser = argparse.ArgumentParser(description='图像生成器参数设置')
@@ -102,7 +102,7 @@ if __name__ == '__main__':
             gr.Slider(label="推理步数", minimum=1, maximum=100, step=1, value=32)
         ],
         outputs=gr.Image(type="pil", format="png"),  # 使用 PIL Image 类型并指定格式为 png
-        title="图像生成器",
+        title="AI写真定制",
         description="请输入提示文本、随机种子及推理步数以生成图片。"
     )
     # 启动 Gradio 应用
