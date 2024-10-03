@@ -607,6 +607,8 @@ class DatasetConfig:
 
         # ip adapter / reference dataset
         self.clip_image_path: str = kwargs.get('clip_image_path', None)  # depth maps, etc
+        # get the clip image randomly from the same folder as the image. Useful for folder grouped pairs.
+        self.clip_image_from_same_folder: bool = kwargs.get('clip_image_from_same_folder', False)
         self.clip_image_augmentations: List[dict] = kwargs.get('clip_image_augmentations', None)
         self.clip_image_shuffle_augmentations: bool = kwargs.get('clip_image_shuffle_augmentations', False)
         self.replacements: List[str] = kwargs.get('replacements', [])

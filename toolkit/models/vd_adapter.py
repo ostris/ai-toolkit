@@ -472,8 +472,8 @@ class VisionDirectAdapter(torch.nn.Module):
             
         self.mid_size = self.token_size
         
-        # if pixtral, use cross attn dim for more sparse representation
-        if is_pixtral:
+        # if pixtral, use cross attn dim for more sparse representation if only doing double transformers
+        if is_pixtral and self.config.flux_only_double:
             if is_flux:
                 hidden_size = 3072
             else:
