@@ -752,8 +752,7 @@ class ClipImageFileItemDTOMixin:
             if len(img_files) > 1:
                 img_files.remove(self.path)
             # randomly grab one
-            self.clip_image_path = random.choice(img_files)
-            return self.path
+            return random.choice(img_files)
         else:
             return self.clip_image_path
 
