@@ -410,6 +410,7 @@ class ModelConfig:
         self.lora_path = kwargs.get('lora_path', None)
         # mainly for decompression loras for distilled models
         self.assistant_lora_path = kwargs.get('assistant_lora_path', None)
+        self.inference_lora_path = kwargs.get('inference_lora_path', None)
         self.latent_space_version = kwargs.get('latent_space_version', None)
 
         # only for SDXL models for now
