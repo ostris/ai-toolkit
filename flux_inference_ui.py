@@ -29,12 +29,11 @@ parser.add_argument('--openai_api_key', type=str, default=None,
                     help='OpenAI API密钥')
 parser.add_argument('--model', type=str, default="gpt-4o-mini",
                     help='使用的LLM模型名称')
-
+parser.add_argument('--weight_name', type=str, default="",
+                    help='LoRA权重文件名，默认行为是自动判断。')
 args = parser.parse_args()
 
 # 从命令行获取参数值
-model_id = args.model_id
-lora_dir = args.lora_dir
 trigger_word = args.trigger_word
 use_ai_assist = args.use_ai_assist
 openai_base_url = args.openai_base_url
@@ -88,8 +87,8 @@ def generate_image(prompt, seed, num_inference_steps):
 
 if __name__ == '__main__':
     # 加载模型
-    pipe = FluxPipeline.from_pretrained(model_id, torch_dtype=torch.bfloat16)
-    pipe.load_lora_weights(lora_dir, weight_name="fenglin-flux-lora.safetensors")
+    pipe = FluxPipeline.from_pretrained(args.model_id, torch_dtype=torch.bfloat16)
+    pipe.load_lora_weights(args.lora_dir, weight_name=args.weight_name)  # 使用命令行参数传递的权重文件名
     pipe.enable_model_cpu_offload()
 
     # 创建 Gradio 界面
