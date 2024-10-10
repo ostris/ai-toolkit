@@ -211,6 +211,11 @@ class AdapterConfig:
         self.pixtral_random_image_size: int = kwargs.get('pixtral_random_image_size', False)
 
         self.flux_only_double: bool = kwargs.get('flux_only_double', False)
+        
+        # train and use a conv layer to pool the embedding
+        self.conv_pooling: bool = kwargs.get('conv_pooling', False)
+        self.conv_pooling_stacks: int = kwargs.get('conv_pooling_stacks', 1)
+        self.sparse_autoencoder_dim: Optional[int] = kwargs.get('sparse_autoencoder_dim', None)
 
 
 class EmbeddingConfig:
