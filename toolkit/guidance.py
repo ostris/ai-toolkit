@@ -481,9 +481,9 @@ def get_guided_loss_polarity(
 
     loss = pred_loss + pred_neg_loss
 
-    if sd.is_flow_matching:
-        timestep_weight = sd.noise_scheduler.get_weights_for_timesteps(timesteps).to(loss.device, dtype=loss.dtype).detach()
-        loss = loss * timestep_weight
+    # if sd.is_flow_matching:
+    #     timestep_weight = sd.noise_scheduler.get_weights_for_timesteps(timesteps).to(loss.device, dtype=loss.dtype).detach()
+    #     loss = loss * timestep_weight
 
 
     loss = loss.mean([1, 2, 3])

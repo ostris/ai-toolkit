@@ -63,7 +63,7 @@ class SDTrainer(BaseSDTrainProcess):
         self.is_bfloat = self.train_config.dtype == "bfloat16" or self.train_config.dtype == "bf16"
 
         self.do_grad_scale = True
-        if self.is_fine_tuning:
+        if self.is_fine_tuning and self.is_bfloat:
             self.do_grad_scale = False
         if self.adapter_config is not None:
             if self.adapter_config.train:

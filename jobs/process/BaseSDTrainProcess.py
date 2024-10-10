@@ -1661,8 +1661,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 batch_list = []
 
                 for b in range(self.train_config.gradient_accumulation):
+                    # keep track to alternate on an accumulation step for reg   
+                    batch_step = step
                     # don't do a reg step on sample or save steps as we dont want to normalize on those
-                    if step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
+                    if batch_step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
                         try:
                             with self.timer('get_batch:reg'):
                                 batch = next(dataloader_iterator_reg)
@@ -1698,6 +1700,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     else:
                         batch = None
                     batch_list.append(batch)
+                    batch_step += 1
 
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:

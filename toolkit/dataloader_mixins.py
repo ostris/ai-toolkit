@@ -121,6 +121,9 @@ class CaptionMixin:
                 prompt_path = path_no_ext + '.' + ext
                 if os.path.exists(prompt_path):
                     break
+                
+        # allow folders to have a default prompt
+        default_prompt_path = os.path.join(os.path.dirname(img_path), 'default.txt')
 
         if os.path.exists(prompt_path):
             with open(prompt_path, 'r', encoding='utf-8') as f:
@@ -131,6 +134,10 @@ class CaptionMixin:
                     if 'caption' in prompt:
                         prompt = prompt['caption']
 
+                prompt = clean_caption(prompt)
+        elif os.path.exists(default_prompt_path):
+            with open(default_prompt_path, 'r', encoding='utf-8') as f:
+                prompt = f.read()
                 prompt = clean_caption(prompt)
         else:
             prompt = ''
