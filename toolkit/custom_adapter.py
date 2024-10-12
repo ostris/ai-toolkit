@@ -884,8 +884,8 @@ class CustomAdapter(torch.nn.Module):
                             clip_image_embeds = clip_output.pooler_output
                         # TODO should we always norm image embeds?
                         # get norm embeddings
-                        l2_norm = torch.norm(clip_image_embeds, p=2)
-                        clip_image_embeds = clip_image_embeds / l2_norm
+                        # l2_norm = torch.norm(clip_image_embeds, p=2)
+                        # clip_image_embeds = clip_image_embeds / l2_norm
 
                     if not is_training or not self.config.train_image_encoder:
                         clip_image_embeds = clip_image_embeds.detach()
