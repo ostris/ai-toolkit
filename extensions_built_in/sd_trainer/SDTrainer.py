@@ -1197,7 +1197,7 @@ class SDTrainer(BaseSDTrainProcess):
                         self.adapter(conditional_clip_embeds)
 
                 # do the custom adapter after the prior prediction
-                if self.adapter and isinstance(self.adapter, CustomAdapter) and has_clip_image:
+                if self.adapter and isinstance(self.adapter, CustomAdapter) and (has_clip_image or is_reg):
                     quad_count = random.randint(1, 4)
                     self.adapter.train()
                     self.adapter.trigger_pre_te(
