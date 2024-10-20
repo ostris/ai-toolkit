@@ -44,19 +44,25 @@ class FileItemDTO(
         self.path = kwargs.get('path', '')
         self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         size_database = kwargs.get('size_database', {})
-        filename = os.path.basename(self.path)
-        if filename in size_database:
-            w, h = size_database[filename]
+        dataset_root =  kwargs.get('dataset_root', None)
+        if dataset_root is not None:
+            # remove dataset root from path
+            file_key = self.path.replace(dataset_root, '')
         else:
+            file_key = os.path.basename(self.path)
+        if file_key in size_database:
+            w, h = size_database[file_key]
+        else:
+            # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method for now.
             # process width and height
-            try:
-                w, h = image_utils.get_image_size(self.path)
-            except image_utils.UnknownImageFormat:
-                print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
-                           f'This process is faster for png, jpeg')
-                img = exif_transpose(Image.open(self.path))
-                w, h = img.size
-            size_database[filename] = (w, h)
+            # try:
+            #     w, h = image_utils.get_image_size(self.path)
+            # except image_utils.UnknownImageFormat:
+            #     print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
+            #                f'This process is faster for png, jpeg')
+            img = exif_transpose(Image.open(self.path))
+            w, h = img.size
+            size_database[file_key] = (w, h)
         self.width: int = w
         self.height: int = h
         self.dataloader_transforms = kwargs.get('dataloader_transforms', None)
