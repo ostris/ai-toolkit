@@ -442,8 +442,13 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
             dataset_folder = os.path.dirname(dataset_folder)
         dataset_size_file = os.path.join(dataset_folder, '.aitk_size.json')
         if os.path.exists(dataset_size_file):
-            with open(dataset_size_file, 'r') as f:
-                self.size_database = json.load(f)
+            try:
+                with open(dataset_size_file, 'r') as f:
+                    self.size_database = json.load(f)
+            except Exception as e:
+                print(f"Error loading size database: {dataset_size_file}")
+                print(e)
+                self.size_database = {}
         else:
             self.size_database = {}
 
