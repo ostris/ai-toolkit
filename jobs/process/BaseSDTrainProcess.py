@@ -1907,6 +1907,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             tags.append("stable-diffusion-xl")
         if self.model_config.is_flux:
             tags.append("flux")
+        if self.model_config.is_v3:
+            tags.append("sd3")
         if self.network_config:
             tags.extend(
                 [

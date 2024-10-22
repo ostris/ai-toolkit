@@ -47,7 +47,7 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel, \
     StableDiffusionXLControlNetPipeline, StableDiffusionControlNetPipeline, StableDiffusion3Pipeline, \
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
-    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler
+    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -267,30 +267,84 @@ class StableDiffusion:
                 pipln = self.custom_pipeline
             else:
                 pipln = StableDiffusion3Pipeline
-
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
-
-            model_id = "stabilityai/stable-diffusion-3-medium"
-            text_encoder3 = T5EncoderModel.from_pretrained(
-                model_id,
-                subfolder="text_encoder_3",
-                # quantization_config=quantization_config,
-                revision="refs/pr/26",
-                device_map="cuda"
+            
+            print("Loading SD3 model")
+            # assume it is the large model
+            base_model_path = "stabilityai/stable-diffusion-3.5-large"
+            print("Loading transformer")
+            subfolder = 'transformer'
+            transformer_path = model_path
+            # check if HF_DATASETS_OFFLINE or TRANSFORMERS_OFFLINE is set
+            if os.path.exists(transformer_path):
+                subfolder = None
+                transformer_path = os.path.join(transformer_path, 'transformer')
+                # check if the path is a full checkpoint.
+                te_folder_path = os.path.join(model_path, 'text_encoder')
+                # if we have the te, this folder is a full checkpoint, use it as the base
+                if os.path.exists(te_folder_path):
+                    base_model_path = model_path
+            else:
+                # is remote use whatever path we were given
+                base_model_path = model_path
+            
+            transformer = SD3Transformer2DModel.from_pretrained(
+                transformer_path,
+                subfolder=subfolder,
+                torch_dtype=dtype,
             )
+            if not self.low_vram:
+                # for low v ram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu
+                transformer.to(torch.device(self.quantize_device), dtype=dtype)
+            flush()
+            
+            if self.model_config.lora_path is not None:
+                raise ValueError("LoRA is not supported for SD3 models currently")
+            
+            if self.model_config.quantize:
+                quantization_type = qfloat8
+                print("Quantizing transformer")
+                quantize(transformer, weights=quantization_type)
+                freeze(transformer)
+                transformer.to(self.device_torch)
+            else:
+                transformer.to(self.device_torch, dtype=dtype)
+                
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(base_model_path, subfolder="scheduler")
+            print("Loading vae")
+            vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
+            flush()
+            
+            print("Loading t5")
+            tokenizer_3 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_3", torch_dtype=dtype)
+            text_encoder_3 = T5EncoderModel.from_pretrained(
+                base_model_path, 
+                subfolder="text_encoder_3", 
+                torch_dtype=dtype
+            )
+            
+            text_encoder_3.to(self.device_torch, dtype=dtype)
+            flush()
+
+            if self.model_config.quantize:
+                print("Quantizing T5")
+                quantize(text_encoder_3, weights=qfloat8)
+                freeze(text_encoder_3)
+                flush()
+                
 
             # see if path exists
             if not os.path.exists(model_path) or os.path.isdir(model_path):
                 try:
                     # try to load with default diffusers
                     pipe = pipln.from_pretrained(
-                        model_path,
+                        base_model_path,
                         dtype=dtype,
                         device=self.device_torch,
-                        text_encoder_3=text_encoder3,
+                        tokenizer_3=tokenizer_3,
+                        text_encoder_3=text_encoder_3,
+                        transformer=transformer,
                         # variant="fp16",
                         use_safetensors=True,
-                        revision="refs/pr/26",
                         repo_type="model",
                         ignore_patterns=["*.md", "*..gitattributes"],
                         **load_args
@@ -302,9 +356,11 @@ class StableDiffusion:
             else:
                 pipe = pipln.from_single_file(
                     model_path,
+                    transformer=transformer,
                     device=self.device_torch,
                     torch_dtype=self.torch_dtype,
-                    text_encoder_3=text_encoder3,
+                    tokenizer_3=tokenizer_3,
+                    text_encoder_3=text_encoder_3,
                     **load_args
                 )
 
@@ -1815,6 +1871,8 @@ class StableDiffusion:
                         pooled_projections=text_embeddings.pooled_embeds.to(self.device_torch, self.torch_dtype),
                         **kwargs,
                     ).sample
+                    if isinstance(noise_pred, QTensor):
+                        noise_pred = noise_pred.dequantize()
                 elif self.is_auraflow:
                     # aura use timestep value between 0 and 1, with t=1 as noise and t=0 as the image
                     # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
