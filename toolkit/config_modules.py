@@ -458,6 +458,11 @@ class EMAConfig:
         self.ema_decay: float = kwargs.get('ema_decay', 0.999)
         # feeds back the decay difference into the parameter
         self.use_feedback: bool = kwargs.get('use_feedback', False)
+        
+        # every update, the params are multiplied by this amount
+        # only use for things without a bias like lora
+        # similar to a decay in an optimizer but the opposite
+        self.param_multiplier: float = kwargs.get('param_multiplier', 1.0)
 
 
 class ReferenceDatasetConfig:
@@ -546,6 +551,8 @@ class DatasetConfig:
         self.dataset_path: str = kwargs.get('dataset_path', None)
 
         self.default_caption: str = kwargs.get('default_caption', None)
+        # trigger word for just this dataset
+        self.trigger_word: str = kwargs.get('trigger_word', None)
         random_triggers = kwargs.get('random_triggers', [])
         # if they are a string, load them from a file
         if isinstance(random_triggers, str) and os.path.exists(random_triggers):
