@@ -17,6 +17,41 @@ config:
         type: "lora"
         linear: 16
         linear_alpha: 16
+        network_kwargs:
+          only_if_contains:
+            - "transformer.transformer_blocks.0"
+            - "transformer.transformer_blocks.2"
+            - "transformer.transformer_blocks.5"
+            - "transformer.transformer_blocks.12"
+            - "transformer.transformer_blocks.15"
+            - "transformer.transformer_blocks.18"
+            - "transformer.single_transformer_blocks.0"
+            - "transformer.single_transformer_blocks.4.proj_out"
+            - "transformer.single_transformer_blocks.5.proj_out"
+            - "transformer.single_transformer_blocks.7"
+            - "transformer.single_transformer_blocks.8.proj_out"
+            - "transformer.single_transformer_blocks.9.proj_out"
+            - "transformer.single_transformer_blocks.10.proj_out"
+            - "transformer.single_transformer_blocks.11.proj_out"
+            - "transformer.single_transformer_blocks.12.proj_out"
+            - "transformer.single_transformer_blocks.13.proj_out"
+            - "transformer.single_transformer_blocks.14.proj_out"
+            - "transformer.single_transformer_blocks.15.proj_out"
+            - "transformer.single_transformer_blocks.16.attn"
+            - "transformer.single_transformer_blocks.17.attn"
+            - "transformer.single_transformer_blocks.18.attn"
+            - "transformer.single_transformer_blocks.20"
+            - "transformer.single_transformer_blocks.21.proj_out"
+            - "transformer.single_transformer_blocks.22.proj_out"
+            - "transformer.single_transformer_blocks.23.proj_out"
+            - "transformer.single_transformer_blocks.24.proj_out"
+            - "transformer.single_transformer_blocks.25"
+            - "transformer.single_transformer_blocks.26.proj_out"
+            - "transformer.single_transformer_blocks.27.proj_out"
+            - "transformer.single_transformer_blocks.28.attn"
+            - "transformer.single_transformer_blocks.33.proj_out"
+            - "transformer.single_transformer_blocks.34.proj_out"
+            - "transformer.single_transformer_blocks.35"
       save:
         dtype: float16 # precision to save
         save_every: 250 # save every this many steps
@@ -36,17 +71,30 @@ config:
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
-          resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions
+          resolution: [ 512,768,1024 ]  # flux enjoys multiple resolutions
+          flip_aug: True
+          keep_tokens: True
       train:
+        reg_weight: 0.8
         batch_size: 1
         steps: 2000  # total number of steps to train 500 - 4000 is a good range
-        gradient_accumulation_steps: 1
+        gradient_accumulation: 2
+        gradient_checkpointing: true
         train_unet: true
         train_text_encoder: false  # probably won't work with flux
+        #train_clip: true
+        #train_t5: false
+        #t5_trainable_layers: [10, 11, 12]
         gradient_checkpointing: true  # need the on unless you have a ton of vram
         noise_scheduler: "flowmatch" # for training only
         optimizer: "adamw8bit"
         lr: 1e-4
+        lr_scheduler: "polynomial"
+        lr_scheduler_params:
+            polynomial:
+                power: 0.6
+            cosine: {}
+            constant: {}
         # uncomment this to skip the pre training sample
 #        skip_first_sample: true
         # uncomment to completely disable sampling
@@ -75,22 +123,22 @@ config:
         prompts:
           # you can add [trigger] to the prompts here and it will be replaced with the trigger word
 #          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
-          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a man with black hair, playing chess at the park, bomb going off in the background"
           - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
-          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
-          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
-          - "a bear building a log cabin in the snow covered mountains"
-          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
-          - "hipster man with a beard, building a chair, in a wood shop"
-          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
-          - "a man holding a sign that says, 'this is a sign'"
-          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+#          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+#          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+#          - "a bear building a log cabin in the snow covered mountains"
+#          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+#          - "hipster man with a beard, building a chair, in a wood shop"
+#          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+#          - "a man holding a sign that says, 'this is a sign'"
+#          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
         neg: ""  # not used on flux
-        seed: 42
+        seed: 648
         walk_seed: true
         guidance_scale: 4
         sample_steps: 20
 # you can add any additional meta info here. [name] is replaced with config name at top
 meta:
-  name: "[name]"
+  name: "[PAseer]"
   version: '1.0'

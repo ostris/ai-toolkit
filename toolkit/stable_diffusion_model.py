@@ -2060,7 +2060,7 @@ class StableDiffusion:
                     prompt,
                     num_images_per_prompt=num_images_per_prompt,
                     truncate=not long_prompts,
-                    max_length=max_length,
+                    max_length=255,
                     dropout_prob=dropout_prob,
                     pipeline=self.pipeline,
                 )
