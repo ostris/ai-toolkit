@@ -28,6 +28,18 @@ def get_optimizer(
             optimizer = dadaptation.DAdaptAdam(params, eps=1e-6, lr=use_lr, **optimizer_params)
             # warn user that dadaptation is deprecated
             print("WARNING: Dadaptation optimizer type has been changed to DadaptationAdam. Please update your config.")
+    elif lower_type.startswith("prodigy8bit"):
+        from toolkit.optimizers.prodigy_8bit import Prodigy8bit
+        print("Using Prodigy optimizer")
+        use_lr = learning_rate
+        if use_lr < 0.1:
+            # dadaptation uses different lr that is values of 0.1 to 1.0. default to 1.0
+            use_lr = 1.0
+
+        print(f"Using lr {use_lr}")
+        # let net be the neural network you want to train
+        # you can choose weight decay value based on your problem, 0 by default
+        optimizer = Prodigy8bit(params, lr=use_lr, eps=1e-6, **optimizer_params)
     elif lower_type.startswith("prodigy"):
         from prodigyopt import Prodigy
 
