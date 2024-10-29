@@ -1473,7 +1473,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # self.step_num = self.embedding.step
                 # self.start_step = self.step_num
                 params.append({
-                    'params': self.embedding.get_trainable_params(),
+                    'params': list(self.embedding.get_trainable_params()),
                     'lr': self.train_config.embedding_lr
                 })
 
@@ -1491,7 +1491,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     else:
                         # set trainable params
                         params.append({
-                            'params': self.adapter.parameters(),
+                            'params': list(self.adapter.parameters()),
                             'lr': self.train_config.adapter_lr
                         })
 
