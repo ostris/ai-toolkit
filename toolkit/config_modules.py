@@ -449,7 +449,13 @@ class ModelConfig:
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:
             raise ValueError("attn_masking is only supported with flux models currently")
-        pass
+        # for targeting a specific layers
+        self.ignore_if_contains: Optional[List[str]] = kwargs.get("ignore_if_contains", None)
+        self.only_if_contains: Optional[List[str]] = kwargs.get("only_if_contains", None)
+        
+        if self.ignore_if_contains is not None or self.only_if_contains is not None:
+            if not self.is_flux:
+                raise ValueError("ignore_if_contains and only_if_contains are only supported with flux models currently")
 
 
 class EMAConfig:
