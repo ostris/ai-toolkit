@@ -2,6 +2,7 @@ import math
 from typing import List
 import torch
 from toolkit.optimizers.optimizer_utils import copy_stochastic, stochastic_grad_accummulation
+from optimum.quanto import QBytesTensor
 
 
 class Adafactor(torch.optim.Optimizer):
@@ -251,6 +252,9 @@ class Adafactor(torch.optim.Optimizer):
                         state["exp_avg_sq"] = state["exp_avg_sq"].to(grad)
 
                 p_data_fp32 = p
+                
+                if isinstance(p_data_fp32, QBytesTensor):
+                    p_data_fp32 = p_data_fp32.dequantize()
                 if p.dtype != torch.float32:
                     p_data_fp32 = p_data_fp32.clone().float()
 
