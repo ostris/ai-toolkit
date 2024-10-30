@@ -1750,7 +1750,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             with torch.no_grad():
                 # torch.cuda.empty_cache()
-                if self.train_config.optimizer.lower().startswith('dadaptation') or \
+                # if optimizer has get_lrs method, then use it
+                if hasattr(optimizer, 'get_learning_rates'):
+                    learning_rate = optimizer.get_learning_rates()[0]
+                elif self.train_config.optimizer.lower().startswith('dadaptation') or \
                         self.train_config.optimizer.lower().startswith('prodigy'):
                     learning_rate = (
                             optimizer.param_groups[0]["d"] *
