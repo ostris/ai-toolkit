@@ -1,3 +1,4 @@
+import math
 import torch
 import sys
 
@@ -17,6 +18,8 @@ from toolkit.paths import REPOS_ROOT
 from toolkit.photomaker import PhotoMakerIDEncoder, FuseModule, PhotoMakerCLIPEncoder
 from toolkit.saving import load_ip_adapter_model, load_custom_adapter_model
 from toolkit.train_tools import get_torch_dtype
+from toolkit.models.pixtral_vision import PixtralVisionEncoderCompatible, PixtralVisionImagePreprocessorCompatible
+import random
 
 sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
@@ -257,6 +260,13 @@ class CustomAdapter(torch.nn.Module):
             self.vision_encoder = SiglipVisionModel.from_pretrained(
                 adapter_config.image_encoder_path,
                 ignore_mismatched_sizes=True).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        elif self.config.image_encoder_arch == 'pixtral':
+            self.image_processor = PixtralVisionImagePreprocessorCompatible(
+                max_image_size=self.config.pixtral_max_image_size,
+            )
+            self.vision_encoder = PixtralVisionEncoderCompatible.from_pretrained(
+                adapter_config.image_encoder_path,
+            ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         elif self.config.image_encoder_arch == 'vit':
             try:
                 self.image_processor = ViTFeatureExtractor.from_pretrained(adapter_config.image_encoder_path)
@@ -397,7 +407,7 @@ class CustomAdapter(torch.nn.Module):
         if 'vd_adapter' in state_dict:
             self.vd_adapter.load_state_dict(state_dict['vd_adapter'], strict=strict)
         if 'dvadapter' in state_dict:
-            self.vd_adapter.load_state_dict(state_dict['dvadapter'], strict=strict)
+            self.vd_adapter.load_state_dict(state_dict['dvadapter'], strict=False)
 
         if 'sv_adapter' in state_dict:
             self.single_value_adapter.load_state_dict(state_dict['sv_adapter'], strict=strict)
@@ -445,8 +455,8 @@ class CustomAdapter(torch.nn.Module):
             return state_dict
         elif self.adapter_type == 'vision_direct':
             state_dict["dvadapter"] = self.vd_adapter.state_dict()
-            if self.config.train_image_encoder:
-                state_dict["vision_encoder"] = self.vision_encoder.state_dict()
+            # if self.config.train_image_encoder: # always return vision encoder
+            state_dict["vision_encoder"] = self.vision_encoder.state_dict()
             return state_dict
         elif self.adapter_type == 'single_value':
             state_dict["sv_adapter"] = self.single_value_adapter.state_dict()
@@ -700,9 +710,11 @@ class CustomAdapter(torch.nn.Module):
         else:
             return prompt_embeds
 
-    def get_empty_clip_image(self, batch_size: int) -> torch.Tensor:
+    def get_empty_clip_image(self, batch_size: int, shape=None) -> torch.Tensor:
         with torch.no_grad():
-            tensors_0_1 = torch.rand([batch_size, 3, self.input_size, self.input_size], device=self.device)
+            if shape is None:
+                shape = [batch_size, 3, self.input_size, self.input_size]
+            tensors_0_1 = torch.rand(shape, device=self.device)
             noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
                                      dtype=get_torch_dtype(self.sd_ref().dtype))
             tensors_0_1 = tensors_0_1 * noise_scale
@@ -720,8 +732,7 @@ class CustomAdapter(torch.nn.Module):
     def train(self, mode: bool = True):
         if self.config.train_image_encoder:
             self.vision_encoder.train(mode)
-        else:
-            super().train(mode)
+        super().train(mode)
 
     def trigger_pre_te(
             self,
@@ -732,6 +743,7 @@ class CustomAdapter(torch.nn.Module):
             batch_size=1,
     ) -> PromptEmbeds:
         if self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter':
+            skip_unconditional = self.sd_ref().is_flux
             if tensors_0_1 is None:
                 tensors_0_1 = self.get_empty_clip_image(batch_size)
                 has_been_preprocessed = True
@@ -757,11 +769,37 @@ class CustomAdapter(torch.nn.Module):
                     ).pixel_values
                 else:
                     clip_image = tensors_0_1
+                    
+                # if is pixtral
+                if self.config.image_encoder_arch == 'pixtral' and self.config.pixtral_random_image_size:
+                    # get the random size
+                    random_size = random.randint(256, self.config.pixtral_max_image_size)
+                    # images are already sized for max size, we have to fit them to the pixtral patch size to reduce / enlarge it farther.
+                    h, w = clip_image.shape[2], clip_image.shape[3]
+                    current_base_size = int(math.sqrt(w * h))
+                    ratio = current_base_size / random_size
+                    if ratio > 1:
+                        w = round(w / ratio)
+                        h = round(h / ratio)
+
+                    width_tokens = (w - 1) // self.image_processor.image_patch_size + 1
+                    height_tokens = (h - 1) // self.image_processor.image_patch_size + 1
+                    assert width_tokens > 0
+                    assert height_tokens > 0
+                    
+                    new_image_size = (
+                        width_tokens * self.image_processor.image_patch_size,
+                        height_tokens * self.image_processor.image_patch_size,
+                    )
+                    
+                    # resize the image
+                    clip_image = F.interpolate(clip_image, size=new_image_size, mode='bicubic', align_corners=False)
+                    
 
                 batch_size = clip_image.shape[0]
-                if self.adapter_type == 'vision_direct'  or self.adapter_type == 'te_augmenter':
+                if (self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter') and not skip_unconditional:
                     # add an unconditional so we can save it
-                    unconditional = self.get_empty_clip_image(batch_size).to(
+                    unconditional = self.get_empty_clip_image(batch_size, shape=clip_image.shape).to(
                         clip_image.device, dtype=clip_image.dtype
                     )
                     clip_image = torch.cat([unconditional, clip_image], dim=0)
@@ -840,11 +878,14 @@ class CustomAdapter(torch.nn.Module):
                     elif self.config.clip_layer == 'last_hidden_state':
                         clip_image_embeds = clip_output.hidden_states[-1]
                     else:
-                        clip_image_embeds = clip_output.image_embeds
+                        if hasattr(clip_output, 'image_embeds'):
+                            clip_image_embeds = clip_output.image_embeds
+                        elif hasattr(clip_output, 'pooler_output'):
+                            clip_image_embeds = clip_output.pooler_output
                         # TODO should we always norm image embeds?
                         # get norm embeddings
-                        l2_norm = torch.norm(clip_image_embeds, p=2)
-                        clip_image_embeds = clip_image_embeds / l2_norm
+                        # l2_norm = torch.norm(clip_image_embeds, p=2)
+                        # clip_image_embeds = clip_image_embeds / l2_norm
 
                     if not is_training or not self.config.train_image_encoder:
                         clip_image_embeds = clip_image_embeds.detach()
@@ -857,7 +898,10 @@ class CustomAdapter(torch.nn.Module):
 
                     # save them to the conditional and unconditional
                     try:
-                        self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
+                        if skip_unconditional:
+                            self.unconditional_embeds, self.conditional_embeds = None, clip_image_embeds
+                        else:
+                            self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
                     except ValueError:
                         raise ValueError(f"could not split the clip image embeds into 2. Got shape: {clip_image_embeds.shape}")
 
@@ -889,6 +933,12 @@ class CustomAdapter(torch.nn.Module):
                     yield from attn_processor.parameters(recurse)
                 if self.config.train_image_encoder:
                     yield from self.vision_encoder.parameters(recurse)
+                if self.vd_adapter.resampler is not None:
+                    yield from self.vd_adapter.resampler.parameters(recurse)
+                if self.vd_adapter.pool is not None:
+                    yield from self.vd_adapter.pool.parameters(recurse)
+                if self.vd_adapter.sparse_autoencoder is not None:
+                    yield from self.vd_adapter.sparse_autoencoder.parameters(recurse)
         elif self.config.type == 'te_augmenter':
             yield from self.te_augmenter.parameters(recurse)
             if self.config.train_image_encoder:

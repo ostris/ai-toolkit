@@ -34,6 +34,7 @@ class GenerateConfig:
         self.compile = kwargs.get('compile', False)
         self.ext = kwargs.get('ext', 'png')
         self.prompt_file = kwargs.get('prompt_file', False)
+        self.num_repeats = kwargs.get('num_repeats', 1)
         self.prompts_in_file = self.prompts
         if self.prompts is None:
             raise ValueError("Prompts must be set")
@@ -110,30 +111,31 @@ class GenerateProcess(BaseProcess):
             print(f"Generating {len(self.generate_config.prompts)} images")
             # build prompt image configs
             prompt_image_configs = []
-            for prompt in self.generate_config.prompts:
-                width = self.generate_config.width
-                height = self.generate_config.height
-                prompt = self.clean_prompt(prompt)
+            for _ in range(self.generate_config.num_repeats):
+                for prompt in self.generate_config.prompts:
+                    width = self.generate_config.width
+                    height = self.generate_config.height
+                    # prompt = self.clean_prompt(prompt)
 
-                if self.generate_config.size_list is not None:
-                    # randomly select a size
-                    width, height = random.choice(self.generate_config.size_list)
+                    if self.generate_config.size_list is not None:
+                        # randomly select a size
+                        width, height = random.choice(self.generate_config.size_list)
 
-                prompt_image_configs.append(GenerateImageConfig(
-                    prompt=prompt,
-                    prompt_2=self.generate_config.prompt_2,
-                    width=width,
-                    height=height,
-                    num_inference_steps=self.generate_config.sample_steps,
-                    guidance_scale=self.generate_config.guidance_scale,
-                    negative_prompt=self.generate_config.neg,
-                    negative_prompt_2=self.generate_config.neg_2,
-                    seed=self.generate_config.seed,
-                    guidance_rescale=self.generate_config.guidance_rescale,
-                    output_ext=self.generate_config.ext,
-                    output_folder=self.output_folder,
-                    add_prompt_file=self.generate_config.prompt_file
-                ))
+                    prompt_image_configs.append(GenerateImageConfig(
+                        prompt=prompt,
+                        prompt_2=self.generate_config.prompt_2,
+                        width=width,
+                        height=height,
+                        num_inference_steps=self.generate_config.sample_steps,
+                        guidance_scale=self.generate_config.guidance_scale,
+                        negative_prompt=self.generate_config.neg,
+                        negative_prompt_2=self.generate_config.neg_2,
+                        seed=self.generate_config.seed,
+                        guidance_rescale=self.generate_config.guidance_rescale,
+                        output_ext=self.generate_config.ext,
+                        output_folder=self.output_folder,
+                        add_prompt_file=self.generate_config.prompt_file
+                    ))
             # generate images
             self.sd.generate_images(prompt_image_configs, sampler=self.generate_config.sampler)
 

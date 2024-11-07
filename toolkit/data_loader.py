@@ -441,11 +441,24 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         if not os.path.isdir(self.dataset_path):
             dataset_folder = os.path.dirname(dataset_folder)
         dataset_size_file = os.path.join(dataset_folder, '.aitk_size.json')
+        dataloader_version = "0.1.1"
         if os.path.exists(dataset_size_file):
-            with open(dataset_size_file, 'r') as f:
-                self.size_database = json.load(f)
+            try:
+                with open(dataset_size_file, 'r') as f:
+                    self.size_database = json.load(f)
+                
+                if "__version__" not in self.size_database or self.size_database["__version__"] != dataloader_version:
+                    print("Upgrading size database to new version")
+                    # old version, delete and recreate
+                    self.size_database = {}
+            except Exception as e:
+                print(f"Error loading size database: {dataset_size_file}")
+                print(e)
+                self.size_database = {}
         else:
             self.size_database = {}
+        
+        self.size_database["__version__"] = dataloader_version
 
         bad_count = 0
         for file in tqdm(file_list):
@@ -456,6 +469,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
+                    dataset_root=dataset_folder,
                 )
                 self.file_list.append(file_item)
             except Exception as e:

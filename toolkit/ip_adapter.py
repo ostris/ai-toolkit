@@ -1161,13 +1161,13 @@ class IPAdapter(torch.nn.Module):
         # when training just scaler, we do not train anything else
         if not self.config.train_scaler:
             param_groups.append({
-                "params": self.get_non_scaler_parameters(),
+                "params": list(self.get_non_scaler_parameters()),
                 "lr": adapter_lr,
             })
         if self.config.train_scaler or self.config.merge_scaler:
             scaler_lr = adapter_lr if self.config.scaler_lr is None else self.config.scaler_lr
             param_groups.append({
-                "params": self.get_scaler_parameters(),
+                "params": list(self.get_scaler_parameters()),
                 "lr": scaler_lr,
             })
         return param_groups

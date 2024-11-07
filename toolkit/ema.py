@@ -45,7 +45,8 @@ class ExponentialMovingAverage:
             decay: float = 0.995,
             use_num_updates: bool = True,
             # feeds back the decat to the parameter
-            use_feedback: bool = False
+            use_feedback: bool = False,
+            param_multiplier: float = 1.0
     ):
         if parameters is None:
             raise ValueError("parameters must be provided")
@@ -54,6 +55,7 @@ class ExponentialMovingAverage:
         self.decay = decay
         self.num_updates = 0 if use_num_updates else None
         self.use_feedback = use_feedback
+        self.param_multiplier = param_multiplier
         parameters = list(parameters)
         self.shadow_params = [
             p.clone().detach()
@@ -128,6 +130,9 @@ class ExponentialMovingAverage:
 
                 if self.use_feedback:
                     param.add_(tmp)
+                
+                if self.param_multiplier != 1.0:
+                    param.mul_(self.param_multiplier)
 
     def copy_to(
             self,

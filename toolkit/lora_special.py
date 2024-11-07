@@ -232,7 +232,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.peft_format = peft_format
 
         # always do peft for flux only for now
-        if self.is_flux:
+        if self.is_flux or self.is_v3:
             self.peft_format = True
 
         if self.peft_format:
@@ -324,6 +324,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                             if "transformer_blocks" not in lora_name:
                                 skip = True
                         if self.transformer_only and self.is_flux and is_unet:
+                            if "transformer_blocks" not in lora_name:
+                                skip = True
+                        if self.transformer_only and self.is_v3 and is_unet:
                             if "transformer_blocks" not in lora_name:
                                 skip = True
 

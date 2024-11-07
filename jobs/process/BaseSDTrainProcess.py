@@ -55,9 +55,9 @@ import gc
 
 from tqdm import tqdm
 
-from toolkit.config_modules import SaveConfig, LogingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
+from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
     GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig
-
+from toolkit.logging import create_logger
 
 def flush():
     torch.cuda.empty_cache()
@@ -102,7 +102,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             self.has_first_sample_requested = False
             self.first_sample_config = self.sample_config
-        self.logging_config = LogingConfig(**self.get_conf('logging', {}))
+        self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
+        self.logger = create_logger(self.logging_config, config)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -173,6 +174,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             train_adapter=is_training_adapter,
             train_embedding=self.embed_config is not None,
             train_refiner=self.train_config.train_refiner,
+            unload_text_encoder=self.train_config.unload_text_encoder,
+            require_grads=False  # we ensure them later
+        )
+        
+        self.get_params_device_state_preset = get_train_sd_device_state_preset(
+            device=self.device_torch,
+            train_unet=self.train_config.train_unet,
+            train_text_encoder=self.train_config.train_text_encoder,
+            cached_latents=self.is_latents_cached,
+            train_lora=self.network_config is not None,
+            train_adapter=is_training_adapter,
+            train_embedding=self.embed_config is not None,
+            train_refiner=self.train_config.train_refiner,
+            unload_text_encoder=self.train_config.unload_text_encoder,
+            require_grads=True  # We check for grads when getting params
         )
 
         # fine_tuning here is for training actual SD network, not LoRA, embeddings, etc. it is (Dreambooth, etc)
@@ -258,6 +274,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 adapter_conditioning_scale=sample_config.adapter_conditioning_scale,
                 refiner_start_at=sample_config.refiner_start_at,
                 extra_values=sample_config.extra_values,
+                logger=self.logger,
                 **extra_args
             ))
 
@@ -568,13 +585,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return params
 
     def hook_before_train_loop(self):
-        pass
+        self.logger.start()
 
     def ensure_params_requires_grad(self):
         # get param groups
-        for group in self.optimizer.param_groups:
+        # for group in self.optimizer.param_groups:
+        for group in self.params:
             for param in group['params']:
-                param.requires_grad = True
+                if isinstance(param, torch.nn.Parameter):  # Ensure it's a proper parameter
+                    param.requires_grad_(True)
 
     def setup_ema(self):
         if self.train_config.ema_config.use_ema:
@@ -585,8 +604,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     params.append(param)
             self.ema = ExponentialMovingAverage(
                 params,
-                self.train_config.ema_config.ema_decay,
+                decay=self.train_config.ema_config.ema_decay,
                 use_feedback=self.train_config.ema_config.use_feedback,
+                param_multiplier=self.train_config.ema_config.param_multiplier,
             )
 
     def before_dataset_load(self):
@@ -910,10 +930,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         num_train_timesteps, device=self.device_torch, original_inference_steps=num_train_timesteps
                     )
                 elif self.train_config.noise_scheduler == 'flowmatch':
+                    linear_timesteps = any([
+                        self.train_config.linear_timesteps,
+                        self.train_config.linear_timesteps2,
+                        self.train_config.timestep_type == 'linear',
+                    ])
                     self.sd.noise_scheduler.set_train_timesteps(
                         num_train_timesteps,
                         device=self.device_torch,
-                        linear=self.train_config.linear_timesteps or self.train_config.linear_timesteps2
+                        linear=linear_timesteps
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(
@@ -1448,7 +1473,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # self.step_num = self.embedding.step
                 # self.start_step = self.step_num
                 params.append({
-                    'params': self.embedding.get_trainable_params(),
+                    'params': list(self.embedding.get_trainable_params()),
                     'lr': self.train_config.embedding_lr
                 })
 
@@ -1466,7 +1491,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     else:
                         # set trainable params
                         params.append({
-                            'params': self.adapter.parameters(),
+                            'params': list(self.adapter.parameters()),
                             'lr': self.train_config.adapter_lr
                         })
 
@@ -1478,7 +1503,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         else:  # no network, embedding or adapter
             # set the device state preset before getting params
-            self.sd.set_device_state(self.train_device_state_preset)
+            self.sd.set_device_state(self.get_params_device_state_preset)
 
             # params = self.get_params()
             if len(params) == 0:
@@ -1512,6 +1537,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.start_step = self.step_num
 
         optimizer_type = self.train_config.optimizer.lower()
+        
+        # esure params require grad
+        self.ensure_params_requires_grad()
         optimizer = get_optimizer(self.params, optimizer_type, learning_rate=self.train_config.lr,
                                   optimizer_params=self.train_config.optimizer_params)
         self.optimizer = optimizer
@@ -1627,6 +1655,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # TRAIN LOOP
         ###################################################################
 
+
         start_step_num = self.step_num
         did_first_flush = False
         for step in range(start_step_num, self.train_config.steps):
@@ -1652,8 +1681,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 batch_list = []
 
                 for b in range(self.train_config.gradient_accumulation):
+                    # keep track to alternate on an accumulation step for reg   
+                    batch_step = step
                     # don't do a reg step on sample or save steps as we dont want to normalize on those
-                    if step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
+                    if batch_step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
                         try:
                             with self.timer('get_batch:reg'):
                                 batch = next(dataloader_iterator_reg)
@@ -1689,6 +1720,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     else:
                         batch = None
                     batch_list.append(batch)
+                    batch_step += 1
 
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:
@@ -1718,7 +1750,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             with torch.no_grad():
                 # torch.cuda.empty_cache()
-                if self.train_config.optimizer.lower().startswith('dadaptation') or \
+                # if optimizer has get_lrs method, then use it
+                if hasattr(optimizer, 'get_learning_rates'):
+                    learning_rate = optimizer.get_learning_rates()[0]
+                elif self.train_config.optimizer.lower().startswith('dadaptation') or \
                         self.train_config.optimizer.lower().startswith('prodigy'):
                     learning_rate = (
                             optimizer.param_groups[0]["d"] *
@@ -1747,6 +1782,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
+                        if self.train_config.unload_text_encoder:
+                            # make sure the text encoder is unloaded
+                            self.sd.text_encoder_to('cpu')
+                        flush()
+
                         self.ensure_params_requires_grad()
                         self.progress_bar.unpause()
 
@@ -1767,6 +1807,25 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                     self.writer.add_scalar(f"{key}", value, self.step_num)
                                 self.writer.add_scalar(f"lr", learning_rate, self.step_num)
                             self.progress_bar.unpause()
+                        
+                        # log to logger
+                        self.logger.log({
+                            'learning_rate': learning_rate,
+                        })
+                        for key, value in loss_dict.items():
+                            self.logger.log({
+                                f'loss/{key}': value,
+                            })
+                    elif self.logging_config.log_every is None: 
+                        # log every step
+                        self.logger.log({
+                            'learning_rate': learning_rate,
+                        })
+                        for key, value in loss_dict.items():
+                            self.logger.log({
+                                f'loss/{key}': value,
+                            })
+
 
                     if self.performance_log_every > 0 and self.step_num % self.performance_log_every == 0:
                         self.progress_bar.pause()
@@ -1774,6 +1833,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.timer.print()
                         self.timer.reset()
                         self.progress_bar.unpause()
+                
+                # commit log
+                self.logger.commit(step=self.step_num)
 
                 # sets progress bar to match out step
                 self.progress_bar.update(step - self.progress_bar.n)
@@ -1796,8 +1858,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sd.pipeline.disable_freeu()
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
+            self.logger.commit(step=self.step_num)
         print("")
         self.save()
+        self.logger.finish()
+
         if self.save_config.push_to_hub:
             if("HF_TOKEN" not in os.environ):
                 interpreter_login(new_session=False, write_permission=True)
@@ -1864,6 +1929,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             tags.append("stable-diffusion-xl")
         if self.model_config.is_flux:
             tags.append("flux")
+        if self.model_config.is_v3:
+            tags.append("sd3")
         if self.network_config:
             tags.extend(
                 [
@@ -1940,7 +2007,7 @@ from diffusers import AutoPipelineForText2Image
 import torch
 
 pipeline = AutoPipelineForText2Image.from_pretrained('{base_model}', torch_dtype={dtype}).to('cuda')
-pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}')
+pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}.safetensors')
 image = pipeline('{instance_prompt if not widgets else self.sample_config.prompts[0]}').images[0]
 image.save("my_image.png")
 ```
