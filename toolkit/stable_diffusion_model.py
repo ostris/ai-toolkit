@@ -1161,6 +1161,8 @@ class StableDiffusion:
                         self.network.multiplier = gen_config.network_multiplier
                     torch.manual_seed(gen_config.seed)
                     torch.cuda.manual_seed(gen_config.seed)
+                    
+                    generator = torch.manual_seed(gen_config.seed)
 
                     if self.adapter is not None and isinstance(self.adapter, ClipVisionAdapter) \
                             and gen_config.adapter_image_path is not None:
@@ -1285,6 +1287,7 @@ class StableDiffusion:
                             guidance_scale=gen_config.guidance_scale,
                             guidance_rescale=grs,
                             latents=gen_config.latents,
+                            generator=generator,
                             **extra
                         ).images[0]
                     elif self.is_v3:
@@ -1298,6 +1301,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            generator=generator,
                             **extra
                         ).images[0]
                     elif self.is_flux:
@@ -1312,6 +1316,7 @@ class StableDiffusion:
                                 num_inference_steps=gen_config.num_inference_steps,
                                 guidance_scale=gen_config.guidance_scale,
                                 latents=gen_config.latents,
+                                generator=generator,
                                 **extra
                             ).images[0]
                         else:
@@ -1325,6 +1330,7 @@ class StableDiffusion:
                                 num_inference_steps=gen_config.num_inference_steps,
                                 guidance_scale=gen_config.guidance_scale,
                                 latents=gen_config.latents,
+                                generator=generator,
                                 **extra
                             ).images[0]
                     elif self.is_pixart:
@@ -1345,6 +1351,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            generator=generator,
                             **extra
                         ).images[0]
                     elif self.is_auraflow:
@@ -1366,6 +1373,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            generator=generator,
                             **extra
                         ).images[0]
                     else:
@@ -1379,6 +1387,7 @@ class StableDiffusion:
                             num_inference_steps=gen_config.num_inference_steps,
                             guidance_scale=gen_config.guidance_scale,
                             latents=gen_config.latents,
+                            generator=generator,
                             **extra
                         ).images[0]
 
@@ -1404,7 +1413,8 @@ class StableDiffusion:
                             guidance_rescale=grs,
                             denoising_start=gen_config.refiner_start_at,
                             denoising_end=gen_config.num_inference_steps,
-                            image=img.unsqueeze(0)
+                            image=img.unsqueeze(0),
+                            generator=generator,
                         ).images[0]
 
                     gen_config.save_image(img, i)
