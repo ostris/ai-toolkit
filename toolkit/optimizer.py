@@ -53,6 +53,14 @@ def get_optimizer(
         # let net be the neural network you want to train
         # you can choose weight decay value based on your problem, 0 by default
         optimizer = Prodigy(params, lr=use_lr, eps=1e-6, **optimizer_params)
+    elif lower_type == "adam8":
+        from toolkit.optimizers.adam8bit import Adam8bit
+
+        optimizer = Adam8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
+    elif lower_type == "adamw8":
+        from toolkit.optimizers.adam8bit import Adam8bit
+
+        optimizer = Adam8bit(params, lr=learning_rate, eps=1e-6, decouple=True, **optimizer_params)
     elif lower_type.endswith("8bit"):
         import bitsandbytes
 
