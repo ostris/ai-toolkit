@@ -45,7 +45,7 @@ class SampleConfig:
         self.width: int = kwargs.get('width', 512)
         self.height: int = kwargs.get('height', 512)
         self.prompts: list[str] = kwargs.get('prompts', [])
-        self.neg = kwargs.get('neg', False)
+        self.neg = kwargs.get('neg', '')
         self.seed = kwargs.get('seed', 0)
         self.walk_seed = kwargs.get('walk_seed', False)
         self.guidance_scale = kwargs.get('guidance_scale', 7)
