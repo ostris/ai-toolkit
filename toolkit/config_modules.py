@@ -389,6 +389,10 @@ class TrainConfig:
         # will cache a blank prompt or the trigger word, and unload the text encoder to cpu
         # will make training faster and use less vram
         self.unload_text_encoder = kwargs.get('unload_text_encoder', False)
+        # for swapping which parameters are trained during training
+        self.do_paramiter_swapping = kwargs.get('do_paramiter_swapping', False)
+        # 0.1 is 10% of the parameters active at a time lower is less vram, higher is more
+        self.paramiter_swapping_factor = kwargs.get('paramiter_swapping_factor', 0.1)
 
 
 class ModelConfig:
@@ -899,3 +903,15 @@ class GenerateImageConfig:
             return
 
         self.logger.log_image(image, count, self.prompt)
+        
+        
+def validate_configs(
+    train_config: TrainConfig,
+    model_config: ModelConfig,
+    save_config: SaveConfig,
+):
+    if model_config.is_flux:
+        if save_config.save_format != 'diffusers':
+            # make it diffusers
+            save_config.save_format = 'diffusers'
+        
