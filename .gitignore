@@ -176,3 +176,5 @@ cython_debug/
 /temp
 /wandb
 .vscode/settings.json
+.DS_Store
+._.DS_Store
