@@ -513,12 +513,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # move it back
                     self.adapter = self.adapter.to(orig_device, dtype=orig_dtype)
                 else:
+                    direct_save = False
+                    if self.adapter_config.train_only_image_encoder:
+                        direct_save = True
+                    if self.adapter_config.type == 'redux':
+                        direct_save = True
                     save_ip_adapter_from_diffusers(
                         state_dict,
                         output_file=file_path,
                         meta=save_meta,
                         dtype=get_torch_dtype(self.save_config.dtype),
-                        direct_save=self.adapter_config.train_only_image_encoder
+                        direct_save=direct_save
                     )
         else:
             if self.save_config.save_format == "diffusers":
