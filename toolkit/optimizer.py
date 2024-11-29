@@ -95,6 +95,9 @@ def get_optimizer(
         if 'warmup_init' not in optimizer_params:
             optimizer_params['warmup_init'] = False
         optimizer = Adafactor(params, lr=float(learning_rate), eps=1e-6, **optimizer_params)
+    elif lower_type == 'automagic':
+        from toolkit.optimizers.automagic import Automagic
+        optimizer = Automagic(params, lr=float(learning_rate), **optimizer_params)
     else:
         raise ValueError(f'Unknown optimizer type {optimizer_type}')
     return optimizer
