@@ -241,7 +241,7 @@ class Auto8bitTensor:
         self.orig_dtype = state_dict['orig_dtype']
 
     def __str__(self):
-        return f"Auto8bitTensor(scale={self.scale}, orig_dtype={self.orig_dtype})"
+        return f"Auto8bitTensor({self.dequantize()})"
 
 
 def stochastic_grad_accummulation(param):
