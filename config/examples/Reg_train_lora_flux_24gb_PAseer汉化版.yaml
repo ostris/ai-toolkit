@@ -1,0 +1,106 @@
+---
+job: extension
+config:
+  # this name will be the folder and filename name 这里填写项目名称，会自动创建同名项目文件夹
+  name: "my_first_flux_lora_v1"  #项目名
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights  项目储存位置
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps   每多少步保存训练日志，用于记录训练细节
+#      performance_log_every: 1000
+      device: cuda:0
+      # if a trigger word is specified, it will be added to captions of training data if it does not already exist  添加独特的触发词，如果你的标签文件中没有会添加。
+      # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word   也可以在打标的时候用[trigger]作为预备位置，这个词会被替换为触发词。
+#      trigger_word: "p3r5on"  #写入你的总体触发词
+      network:
+        type: "lora"  #可以lycoris，lora
+        linear: 16  #dim/rank 决定文件大小
+        linear_alpha: 16  # 约束能力，越小需要的学习率越大，建议每缩小一半，学习率提高10%
+      save:
+        dtype: float16 # precision to save  保存精度
+        save_every: 250 # save every this many steps  每多少步储存一次
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep  最多保存多少个模型（自动删除最旧的模型）
+        push_to_hub: false #change this to True to push your trained model to Hugging Face. 自动发布到huggingface（抱脸网）上
+        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
+#       hf_repo_id: your-username/your-model-slug        #抱脸网的登陆讯息
+#       hf_private: true #whether the repo is private or public   #是否发布为公开项目
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/folder"  #目标训练集
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time  标签丢弃率，增加泛化性，减少精确性。请酌情增减，太高会产生标签污染。
+          shuffle_tokens: false  # shuffle caption order, split by commas  打乱标签。
+          keep_tokens: 2 #打乱标签的情况下，确保前n个词不变
+          cache_latents_to_disk: true  # leave this true unless you know what you're doing
+          resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions this will create 3 different repeats  选一个留下就行，当然是越大越精细，但显存也占的多。
+          num_repeats: 2 #how many times to repeats your datasets  重复次数
+          
+        - folder_path: "/path/to/images/Reg-folder"   #正则化训练集
+          is_reg: True
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          shuffle_tokens: false  # shuffle caption order, split by commas
+          cache_latents_to_disk: true  # leave this true unless you know what you're doing
+          resolution: [ 1024 ]  # flux enjoys multiple resolutions
+      train:
+        batch_size: 1 #learn n pictures at same time use more VRAM but more accurate. 并行学习数量增加占用的显存但会让结果更精确。每提升一倍建议增加50%学习率。
+        steps: 2000  # total number of steps to train 500 - 4000 is a good range  总步数，请根据（训练集图片数量*num_repeats)÷batch_size÷gradient_accumulation_steps*epoch==steps来计算你想知道的任一数值。
+        gradient_accumulation_steps: 1  #连续累积学习数量，比batch_size占用的显存更少。
+        train_unet: true  
+        train_text_encoder: false  # probably won't work with flux FLUX训练目前没支持
+        gradient_checkpointing: true  # need the on unless you have a ton of vram  必须开，不然24G显存肯定不够用。
+        noise_scheduler: "flowmatch" # for training only 目前FLUX只支持这个噪声添加方式
+        optimizer: "adamw8bit" #lion，lion8bit
+        lr: 1e-4  #请根据batch_size, liner_alpha, liner, gradient_accumulation_steps来调整。lion8bit的推荐学习率是2e-5.
+        # uncomment this to skip the pre training sample
+#        skip_first_sample: true
+        # uncomment to completely disable sampling
+#        disable_sampling: true
+        # uncomment to use new vell curved weighting. Experimental but may produce better results 建议开启，FLUX的dev模型属于蒸馏模型，噪声添加用这个方式更好些。
+        linear_timesteps: true
+
+        # ema will smooth out learning, but could slow it down. Recommended to leave on.
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+
+        # will probably need this if gpu supports it for flux, other dtypes may not work correctly
+        dtype: bf16
+      model:
+        # huggingface model name or path  如果你下载到本地，这里改成固定路径，确保这个地方是Diffusers的训练底模，而不是一个文件。
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        is_flux: true
+        quantize: true  # run 8bit mixed precision 开，不然24G显存肯定不够用。
+#        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower. 太慢，不建议开。
+      sample:
+        sampler: "flowmatch" # must match train.noise_scheduler
+        sample_every: 250 # sample every this many steps  建议和训练保存步数一致，不然只有示例图没有文件，或者只有文件没有示例图都会影响心情~.
+        width: 1024
+        height: 1024
+        prompts:
+          # you can add [trigger] to the prompts here and it will be replaced with the trigger word  可以自己改，建议删去一些。
+#          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "hipster man with a beard, building a chair, in a wood shop"
+          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+          - "a man holding a sign that says, 'this is a sign'"
+          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+        neg: ""  # not used on flux 负面提示词在FLUX就是正面提示词，不如不添加。
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 20
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'
