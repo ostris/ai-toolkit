@@ -131,6 +131,25 @@ You will instantiate a UI that will let you upload your images, caption them, tr
 ![image](assets/lora_ease_ui.png)
 
 
+### Google Colab
+
+If you are not using `FLUX.1-dev`, you can skip the `!huggingface-cli login` step.  
+Otherwise, make sure to set your Hugging Face Access Token first:
+
+```bash
+!huggingface-cli login
+```
+
+Next, run the following commands in your Colab notebook:
+
+```bash
+!git clone https://github.com/ostris/ai-toolkit.git
+%cd ai-toolkit
+!git submodule update --init --recursive
+!pip3 install -r requirements.txt
+!python flux_train_ui.py
+```
+
 ## Training in RunPod
 Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
 > You need a minimum of 24GB VRAM, pick a GPU by your preference.
