@@ -1,15 +1,14 @@
 import os
 from collections import OrderedDict
 from jobs import BaseJob
-from toolkit.extension import get_all_extensions_process_dict
-from toolkit.paths import CONFIG_ROOT
+from toolkit.extension_registry import ExtensionRegistry
 
 class ExtensionJob(BaseJob):
 
     def __init__(self, config: OrderedDict):
         super().__init__(config)
-        self.device = self.get_conf('device', 'cpu')
-        self.process_dict = get_all_extensions_process_dict()
+        self.device = self.get_conf("device", "cpu")
+        self.process_dict = ExtensionRegistry().get_process_dict()
         self.load_processes(self.process_dict)
 
     def run(self):
