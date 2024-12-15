@@ -264,6 +264,10 @@ class Adafactor(torch.optim.Optimizer):
                 if grad.is_sparse:
                     raise RuntimeError(
                         "Adafactor does not support sparse gradients.")
+                
+                # if p has atts _scale then it is quantized. We need to divide the grad by the scale
+                # if hasattr(p, "_scale"):
+                #     grad = grad / p._scale
 
                 state = self.state[p]
                 grad_shape = grad.shape

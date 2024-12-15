@@ -227,6 +227,11 @@ class EmbeddingConfig:
         self.trigger_class_name = kwargs.get('trigger_class_name', None)  # used for inverted masked prior
 
 
+class DecoratorConfig:
+    def __init__(self, **kwargs):
+        self.num_tokens: str = kwargs.get('num_tokens', 4)
+
+
 ContentOrStyleType = Literal['balanced', 'style', 'content']
 LossTarget = Literal['noise', 'source', 'unaugmented', 'differential_noise']
 
@@ -393,6 +398,8 @@ class TrainConfig:
         self.do_paramiter_swapping = kwargs.get('do_paramiter_swapping', False)
         # 0.1 is 10% of the parameters active at a time lower is less vram, higher is more
         self.paramiter_swapping_factor = kwargs.get('paramiter_swapping_factor', 0.1)
+        # bypass the guidance embedding for training. For open flux with guidance embedding
+        self.bypass_guidance_embedding = kwargs.get('bypass_guidance_embedding', False)
 
 
 class ModelConfig:
@@ -458,6 +465,7 @@ class ModelConfig:
         # for targeting a specific layers
         self.ignore_if_contains: Optional[List[str]] = kwargs.get("ignore_if_contains", None)
         self.only_if_contains: Optional[List[str]] = kwargs.get("only_if_contains", None)
+        self.quantize_kwargs = kwargs.get("quantize_kwargs", {})
         
         if self.ignore_if_contains is not None or self.only_if_contains is not None:
             if not self.is_flux:
@@ -914,4 +922,6 @@ def validate_configs(
         if save_config.save_format != 'diffusers':
             # make it diffusers
             save_config.save_format = 'diffusers'
-        
+        if model_config.use_flux_cfg:
+            # bypass the embedding
+            train_config.bypass_guidance_embedding = True

@@ -34,6 +34,7 @@ from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.lorm import convert_diffusers_unet_to_lorm, count_parameters, print_lorm_extract_details, \
     lorm_ignore_if_contains, lorm_parameter_threshold, LORM_TARGET_REPLACE_MODULE
 from toolkit.lycoris_special import LycorisSpecialNetwork
+from toolkit.models.decorator import Decorator
 from toolkit.network_mixins import Network
 from toolkit.optimizer import get_optimizer
 from toolkit.paths import CONFIG_ROOT
@@ -56,7 +57,8 @@ import gc
 from tqdm import tqdm
 
 from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
-    GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs
+    GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs, \
+    DecoratorConfig
 from toolkit.logging import create_logger
 from diffusers import FluxTransformer2DModel
 
@@ -143,6 +145,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         embedding_raw = self.get_conf('embedding', None)
         if embedding_raw is not None:
             self.embed_config = EmbeddingConfig(**embedding_raw)
+        
+        self.decorator_config: DecoratorConfig = None
+        decorator_raw = self.get_conf('decorator', None)
+        if decorator_raw is not None:
+            if not self.model_config.is_flux:
+                raise ValueError("Decorators are only supported for Flux models currently")
+            self.decorator_config = DecoratorConfig(**decorator_raw)
 
         # t2i adapter
         self.adapter_config = None
@@ -157,6 +166,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.network: Union[Network, None] = None
         self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, CustomAdapter, ControlNetModel, None] = None
         self.embedding: Union[Embedding, None] = None
+        self.decorator: Union[Decorator, None] = None
 
         is_training_adapter = self.adapter_config is not None and self.adapter_config.train
 
@@ -174,6 +184,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             train_lora=self.network_config is not None,
             train_adapter=is_training_adapter,
             train_embedding=self.embed_config is not None,
+            train_decorator=self.decorator_config is not None,
             train_refiner=self.train_config.train_refiner,
             unload_text_encoder=self.train_config.unload_text_encoder,
             require_grads=False  # we ensure them later
@@ -187,6 +198,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             train_lora=self.network_config is not None,
             train_adapter=is_training_adapter,
             train_embedding=self.embed_config is not None,
+            train_decorator=self.decorator_config is not None,
             train_refiner=self.train_config.train_refiner,
             unload_text_encoder=self.train_config.unload_text_encoder,
             require_grads=True  # We check for grads when getting params
@@ -194,7 +206,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # fine_tuning here is for training actual SD network, not LoRA, embeddings, etc. it is (Dreambooth, etc)
         self.is_fine_tuning = True
-        if self.network_config is not None or is_training_adapter or self.embed_config is not None:
+        if self.network_config is not None or is_training_adapter or self.embed_config is not None or self.decorator_config is not None:
             self.is_fine_tuning = False
 
         self.named_lora = False
@@ -468,6 +480,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # replace extension
                     emb_file_path = os.path.splitext(emb_file_path)[0] + ".pt"
                 self.embedding.save(emb_file_path)
+            
+            if self.decorator is not None:
+                dec_filename = f'{self.job.name}{step_num}.safetensors'
+                dec_file_path = os.path.join(self.save_root, dec_filename)
+                decorator_state_dict = self.decorator.state_dict()
+                for key, value in decorator_state_dict.items():
+                    if isinstance(value, torch.Tensor):
+                        decorator_state_dict[key] = value.clone().to('cpu', dtype=get_torch_dtype(self.save_config.dtype))
+                save_file(
+                    decorator_state_dict,
+                    dec_file_path,
+                    metadata=save_meta,
+                )
 
             if self.adapter is not None and self.adapter_config.train:
                 adapter_name = self.job.name
@@ -1504,6 +1529,30 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     'params': list(self.embedding.get_trainable_params()),
                     'lr': self.train_config.embedding_lr
                 })
+
+                flush()
+            
+            if self.decorator_config is not None:
+                self.decorator = Decorator(
+                    num_tokens=self.decorator_config.num_tokens,
+                    token_size=4096 # t5xxl hidden size for flux
+                )
+                latest_save_path = self.get_latest_save_path()
+                # load last saved weights
+                if latest_save_path is not None:
+                    state_dict = load_file(latest_save_path)
+                    self.decorator.load_state_dict(state_dict)
+                    self.load_training_state_from_metadata(path)
+                    
+                params.append({
+                    'params': list(self.decorator.parameters()),
+                    'lr': self.train_config.lr
+                })
+                
+                # give it to the sd network
+                self.sd.decorator = self.decorator
+                self.decorator.to(self.device_torch, dtype=torch.float32)
+                self.decorator.train()
 
                 flush()
 

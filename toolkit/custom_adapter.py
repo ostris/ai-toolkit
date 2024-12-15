@@ -205,7 +205,8 @@ class CustomAdapter(torch.nn.Module):
         elif self.adapter_type == 'single_value':
             self.single_value_adapter = SingleValueAdapter(self, self.sd_ref(), num_values=self.config.num_tokens)
         elif self.adapter_type == 'redux':
-            self.redux_adapter = ReduxImageEncoder(1152, 4096, self.device, torch_dtype)
+            vision_hidden_size = self.vision_encoder.config.hidden_size
+            self.redux_adapter = ReduxImageEncoder(vision_hidden_size, 4096, self.device, torch_dtype)
         else:
             raise ValueError(f"unknown adapter type: {self.adapter_type}")
 

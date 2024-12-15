@@ -101,7 +101,7 @@ class Automagic(torch.optim.Optimizer):
         if 'avg_lr' in param_state:
             lr = param_state["avg_lr"]
         else:
-            lr = param_state["lr"]
+            lr = 0.0
         return lr
 
     def _get_group_lr(self, group):
@@ -332,4 +332,4 @@ class Automagic(torch.optim.Optimizer):
                 state['lr_mask'] = Auto8bitTensor(sd_mask)
                 del state_dict['state'][idx]['lr_mask']
                 idx += 1
-        super().load_state_dict(state_dict, strict)
+        super().load_state_dict(state_dict)

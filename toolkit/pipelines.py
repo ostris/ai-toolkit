@@ -14,6 +14,7 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
 from diffusers.utils import is_torch_xla_available
 from k_diffusion.external import CompVisVDenoiser, CompVisDenoiser
 from k_diffusion.sampling import get_sigmas_karras, BrownianTreeNoiseSampler
+from toolkit.models.flux import bypass_flux_guidance, restore_flux_guidance
 
 
 if is_torch_xla_available():
@@ -1235,6 +1236,8 @@ class FluxWithCFGPipeline(FluxPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
     ):
+        # bypass the guidance embedding if there is one
+        bypass_flux_guidance(self.transformer)
 
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
@@ -1410,6 +1413,7 @@ class FluxWithCFGPipeline(FluxPipeline):
 
         # Offload all models
         self.maybe_free_model_hooks()
+        restore_flux_guidance(self.transformer)
 
         if not return_dict:
             return (image,)

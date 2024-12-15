@@ -934,8 +934,10 @@ class SDTrainer(BaseSDTrainProcess):
             unconditional_embeddings=unconditional_embeds,
             timestep=timesteps,
             guidance_scale=self.train_config.cfg_scale,
+            guidance_embedding_scale=self.train_config.cfg_scale,
             detach_unconditional=False,
             rescale_cfg=self.train_config.cfg_rescale,
+            bypass_guidance_embedding=self.train_config.bypass_guidance_embedding,
             **kwargs
         )
 
@@ -1289,6 +1291,16 @@ class SDTrainer(BaseSDTrainProcess):
                         conditional_embeds = conditional_embeds.detach()
                         if self.train_config.do_cfg:
                             unconditional_embeds = unconditional_embeds.detach()
+                    
+                    if self.decorator:
+                        conditional_embeds.text_embeds = self.decorator(
+                            conditional_embeds.text_embeds
+                        )
+                        if self.train_config.do_cfg:
+                            unconditional_embeds.text_embeds = self.decorator(
+                                unconditional_embeds.text_embeds, 
+                                is_unconditional=True
+                            )
 
                 # flush()
                 pred_kwargs = {}
