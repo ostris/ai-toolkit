@@ -2,60 +2,59 @@
 job: extension
 config:
   # this name will be the folder and filename name
-  name: "my_first_flux_lora_v1"
+  name: "NAME_FLUX_PAseer"
   process:
     - type: 'sd_trainer'
       # root folder to save training sessions/samples/weights
       training_folder: "output"
       # uncomment to see performance stats in the terminal every N steps
 #      performance_log_every: 1000
-      device: cuda:0
+      device: ["cuda:0","cuda:1"]
       # if a trigger word is specified, it will be added to captions of training data if it does not already exist
       # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
 #      trigger_word: "p3r5on"
       network:
         type: "lora"
-        linear: 16
-        linear_alpha: 16
+        linear: 8
+        linear_alpha: 1
         network_kwargs:
           only_if_contains:
             - "transformer.transformer_blocks.0"
+            - "transformer.transformer_blocks.1"
             - "transformer.transformer_blocks.2"
-            - "transformer.transformer_blocks.5"
-            - "transformer.transformer_blocks.12"
-            - "transformer.transformer_blocks.15"
+            - "transformer.transformer_blocks.10"
+            - "transformer.transformer_blocks.14"
+            - "transformer.transformer_blocks.16"
+            - "transformer.transformer_blocks.17"
             - "transformer.transformer_blocks.18"
             - "transformer.single_transformer_blocks.0"
-            - "transformer.single_transformer_blocks.4.proj_out"
-            - "transformer.single_transformer_blocks.5.proj_out"
+            - "transformer.single_transformer_blocks.1"
+            - "transformer.single_transformer_blocks.4"
+            - "transformer.single_transformer_blocks.6"
             - "transformer.single_transformer_blocks.7"
-            - "transformer.single_transformer_blocks.8.proj_out"
-            - "transformer.single_transformer_blocks.9.proj_out"
-            - "transformer.single_transformer_blocks.10.proj_out"
-            - "transformer.single_transformer_blocks.11.proj_out"
-            - "transformer.single_transformer_blocks.12.proj_out"
-            - "transformer.single_transformer_blocks.13.proj_out"
-            - "transformer.single_transformer_blocks.14.proj_out"
-            - "transformer.single_transformer_blocks.15.proj_out"
-            - "transformer.single_transformer_blocks.16.attn"
-            - "transformer.single_transformer_blocks.17.attn"
-            - "transformer.single_transformer_blocks.18.attn"
+            - "transformer.single_transformer_blocks.8"
+            - "transformer.single_transformer_blocks.9"
+            - "transformer.single_transformer_blocks.10"
+            - "transformer.single_transformer_blocks.11"
+            - "transformer.single_transformer_blocks.12"
+            - "transformer.single_transformer_blocks.13"
+            - "transformer.single_transformer_blocks.15"
+            - "transformer.single_transformer_blocks.19"
             - "transformer.single_transformer_blocks.20"
-            - "transformer.single_transformer_blocks.21.proj_out"
-            - "transformer.single_transformer_blocks.22.proj_out"
-            - "transformer.single_transformer_blocks.23.proj_out"
-            - "transformer.single_transformer_blocks.24.proj_out"
+            - "transformer.single_transformer_blocks.23"
             - "transformer.single_transformer_blocks.25"
-            - "transformer.single_transformer_blocks.26.proj_out"
-            - "transformer.single_transformer_blocks.27.proj_out"
-            - "transformer.single_transformer_blocks.28.attn"
-            - "transformer.single_transformer_blocks.33.proj_out"
-            - "transformer.single_transformer_blocks.34.proj_out"
+            - "transformer.single_transformer_blocks.27"
+            - "transformer.single_transformer_blocks.29"
+            - "transformer.single_transformer_blocks.30"
+            - "transformer.single_transformer_blocks.33"
+            - "transformer.single_transformer_blocks.34"
             - "transformer.single_transformer_blocks.35"
+            - "transformer.single_transformer_blocks.36.proj_out"
+            - "transformer.single_transformer_blocks.37"
       save:
         dtype: float16 # precision to save
-        save_every: 250 # save every this many steps
-        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+        save_every: 300 # save every this many steps
+        max_step_saves_to_keep: 3 # how many intermittent saves to keep
         push_to_hub: false #change this to True to push your trained model to Hugging Face.
         # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
 #       hf_repo_id: your-username/your-model-slug
@@ -66,20 +65,20 @@ config:
         # images will automatically be resized and bucketed into the resolution specified
         # on windows, escape back slashes with another backslash so
         # "C:\\path\\to\\images\\folder"
-        - folder_path: "/path/to/images/folder"
+        - folder_path: "/root/ai-toolkit/训练集"
           caption_ext: "txt"
-          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
-          shuffle_tokens: false  # shuffle caption order, split by commas
+          caption_dropout_rate: 0  # will drop out the caption 5% of time
+          shuffle_tokens: true  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
-          resolution: [ 512,768,1024 ]  # flux enjoys multiple resolutions
+          resolution: [ 512, 1024 ]  # flux enjoys multiple resolutions
           flip_aug: True
-          keep_tokens: True
+          keep_tokens: 2
+          num_repeats: 2
       train:
-        reg_weight: 0.8
+        reg_weight: 0.6
         batch_size: 1
-        steps: 2000  # total number of steps to train 500 - 4000 is a good range
+        steps: 2400  # total number of steps to train 500 - 4000 is a good range
         gradient_accumulation: 2
-        gradient_checkpointing: true
         train_unet: true
         train_text_encoder: false  # probably won't work with flux
         #train_clip: true
@@ -88,13 +87,10 @@ config:
         gradient_checkpointing: true  # need the on unless you have a ton of vram
         noise_scheduler: "flowmatch" # for training only
         optimizer: "adamw8bit"
-        lr: 1e-4
-        lr_scheduler: "polynomial"
+        lr: 6.8e-4
+        lr_scheduler: "polynomial"  #constant
         lr_scheduler_params:
-            polynomial:
-                power: 0.6
-            cosine: {}
-            constant: {}
+            power: 0.2
         # uncomment this to skip the pre training sample
 #        skip_first_sample: true
         # uncomment to completely disable sampling
@@ -111,20 +107,20 @@ config:
         dtype: bf16
       model:
         # huggingface model name or path
-        name_or_path: "black-forest-labs/FLUX.1-dev"
+        name_or_path: "/root/ai-toolkit/FLUX.1-dev"
         is_flux: true
         quantize: true  # run 8bit mixed precision
 #        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
-        sample_every: 250 # sample every this many steps
+        sample_every: 300 # sample every this many steps
         width: 1024
         height: 1024
         prompts:
           # you can add [trigger] to the prompts here and it will be replaced with the trigger word
 #          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
-          - "a man with black hair, playing chess at the park, bomb going off in the background"
-          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "example, tag"
+#          - "example, tags"
 #          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
 #          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
 #          - "a bear building a log cabin in the snow covered mountains"
@@ -134,7 +130,7 @@ config:
 #          - "a man holding a sign that says, 'this is a sign'"
 #          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
         neg: ""  # not used on flux
-        seed: 648
+        seed: 123456
         walk_seed: true
         guidance_scale: 4
         sample_steps: 20

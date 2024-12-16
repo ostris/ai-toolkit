@@ -83,6 +83,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # if true, then we do not do an optimizer step. We are accumulating gradients
         self.is_grad_accumulation_step = False
         self.device = self.get_conf('device', self.job.device)
+        device_config = self.get_conf('device', self.job.device)
+        if isinstance(device_config, str) and device_config.startswith('cuda'):
+            devices = device_config.split(',')
+            if len(devices) > 1:
+                # 多 GPU 情况下，选择当前进程的 GPU
+                local_rank = int(os.getenv('LOCAL_RANK', 0))
+                if local_rank < len(devices):
+                    self.device = devices[local_rank]
+                else:
+                    raise RuntimeError(f"Invalid LOCAL_RANK {local_rank}, exceeding available devices {devices}")
+            else:
+                # 单 GPU 情况
+                self.device = device_config
+        else:
+            # 使用 CPU
+            self.device = 'cpu'
         self.device_torch = torch.device(self.device)
         network_config = self.get_conf('network', None)
         if network_config is not None:
