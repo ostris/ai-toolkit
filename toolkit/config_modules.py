@@ -386,7 +386,7 @@ class TrainConfig:
         # adds an additional loss to the network to encourage it output a normalized standard deviation
         self.target_norm_std = kwargs.get('target_norm_std', None)
         self.target_norm_std_value = kwargs.get('target_norm_std_value', 1.0)
-        self.timestep_type = kwargs.get('timestep_type', 'sigmoid')  # sigmoid, linear
+        self.timestep_type = kwargs.get('timestep_type', 'sigmoid')  # sigmoid, linear, lognorm_blend
         self.linear_timesteps = kwargs.get('linear_timesteps', False)
         self.linear_timesteps2 = kwargs.get('linear_timesteps2', False)
         self.disable_sampling = kwargs.get('disable_sampling', False)
@@ -470,6 +470,11 @@ class ModelConfig:
         if self.ignore_if_contains is not None or self.only_if_contains is not None:
             if not self.is_flux:
                 raise ValueError("ignore_if_contains and only_if_contains are only supported with flux models currently")
+        
+        # splits the model over the available gpus WIP
+        self.split_model_over_gpus = kwargs.get("split_model_over_gpus", False)
+        if self.split_model_over_gpus and not self.is_flux:
+            raise ValueError("split_model_over_gpus is only supported with flux models currently")
 
 
 class EMAConfig:

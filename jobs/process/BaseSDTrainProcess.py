@@ -970,10 +970,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.linear_timesteps2,
                         self.train_config.timestep_type == 'linear',
                     ])
+                    
+                    timestep_type = 'linear' if linear_timesteps else None
+                    if timestep_type is None:
+                        timestep_type = self.train_config.timestep_type
+                    
                     self.sd.noise_scheduler.set_train_timesteps(
                         num_train_timesteps,
                         device=self.device_torch,
-                        linear=linear_timesteps
+                        timestep_type=timestep_type
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(
