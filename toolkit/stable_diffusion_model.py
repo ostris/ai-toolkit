@@ -696,7 +696,7 @@ class StableDiffusion:
             text_encoder_2.to(self.device_torch, dtype=dtype)
             flush()
 
-            if self.model_config.quantize:
+            if self.model_config.quantize_te:
                 print("Quantizing T5")
                 quantize(text_encoder_2, weights=qfloat8)
                 freeze(text_encoder_2)

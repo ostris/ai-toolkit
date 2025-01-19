@@ -346,8 +346,8 @@ class TrainConfig:
         self.standardize_images = kwargs.get('standardize_images', False)
         self.standardize_latents = kwargs.get('standardize_latents', False)
 
-        if self.train_turbo and not self.noise_scheduler.startswith("euler"):
-            raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
+        # if self.train_turbo and not self.noise_scheduler.startswith("euler"):
+        #     raise ValueError(f"train_turbo is only supported with euler and wuler_a noise schedulers")
 
         self.dynamic_noise_offset = kwargs.get('dynamic_noise_offset', False)
         self.do_cfg = kwargs.get('do_cfg', False)
@@ -458,6 +458,7 @@ class ModelConfig:
 
         # only for flux for now
         self.quantize = kwargs.get("quantize", False)
+        self.quantize_te = kwargs.get("quantize_te", self.quantize)
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:
@@ -827,7 +828,10 @@ class GenerateImageConfig:
             prompt += ' --gr ' + str(self.guidance_rescale)
 
             # get gen info
-            f.write(self.prompt)
+            try:
+                f.write(self.prompt)
+            except Exception as e:
+                print(f"Error writing prompt file. Prompt contains non-unicode characters. {e}")
 
     def _process_prompt_string(self):
         # we will try to support all sd-scripts where we can

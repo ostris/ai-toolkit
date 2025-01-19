@@ -110,7 +110,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             return timesteps
         elif timestep_type == 'lognorm_blend':
             # disgtribute timestepd to the center/early and blend in linear
-            alpha = 0.8
+            alpha = 0.75
 
             lognormal = LogNormal(loc=0, scale=0.333)
 
