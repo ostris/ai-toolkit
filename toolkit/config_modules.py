@@ -400,6 +400,9 @@ class TrainConfig:
         self.paramiter_swapping_factor = kwargs.get('paramiter_swapping_factor', 0.1)
         # bypass the guidance embedding for training. For open flux with guidance embedding
         self.bypass_guidance_embedding = kwargs.get('bypass_guidance_embedding', False)
+        
+        # diffusion feature extractor
+        self.diffusion_feature_extractor_path = kwargs.get('diffusion_feature_extractor_path', None)
 
 
 class ModelConfig:
