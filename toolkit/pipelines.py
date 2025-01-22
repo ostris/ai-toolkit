@@ -1285,20 +1285,21 @@ class FluxWithCFGPipeline(FluxPipeline):
             max_sequence_length=max_sequence_length,
             lora_scale=lora_scale,
         )
-        (
-            negative_prompt_embeds,
-            negative_pooled_prompt_embeds,
-            negative_text_ids,
-        ) = self.encode_prompt(
-            prompt=negative_prompt,
-            prompt_2=negative_prompt_2,
-            prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=negative_pooled_prompt_embeds,
-            device=device,
-            num_images_per_prompt=num_images_per_prompt,
-            max_sequence_length=max_sequence_length,
-            lora_scale=lora_scale,
-        )
+        if guidance_scale > 1.00001:
+            (
+                negative_prompt_embeds,
+                negative_pooled_prompt_embeds,
+                negative_text_ids,
+            ) = self.encode_prompt(
+                prompt=negative_prompt,
+                prompt_2=negative_prompt_2,
+                prompt_embeds=negative_prompt_embeds,
+                pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
+                lora_scale=lora_scale,
+            )
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels // 4
@@ -1361,21 +1362,25 @@ class FluxWithCFGPipeline(FluxPipeline):
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
                 )[0]
+                
+                if guidance_scale > 1.00001:
+                    # todo combine these
+                    noise_pred_uncond = self.transformer(
+                        hidden_states=latents,
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        pooled_projections=negative_pooled_prompt_embeds,
+                        encoder_hidden_states=negative_prompt_embeds,
+                        txt_ids=negative_text_ids,
+                        img_ids=latent_image_ids,
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                        return_dict=False,
+                    )[0]
 
-                # todo combine these
-                noise_pred_uncond = self.transformer(
-                    hidden_states=latents,
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    pooled_projections=negative_pooled_prompt_embeds,
-                    encoder_hidden_states=negative_prompt_embeds,
-                    txt_ids=negative_text_ids,
-                    img_ids=latent_image_ids,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    return_dict=False,
-                )[0]
-
-                noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                
+                else:
+                    noise_pred = noise_pred_text
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
