@@ -403,6 +403,9 @@ class TrainConfig:
         
         # diffusion feature extractor
         self.diffusion_feature_extractor_path = kwargs.get('diffusion_feature_extractor_path', None)
+        
+        # optimal noise pairing
+        self.optimal_noise_pairing_samples = kwargs.get('optimal_noise_pairing_samples', 1)
 
 
 class ModelConfig:
