@@ -385,7 +385,8 @@ class SDTrainer(BaseSDTrainProcess):
             
             # do diffusion feature extraction on prediction
             pred_features = self.dfe(torch.cat([noise_pred.float(), noise.float()], dim=1))
-            additional_loss += torch.nn.functional.mse_loss(pred_features, target_features, reduction="mean")
+            additional_loss += torch.nn.functional.mse_loss(pred_features, target_features, reduction="mean") * \
+                self.train_config.diffusion_feature_extractor_weight
             
         if target is None:
             target = noise
