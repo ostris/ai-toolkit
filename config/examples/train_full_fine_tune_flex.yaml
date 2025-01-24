@@ -74,6 +74,10 @@ config:
         # quantize: true
         # you can quantize just the T5 text encoder here to save vram
         quantize_te: true
+        # only train the transformer blocks
+        only_if_contains: 
+          - "transformer.transformer_blocks."
+          - "transformer.single_transformer_blocks."
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
         sample_every: 250 # sample every this many steps
