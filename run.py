@@ -20,20 +20,26 @@ if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     torch.autograd.set_detect_anomaly(True)
 import argparse
 from toolkit.job import get_job
+from toolkit.accelerator import get_accelerator
+from toolkit.print import print_acc
+
+accelerator = get_accelerator()
 
 
 def print_end_message(jobs_completed, jobs_failed):
+    if not accelerator.is_main_process:
+        return
     failure_string = f"{jobs_failed} failure{'' if jobs_failed == 1 else 's'}" if jobs_failed > 0 else ""
     completed_string = f"{jobs_completed} completed job{'' if jobs_completed == 1 else 's'}"
 
-    print("")
-    print("========================================")
-    print("Result:")
+    print_acc("")
+    print_acc("========================================")
+    print_acc("Result:")
     if len(completed_string) > 0:
-        print(f" - {completed_string}")
+        print_acc(f" - {completed_string}")
     if len(failure_string) > 0:
-        print(f" - {failure_string}")
-    print("========================================")
+        print_acc(f" - {failure_string}")
+    print_acc("========================================")
 
 
 def main():
@@ -70,7 +76,8 @@ def main():
     jobs_completed = 0
     jobs_failed = 0
 
-    print(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
+    if accelerator.is_main_process:
+        print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
         try:
@@ -79,7 +86,7 @@ def main():
             job.cleanup()
             jobs_completed += 1
         except Exception as e:
-            print(f"Error running job: {e}")
+            print_acc(f"Error running job: {e}")
             jobs_failed += 1
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
