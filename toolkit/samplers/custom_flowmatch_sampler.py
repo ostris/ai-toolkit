@@ -3,12 +3,27 @@ from typing import Union
 from torch.distributions import LogNormal
 from diffusers import FlowMatchEulerDiscreteScheduler
 import torch
+import numpy as np
+
+
+def calculate_shift(
+    image_seq_len,
+    base_seq_len: int = 256,
+    max_seq_len: int = 4096,
+    base_shift: float = 0.5,
+    max_shift: float = 1.16,
+):
+    m = (max_shift - base_shift) / (max_seq_len - base_seq_len)
+    b = base_shift - m * base_seq_len
+    mu = image_seq_len * m + b
+    return mu
 
 
 class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
+        self.timestep_type = "linear"
 
         with torch.no_grad():
             # create weights for timesteps
@@ -89,7 +104,8 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
     def scale_model_input(self, sample: torch.Tensor, timestep: Union[float, torch.Tensor]) -> torch.Tensor:
         return sample
 
-    def set_train_timesteps(self, num_timesteps, device, timestep_type='linear'):
+    def set_train_timesteps(self, num_timesteps, device, timestep_type='linear', latents=None):
+        self.timestep_type = timestep_type
         if timestep_type == 'linear':
             timesteps = torch.linspace(1000, 0, num_timesteps, device=device)
             self.timesteps = timesteps
@@ -108,6 +124,42 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.timesteps = timesteps.to(device=device)
 
             return timesteps
+        elif timestep_type == 'flux_shift':
+            # matches inference dynamic shifting
+            timesteps = np.linspace(
+                self._sigma_to_t(self.sigma_max), self._sigma_to_t(self.sigma_min), num_timesteps
+            )
+
+            sigmas = timesteps / self.config.num_train_timesteps
+            
+            if latents is None:
+                raise ValueError('latents is None')
+            
+            h = latents.shape[2] // 2  # Divide by ph
+            w = latents.shape[3] // 2  # Divide by pw
+            image_seq_len = h * w
+
+            # todo need to know the mu for the shift
+            mu = calculate_shift(
+                image_seq_len,
+                self.config.get("base_image_seq_len", 256),
+                self.config.get("max_image_seq_len", 4096),
+                self.config.get("base_shift", 0.5),
+                self.config.get("max_shift", 1.16),
+            )
+            sigmas = self.time_shift(mu, 1.0, sigmas)
+
+            sigmas = torch.from_numpy(sigmas).to(dtype=torch.float32, device=device)
+            timesteps = sigmas * self.config.num_train_timesteps
+
+            sigmas = torch.cat([sigmas, torch.zeros(1, device=sigmas.device)])
+
+            self.timesteps = timesteps.to(device=device)
+            self.sigmas = sigmas
+            
+            self.timesteps = timesteps.to(device=device)
+            return timesteps
+            
         elif timestep_type == 'lognorm_blend':
             # disgtribute timestepd to the center/early and blend in linear
             alpha = 0.75
@@ -128,5 +180,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             timesteps, _ = torch.sort(timesteps, descending=True)
 
             timesteps = timesteps.to(torch.int)
+            self.timesteps = timesteps.to(device=device)
+            return timesteps
         else:
             raise ValueError(f"Invalid timestep type: {timestep_type}")

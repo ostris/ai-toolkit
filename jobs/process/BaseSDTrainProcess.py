@@ -79,7 +79,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.accelerator: Accelerator = get_accelerator()
         if self.accelerator.is_local_main_process:
             transformers.utils.logging.set_verbosity_warning()
-            diffusers.utils.logging.set_verbosity_info()
+            diffusers.utils.logging.set_verbosity_error()
         else:
             transformers.utils.logging.set_verbosity_error()
             diffusers.utils.logging.set_verbosity_error()
@@ -1066,7 +1066,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.sd.noise_scheduler.set_train_timesteps(
                         num_train_timesteps,
                         device=self.device_torch,
-                        timestep_type=timestep_type
+                        timestep_type=timestep_type,
+                        latents=latents
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(

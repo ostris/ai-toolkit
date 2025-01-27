@@ -1027,9 +1027,9 @@ class StableDiffusion:
                 if self.model_config.use_flux_cfg:
                     pipeline = FluxWithCFGPipeline(
                         vae=self.vae,
-                        transformer=self.unet,
-                        text_encoder=self.text_encoder[0],
-                        text_encoder_2=self.text_encoder[1],
+                        transformer=unwrap_model(self.unet),
+                        text_encoder=unwrap_model(self.text_encoder[0]),
+                        text_encoder_2=unwrap_model(self.text_encoder[1]),
                         tokenizer=self.tokenizer[0],
                         tokenizer_2=self.tokenizer[1],
                         scheduler=noise_scheduler,
@@ -1039,9 +1039,9 @@ class StableDiffusion:
                 else:
                     pipeline = FluxPipeline(
                         vae=self.vae,
-                        transformer=self.unet,
-                        text_encoder=self.text_encoder[0],
-                        text_encoder_2=self.text_encoder[1],
+                        transformer=unwrap_model(self.unet),
+                        text_encoder=unwrap_model(self.text_encoder[0]),
+                        text_encoder_2=unwrap_model(self.text_encoder[1]),
                         tokenizer=self.tokenizer[0],
                         tokenizer_2=self.tokenizer[1],
                         scheduler=noise_scheduler,
