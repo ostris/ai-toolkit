@@ -1360,10 +1360,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         #         print("sage attention is not installed. Using SDP instead")
 
         if self.train_config.gradient_checkpointing:
-            if self.sd.is_flux:
-                unet.gradient_checkpointing = True
-            else:
-                unet.enable_gradient_checkpointing()
+            unet.enable_gradient_checkpointing()
             if isinstance(text_encoder, list):
                 for te in text_encoder:
                     if hasattr(te, 'enable_gradient_checkpointing'):
