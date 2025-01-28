@@ -922,7 +922,7 @@ class SDTrainer(BaseSDTrainProcess):
             prior_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype).detach(),
                 conditional_embeddings=embeds_to_use.to(self.device_torch, dtype=dtype).detach(),
-                unconditional_embeds=unconditional_embeds,
+                unconditional_embeddings=unconditional_embeds,
                 timestep=timesteps,
                 guidance_scale=self.train_config.cfg_scale,
                 rescale_cfg=self.train_config.cfg_rescale,
@@ -968,7 +968,7 @@ class SDTrainer(BaseSDTrainProcess):
         return self.sd.predict_noise(
             latents=noisy_latents.to(self.device_torch, dtype=dtype),
             conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
-            unconditional_embeds=unconditional_embeds,
+            unconditional_embeddings=unconditional_embeds,
             timestep=timesteps,
             guidance_scale=self.train_config.cfg_scale,
             guidance_embedding_scale=self.train_config.cfg_scale,
