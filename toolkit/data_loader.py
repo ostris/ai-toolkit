@@ -12,7 +12,7 @@ import torch
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset, random_split
 from tqdm import tqdm
 import albumentations as A
 
@@ -560,7 +560,8 @@ def get_dataloader_from_datasets(
         dataset_options,
         batch_size=1,
         sd: 'StableDiffusion' = None,
-) -> DataLoader:
+        validation_every=None,
+) -> List[DataLoader]:
     if dataset_options is None or len(dataset_options) == 0:
         return None
 
@@ -593,6 +594,8 @@ def get_dataloader_from_datasets(
 
     concatenated_dataset = ConcatDataset(datasets)
 
+    train_dataset, validation_dataset = random_split(concatenated_dataset, [len(concatenated_dataset) * config.validation_percent, len(concatenated_dataset) - len(concatenated_dataset) * dataset_config_list[0].validation_percent],generator=torch.Generator().manual_seed(42))
+
     # todo build scheduler that can get buckets from all datasets that match
     # todo and evenly distribute reg images
 
@@ -613,28 +616,50 @@ def get_dataloader_from_datasets(
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
 
+    result_loaders = []
     if has_buckets:
         # make sure they all have buckets
         for dataset in datasets:
             assert dataset.dataset_config.buckets, f"buckets not found on dataset {dataset.dataset_config.folder_path}, you either need all buckets or none"
 
-        data_loader = DataLoader(
-            concatenated_dataset,
+        train_loader = DataLoader(
+            train_dataset,
             batch_size=None,  # we batch in the datasets for now
             drop_last=False,
             shuffle=True,
             collate_fn=dto_collation,  # Use the custom collate function
             **dataloader_kwargs
         )
+        result_loaders.append(train_loader)
+        if validation_every is not None:
+            validation_loader = DataLoader(
+                validation_dataset,
+                batch_size=1,  # we batch in the datasets for now
+                drop_last=False,
+                shuffle=False,
+                collate_fn=dto_collation,  # Use the custom collate function
+                **dataloader_kwargs
+            )
+            result_loaders.append(validation_loader)
     else:
         data_loader = DataLoader(
-            concatenated_dataset,
+            train_dataset,
             batch_size=batch_size,
             shuffle=True,
             collate_fn=dto_collation,
             **dataloader_kwargs
         )
-    return data_loader
+        result_loaders.append(data_loader)
+        if validation_every is not None:
+            validation_loader = DataLoader(
+                validation_dataset,
+                batch_size=1,
+                shuffle=False,
+                collate_fn=dto_collation,
+                **dataloader_kwargs
+            )
+            result_loaders.append(validation_loader)
+    return result_loaders
 
 
 def trigger_dataloader_setup_epoch(dataloader: DataLoader):

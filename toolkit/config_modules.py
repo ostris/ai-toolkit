@@ -408,6 +408,9 @@ class TrainConfig:
         # optimal noise pairing
         self.optimal_noise_pairing_samples = kwargs.get('optimal_noise_pairing_samples', 1)
 
+        # validation
+        self.validation_every = kwargs.get('validation_every', 1000)  # Set to same as save_every by default
+
 
 class ModelConfig:
     def __init__(self, **kwargs):
@@ -666,6 +669,8 @@ class DatasetConfig:
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
         self.replay_transforms: bool = kwargs.get('replay_transforms', True)
+        # validation
+        self.validation_percent = kwargs.get('validation_percent', 0.1)  # 10% holdout
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

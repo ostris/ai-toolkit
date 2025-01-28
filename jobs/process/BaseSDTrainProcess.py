@@ -214,7 +214,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.named_lora = True
         self.snr_gos: Union[LearnableSNRGamma, None] = None
         self.ema: ExponentialMovingAverage = None
-        
+
+        self.validation_every = self.train_config.validation_every
         validate_configs(self.train_config, self.model_config, self.save_config)
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
@@ -1056,15 +1057,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     raise ValueError(f"Unknown content_or_style {content_or_style}")
 
                 # do flow matching
-                # if self.sd.is_flow_matching:
-                #     u = compute_density_for_timestep_sampling(
-                #         weighting_scheme="logit_normal",  # ["sigma_sqrt", "logit_normal", "mode", "cosmap"]
-                #         batch_size=batch_size,
-                #         logit_mean=0.0,
-                #         logit_std=1.0,
-                #         mode_scale=1.29,
-                #     )
-                #     timestep_indices = (u * self.sd.noise_scheduler.config.num_train_timesteps).long()
+                if content_or_style == 'style':
+                    u = compute_density_for_timestep_sampling(
+                        weighting_scheme="logit_normal",  # ["sigma_sqrt", "logit_normal", "mode", "cosmap"]
+                        batch_size=batch_size,
+                        logit_mean=-6,
+                        logit_std=2.0,
+                        mode_scale=1.29,
+                    )
+                    timestep_indices = (u * self.sd.noise_scheduler.config.num_train_timesteps).long()
                 # convert the timestep_indices to a timestep
                 timesteps = [self.sd.noise_scheduler.timesteps[x.item()] for x in timestep_indices]
                 timesteps = torch.stack(timesteps, dim=0)
@@ -1701,10 +1702,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.before_dataset_load()
         # load datasets if passed in the root process
         if self.datasets is not None:
-            self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd)
+            self.data_loader, self.data_loader_val = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd, self.validation_every)
         if self.datasets_reg is not None:
-            self.data_loader_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size,
-                                                                self.sd)
+            self.data_loader_reg, self.data_loader_val_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size,
+                                                                self.sd, self.validation_every)
 
         flush()
         ### HOOK ###
@@ -1743,6 +1744,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             dataloader_reg = None
             dataloader_iterator_reg = None
+
+        if self.data_loader_val is not None:
+            dataloader_val = self.data_loader_val
+            dataloader_iterator_val = iter(dataloader_val)
+        else:
+            dataloader_val = None
+            dataloader_iterator_val = None
 
         # zero any gradients
         optimizer.zero_grad()

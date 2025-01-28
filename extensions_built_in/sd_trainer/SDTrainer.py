@@ -968,7 +968,7 @@ class SDTrainer(BaseSDTrainProcess):
         return self.sd.predict_noise(
             latents=noisy_latents.to(self.device_torch, dtype=dtype),
             conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
-            unconditional_embeddings=unconditional_embeds,
+            unconditional_embeds=unconditional_embeds,
             timestep=timesteps,
             guidance_scale=self.train_config.cfg_scale,
             guidance_embedding_scale=self.train_config.cfg_scale,
@@ -1711,6 +1711,76 @@ class SDTrainer(BaseSDTrainProcess):
             {'loss': loss.item()}
         )
 
+        if self.train_config.validation_every is not None and self.step_num % self.train_config.validation_every == 0:
+            validation_loss = self.hook_validation_loop(self.data_loader_val)
+            loss_dict['validation_loss'] = validation_loss.item()
+
         self.end_of_training_loop()
 
         return loss_dict
+    
+    def hook_validation_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
+        """
+        Validation loop that evaluates model performance without updating weights.
+        Similar to training but with no gradient calculations or optimizer steps.
+        """
+        if isinstance(batch, list):
+            batch_list = batch
+        else:
+            batch_list = [batch]
+        
+        total_loss = None
+        
+        # Ensure model components are in eval mode
+        if self.network is not None:
+            self.network.eval()
+        if self.adapter is not None:
+            self.adapter.eval()
+        if self.sd.unet is not None:
+            self.sd.unet.eval()
+        
+        with torch.no_grad():
+            for batch in batch_list:
+                # Preprocess batch and get required tensors
+                batch = self.preprocess_batch(batch)
+                dtype = get_torch_dtype(self.train_config.dtype)
+                
+                # Process batch similar to training
+                noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
+
+                # Encode prompts
+                conditional_embeds = self.sd.encode_prompt(
+                    conditioned_prompts,
+                    long_prompts=self.do_long_prompts
+                ).to(self.device_torch, dtype=dtype)
+
+                # Predict noise
+                noise_pred = self.predict_noise(
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    conditional_embeds=conditional_embeds
+                )
+
+                # Calculate loss
+                loss = self.calculate_loss(
+                    noise_pred=noise_pred,
+                    noise=noise,
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    batch=batch,
+                )
+
+                if total_loss is None:
+                    total_loss = loss
+                else:
+                    total_loss += loss
+
+        # Restore training mode
+        if self.network is not None:
+            self.network.train()
+        if self.adapter is not None:
+            self.adapter.train()
+        if self.sd.unet is not None:
+            self.sd.unet.train()
+        
+        return total_loss.detach()
