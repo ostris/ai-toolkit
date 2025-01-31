@@ -1636,7 +1636,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if latest_save_path is not None:
                     state_dict = load_file(latest_save_path)
                     self.decorator.load_state_dict(state_dict)
-                    self.load_training_state_from_metadata(path)
+                    self.load_training_state_from_metadata(latest_save_path)
                     
                 params.append({
                     'params': list(self.decorator.parameters()),

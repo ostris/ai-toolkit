@@ -109,6 +109,9 @@ class BlankNetwork:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.is_active = False
+    
+    def train(self):
+        pass
 
 
 def flush():
