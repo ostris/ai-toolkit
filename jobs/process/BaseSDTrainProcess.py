@@ -651,9 +651,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.accelerator.even_batches=False
         
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
-        if self.sd.vae is not None:
-            self.sd.vae = self.accelerator.prepare(self.sd.vae)
+        self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
+            self.sd.unet_unwrapped = self.sd.unet
             self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
