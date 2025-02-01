@@ -14,6 +14,7 @@ from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import
 from diffusers.utils import is_torch_xla_available
 from k_diffusion.external import CompVisVDenoiser, CompVisDenoiser
 from k_diffusion.sampling import get_sigmas_karras, BrownianTreeNoiseSampler
+from toolkit.models.flux import bypass_flux_guidance, restore_flux_guidance
 
 
 if is_torch_xla_available():
@@ -1235,6 +1236,8 @@ class FluxWithCFGPipeline(FluxPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
     ):
+        # bypass the guidance embedding if there is one
+        bypass_flux_guidance(self.transformer)
 
         height = height or self.default_sample_size * self.vae_scale_factor
         width = width or self.default_sample_size * self.vae_scale_factor
@@ -1282,20 +1285,21 @@ class FluxWithCFGPipeline(FluxPipeline):
             max_sequence_length=max_sequence_length,
             lora_scale=lora_scale,
         )
-        (
-            negative_prompt_embeds,
-            negative_pooled_prompt_embeds,
-            negative_text_ids,
-        ) = self.encode_prompt(
-            prompt=negative_prompt,
-            prompt_2=negative_prompt_2,
-            prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=negative_pooled_prompt_embeds,
-            device=device,
-            num_images_per_prompt=num_images_per_prompt,
-            max_sequence_length=max_sequence_length,
-            lora_scale=lora_scale,
-        )
+        if guidance_scale > 1.00001:
+            (
+                negative_prompt_embeds,
+                negative_pooled_prompt_embeds,
+                negative_text_ids,
+            ) = self.encode_prompt(
+                prompt=negative_prompt,
+                prompt_2=negative_prompt_2,
+                prompt_embeds=negative_prompt_embeds,
+                pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                device=device,
+                num_images_per_prompt=num_images_per_prompt,
+                max_sequence_length=max_sequence_length,
+                lora_scale=lora_scale,
+            )
 
         # 4. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels // 4
@@ -1358,21 +1362,25 @@ class FluxWithCFGPipeline(FluxPipeline):
                     joint_attention_kwargs=self.joint_attention_kwargs,
                     return_dict=False,
                 )[0]
+                
+                if guidance_scale > 1.00001:
+                    # todo combine these
+                    noise_pred_uncond = self.transformer(
+                        hidden_states=latents,
+                        timestep=timestep / 1000,
+                        guidance=guidance,
+                        pooled_projections=negative_pooled_prompt_embeds,
+                        encoder_hidden_states=negative_prompt_embeds,
+                        txt_ids=negative_text_ids,
+                        img_ids=latent_image_ids,
+                        joint_attention_kwargs=self.joint_attention_kwargs,
+                        return_dict=False,
+                    )[0]
 
-                # todo combine these
-                noise_pred_uncond = self.transformer(
-                    hidden_states=latents,
-                    timestep=timestep / 1000,
-                    guidance=guidance,
-                    pooled_projections=negative_pooled_prompt_embeds,
-                    encoder_hidden_states=negative_prompt_embeds,
-                    txt_ids=negative_text_ids,
-                    img_ids=latent_image_ids,
-                    joint_attention_kwargs=self.joint_attention_kwargs,
-                    return_dict=False,
-                )[0]
-
-                noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                
+                else:
+                    noise_pred = noise_pred_text
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
@@ -1410,6 +1418,7 @@ class FluxWithCFGPipeline(FluxPipeline):
 
         # Offload all models
         self.maybe_free_model_hooks()
+        restore_flux_guidance(self.transformer)
 
         if not return_dict:
             return (image,)

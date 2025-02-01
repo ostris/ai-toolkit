@@ -32,6 +32,7 @@ from torchvision import transforms
 from diffusers import EMAModel
 import math
 from toolkit.train_tools import precondition_model_outputs_flow_match
+from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
 
 
 def flush():
@@ -63,7 +64,7 @@ class SDTrainer(BaseSDTrainProcess):
         self.is_bfloat = self.train_config.dtype == "bfloat16" or self.train_config.dtype == "bf16"
 
         self.do_grad_scale = True
-        if self.is_fine_tuning:
+        if self.is_fine_tuning and self.is_bfloat:
             self.do_grad_scale = False
         if self.adapter_config is not None:
             if self.adapter_config.train:
@@ -78,6 +79,8 @@ class SDTrainer(BaseSDTrainProcess):
 
         self.cached_blank_embeds: Optional[PromptEmbeds] = None
         self.cached_trigger_embeds: Optional[PromptEmbeds] = None
+        
+        self.dfe: Optional[DiffusionFeatureExtractor] = None
 
 
     def before_model_load(self):
@@ -178,6 +181,11 @@ class SDTrainer(BaseSDTrainProcess):
                 # move back to cpu
                 self.sd.text_encoder_to('cpu')
                 flush()
+        
+        if self.train_config.diffusion_feature_extractor_path is not None:
+            self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path)
+            self.dfe.to(self.device_torch)
+            self.dfe.eval()
 
 
     def process_output_for_turbo(self, pred, noisy_latents, timesteps, noise, batch):
@@ -285,6 +293,7 @@ class SDTrainer(BaseSDTrainProcess):
     ):
         loss_target = self.train_config.loss_target
         is_reg = any(batch.get_is_reg_list())
+        additional_loss = 0.0
 
         prior_mask_multiplier = None
         target_mask_multiplier = None
@@ -367,7 +376,35 @@ class SDTrainer(BaseSDTrainProcess):
             target = (noise - batch.latents).detach()
         else:
             target = noise
-
+            
+        if self.dfe is not None:
+            if self.dfe.version == 1:
+                # do diffusion feature extraction on target
+                with torch.no_grad():
+                    rectified_flow_target = noise.float() - batch.latents.float()
+                    target_features = self.dfe(torch.cat([rectified_flow_target, noise.float()], dim=1))
+                
+                # do diffusion feature extraction on prediction
+                pred_features = self.dfe(torch.cat([noise_pred.float(), noise.float()], dim=1))
+                additional_loss += torch.nn.functional.mse_loss(pred_features, target_features, reduction="mean") * \
+                    self.train_config.diffusion_feature_extractor_weight
+            else:
+                # version 2
+                # do diffusion feature extraction on target
+                with torch.no_grad():
+                    rectified_flow_target = noise.float() - batch.latents.float()
+                    target_feature_list = self.dfe(torch.cat([rectified_flow_target, noise.float()], dim=1))
+                
+                # do diffusion feature extraction on prediction
+                pred_feature_list = self.dfe(torch.cat([noise_pred.float(), noise.float()], dim=1))
+                
+                dfe_loss = 0.0
+                for i in range(len(target_feature_list)):
+                    dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
+                
+                additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
+                
+            
         if target is None:
             target = noise
 
@@ -487,7 +524,7 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss + norm_std_loss
 
 
-        return loss
+        return loss + additional_loss
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
         return batch
@@ -934,8 +971,10 @@ class SDTrainer(BaseSDTrainProcess):
             unconditional_embeddings=unconditional_embeds,
             timestep=timesteps,
             guidance_scale=self.train_config.cfg_scale,
+            guidance_embedding_scale=self.train_config.cfg_scale,
             detach_unconditional=False,
             rescale_cfg=self.train_config.cfg_rescale,
+            bypass_guidance_embedding=self.train_config.bypass_guidance_embedding,
             **kwargs
         )
 
@@ -1197,7 +1236,7 @@ class SDTrainer(BaseSDTrainProcess):
                         self.adapter(conditional_clip_embeds)
 
                 # do the custom adapter after the prior prediction
-                if self.adapter and isinstance(self.adapter, CustomAdapter) and has_clip_image:
+                if self.adapter and isinstance(self.adapter, CustomAdapter) and (has_clip_image or is_reg):
                     quad_count = random.randint(1, 4)
                     self.adapter.train()
                     self.adapter.trigger_pre_te(
@@ -1289,6 +1328,16 @@ class SDTrainer(BaseSDTrainProcess):
                         conditional_embeds = conditional_embeds.detach()
                         if self.train_config.do_cfg:
                             unconditional_embeds = unconditional_embeds.detach()
+                    
+                    if self.decorator:
+                        conditional_embeds.text_embeds = self.decorator(
+                            conditional_embeds.text_embeds
+                        )
+                        if self.train_config.do_cfg:
+                            unconditional_embeds.text_embeds = self.decorator(
+                                unconditional_embeds.text_embeds, 
+                                is_unconditional=True
+                            )
 
                 # flush()
                 pred_kwargs = {}

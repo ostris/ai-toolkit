@@ -1,3 +1,4 @@
+import math
 import torch
 import sys
 
@@ -13,10 +14,13 @@ from toolkit.models.single_value_adapter import SingleValueAdapter
 from toolkit.models.te_adapter import TEAdapter
 from toolkit.models.te_aug_adapter import TEAugAdapter
 from toolkit.models.vd_adapter import VisionDirectAdapter
+from toolkit.models.redux import ReduxImageEncoder
 from toolkit.paths import REPOS_ROOT
 from toolkit.photomaker import PhotoMakerIDEncoder, FuseModule, PhotoMakerCLIPEncoder
 from toolkit.saving import load_ip_adapter_model, load_custom_adapter_model
 from toolkit.train_tools import get_torch_dtype
+from toolkit.models.pixtral_vision import PixtralVisionEncoderCompatible, PixtralVisionImagePreprocessorCompatible
+import random
 
 sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
@@ -90,6 +94,8 @@ class CustomAdapter(torch.nn.Module):
         self.te_augmenter: TEAugAdapter = None
         self.vd_adapter: VisionDirectAdapter = None
         self.single_value_adapter: SingleValueAdapter = None
+        self.redux_adapter: ReduxImageEncoder = None
+        
         self.conditional_embeds: Optional[torch.Tensor] = None
         self.unconditional_embeds: Optional[torch.Tensor] = None
 
@@ -198,6 +204,9 @@ class CustomAdapter(torch.nn.Module):
             self.vd_adapter = VisionDirectAdapter(self, self.sd_ref(), self.vision_encoder)
         elif self.adapter_type == 'single_value':
             self.single_value_adapter = SingleValueAdapter(self, self.sd_ref(), num_values=self.config.num_tokens)
+        elif self.adapter_type == 'redux':
+            vision_hidden_size = self.vision_encoder.config.hidden_size
+            self.redux_adapter = ReduxImageEncoder(vision_hidden_size, 4096, self.device, torch_dtype)
         else:
             raise ValueError(f"unknown adapter type: {self.adapter_type}")
 
@@ -257,6 +266,13 @@ class CustomAdapter(torch.nn.Module):
             self.vision_encoder = SiglipVisionModel.from_pretrained(
                 adapter_config.image_encoder_path,
                 ignore_mismatched_sizes=True).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        elif self.config.image_encoder_arch == 'pixtral':
+            self.image_processor = PixtralVisionImagePreprocessorCompatible(
+                max_image_size=self.config.pixtral_max_image_size,
+            )
+            self.vision_encoder = PixtralVisionEncoderCompatible.from_pretrained(
+                adapter_config.image_encoder_path,
+            ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         elif self.config.image_encoder_arch == 'vit':
             try:
                 self.image_processor = ViTFeatureExtractor.from_pretrained(adapter_config.image_encoder_path)
@@ -397,7 +413,7 @@ class CustomAdapter(torch.nn.Module):
         if 'vd_adapter' in state_dict:
             self.vd_adapter.load_state_dict(state_dict['vd_adapter'], strict=strict)
         if 'dvadapter' in state_dict:
-            self.vd_adapter.load_state_dict(state_dict['dvadapter'], strict=strict)
+            self.vd_adapter.load_state_dict(state_dict['dvadapter'], strict=False)
 
         if 'sv_adapter' in state_dict:
             self.single_value_adapter.load_state_dict(state_dict['sv_adapter'], strict=strict)
@@ -413,6 +429,13 @@ class CustomAdapter(torch.nn.Module):
                 self.ilora_module.load_state_dict(state_dict['ilora'], strict=strict)
             except Exception as e:
                 print(e)
+        if 'redux_up' in state_dict:
+            # state dict is seperated. so recombine it
+            new_dict = {}
+            for k, v in state_dict.items():
+                for k2, v2 in v.items():
+                    new_dict[k + '.' + k2] = v2
+            self.redux_adapter.load_state_dict(new_dict, strict=True)
 
         pass
 
@@ -456,6 +479,11 @@ class CustomAdapter(torch.nn.Module):
                 state_dict["vision_encoder"] = self.vision_encoder.state_dict()
             state_dict["ilora"] = self.ilora_module.state_dict()
             return state_dict
+        elif self.adapter_type == 'redux':
+            d = self.redux_adapter.state_dict()
+            for k, v in d.items():
+                state_dict[k] = v
+            return state_dict
         else:
             raise NotImplementedError
 
@@ -472,7 +500,7 @@ class CustomAdapter(torch.nn.Module):
             prompt: Union[List[str], str],
             is_unconditional: bool = False,
     ):
-        if self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct':
+        if self.adapter_type == 'clip_fusion' or self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct' or self.adapter_type == 'redux':
             return prompt
         elif self.adapter_type == 'text_encoder':
             # todo allow for training
@@ -594,7 +622,7 @@ class CustomAdapter(torch.nn.Module):
         if self.adapter_type == 'ilora':
             return prompt_embeds
 
-        if self.adapter_type == 'photo_maker' or self.adapter_type == 'clip_fusion':
+        if self.adapter_type == 'photo_maker' or self.adapter_type == 'clip_fusion' or self.adapter_type == 'redux':
             if is_unconditional:
                 # we dont condition the negative embeds for photo maker
                 return prompt_embeds.clone()
@@ -616,6 +644,7 @@ class CustomAdapter(torch.nn.Module):
                         return_tensors="pt",
                         do_resize=True,
                         do_rescale=False,
+                        do_convert_rgb=True
                     ).pixel_values
                 else:
                     clip_image = tensors_0_1
@@ -696,13 +725,49 @@ class CustomAdapter(torch.nn.Module):
                     )
                     return prompt_embeds
 
+            elif self.adapter_type == 'redux':
+                with torch.set_grad_enabled(is_training):
+                    if is_training and self.config.train_image_encoder:
+                        self.vision_encoder.train()
+                        clip_image = clip_image.requires_grad_(True)
+                        id_embeds = self.vision_encoder(
+                            clip_image,
+                            output_hidden_states=True,
+                        )
+                    else:
+                        with torch.no_grad():
+                            self.vision_encoder.eval()
+                            id_embeds = self.vision_encoder(
+                                clip_image, output_hidden_states=True
+                            )
 
+                    img_embeds = id_embeds['last_hidden_state']
+
+                    if self.config.quad_image:
+                        # get the outputs of the quat
+                        chunks = img_embeds.chunk(quad_count, dim=0)
+                        chunk_sum = torch.zeros_like(chunks[0])
+                        for chunk in chunks:
+                            chunk_sum = chunk_sum + chunk
+                        # get the mean of them
+
+                        img_embeds = chunk_sum / quad_count
+
+                    if not is_training or not self.config.train_image_encoder:
+                        img_embeds = img_embeds.detach()
+                    
+                    img_embeds = self.redux_adapter(img_embeds.to(self.device, get_torch_dtype(self.sd_ref().dtype)))
+
+                    prompt_embeds.text_embeds = torch.cat((prompt_embeds.text_embeds, img_embeds), dim=-2)
+                    return prompt_embeds
         else:
             return prompt_embeds
 
-    def get_empty_clip_image(self, batch_size: int) -> torch.Tensor:
+    def get_empty_clip_image(self, batch_size: int, shape=None) -> torch.Tensor:
         with torch.no_grad():
-            tensors_0_1 = torch.rand([batch_size, 3, self.input_size, self.input_size], device=self.device)
+            if shape is None:
+                shape = [batch_size, 3, self.input_size, self.input_size]
+            tensors_0_1 = torch.rand(shape, device=self.device)
             noise_scale = torch.rand([tensors_0_1.shape[0], 1, 1, 1], device=self.device,
                                      dtype=get_torch_dtype(self.sd_ref().dtype))
             tensors_0_1 = tensors_0_1 * noise_scale
@@ -720,8 +785,7 @@ class CustomAdapter(torch.nn.Module):
     def train(self, mode: bool = True):
         if self.config.train_image_encoder:
             self.vision_encoder.train(mode)
-        else:
-            super().train(mode)
+        super().train(mode)
 
     def trigger_pre_te(
             self,
@@ -732,6 +796,7 @@ class CustomAdapter(torch.nn.Module):
             batch_size=1,
     ) -> PromptEmbeds:
         if self.adapter_type == 'ilora' or self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter':
+            skip_unconditional = self.sd_ref().is_flux
             if tensors_0_1 is None:
                 tensors_0_1 = self.get_empty_clip_image(batch_size)
                 has_been_preprocessed = True
@@ -757,11 +822,37 @@ class CustomAdapter(torch.nn.Module):
                     ).pixel_values
                 else:
                     clip_image = tensors_0_1
+                    
+                # if is pixtral
+                if self.config.image_encoder_arch == 'pixtral' and self.config.pixtral_random_image_size:
+                    # get the random size
+                    random_size = random.randint(256, self.config.pixtral_max_image_size)
+                    # images are already sized for max size, we have to fit them to the pixtral patch size to reduce / enlarge it farther.
+                    h, w = clip_image.shape[2], clip_image.shape[3]
+                    current_base_size = int(math.sqrt(w * h))
+                    ratio = current_base_size / random_size
+                    if ratio > 1:
+                        w = round(w / ratio)
+                        h = round(h / ratio)
+
+                    width_tokens = (w - 1) // self.image_processor.image_patch_size + 1
+                    height_tokens = (h - 1) // self.image_processor.image_patch_size + 1
+                    assert width_tokens > 0
+                    assert height_tokens > 0
+                    
+                    new_image_size = (
+                        width_tokens * self.image_processor.image_patch_size,
+                        height_tokens * self.image_processor.image_patch_size,
+                    )
+                    
+                    # resize the image
+                    clip_image = F.interpolate(clip_image, size=new_image_size, mode='bicubic', align_corners=False)
+                    
 
                 batch_size = clip_image.shape[0]
-                if self.adapter_type == 'vision_direct'  or self.adapter_type == 'te_augmenter':
+                if (self.adapter_type == 'vision_direct' or self.adapter_type == 'te_augmenter') and not skip_unconditional:
                     # add an unconditional so we can save it
-                    unconditional = self.get_empty_clip_image(batch_size).to(
+                    unconditional = self.get_empty_clip_image(batch_size, shape=clip_image.shape).to(
                         clip_image.device, dtype=clip_image.dtype
                     )
                     clip_image = torch.cat([unconditional, clip_image], dim=0)
@@ -840,11 +931,14 @@ class CustomAdapter(torch.nn.Module):
                     elif self.config.clip_layer == 'last_hidden_state':
                         clip_image_embeds = clip_output.hidden_states[-1]
                     else:
-                        clip_image_embeds = clip_output.image_embeds
+                        if hasattr(clip_output, 'image_embeds'):
+                            clip_image_embeds = clip_output.image_embeds
+                        elif hasattr(clip_output, 'pooler_output'):
+                            clip_image_embeds = clip_output.pooler_output
                         # TODO should we always norm image embeds?
                         # get norm embeddings
-                        l2_norm = torch.norm(clip_image_embeds, p=2)
-                        clip_image_embeds = clip_image_embeds / l2_norm
+                        # l2_norm = torch.norm(clip_image_embeds, p=2)
+                        # clip_image_embeds = clip_image_embeds / l2_norm
 
                     if not is_training or not self.config.train_image_encoder:
                         clip_image_embeds = clip_image_embeds.detach()
@@ -857,7 +951,10 @@ class CustomAdapter(torch.nn.Module):
 
                     # save them to the conditional and unconditional
                     try:
-                        self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
+                        if skip_unconditional:
+                            self.unconditional_embeds, self.conditional_embeds = None, clip_image_embeds
+                        else:
+                            self.unconditional_embeds, self.conditional_embeds = clip_image_embeds.chunk(2, dim=0)
                     except ValueError:
                         raise ValueError(f"could not split the clip image embeds into 2. Got shape: {clip_image_embeds.shape}")
 
@@ -889,14 +986,20 @@ class CustomAdapter(torch.nn.Module):
                     yield from attn_processor.parameters(recurse)
                 if self.config.train_image_encoder:
                     yield from self.vision_encoder.parameters(recurse)
-                if self.config.num_tokens:
+                if self.vd_adapter.resampler is not None:
                     yield from self.vd_adapter.resampler.parameters(recurse)
+                if self.vd_adapter.pool is not None:
+                    yield from self.vd_adapter.pool.parameters(recurse)
+                if self.vd_adapter.sparse_autoencoder is not None:
+                    yield from self.vd_adapter.sparse_autoencoder.parameters(recurse)
         elif self.config.type == 'te_augmenter':
             yield from self.te_augmenter.parameters(recurse)
             if self.config.train_image_encoder:
                 yield from self.vision_encoder.parameters(recurse)
         elif self.config.type == 'single_value':
             yield from self.single_value_adapter.parameters(recurse)
+        elif self.config.type == 'redux':
+            yield from self.redux_adapter.parameters(recurse)
         else:
             raise NotImplementedError
 

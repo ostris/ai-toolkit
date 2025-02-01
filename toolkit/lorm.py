@@ -354,7 +354,8 @@ def convert_diffusers_unet_to_lorm(
                 elif child_module.__class__.__name__ in LINEAR_MODULES:
                     if count_parameters(child_module) > parameter_threshold:
 
-                        dtype = child_module.weight.dtype
+                        # dtype = child_module.weight.dtype
+                        dtype = torch.float32
                         # extract and convert
                         down_weight, up_weight, lora_dim, diff = extract_linear(
                             weight=child_module.weight.clone().detach().float(),
