@@ -66,6 +66,7 @@ from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
+from diffusers import FluxFillPipeline
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -560,7 +561,10 @@ class StableDiffusion:
             )
             # hack in model gpu splitter
             if self.model_config.split_model_over_gpus:
-                add_model_gpu_splitter_to_flux(transformer)
+                add_model_gpu_splitter_to_flux(
+                    transformer, 
+                    other_module_param_count_scale=self.model_config.split_model_other_module_param_count_scale
+                )
             
             if not self.low_vram:
                 # for low v ram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu

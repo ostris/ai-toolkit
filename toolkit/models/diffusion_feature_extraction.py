@@ -250,13 +250,14 @@ class DiffusionFeatureExtractor3(nn.Module):
         bs = noise_pred.shape[0]
         noise_pred_chunks = torch.chunk(noise_pred, bs)
         timestep_chunks = torch.chunk(timesteps, bs)
+        noisy_latent_chunks = torch.chunk(noisy_latents, bs)
         stepped_chunks = []
         for idx in range(bs):
             model_output = noise_pred_chunks[idx]
             timestep = timestep_chunks[idx]
             scheduler._step_index = None
             scheduler._init_step_index(timestep)
-            sample = noisy_latents.to(torch.float32)
+            sample = noisy_latent_chunks[idx].to(torch.float32)
             
             sigma = scheduler.sigmas[scheduler.step_index]
             sigma_next = scheduler.sigmas[-1] # use last sigma for final step

@@ -1839,7 +1839,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         did_first_flush = False
         for step in range(start_step_num, self.train_config.steps):
             if self.train_config.do_paramiter_swapping:
-                self.optimizer.swap_paramiters()
+                self.optimizer.optimizer.swap_paramiters()
             self.timer.start('train_loop')
             if self.train_config.do_random_cfg:
                 self.train_config.do_cfg = True

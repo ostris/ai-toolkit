@@ -483,6 +483,7 @@ class ModelConfig:
         self.split_model_over_gpus = kwargs.get("split_model_over_gpus", False)
         if self.split_model_over_gpus and not self.is_flux:
             raise ValueError("split_model_over_gpus is only supported with flux models currently")
+        self.split_model_other_module_param_count_scale = kwargs.get("split_model_other_module_param_count_scale", 0.3)
 
 
 class EMAConfig:
