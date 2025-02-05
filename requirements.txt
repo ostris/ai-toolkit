@@ -1,7 +1,7 @@
 torch==2.5.1
 torchvision==0.20.1
 safetensors
-git+https://github.com/huggingface/diffusers.git
+diffusers==0.32.2
 transformers
 lycoris-lora==1.8.3
 flatten_json
