@@ -1,0 +1,3 @@
+- only do ema on main device? shouldne be needed other than saving and sampling
+- check when to unwrap model and what it does
+- disable timer for non main local

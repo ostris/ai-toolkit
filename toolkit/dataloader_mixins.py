@@ -24,6 +24,8 @@ from torchvision import transforms
 from PIL import Image, ImageFilter, ImageOps
 from PIL.ImageOps import exif_transpose
 import albumentations as A
+from toolkit.print import print_acc
+from toolkit.accelerator import get_accelerator
 
 from toolkit.train_tools import get_torch_dtype
 
@@ -31,6 +33,8 @@ if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
     from toolkit.data_transfer_object.data_loader import FileItemDTO
     from toolkit.stable_diffusion_model import StableDiffusion
+
+accelerator = get_accelerator()
 
 # def get_associated_caption_from_img_path(img_path):
 # https://demo.albumentations.ai/
@@ -263,7 +267,7 @@ class BucketsMixin:
                     file_item.crop_y = int((file_item.scale_to_height - new_height) / 2)
 
                 if file_item.crop_y < 0 or file_item.crop_x < 0:
-                    print('debug')
+                    print_acc('debug')
 
             # check if bucket exists, if not, create it
             bucket_key = f'{file_item.crop_width}x{file_item.crop_height}'
@@ -275,10 +279,10 @@ class BucketsMixin:
         self.shuffle_buckets()
         self.build_batch_indices()
         if not quiet:
-            print(f'Bucket sizes for {self.dataset_path}:')
+            print_acc(f'Bucket sizes for {self.dataset_path}:')
             for key, bucket in self.buckets.items():
-                print(f'{key}: {len(bucket.file_list_idx)} files')
-            print(f'{len(self.buckets)} buckets made')
+                print_acc(f'{key}: {len(bucket.file_list_idx)} files')
+            print_acc(f'{len(self.buckets)} buckets made')
 
 
 class CaptionProcessingDTOMixin:
@@ -447,8 +451,8 @@ class ImageProcessingDTOMixin:
             img = Image.open(self.path)
             img = exif_transpose(img)
         except Exception as e:
-            print(f"Error: {e}")
-            print(f"Error loading image: {self.path}")
+            print_acc(f"Error: {e}")
+            print_acc(f"Error loading image: {self.path}")
 
         if self.use_alpha_as_mask:
             # we do this to make sure it does not replace the alpha with another color
@@ -462,11 +466,11 @@ class ImageProcessingDTOMixin:
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
-            print(
+            print_acc(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
         elif h > w and self.scale_to_height < self.scale_to_width:
             # throw error, they should match
-            print(
+            print_acc(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
 
         if self.flip_x:
@@ -482,7 +486,7 @@ class ImageProcessingDTOMixin:
             # crop to x_crop, y_crop, x_crop + crop_width, y_crop + crop_height
             if img.width < self.crop_x + self.crop_width or img.height < self.crop_y + self.crop_height:
                 # todo look into this. This still happens sometimes
-                print('size mismatch')
+                print_acc('size mismatch')
             img = img.crop((
                 self.crop_x,
                 self.crop_y,
@@ -501,7 +505,7 @@ class ImageProcessingDTOMixin:
             if self.dataset_config.random_crop:
                 if self.dataset_config.random_scale and min_img_size > self.dataset_config.resolution:
                     if min_img_size < self.dataset_config.resolution:
-                        print(
+                        print_acc(
                             f"Unexpected values: min_img_size={min_img_size}, self.resolution={self.dataset_config.resolution}, image file={self.path}")
                         scale_size = self.dataset_config.resolution
                     else:
@@ -567,8 +571,8 @@ class ControlFileItemDTOMixin:
             img = Image.open(self.control_path).convert('RGB')
             img = exif_transpose(img)
         except Exception as e:
-            print(f"Error: {e}")
-            print(f"Error loading image: {self.control_path}")
+            print_acc(f"Error: {e}")
+            print_acc(f"Error loading image: {self.control_path}")
 
         if self.full_size_control_images:
             # we just scale them to 512x512:
@@ -782,8 +786,8 @@ class ClipImageFileItemDTOMixin:
         except Exception as e:
             # make a random noise image
             img = Image.new('RGB', (self.dataset_config.resolution, self.dataset_config.resolution))
-            print(f"Error: {e}")
-            print(f"Error loading image: {clip_image_path}")
+            print_acc(f"Error: {e}")
+            print_acc(f"Error loading image: {clip_image_path}")
 
         img = img.convert('RGB')
 
@@ -981,8 +985,8 @@ class MaskFileItemDTOMixin:
             img = Image.open(self.mask_path)
             img = exif_transpose(img)
         except Exception as e:
-            print(f"Error: {e}")
-            print(f"Error loading image: {self.mask_path}")
+            print_acc(f"Error: {e}")
+            print_acc(f"Error loading image: {self.mask_path}")
 
         if self.use_alpha_as_mask:
             # pipeline expectws an rgb image so we need to put alpha in all channels
@@ -999,11 +1003,11 @@ class MaskFileItemDTOMixin:
         fix_size = False
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
-            print(f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            print_acc(f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
             fix_size = True
         elif h > w and self.scale_to_height < self.scale_to_width:
             # throw error, they should match
-            print(f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            print_acc(f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
             fix_size = True
 
         if fix_size:
@@ -1085,8 +1089,8 @@ class UnconditionalFileItemDTOMixin:
             img = Image.open(self.unconditional_path)
             img = exif_transpose(img)
         except Exception as e:
-            print(f"Error: {e}")
-            print(f"Error loading image: {self.mask_path}")
+            print_acc(f"Error: {e}")
+            print_acc(f"Error loading image: {self.mask_path}")
 
         img = img.convert('RGB')
         w, h = img.size
@@ -1166,9 +1170,9 @@ class PoiFileItemDTOMixin:
             with open(caption_path, 'r', encoding='utf-8') as f:
                 json_data = json.load(f)
             if 'poi' not in json_data:
-                print(f"Warning: poi not found in caption file: {caption_path}")
+                print_acc(f"Warning: poi not found in caption file: {caption_path}")
             if self.poi not in json_data['poi']:
-                print(f"Warning: poi not found in caption file: {caption_path}")
+                print_acc(f"Warning: poi not found in caption file: {caption_path}")
             # poi has, x, y, width, height
             # do full image if no poi
             self.poi_x = 0
@@ -1242,8 +1246,8 @@ class PoiFileItemDTOMixin:
                 # now we have our random crop, but it may be smaller than resolution. Check and expand if needed
                 current_resolution = get_resolution(poi_width, poi_height)
             except Exception as e:
-                print(f"Error: {e}")
-                print(f"Error getting resolution: {self.path}")
+                print_acc(f"Error: {e}")
+                print_acc(f"Error getting resolution: {self.path}")
                 raise e
                 return False
             if current_resolution >= self.dataset_config.resolution:
@@ -1252,7 +1256,7 @@ class PoiFileItemDTOMixin:
             else:
                 num_loops += 1
                 if num_loops > 100:
-                    print(
+                    print_acc(
                         f"Warning: poi bucketing looped too many times. This should not happen. Please report this issue.")
                     return False
 
@@ -1279,7 +1283,7 @@ class PoiFileItemDTOMixin:
 
         if self.scale_to_width < self.crop_x + self.crop_width or self.scale_to_height < self.crop_y + self.crop_height:
             # todo look into this. This still happens sometimes
-            print('size mismatch')
+            print_acc('size mismatch')
 
         return True
 
@@ -1373,88 +1377,89 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
-        print(f"Caching latents for {self.dataset_path}")
-        # cache all latents to disk
-        to_disk = self.is_caching_latents_to_disk
-        to_memory = self.is_caching_latents_to_memory
+        with accelerator.main_process_first():
+            print_acc(f"Caching latents for {self.dataset_path}")
+            # cache all latents to disk
+            to_disk = self.is_caching_latents_to_disk
+            to_memory = self.is_caching_latents_to_memory
 
-        if to_disk:
-            print(" - Saving latents to disk")
-        if to_memory:
-            print(" - Keeping latents in memory")
-        # move sd items to cpu except for vae
-        self.sd.set_device_state_preset('cache_latents')
+            if to_disk:
+                print_acc(" - Saving latents to disk")
+            if to_memory:
+                print_acc(" - Keeping latents in memory")
+            # move sd items to cpu except for vae
+            self.sd.set_device_state_preset('cache_latents')
 
-        # use tqdm to show progress
-        i = 0
-        for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
-            # set latent space version
-            if self.sd.model_config.latent_space_version is not None:
-                file_item.latent_space_version = self.sd.model_config.latent_space_version
-            elif self.sd.is_xl:
-                file_item.latent_space_version = 'sdxl'
-            elif self.sd.is_v3:
-                file_item.latent_space_version = 'sd3'
-            elif self.sd.is_auraflow:
-                file_item.latent_space_version = 'sdxl'
-            elif self.sd.is_flux:
-                file_item.latent_space_version = 'flux1'
-            elif self.sd.model_config.is_pixart_sigma:
-                file_item.latent_space_version = 'sdxl'
-            else:
-                file_item.latent_space_version = 'sd1'
-            file_item.is_caching_to_disk = to_disk
-            file_item.is_caching_to_memory = to_memory
-            file_item.latent_load_device = self.sd.device
+            # use tqdm to show progress
+            i = 0
+            for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
+                # set latent space version
+                if self.sd.model_config.latent_space_version is not None:
+                    file_item.latent_space_version = self.sd.model_config.latent_space_version
+                elif self.sd.is_xl:
+                    file_item.latent_space_version = 'sdxl'
+                elif self.sd.is_v3:
+                    file_item.latent_space_version = 'sd3'
+                elif self.sd.is_auraflow:
+                    file_item.latent_space_version = 'sdxl'
+                elif self.sd.is_flux:
+                    file_item.latent_space_version = 'flux1'
+                elif self.sd.model_config.is_pixart_sigma:
+                    file_item.latent_space_version = 'sdxl'
+                else:
+                    file_item.latent_space_version = 'sd1'
+                file_item.is_caching_to_disk = to_disk
+                file_item.is_caching_to_memory = to_memory
+                file_item.latent_load_device = self.sd.device
 
-            latent_path = file_item.get_latent_path(recalculate=True)
-            # check if it is saved to disk already
-            if os.path.exists(latent_path):
-                if to_memory:
-                    # load it into memory
-                    state_dict = load_file(latent_path, device='cpu')
-                    file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
-            else:
-                # not saved to disk, calculate
-                # load the image first
-                file_item.load_and_process_image(self.transform, only_load_latents=True)
-                dtype = self.sd.torch_dtype
-                device = self.sd.device_torch
-                # add batch dimension
-                try:
-                    imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
-                    latent = self.sd.encode_images(imgs).squeeze(0)
-                except Exception as e:
-                    print(f"Error processing image: {file_item.path}")
-                    print(f"Error: {str(e)}")
-                    raise e
-                # save_latent
-                if to_disk:
-                    state_dict = OrderedDict([
-                        ('latent', latent.clone().detach().cpu()),
-                    ])
-                    # metadata
-                    meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
-                    os.makedirs(os.path.dirname(latent_path), exist_ok=True)
-                    save_file(state_dict, latent_path, metadata=meta)
+                latent_path = file_item.get_latent_path(recalculate=True)
+                # check if it is saved to disk already
+                if os.path.exists(latent_path):
+                    if to_memory:
+                        # load it into memory
+                        state_dict = load_file(latent_path, device='cpu')
+                        file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
+                else:
+                    # not saved to disk, calculate
+                    # load the image first
+                    file_item.load_and_process_image(self.transform, only_load_latents=True)
+                    dtype = self.sd.torch_dtype
+                    device = self.sd.device_torch
+                    # add batch dimension
+                    try:
+                        imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
+                        latent = self.sd.encode_images(imgs).squeeze(0)
+                    except Exception as e:
+                        print_acc(f"Error processing image: {file_item.path}")
+                        print_acc(f"Error: {str(e)}")
+                        raise e
+                    # save_latent
+                    if to_disk:
+                        state_dict = OrderedDict([
+                            ('latent', latent.clone().detach().cpu()),
+                        ])
+                        # metadata
+                        meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
+                        os.makedirs(os.path.dirname(latent_path), exist_ok=True)
+                        save_file(state_dict, latent_path, metadata=meta)
 
-                if to_memory:
-                    # keep it in memory
-                    file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
+                    if to_memory:
+                        # keep it in memory
+                        file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
 
-                del imgs
-                del latent
-                del file_item.tensor
+                    del imgs
+                    del latent
+                    del file_item.tensor
 
-                # flush(garbage_collect=False)
-            file_item.is_latent_cached = True
-            i += 1
-            # flush every 100
-            # if i % 100 == 0:
-            #     flush()
+                    # flush(garbage_collect=False)
+                file_item.is_latent_cached = True
+                i += 1
+                # flush every 100
+                # if i % 100 == 0:
+                #     flush()
 
-        # restore device state
-        self.sd.restore_device_state()
+            # restore device state
+            self.sd.restore_device_state()
 
 
 class CLIPCachingMixin:
@@ -1469,9 +1474,9 @@ class CLIPCachingMixin:
         if not self.is_caching_clip_vision_to_disk:
             return
         with torch.no_grad():
-            print(f"Caching clip vision for {self.dataset_path}")
+            print_acc(f"Caching clip vision for {self.dataset_path}")
 
-            print(" - Saving clip to disk")
+            print_acc(" - Saving clip to disk")
             # move sd items to cpu except for vae
             self.sd.set_device_state_preset('cache_clip')
 
@@ -1512,7 +1517,7 @@ class CLIPCachingMixin:
                 self.clip_vision_num_unconditional_cache = 1
 
             # cache unconditionals
-            print(f" - Caching {self.clip_vision_num_unconditional_cache} unconditional clip vision to disk")
+            print_acc(f" - Caching {self.clip_vision_num_unconditional_cache} unconditional clip vision to disk")
             clip_vision_cache_path = os.path.join(self.dataset_config.clip_image_path, '_clip_vision_cache')
 
             unconditional_paths = []

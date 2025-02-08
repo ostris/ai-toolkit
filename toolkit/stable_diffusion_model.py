@@ -63,7 +63,10 @@ from huggingface_hub import hf_hub_download
 from toolkit.models.flux import add_model_gpu_splitter_to_flux, bypass_flux_guidance, restore_flux_guidance
 
 from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
+from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
+from toolkit.print import print_acc
+from diffusers import FluxFillPipeline
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -133,18 +136,17 @@ class StableDiffusion:
             noise_scheduler=None,
             quantize_device=None,
     ):
+        self.accelerator = get_accelerator()
         self.custom_pipeline = custom_pipeline
-        self.device = device
+        self.device = str(self.accelerator.device)
         self.dtype = dtype
         self.torch_dtype = get_torch_dtype(dtype)
-        self.device_torch = torch.device(self.device)
+        self.device_torch = self.accelerator.device
 
-        self.vae_device_torch = torch.device(self.device) if model_config.vae_device is None else torch.device(
-            model_config.vae_device)
+        self.vae_device_torch = self.accelerator.device
         self.vae_torch_dtype = get_torch_dtype(model_config.vae_dtype)
 
-        self.te_device_torch = torch.device(self.device) if model_config.te_device is None else torch.device(
-            model_config.te_device)
+        self.te_device_torch = self.accelerator.device
         self.te_torch_dtype = get_torch_dtype(model_config.te_dtype)
 
         self.model_config = model_config
@@ -155,6 +157,7 @@ class StableDiffusion:
         self.pipeline: Union[None, 'StableDiffusionPipeline', 'CustomStableDiffusionXLPipeline', 'PixArtAlphaPipeline']
         self.vae: Union[None, 'AutoencoderKL']
         self.unet: Union[None, 'UNet2DConditionModel']
+        self.unet_unwrapped: Union[None, 'UNet2DConditionModel']
         self.text_encoder: Union[None, 'CLIPTextModel', List[Union['CLIPTextModel', 'CLIPTextModelWithProjection']]]
         self.tokenizer: Union[None, 'CLIPTokenizer', List['CLIPTokenizer']]
         self.noise_scheduler: Union[None, 'DDPMScheduler'] = noise_scheduler
@@ -189,7 +192,7 @@ class StableDiffusion:
         if self.is_flux or self.is_v3 or self.is_auraflow or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
             self.is_flow_matching = True
 
-        self.quantize_device = quantize_device if quantize_device is not None else self.device
+        self.quantize_device = self.device_torch
         self.low_vram = self.model_config.low_vram
 
         # merge in and preview active with -1 weight
@@ -257,8 +260,8 @@ class StableDiffusion:
             pipe.vae = pipe.vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
 
             if self.model_config.experimental_xl:
-                print("Experimental XL mode enabled")
-                print("Loading and injecting alt weights")
+                print_acc("Experimental XL mode enabled")
+                print_acc("Loading and injecting alt weights")
                 # load the mismatched weight and force it in
                 raw_state_dict = load_file(model_path)
                 replacement_weight = raw_state_dict['conditioner.embedders.1.model.text_projection'].clone()
@@ -268,17 +271,17 @@ class StableDiffusion:
                 # replace weight with mismatched weight
                 te1_state_dict['text_projection.weight'] = replacement_weight.to(self.device_torch, dtype=dtype)
                 flush()
-                print("Injecting alt weights")
+                print_acc("Injecting alt weights")
         elif self.model_config.is_v3:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
             else:
                 pipln = StableDiffusion3Pipeline
             
-            print("Loading SD3 model")
+            print_acc("Loading SD3 model")
             # assume it is the large model
             base_model_path = "stabilityai/stable-diffusion-3.5-large"
-            print("Loading transformer")
+            print_acc("Loading transformer")
             subfolder = 'transformer'
             transformer_path = model_path
             # check if HF_DATASETS_OFFLINE or TRANSFORMERS_OFFLINE is set
@@ -301,7 +304,7 @@ class StableDiffusion:
             )
             if not self.low_vram:
                 # for low v ram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu
-                transformer.to(torch.device(self.quantize_device), dtype=dtype)
+                transformer.to(self.quantize_device, dtype=dtype)
             flush()
             
             if self.model_config.lora_path is not None:
@@ -309,7 +312,7 @@ class StableDiffusion:
             
             if self.model_config.quantize:
                 quantization_type = qfloat8
-                print("Quantizing transformer")
+                print_acc("Quantizing transformer")
                 quantize(transformer, weights=quantization_type)
                 freeze(transformer)
                 transformer.to(self.device_torch)
@@ -317,11 +320,11 @@ class StableDiffusion:
                 transformer.to(self.device_torch, dtype=dtype)
                 
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(base_model_path, subfolder="scheduler")
-            print("Loading vae")
+            print_acc("Loading vae")
             vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
             flush()
             
-            print("Loading t5")
+            print_acc("Loading t5")
             tokenizer_3 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_3", torch_dtype=dtype)
             text_encoder_3 = T5EncoderModel.from_pretrained(
                 base_model_path, 
@@ -333,7 +336,7 @@ class StableDiffusion:
             flush()
 
             if self.model_config.quantize:
-                print("Quantizing T5")
+                print_acc("Quantizing T5")
                 quantize(text_encoder_3, weights=qfloat8)
                 freeze(text_encoder_3)
                 flush()
@@ -357,7 +360,7 @@ class StableDiffusion:
                         **load_args
                     )
                 except Exception as e:
-                    print(f"Error loading from pretrained: {e}")
+                    print_acc(f"Error loading from pretrained: {e}")
                     raise e
 
             else:
@@ -532,10 +535,10 @@ class StableDiffusion:
             tokenizer = pipe.tokenizer
 
         elif self.model_config.is_flux:
-            print("Loading Flux model")
+            print_acc("Loading Flux model")
             # base_model_path = "black-forest-labs/FLUX.1-schnell"
             base_model_path = self.model_config.name_or_path_original
-            print("Loading transformer")
+            print_acc("Loading transformer")
             subfolder = 'transformer'
             transformer_path = model_path
             local_files_only = False
@@ -558,11 +561,14 @@ class StableDiffusion:
             )
             # hack in model gpu splitter
             if self.model_config.split_model_over_gpus:
-                add_model_gpu_splitter_to_flux(transformer)
+                add_model_gpu_splitter_to_flux(
+                    transformer, 
+                    other_module_param_count_scale=self.model_config.split_model_other_module_param_count_scale
+                )
             
             if not self.low_vram:
                 # for low v ram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu
-                transformer.to(torch.device(self.quantize_device), dtype=dtype)
+                transformer.to(self.quantize_device, dtype=dtype)
             flush()
 
             if self.model_config.assistant_lora_path is not None or self.model_config.inference_lora_path is not None:
@@ -584,7 +590,7 @@ class StableDiffusion:
                         load_lora_path, "pytorch_lora_weights.safetensors"
                     )
                 elif not os.path.exists(load_lora_path):
-                    print(f"Grabbing lora from the hub: {load_lora_path}")
+                    print_acc(f"Grabbing lora from the hub: {load_lora_path}")
                     new_lora_path = hf_hub_download(
                         load_lora_path,
                         filename="pytorch_lora_weights.safetensors"
@@ -607,7 +613,7 @@ class StableDiffusion:
                     self.model_config.lora_path = self.model_config.assistant_lora_path
 
             if self.model_config.lora_path is not None:
-                print("Fusing in LoRA")
+                print_acc("Fusing in LoRA")
                 # need the pipe for peft
                 pipe: FluxPipeline = FluxPipeline(
                     scheduler=None,
@@ -638,7 +644,7 @@ class StableDiffusion:
 
                     # double blocks
                     transformer.transformer_blocks = transformer.transformer_blocks.to(
-                        torch.device(self.quantize_device), dtype=dtype
+                        self.quantize_device, dtype=dtype
                     )
                     pipe.load_lora_weights(double_transformer_lora, adapter_name=f"lora1_double")
                     pipe.fuse_lora()
@@ -649,7 +655,7 @@ class StableDiffusion:
 
                     # single blocks
                     transformer.single_transformer_blocks = transformer.single_transformer_blocks.to(
-                        torch.device(self.quantize_device), dtype=dtype
+                        self.quantize_device, dtype=dtype
                     )
                     pipe.load_lora_weights(single_transformer_lora, adapter_name=f"lora1_single")
                     pipe.fuse_lora()
@@ -677,7 +683,7 @@ class StableDiffusion:
                 # patch the state dict method
                 patch_dequantization_on_save(transformer)
                 quantization_type = qfloat8
-                print("Quantizing transformer")
+                print_acc("Quantizing transformer")
                 quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
                 freeze(transformer)
                 transformer.to(self.device_torch)
@@ -687,11 +693,11 @@ class StableDiffusion:
             flush()
 
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(base_model_path, subfolder="scheduler")
-            print("Loading vae")
+            print_acc("Loading vae")
             vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
             flush()
 
-            print("Loading t5")
+            print_acc("Loading t5")
             tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2", torch_dtype=dtype)
             text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
                                                             torch_dtype=dtype)
@@ -700,17 +706,17 @@ class StableDiffusion:
             flush()
 
             if self.model_config.quantize_te:
-                print("Quantizing T5")
+                print_acc("Quantizing T5")
                 quantize(text_encoder_2, weights=qfloat8)
                 freeze(text_encoder_2)
                 flush()
                 
-            print("Loading clip")
+            print_acc("Loading clip")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
             tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
             text_encoder.to(self.device_torch, dtype=dtype)
 
-            print("making pipe")
+            print_acc("making pipe")
             pipe: FluxPipeline = FluxPipeline(
                 scheduler=scheduler,
                 text_encoder=text_encoder,
@@ -723,7 +729,7 @@ class StableDiffusion:
             pipe.text_encoder_2 = text_encoder_2
             pipe.transformer = transformer
 
-            print("preparing")
+            print_acc("preparing")
 
             text_encoder = [pipe.text_encoder, pipe.text_encoder_2]
             tokenizer = [pipe.tokenizer, pipe.tokenizer_2]
@@ -839,7 +845,7 @@ class StableDiffusion:
         self.is_loaded = True
 
         if self.model_config.assistant_lora_path is not None:
-            print("Loading assistant lora")
+            print_acc("Loading assistant lora")
             self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
                 self.model_config.assistant_lora_path, self)
 
@@ -849,7 +855,7 @@ class StableDiffusion:
                 self.assistant_lora.is_active = False
                 
         if self.model_config.inference_lora_path is not None:
-            print("Loading inference lora")
+            print_acc("Loading inference lora")
             self.assistant_lora: 'LoRASpecialNetwork' = load_assistant_lora_from_path(
                 self.model_config.inference_lora_path, self)
             # disable during training
@@ -920,11 +926,12 @@ class StableDiffusion:
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
+        network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
-            print("Unloading assistant lora")
+            print_acc("Unloading assistant lora")
             if self.invert_assistant_lora:
                 self.assistant_lora.is_active = True
                 # move weights on to the device
@@ -933,18 +940,17 @@ class StableDiffusion:
                 self.assistant_lora.is_active = False
                 
         if self.model_config.inference_lora_path is not None:
-            print("Loading inference lora")
+            print_acc("Loading inference lora")
             self.assistant_lora.is_active = True
             # move weights on to the device
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
 
-        if self.network is not None:
-            self.network.eval()
-            network = self.network
+        if network is not None:
+            network.eval()
             # check if we have the same network weight for all samples. If we do, we can merge in th
             # the network to drastically speed up inference
             unique_network_weights = set([x.network_multiplier for x in image_configs])
-            if len(unique_network_weights) == 1 and self.network.can_merge_in:
+            if len(unique_network_weights) == 1 and network.can_merge_in:
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
                 network.merge_in(merge_weight=merge_multiplier)
@@ -1029,9 +1035,9 @@ class StableDiffusion:
                 if self.model_config.use_flux_cfg:
                     pipeline = FluxWithCFGPipeline(
                         vae=self.vae,
-                        transformer=self.unet,
-                        text_encoder=self.text_encoder[0],
-                        text_encoder_2=self.text_encoder[1],
+                        transformer=unwrap_model(self.unet),
+                        text_encoder=unwrap_model(self.text_encoder[0]),
+                        text_encoder_2=unwrap_model(self.text_encoder[1]),
                         tokenizer=self.tokenizer[0],
                         tokenizer_2=self.tokenizer[1],
                         scheduler=noise_scheduler,
@@ -1041,9 +1047,9 @@ class StableDiffusion:
                 else:
                     pipeline = FluxPipeline(
                         vae=self.vae,
-                        transformer=self.unet,
-                        text_encoder=self.text_encoder[0],
-                        text_encoder_2=self.text_encoder[1],
+                        transformer=unwrap_model(self.unet),
+                        text_encoder=unwrap_model(self.text_encoder[0]),
+                        text_encoder_2=unwrap_model(self.text_encoder[1]),
                         tokenizer=self.tokenizer[0],
                         tokenizer_2=self.tokenizer[1],
                         scheduler=noise_scheduler,
@@ -1122,15 +1128,15 @@ class StableDiffusion:
             flush()
 
         start_multiplier = 1.0
-        if self.network is not None:
-            start_multiplier = self.network.multiplier
+        if network is not None:
+            start_multiplier = network.multiplier
 
         # pipeline.to(self.device_torch)
 
         with network:
             with torch.no_grad():
-                if self.network is not None:
-                    assert self.network.is_active
+                if network is not None:
+                    assert network.is_active
 
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
                     gen_config = image_configs[i]
@@ -1167,8 +1173,8 @@ class StableDiffusion:
                             validation_image = validation_image.unsqueeze(0)
                             self.adapter.set_reference_images(validation_image)
 
-                    if self.network is not None:
-                        self.network.multiplier = gen_config.network_multiplier
+                    if network is not None:
+                        network.multiplier = gen_config.network_multiplier
                     torch.manual_seed(gen_config.seed)
                     torch.cuda.manual_seed(gen_config.seed)
                     
@@ -1335,6 +1341,12 @@ class StableDiffusion:
                                 **extra
                             ).images[0]
                         else:
+                            # Fix a bug in diffusers/torch
+                            def callback_on_step_end(pipe, i, t, callback_kwargs):
+                                latents = callback_kwargs["latents"]
+                                if latents.dtype != self.unet.dtype:
+                                    latents = latents.to(self.unet.dtype)
+                                return {"latents": latents}
                             img = pipeline(
                                 prompt_embeds=conditional_embeds.text_embeds,
                                 pooled_prompt_embeds=conditional_embeds.pooled_embeds,
@@ -1346,6 +1358,7 @@ class StableDiffusion:
                                 guidance_scale=gen_config.guidance_scale,
                                 latents=gen_config.latents,
                                 generator=generator,
+                                callback_on_step_end=callback_on_step_end,
                                 **extra
                             ).images[0]
                     elif self.is_pixart:
@@ -1451,9 +1464,9 @@ class StableDiffusion:
             torch.cuda.set_rng_state(cuda_rng_state)
 
         self.restore_device_state()
-        if self.network is not None:
-            self.network.train()
-            self.network.multiplier = start_multiplier
+        if network is not None:
+            network.train()
+            network.multiplier = start_multiplier
 
         self.unet.to(self.device_torch, dtype=self.torch_dtype)
         if network.is_merged_in:
@@ -1462,7 +1475,7 @@ class StableDiffusion:
 
         # refuse loras
         if self.model_config.assistant_lora_path is not None:
-            print("Loading assistant lora")
+            print_acc("Loading assistant lora")
             if self.invert_assistant_lora:
                 self.assistant_lora.is_active = False
                 # move weights off the device
@@ -1471,7 +1484,7 @@ class StableDiffusion:
                 self.assistant_lora.is_active = True
                 
         if self.model_config.inference_lora_path is not None:
-            print("Unloading inference lora")
+            print_acc("Unloading inference lora")
             self.assistant_lora.is_active = False
             # move weights off the device
             self.assistant_lora.force_to('cpu', self.torch_dtype)
@@ -1497,7 +1510,7 @@ class StableDiffusion:
         if width is None:
             width = pixel_width // VAE_SCALE_FACTOR
 
-        num_channels = self.unet.config['in_channels']
+        num_channels = self.unet_unwrapped.config['in_channels']
         if self.is_flux:
             # has 64 channels in for some reason
             num_channels = 16
@@ -1805,8 +1818,8 @@ class StableDiffusion:
                                                                                         ratios=aspect_ratio_bin)
 
                 added_cond_kwargs = {"resolution": None, "aspect_ratio": None}
-                if self.unet.config.sample_size == 128 or (
-                        self.vae_scale_factor == 16 and self.unet.config.sample_size == 64):
+                if self.unet_unwrapped.config.sample_size == 128 or (
+                        self.vae_scale_factor == 16 and self.unet_unwrapped.config.sample_size == 64):
                     resolution = torch.tensor([height, width]).repeat(batch_size, 1)
                     aspect_ratio = torch.tensor([float(height / width)]).repeat(batch_size, 1)
                     resolution = resolution.to(dtype=text_embeddings.text_embeds.dtype, device=self.device_torch)
@@ -1829,7 +1842,7 @@ class StableDiffusion:
                 )[0]
 
                 # learned sigma
-                if self.unet.config.out_channels // 2 == self.unet.config.in_channels:
+                if self.unet_unwrapped.config.out_channels // 2 == self.unet_unwrapped.config.in_channels:
                     noise_pred = noise_pred.chunk(2, dim=1)[0]
                 else:
                     noise_pred = noise_pred
@@ -1857,7 +1870,7 @@ class StableDiffusion:
                         txt_ids = torch.zeros(bs, text_embeddings.text_embeds.shape[1], 3).to(self.device_torch)
 
                         # # handle guidance
-                        if self.unet.config.guidance_embeds:
+                        if self.unet_unwrapped.config.guidance_embeds:
                             if isinstance(guidance_embedding_scale, list):
                                 guidance = torch.tensor(guidance_embedding_scale, device=self.device_torch)
                             else:
@@ -1870,6 +1883,11 @@ class StableDiffusion:
                         bypass_flux_guidance(self.unet)
 
                     cast_dtype = self.unet.dtype
+                    # changes from orig implementation
+                    if txt_ids.ndim == 3:
+                        txt_ids = txt_ids[0]
+                    if img_ids.ndim == 3:
+                        img_ids = img_ids[0]
                     # with torch.amp.autocast(device_type='cuda', dtype=cast_dtype):
                     noise_pred = self.unet(
                         hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
@@ -2444,7 +2462,7 @@ class StableDiffusion:
             # diffusers
             if self.is_flux:
                 # only save the unet
-                transformer: FluxTransformer2DModel = self.unet
+                transformer: FluxTransformer2DModel = unwrap_model(self.unet)
                 transformer.save_pretrained(
                     save_directory=os.path.join(output_file, 'transformer'),
                     safe_serialization=True,
@@ -2516,7 +2534,7 @@ class StableDiffusion:
                             params.append(named_params[diffusers_key])
             param_data = {"params": params, "lr": unet_lr}
             trainable_parameters.append(param_data)
-            print(f"Found {len(params)} trainable parameter in unet")
+            print_acc(f"Found {len(params)} trainable parameter in unet")
 
         if text_encoder:
             named_params = self.named_parameters(vae=False, unet=False, text_encoder=text_encoder, state_dict_keys=True)
@@ -2529,7 +2547,7 @@ class StableDiffusion:
             param_data = {"params": params, "lr": text_encoder_lr}
             trainable_parameters.append(param_data)
 
-            print(f"Found {len(params)} trainable parameter in text encoder")
+            print_acc(f"Found {len(params)} trainable parameter in text encoder")
 
         if refiner:
             named_params = self.named_parameters(vae=False, unet=False, text_encoder=False, refiner=True,
@@ -2544,7 +2562,7 @@ class StableDiffusion:
             param_data = {"params": params, "lr": refiner_lr}
             trainable_parameters.append(param_data)
 
-            print(f"Found {len(params)} trainable parameter in refiner")
+            print_acc(f"Found {len(params)} trainable parameter in refiner")
 
         return trainable_parameters
 

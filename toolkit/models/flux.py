@@ -117,16 +117,18 @@ def split_gpu_single_block_forward(
     return hidden_state_out
 
 
-def add_model_gpu_splitter_to_flux(transformer: FluxTransformer2DModel):
+def add_model_gpu_splitter_to_flux(
+    transformer: FluxTransformer2DModel,
+    # ~ 5 billion for all other params
+    other_module_params: Optional[int] = 5e9,
+    # since they are not trainable, multiply by smaller number
+    other_module_param_count_scale: Optional[float] = 0.3
+):
     gpu_id_list = [i for i in range(torch.cuda.device_count())]
     
     # if len(gpu_id_list) > 2:
     #     raise ValueError("Cannot split to more than 2 GPUs currently.")
-    
-    # ~ 5 billion for all other params
-    other_module_params = 5e9
-    # since they are not trainable, multiply by smaller number
-    other_module_params *= 0.5
+    other_module_params *= other_module_param_count_scale
     
     # since we are not tuning the 
     total_params = sum(p.numel() for p in transformer.parameters()) + other_module_params
