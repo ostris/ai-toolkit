@@ -407,6 +407,9 @@ class TrainConfig:
         
         # optimal noise pairing
         self.optimal_noise_pairing_samples = kwargs.get('optimal_noise_pairing_samples', 1)
+        
+        # forces same noise for the same image at a given size.
+        self.force_consistent_noise = kwargs.get('force_consistent_noise', False)
 
 
 class ModelConfig:
