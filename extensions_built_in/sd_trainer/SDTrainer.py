@@ -916,7 +916,7 @@ class SDTrainer(BaseSDTrainProcess):
             # self.network.multiplier = 0.0
             self.sd.unet.eval()
 
-            if self.adapter is not None and isinstance(self.adapter, IPAdapter) and not self.sd.is_flux:
+            if self.adapter is not None and isinstance(self.adapter, IPAdapter) and not self.sd.is_flux and not self.sd.is_lumina2:
                 # we need to remove the image embeds from the prompt except for flux
                 embeds_to_use: PromptEmbeds = embeds_to_use.clone().detach()
                 end_pos = embeds_to_use.text_embeds.shape[1] - self.adapter_config.num_tokens
