@@ -49,7 +49,8 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel, \
     StableDiffusionXLControlNetPipeline, StableDiffusionControlNetPipeline, StableDiffusion3Pipeline, \
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
-    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel
+    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Text2ImgPipeline
+from toolkit.models.lumina2 import Lumina2Transformer2DModel
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -67,6 +68,7 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
 from diffusers import FluxFillPipeline
+from transformers import AutoModel, AutoTokenizer, Gemma2Model
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -182,6 +184,7 @@ class StableDiffusion:
         self.is_pixart = model_config.is_pixart
         self.is_auraflow = model_config.is_auraflow
         self.is_flux = model_config.is_flux
+        self.is_lumina2 = model_config.is_lumina2
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
@@ -189,7 +192,7 @@ class StableDiffusion:
         self.config_file = None
 
         self.is_flow_matching = False
-        if self.is_flux or self.is_v3 or self.is_auraflow or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
+        if self.is_flux or self.is_v3 or self.is_auraflow or self.is_lumina2 or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
             self.is_flow_matching = True
 
         self.quantize_device = self.device_torch
@@ -745,6 +748,97 @@ class StableDiffusion:
             text_encoder[1].eval()
             pipe.transformer = pipe.transformer.to(self.device_torch)
             flush()
+        elif self.model_config.is_lumina2:
+            print_acc("Loading Lumina2 model")
+            # base_model_path = "black-forest-labs/FLUX.1-schnell"
+            base_model_path = self.model_config.name_or_path_original
+            print_acc("Loading transformer")
+            subfolder = 'transformer'
+            transformer_path = model_path
+            if os.path.exists(transformer_path):
+                subfolder = None
+                transformer_path = os.path.join(transformer_path, 'transformer')
+                # check if the path is a full checkpoint.
+                te_folder_path = os.path.join(model_path, 'text_encoder')
+                # if we have the te, this folder is a full checkpoint, use it as the base
+                if os.path.exists(te_folder_path):
+                    base_model_path = model_path
+
+            transformer = Lumina2Transformer2DModel.from_pretrained(
+                transformer_path,
+                subfolder=subfolder,
+                torch_dtype=dtype,
+            )
+            
+            if self.model_config.split_model_over_gpus:
+                raise ValueError("Splitting model over gpus is not supported for Lumina2 models")
+            
+            transformer.to(self.quantize_device, dtype=dtype)
+            flush()
+
+            if self.model_config.assistant_lora_path is not None or self.model_config.inference_lora_path is not None:
+                raise ValueError("Assistant LoRA is not supported for Lumina2 models currently")
+
+            if self.model_config.lora_path is not None:
+                raise ValueError("Loading LoRA is not supported for Lumina2 models currently")
+            
+            flush()
+            
+            if self.model_config.quantize:
+                # patch the state dict method
+                patch_dequantization_on_save(transformer)
+                quantization_type = qfloat8
+                print_acc("Quantizing transformer")
+                quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
+                freeze(transformer)
+                transformer.to(self.device_torch)
+            else:
+                transformer.to(self.device_torch, dtype=dtype)
+
+            flush()
+
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(base_model_path, subfolder="scheduler")
+            print_acc("Loading vae")
+            vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
+            flush()
+
+            print_acc("Loading Gemma2")
+            tokenizer = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+            text_encoder = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
+
+            text_encoder.to(self.device_torch, dtype=dtype)
+            flush()
+
+            if self.model_config.quantize_te:
+                print_acc("Quantizing Gemma2")
+                quantize(text_encoder, weights=qfloat8)
+                freeze(text_encoder)
+                flush()
+
+            print_acc("making pipe")
+            pipe: Lumina2Text2ImgPipeline = Lumina2Text2ImgPipeline(
+                scheduler=scheduler,
+                text_encoder=None,
+                tokenizer=tokenizer,
+                vae=vae,
+                transformer=None,
+            )
+            pipe.text_encoder = text_encoder
+            pipe.transformer = transformer
+
+            print_acc("preparing")
+
+            text_encoder = pipe.text_encoder
+            tokenizer = pipe.tokenizer
+
+            pipe.transformer = pipe.transformer.to(self.device_torch)
+
+            flush()
+            text_encoder.to(self.device_torch)
+            text_encoder.requires_grad_(False)
+            text_encoder.eval()
+            pipe.transformer = pipe.transformer.to(self.device_torch)
+            flush()
         else:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
@@ -817,9 +911,10 @@ class StableDiffusion:
         # add hacks to unet to help training
         # pipe.unet = prepare_unet_for_training(pipe.unet)
 
-        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux:
+        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2:
             # pixart and sd3 dont use a unet
             self.unet = pipe.transformer
+            self.unet_unwrapped = pipe.transformer
         else:
             self.unet: 'UNet2DConditionModel' = pipe.unet
         self.vae: 'AutoencoderKL' = pipe.vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
@@ -832,7 +927,7 @@ class StableDiffusion:
         self.unet.eval()
 
         # load any loras we have
-        if self.model_config.lora_path is not None and not self.is_flux:
+        if self.model_config.lora_path is not None and not self.is_flux and not self.is_lumina2:
             pipe.load_lora_weights(self.model_config.lora_path, adapter_name="lora1")
             pipe.fuse_lora()
             # unfortunately, not an easier way with peft
@@ -975,16 +1070,18 @@ class StableDiffusion:
                         })
                 else:
                     arch = 'sd'
-                    if self.model_config.is_pixart:
+                    if self.is_pixart:
                         arch = 'pixart'
-                    if self.model_config.is_flux:
+                    if self.is_flux:
                         arch = 'flux'
+                    if self.is_lumina2:
+                        arch = 'lumina2'
                     noise_scheduler = get_sampler(
                         sampler,
                         {
                             "prediction_type": self.prediction_type,
                         },
-                        arch
+                        arch=arch
                     )
 
                 try:
@@ -1061,6 +1158,15 @@ class StableDiffusion:
                         **extra_args
                     )
                 pipeline.watermark = None
+            elif self.is_lumina2:
+                pipeline = Lumina2Text2ImgPipeline(
+                    vae=self.vae,
+                    transformer=self.unet,
+                    text_encoder=self.text_encoder,
+                    tokenizer=self.tokenizer,
+                    scheduler=noise_scheduler,
+                    **extra_args
+                )
             elif self.is_v3:
                 pipeline = Pipe(
                     vae=self.vae,
@@ -1366,6 +1472,22 @@ class StableDiffusion:
                                 callback_on_step_end=callback_on_step_end,
                                 **extra
                             ).images[0]
+                    elif self.is_lumina2:
+                        pipeline: Lumina2Text2ImgPipeline = pipeline
+
+                        img = pipeline(
+                            prompt_embeds=conditional_embeds.text_embeds,
+                            prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch, dtype=torch.int64),
+                            negative_prompt_embeds=unconditional_embeds.text_embeds,
+                            negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch, dtype=torch.int64),
+                            height=gen_config.height,
+                            width=gen_config.width,
+                            num_inference_steps=gen_config.num_inference_steps,
+                            guidance_scale=gen_config.guidance_scale,
+                            latents=gen_config.latents,
+                            generator=generator,
+                            **extra
+                        ).images[0]
                     elif self.is_pixart:
                         # needs attention masks for some reason
                         img = pipeline(
@@ -1924,6 +2046,20 @@ class StableDiffusion:
                     
                     if bypass_guidance_embedding:
                         restore_flux_guidance(self.unet)
+                elif self.is_lumina2:
+                    # reverse the timestep since Lumina uses t=0 as the noise and t=1 as the image
+                    t = 1 - timestep / self.noise_scheduler.config.num_train_timesteps
+                    with self.accelerator.autocast():
+                        noise_pred = self.unet(
+                            hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
+                            timestep=t,
+                            attention_mask=text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64),
+                            encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype),
+                            **kwargs,
+                        ).sample
+                    
+                    # lumina2 does this before stepping. Should we do it here?
+                    noise_pred = -noise_pred
                 elif self.is_v3:
                     noise_pred = self.unet(
                         hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
@@ -2168,6 +2304,23 @@ class StableDiffusion:
             pe.pooled_embeds = pooled_prompt_embeds
             return pe
 
+        elif self.is_lumina2:
+            (
+                prompt_embeds,
+                prompt_attention_mask,
+                negative_prompt_embeds,
+                negative_prompt_attention_mask,
+            ) = self.pipeline.encode_prompt(
+                prompt,
+                do_classifier_free_guidance=False,
+                num_images_per_prompt=1,
+                device=self.device_torch,
+                max_sequence_length=256, # should it be 512?
+            )
+            return PromptEmbeds(
+                prompt_embeds,
+                attention_mask=prompt_attention_mask,
+            )
 
         elif isinstance(self.text_encoder, T5EncoderModel):
             embeds, attention_mask = train_tools.encode_prompts_pixart(
@@ -2360,7 +2513,7 @@ class StableDiffusion:
                 for name, param in self.text_encoder.named_parameters(recurse=True, prefix=f"{SD_PREFIX_TEXT_ENCODER}"):
                     named_params[name] = param
         if unet:
-            if self.is_flux:
+            if self.is_flux or self.is_lumina2:
                 for name, param in self.unet.named_parameters(recurse=True, prefix="transformer"):
                     named_params[name] = param
             else:
@@ -2472,6 +2625,14 @@ class StableDiffusion:
                     save_directory=os.path.join(output_file, 'transformer'),
                     safe_serialization=True,
                 )
+            elif self.is_lumina2:
+                # only save the unet
+                transformer: Lumina2Transformer2DModel = unwrap_model(self.unet)
+                transformer.save_pretrained(
+                    save_directory=os.path.join(output_file, 'transformer'),
+                    safe_serialization=True,
+                )
+                
             else:
 
                 self.pipeline.save_pretrained(
@@ -2528,7 +2689,7 @@ class StableDiffusion:
             named_params = self.named_parameters(vae=False, unet=unet, text_encoder=False, state_dict_keys=True)
             unet_lr = unet_lr if unet_lr is not None else default_lr
             params = []
-            if self.is_pixart or self.is_auraflow or self.is_flux:
+            if self.is_pixart or self.is_auraflow or self.is_flux or self.is_v3 or self.is_lumina2:
                 for param in named_params.values():
                     if param.requires_grad:
                         params.append(param)
@@ -2574,7 +2735,9 @@ class StableDiffusion:
     def save_device_state(self):
         # saves the current device state for all modules
         # this is useful for when we want to alter the state and restore it
-        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux:
+        if self.is_lumina2:
+            unet_has_grad = self.unet.x_embedder.weight.requires_grad
+        elif self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux:
             unet_has_grad = self.unet.proj_out.weight.requires_grad
         else:
             unet_has_grad = self.unet.conv_in.weight.requires_grad
@@ -2607,6 +2770,8 @@ class StableDiffusion:
         else:
             if isinstance(self.text_encoder, T5EncoderModel) or isinstance(self.text_encoder, UMT5EncoderModel):
                 te_has_grad = self.text_encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+            elif isinstance(self.text_encoder, Gemma2Model):
+                te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
             else:
                 te_has_grad = self.text_encoder.text_model.final_layer_norm.weight.requires_grad
 

@@ -124,7 +124,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.timesteps = timesteps.to(device=device)
 
             return timesteps
-        elif timestep_type == 'flux_shift':
+        elif timestep_type == 'flux_shift' or timestep_type == 'lumina2_shift':
             # matches inference dynamic shifting
             timesteps = np.linspace(
                 self._sigma_to_t(self.sigma_max), self._sigma_to_t(self.sigma_min), num_timesteps

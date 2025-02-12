@@ -100,6 +100,23 @@ sd_flow_config = {
   "use_dynamic_shifting": False
 }
 
+lumina2_config = {
+  "_class_name": "FlowMatchEulerDiscreteScheduler",
+  "_diffusers_version": "0.33.0.dev0",
+  "base_image_seq_len": 256,
+  "base_shift": 0.5,
+  "invert_sigmas": False,
+  "max_image_seq_len": 4096,
+  "max_shift": 1.15,
+  "num_train_timesteps": 1000,
+  "shift": 6.0,
+  "shift_terminal": None,
+  "use_beta_sigmas": False,
+  "use_dynamic_shifting": False,
+  "use_exponential_sigmas": False,
+  "use_karras_sigmas": False
+}
+
 
 def get_sampler(
         sampler: str,
@@ -147,6 +164,13 @@ def get_sampler(
         config_to_use = copy.deepcopy(flux_config)
         if arch == "sd":
             config_to_use = copy.deepcopy(sd_flow_config)
+        if arch == "flux":
+            config_to_use = copy.deepcopy(flux_config)
+        elif arch == "lumina2":
+            config_to_use = copy.deepcopy(lumina2_config)
+        else:
+            # use flux by default
+            config_to_use = copy.deepcopy(flux_config)
     else:
         raise ValueError(f"Sampler {sampler} not supported")
 
