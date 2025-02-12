@@ -974,12 +974,17 @@ class StableDiffusion:
                             "prediction_type": self.prediction_type,
                         })
                 else:
+                    arch = 'sd'
+                    if self.model_config.is_pixart:
+                        arch = 'pixart'
+                    if self.model_config.is_flux:
+                        arch = 'flux'
                     noise_scheduler = get_sampler(
                         sampler,
                         {
                             "prediction_type": self.prediction_type,
                         },
-                        'sd' if not self.is_pixart else 'pixart'
+                        arch
                     )
 
                 try:

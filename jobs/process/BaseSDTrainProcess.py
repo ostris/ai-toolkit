@@ -1387,12 +1387,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.load_training_state_from_metadata(latest_save_path)
 
         # get the noise scheduler
+        arch = 'sd'
+        if self.model_config.is_pixart:
+            arch = 'pixart'
+        if self.model_config.is_flux:
+            arch = 'flux'
         sampler = get_sampler(
             self.train_config.noise_scheduler,
             {
                 "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
             },
-            'sd' if not self.model_config.is_pixart else 'pixart'
+            arch
         )
 
         if self.train_config.train_refiner and self.model_config.refiner_name_or_path is not None and self.network_config is None:
