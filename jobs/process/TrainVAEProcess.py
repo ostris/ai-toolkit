@@ -5,30 +5,28 @@ import shutil
 import time
 from collections import OrderedDict
 
+import lpips
+import numpy as np
+import torch
+from diffusers import AutoencoderKL
+from jobs.process import BaseTrainProcess
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-from safetensors.torch import save_file, load_file
-from torch.utils.data import DataLoader, ConcatDataset
-import torch
-from torch import nn
-from torchvision.transforms import transforms
-
-from jobs.process import BaseTrainProcess
-from toolkit.image_utils import show_tensors
-from toolkit.kohya_model_util import load_vae, convert_diffusers_back_to_ldm
+from safetensors.torch import load_file, save_file
 from toolkit.data_loader import ImageDataset
-from toolkit.losses import ComparativeTotalVariation, get_gradient_penalty, PatternLoss
+from toolkit.image_utils import show_tensors
+from toolkit.kohya_model_util import convert_diffusers_back_to_ldm, load_vae
+from toolkit.losses import ComparativeTotalVariation, PatternLoss, get_gradient_penalty
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.optimizer import get_optimizer
 from toolkit.style import get_style_model_and_losses
 from toolkit.train_tools import get_torch_dtype
-from diffusers import AutoencoderKL
+from torch import nn
+from torch.utils.data import ConcatDataset, DataLoader
+from torchvision.transforms import Resize, transforms
 from tqdm import tqdm
-import time
-import numpy as np
+
 from .models.vgg19_critic import Critic
-from torchvision.transforms import Resize
-import lpips
 
 IMAGE_TRANSFORMS = transforms.Compose(
     [
@@ -309,6 +307,13 @@ class TrainVAEProcess(BaseTrainProcess):
                 i_str = str(i).zfill(2)
                 filename = f"{seconds_since_epoch}{step_num}_{i_str}.png"
                 output_img.save(os.path.join(sample_folder, filename))
+
+                # Log to TensorBoard
+                if step is not None and hasattr(self, 'writer'):
+                    # Convert PIL image to tensor
+                    img_tensor = transforms.ToTensor()(output_img)
+                    # Log the combined image (input + decoded) to TensorBoard
+                    self.writer.add_image(f'sample_{i}', img_tensor, global_step=step)
 
     def load_vae(self):
         path_to_load = self.vae_path
