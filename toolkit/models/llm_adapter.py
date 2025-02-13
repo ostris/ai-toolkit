@@ -45,7 +45,8 @@ class LLMAdapter(torch.nn.Module):
         self.llm_ref: weakref.ref = weakref.ref(llm)
         self.tokenizer_ref: weakref.ref = weakref.ref(tokenizer)
 
-        self.system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts."
+        self.system_prompt = ""
+        # self.system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts. <Prompt Start> "
 
         self.hidden_size = llm.config.hidden_size
 
@@ -109,7 +110,8 @@ class LLMAdapter(torch.nn.Module):
 
         prompt = prompt if isinstance(prompt, list) else [prompt]
 
-        prompt = [self.system_prompt + " <Prompt Start> " + p for p in prompt]
+        # prompt = [self.system_prompt + " <Prompt Start> " + p for p in prompt]
+        prompt = [self.system_prompt + p for p in prompt]
 
         prompt_embeds, prompt_attention_mask = self._get_prompt_embeds(
             prompt=prompt,
