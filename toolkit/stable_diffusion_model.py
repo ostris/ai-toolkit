@@ -68,7 +68,7 @@ from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
 from diffusers import FluxFillPipeline
-from transformers import AutoModel, AutoTokenizer, Gemma2Model
+from transformers import AutoModel, AutoTokenizer, Gemma2Model, Qwen2Model, LlamaModel
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -801,10 +801,15 @@ class StableDiffusion:
             print_acc("Loading vae")
             vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
             flush()
-
-            print_acc("Loading Gemma2")
-            tokenizer = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
-            text_encoder = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
+            
+            if self.model_config.te_name_or_path is not None:
+                print_acc("Loading TE")
+                tokenizer = AutoTokenizer.from_pretrained(self.model_config.te_name_or_path, torch_dtype=dtype)
+                text_encoder = AutoModel.from_pretrained(self.model_config.te_name_or_path, torch_dtype=dtype)
+            else:
+                print_acc("Loading Gemma2")
+                tokenizer = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+                text_encoder = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
 
             text_encoder.to(self.device_torch, dtype=dtype)
             flush()
@@ -2771,6 +2776,10 @@ class StableDiffusion:
             if isinstance(self.text_encoder, T5EncoderModel) or isinstance(self.text_encoder, UMT5EncoderModel):
                 te_has_grad = self.text_encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
             elif isinstance(self.text_encoder, Gemma2Model):
+                te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
+            elif isinstance(self.text_encoder, Qwen2Model):
+                te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
+            elif isinstance(self.text_encoder, LlamaModel):
                 te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
             else:
                 te_has_grad = self.text_encoder.text_model.final_layer_norm.weight.requires_grad

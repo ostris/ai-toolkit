@@ -475,6 +475,13 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         attention_mask: torch.Tensor,
         return_dict: bool = True,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
+        
+        hidden_size = self.config.get("hidden_size", 2304)
+        # pad or slice text encoder
+        if encoder_hidden_states.shape[2] > hidden_size:
+            encoder_hidden_states = encoder_hidden_states[:, :, :hidden_size]
+        elif encoder_hidden_states.shape[2] < hidden_size:
+            encoder_hidden_states = F.pad(encoder_hidden_states, (0, hidden_size - encoder_hidden_states.shape[2]))
 
         batch_size = hidden_states.size(0)
         

@@ -479,15 +479,13 @@ class ModelConfig:
         self.only_if_contains: Optional[List[str]] = kwargs.get("only_if_contains", None)
         self.quantize_kwargs = kwargs.get("quantize_kwargs", {})
         
-        if self.ignore_if_contains is not None or self.only_if_contains is not None:
-            if not self.is_flux:
-                raise ValueError("ignore_if_contains and only_if_contains are only supported with flux models currently")
-        
         # splits the model over the available gpus WIP
         self.split_model_over_gpus = kwargs.get("split_model_over_gpus", False)
         if self.split_model_over_gpus and not self.is_flux:
             raise ValueError("split_model_over_gpus is only supported with flux models currently")
         self.split_model_other_module_param_count_scale = kwargs.get("split_model_other_module_param_count_scale", 0.3)
+        
+        self.te_name_or_path = kwargs.get("te_name_or_path", None)
 
 
 class EMAConfig:
