@@ -216,6 +216,9 @@ class AdapterConfig:
         self.conv_pooling: bool = kwargs.get('conv_pooling', False)
         self.conv_pooling_stacks: int = kwargs.get('conv_pooling_stacks', 1)
         self.sparse_autoencoder_dim: Optional[int] = kwargs.get('sparse_autoencoder_dim', None)
+        
+        # for llm adapter
+        self.num_cloned_blocks: int = kwargs.get('num_cloned_blocks', 0)
 
 
 class EmbeddingConfig:

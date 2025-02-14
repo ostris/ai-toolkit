@@ -212,6 +212,7 @@ class CustomAdapter(torch.nn.Module):
                 sd=self.sd_ref(),
                 llm=self.te,
                 tokenizer=self.tokenizer,
+                num_cloned_blocks=self.config.num_cloned_blocks,
             )
             self.llm_adapter.to(self.device, torch_dtype)
         elif self.adapter_type == 'te_augmenter':
