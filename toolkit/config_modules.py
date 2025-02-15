@@ -219,6 +219,7 @@ class AdapterConfig:
         
         # for llm adapter
         self.num_cloned_blocks: int = kwargs.get('num_cloned_blocks', 0)
+        self.quantize_llm: bool = kwargs.get('quantize_llm', False)
 
 
 class EmbeddingConfig:
