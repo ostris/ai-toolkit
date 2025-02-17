@@ -51,6 +51,7 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
     FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Text2ImgPipeline
 from toolkit.models.lumina2 import Lumina2Transformer2DModel
+from toolkit.models.flex2 import Flex2Pipeline
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -184,6 +185,7 @@ class StableDiffusion:
         self.is_pixart = model_config.is_pixart
         self.is_auraflow = model_config.is_auraflow
         self.is_flux = model_config.is_flux
+        self.is_flex2 = model_config.is_flex2
         self.is_lumina2 = model_config.is_lumina2
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
@@ -699,17 +701,25 @@ class StableDiffusion:
             print_acc("Loading vae")
             vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
             flush()
-
-            print_acc("Loading t5")
-            tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2", torch_dtype=dtype)
-            text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
-                                                            torch_dtype=dtype)
+            
+            if self.is_flex2:
+                tokenizer_2 = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer_2")
+                text_encoder_2 = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder_2", torch_dtype=dtype)
+                
+            else:
+                print_acc("Loading t5")
+                tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2", torch_dtype=dtype)
+                text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
+                                                                torch_dtype=dtype)
 
             text_encoder_2.to(self.device_torch, dtype=dtype)
             flush()
 
             if self.model_config.quantize_te:
-                print_acc("Quantizing T5")
+                if self.is_flex2:
+                    print_acc("Quantizing LLM")
+                else:
+                    print_acc("Quantizing T5")
                 quantize(text_encoder_2, weights=qfloat8)
                 freeze(text_encoder_2)
                 flush()
@@ -720,7 +730,11 @@ class StableDiffusion:
             text_encoder.to(self.device_torch, dtype=dtype)
 
             print_acc("making pipe")
-            pipe: FluxPipeline = FluxPipeline(
+            Pipe = FluxPipeline
+            if self.is_flex2:
+                Pipe = Flex2Pipeline
+            
+            pipe: Pipe = Pipe(
                 scheduler=scheduler,
                 text_encoder=text_encoder,
                 tokenizer=tokenizer,
@@ -1079,6 +1093,8 @@ class StableDiffusion:
                         arch = 'pixart'
                     if self.is_flux:
                         arch = 'flux'
+                    if self.is_flex2:
+                        arch = 'flex2'
                     if self.is_lumina2:
                         arch = 'lumina2'
                     noise_scheduler = get_sampler(
@@ -1152,7 +1168,11 @@ class StableDiffusion:
                     )
 
                 else:
-                    pipeline = FluxPipeline(
+                    Pipe = FluxPipeline
+                    if self.is_flex2:
+                        Pipe = Flex2Pipeline
+                    
+                    pipeline = Pipe(
                         vae=self.vae,
                         transformer=unwrap_model(self.unet),
                         text_encoder=unwrap_model(self.text_encoder[0]),
@@ -2292,6 +2312,18 @@ class StableDiffusion:
                 embeds,
                 attention_mask=attention_mask,  # not used
             )
+        elif self.is_flex2:
+            prompt_embeds, pooled_prompt_embeds, text_ids = self.pipeline.encode_prompt(
+                prompt,
+                prompt,
+                device=self.device_torch,
+                max_sequence_length=512,
+            )
+            pe = PromptEmbeds(
+                prompt_embeds
+            )
+            pe.pooled_embeds = pooled_prompt_embeds
+            return pe
         elif self.is_flux:
             prompt_embeds, pooled_prompt_embeds = train_tools.encode_prompts_flux(
                 self.tokenizer,  # list
@@ -2761,10 +2793,13 @@ class StableDiffusion:
         if isinstance(self.text_encoder, list):
             self.device_state['text_encoder']: List[dict] = []
             for encoder in self.text_encoder:
-                try:
-                    te_has_grad = encoder.text_model.final_layer_norm.weight.requires_grad
-                except:
-                    te_has_grad = encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+                if isinstance(encoder, LlamaModel):
+                    te_has_grad = encoder.layers[0].mlp.gate_proj.weight.requires_grad
+                else:
+                    try:
+                        te_has_grad = encoder.text_model.final_layer_norm.weight.requires_grad
+                    except:
+                        te_has_grad = encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
                 self.device_state['text_encoder'].append({
                     'training': encoder.training,
                     'device': encoder.device,
