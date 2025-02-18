@@ -1,0 +1,23 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../aitk_db.db"
+}
+
+model Settings {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+}
+
+
+model Training {
+  id          String   @id @default(uuid())
+  name        String
+  run_data    String   // JSON string
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+}

@@ -1,0 +1,32 @@
+{
+  "name": "ai-toolkit-ui",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,css,scss}\""
+  },
+  "dependencies": {
+    "@prisma/client": "^6.3.1",
+    "lucide-react": "^0.475.0",
+    "next": "15.1.7",
+    "prisma": "^6.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "postcss": "^8",
+    "prettier": "^3.5.1",
+    "prettier-basic": "^1.0.0",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5"
+  },
+  "prettier": "prettier-basic"
+}
