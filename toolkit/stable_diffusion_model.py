@@ -2403,7 +2403,7 @@ class StableDiffusion:
 
         latent_list = []
         # Move to vae to device if on cpu
-        if self.vae.device == 'cpu':
+        if self.vae.device == torch.device('cpu'):
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
@@ -2445,7 +2445,7 @@ class StableDiffusion:
             dtype = self.torch_dtype
 
         # Move to vae to device if on cpu
-        if self.vae.device == 'cpu':
+        if self.vae.device == torch.device('cpu'):
             self.vae.to(self.device)
         latents = latents.to(device, dtype=dtype)
         latents = (latents / self.vae.config['scaling_factor']) + self.vae.config['shift_factor']
