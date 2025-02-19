@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { id, name, run_data } = body;
+    const { id, name, job_config, gpu_id } = body;
 
     if (id) {
       // Update existing training
@@ -35,7 +35,8 @@ export async function POST(request: Request) {
         where: { id },
         data: {
           name,
-          run_data: JSON.stringify(run_data),
+          gpu_id,
+          job_config: JSON.stringify(job_config),
         },
       });
       return NextResponse.json(training);
@@ -44,7 +45,8 @@ export async function POST(request: Request) {
       const training = await prisma.training.create({
         data: {
           name,
-          run_data: JSON.stringify(run_data),
+          gpu_id,
+          job_config: JSON.stringify(job_config),
         },
       });
       return NextResponse.json(training);

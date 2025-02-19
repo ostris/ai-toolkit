@@ -1,37 +1,41 @@
 export interface Model {
-    name_or_path: string;
-    model_kwargs?: Record<string, boolean>;
-    train_kwargs?: Record<string, boolean>;
+  name_or_path: string;
+  defaults?: { [key: string]: any };
 }
 
 export interface Option {
-    model: Model[];
+  model: Model[];
 }
 
-
 export const options = {
-    model: [
-        {
-            name_or_path: "ostris/Flex.1-alpha",
-            model_kwargs: {
-                "is_flux": true
-            },
-            train_kwargs: {
-                "bypass_guidance_embedding": true
-            } 
-        },
-        {
-            name_or_path: "black-forest-labs/FLUX.1-dev",
-            model_kwargs: {
-                "is_flux": true
-            },
-        },
-        {
-            name_or_path: "Alpha-VLLM/Lumina-Image-2.0",
-            model_kwargs: {
-                "is_lumina2": true
-            },
-        },
-    ]
-
+  model: [
+    {
+      name_or_path: 'ostris/Flex.1-alpha',
+      defaults: {
+        // default updates when [selected, unselected] in the UI
+        'config.process[0].model.quantize': [true, false],
+        'config.process[0].model.quantize_te': [true, false],
+        'config.process[0].model.is_flux': [true, false],
+        'config.process[0].train.bypass_guidance_embedding': [true, false],
+      },
+    },
+    {
+      name_or_path: 'black-forest-labs/FLUX.1-dev',
+      defaults: {
+        // default updates when [selected, unselected] in the UI
+        'config.process[0].model.quantize': [true, false],
+        'config.process[0].model.quantize_te': [true, false],
+        'config.process[0].model.is_flux': [true, false],
+      },
+    },
+    {
+      name_or_path: 'Alpha-VLLM/Lumina-Image-2.0',
+      defaults: {
+        // default updates when [selected, unselected] in the UI
+        'config.process[0].model.quantize': [false, false],
+        'config.process[0].model.quantize_te': [true, false],
+        'config.process[0].model.is_lumina2': [true, false],
+      },
+    },
+  ],
 } as Option;

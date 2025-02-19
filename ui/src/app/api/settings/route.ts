@@ -1,12 +1,21 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { defaultTrainFolder } from '@/paths';
 
 const prisma = new PrismaClient();
 
 export async function GET() {
   try {
     const settings = await prisma.settings.findMany();
-    return NextResponse.json(settings.reduce((acc, curr) => ({ ...acc, [curr.key]: curr.value }), {}));
+    const settingsObject = settings.reduce((acc: any, setting) => {
+      acc[setting.key] = setting.value;
+      return acc;
+    }, {});
+    // if TRAINING_FOLDER is not set, use default
+    if (!settingsObject.TRAINING_FOLDER || settingsObject.TRAINING_FOLDER === '') {
+      settingsObject.TRAINING_FOLDER = defaultTrainFolder;
+    }
+    return NextResponse.json(settingsObject);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
   }
