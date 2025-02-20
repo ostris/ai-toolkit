@@ -6,6 +6,7 @@ export default function Settings() {
   const [settings, setSettings] = useState({
     HF_TOKEN: '',
     TRAINING_FOLDER: '',
+    DATASETS_FOLDER: '',
   });
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
@@ -17,6 +18,7 @@ export default function Settings() {
         setSettings({
           HF_TOKEN: data.HF_TOKEN || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
+          DATASETS_FOLDER: data.DATASETS_FOLDER || '',
         });
       })
       .catch(error => console.error('Error fetching settings:', error));
@@ -65,7 +67,8 @@ export default function Settings() {
                 <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
                   {' '}
                   Huggingface
-                </a> if you need to access gated/private models.
+                </a>{' '}
+                if you need to access gated/private models.
               </div>
             </label>
             <input
@@ -83,7 +86,8 @@ export default function Settings() {
             <label htmlFor="TRAINING_FOLDER" className="block text-sm font-medium mb-2">
               Training Folder Path
               <div className="text-gray-500 text-sm ml-1">
-                We will store your training information here. Must be an absolute path. If blank, it will default to the output folder in the project root.
+                We will store your training information here. Must be an absolute path. If blank, it will default to the
+                output folder in the project root.
               </div>
             </label>
             <input
@@ -94,6 +98,28 @@ export default function Settings() {
               onChange={handleChange}
               className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
               placeholder="Enter training folder path"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="DATASETS_FOLDER" className="block text-sm font-medium mb-2">
+              Dataset Folder Path
+              <div className="text-gray-500 text-sm ml-1">
+                Where we store and find your datasets.{' '}
+                <span className="text-orange-800">
+                  Warning: This software may modify datasets so it is recommended you keep a backup somewhere else or
+                  have a dedicated folder for this software.
+                </span>
+              </div>
+            </label>
+            <input
+              type="text"
+              id="DATASETS_FOLDER"
+              name="DATASETS_FOLDER"
+              value={settings.DATASETS_FOLDER}
+              onChange={handleChange}
+              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+              placeholder="Enter datasets folder path"
             />
           </div>
         </div>

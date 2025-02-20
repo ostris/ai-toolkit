@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { defaultTrainFolder } from '@/paths';
+import { defaultTrainFolder, defaultDatasetsFolder } from '@/paths';
 
 const prisma = new PrismaClient();
 
@@ -15,6 +15,10 @@ export async function GET() {
     if (!settingsObject.TRAINING_FOLDER || settingsObject.TRAINING_FOLDER === '') {
       settingsObject.TRAINING_FOLDER = defaultTrainFolder;
     }
+    // if DATASETS_FOLDER is not set, use default
+    if (!settingsObject.DATASETS_FOLDER || settingsObject.DATASETS_FOLDER === '') {
+      settingsObject.DATASETS_FOLDER = defaultDatasetsFolder;
+    }
     return NextResponse.json(settingsObject);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
@@ -24,7 +28,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER } = body;
+    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER } = body;
 
     // Upsert both settings
     await Promise.all([
@@ -37,6 +41,11 @@ export async function POST(request: Request) {
         where: { key: 'TRAINING_FOLDER' },
         update: { value: TRAINING_FOLDER },
         create: { key: 'TRAINING_FOLDER', value: TRAINING_FOLDER },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'DATASETS_FOLDER' },
+        update: { value: DATASETS_FOLDER },
+        create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
       }),
     ]);
 
