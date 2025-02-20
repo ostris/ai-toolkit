@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Card from '@/components/Card';
 import { Modal } from '@/components/Modal';
 import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
+import { Button } from '@headlessui/react';
+import { FaRegTrashAlt } from 'react-icons/fa';
+import { openConfirm } from '@/components/ConfirmModal';
 
 export default function Datasets() {
   const { datasets, status, refreshDatasets } = useDatasetList();
@@ -13,36 +15,70 @@ export default function Datasets() {
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
   return (
     <>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-xl font-bold mb-8">Datasets</h1>
-          </div>
-          <div>
-            <button
-              onClick={() => {
-                setIsNewDatasetModalOpen(true);
-              }}
-              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-            >
-              New Dataset
-            </button>
-          </div>
+      <div className="absolute top-0 left-0 w-full h-12  dark:bg-gray-900 shadow-sm z-10 flex items-center px-2">
+        <div>
+          <h1 className="text-lg">Datasets</h1>
         </div>
-        <Card title={`Datasets (${datasets.length})`}>
-          {status === 'loading' && <p>Loading...</p>}
-          {status === 'error' && <p>Error fetching datasets</p>}
-          {status === 'success' && (
-            <div className="space-y-1">
-              {datasets.length === 0 && <p>No datasets found</p>}
-              {datasets.map((dataset: string) => (
-                <Link href={`/datasets/${dataset}`} className="bg-gray-800 hover:bg-gray-700 py-2 px-4 rounded-lg cursor-pointer block" key={dataset}>
-                  {dataset}
-                </Link>
-              ))}
-            </div>
-          )}
-        </Card>
+        <div className="flex-1"></div>
+        <div>
+          <Button
+            className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
+            onClick={() => setIsNewDatasetModalOpen(true)}
+          >
+            New Dataset
+          </Button>
+        </div>
+      </div>
+      <div className="pt-16 px-4 absolute top-0 left-0 w-full h-full overflow-auto">
+        {status === 'loading' && <p>Loading...</p>}
+        {status === 'error' && <p>Error fetching datasets</p>}
+        {status === 'success' && (
+          <div className="space-y-1">
+            {datasets.length === 0 && <p>No datasets found</p>}
+            {datasets.map((dataset: string) => (
+              <div className="flex justify-between bg-gray-900 hover:bg-gray-800 transition-colors" key={dataset}>
+                <div>
+                  <Link href={`/datasets/${dataset}`} className="cursor-pointer block px-4 py-2" key={dataset}>
+                    {dataset}
+                  </Link>
+                </div>
+                <div className="flex-1"></div>
+                <div>
+                  <button
+                    className="text-gray-200 hover:bg-red-600 px-2 py-2 mt-1 mr-1 rounded-full transition-colors"
+                    onClick={() => {
+                      openConfirm({
+                        title: 'Delete Dataset',
+                        message: `Are you sure you want to delete the dataset "${dataset}"? This action cannot be undone.`,
+                        type: 'warning',
+                        confirmText: 'Delete',
+                        onConfirm: () => {
+                          fetch('/api/datasets/delete', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ name: dataset }),
+                          })
+                            .then(res => res.json())
+                            .then(data => {
+                              console.log('Dataset deleted:', data);
+                              refreshDatasets();
+                            })
+                            .catch(error => {
+                              console.error('Error deleting dataset:', error);
+                            });
+                        },
+                      });
+                    }}
+                  >
+                    <FaRegTrashAlt />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <Modal
         isOpen={isNewDatasetModalOpen}

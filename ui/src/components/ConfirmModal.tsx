@@ -1,8 +1,8 @@
 'use client';
+import { useState, useEffect } from 'react';
 import { createGlobalState } from 'react-global-hooks';
-import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react'
-import { FaExclamationTriangle, FaInfo } from "react-icons/fa";
-
+import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
+import { FaExclamationTriangle, FaInfo } from 'react-icons/fa';
 
 export interface ConfirmState {
   title: string;
@@ -15,24 +15,41 @@ export interface ConfirmState {
 
 export const confirmstate = createGlobalState<ConfirmState | null>(null);
 
+export const openConfirm = (confirmProps: ConfirmState) => {
+  confirmstate.set(confirmProps);
+};
 
 export default function ConfirmModal() {
-
   const [confirm, setConfirm] = confirmstate.use();
-  const open = confirm !== null;
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    if (confirm) {
+      setIsOpen(true);
+    }
+  }, [confirm]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      // use timeout to allow the dialog to close before resetting the state
+      setTimeout(() => {
+        setConfirm(null);
+      }, 500);
+    }
+  }, [isOpen]);
 
   const onCancel = () => {
     if (confirm?.onCancel) {
       confirm.onCancel();
     }
-    setConfirm(null);
+    setIsOpen(false);
   };
 
   const onConfirm = () => {
     if (confirm?.onConfirm) {
       confirm.onConfirm();
     }
-    setConfirm(null);
+    setIsOpen(false);
   };
 
   let Icon = FaExclamationTriangle;
@@ -46,45 +63,61 @@ export default function ConfirmModal() {
   // Color mapping for background colors
   const getBgColor = () => {
     switch (color) {
-      case 'danger': return 'bg-red-500';
-      case 'warning': return 'bg-yellow-500';
-      case 'info': return 'bg-blue-500';
-      default: return 'bg-red-500';
+      case 'danger':
+        return 'bg-red-500';
+      case 'warning':
+        return 'bg-yellow-500';
+      case 'info':
+        return 'bg-blue-500';
+      default:
+        return 'bg-red-500';
     }
   };
 
   // Color mapping for text colors
   const getTextColor = () => {
     switch (color) {
-      case 'danger': return 'text-red-950';
-      case 'warning': return 'text-yellow-950';
-      case 'info': return 'text-blue-950';
-      default: return 'text-red-950';
+      case 'danger':
+        return 'text-red-950';
+      case 'warning':
+        return 'text-yellow-950';
+      case 'info':
+        return 'text-blue-950';
+      default:
+        return 'text-red-950';
     }
   };
 
   // Color mapping for titles
   const getTitleColor = () => {
     switch (color) {
-      case 'danger': return 'text-red-500';
-      case 'warning': return 'text-yellow-500';
-      case 'info': return 'text-blue-500';
-      default: return 'text-red-500';
+      case 'danger':
+        return 'text-red-500';
+      case 'warning':
+        return 'text-yellow-500';
+      case 'info':
+        return 'text-blue-500';
+      default:
+        return 'text-red-500';
     }
   };
 
   // Button background color mapping
   const getButtonBgColor = () => {
     switch (color) {
-      case 'danger': return 'bg-red-700 hover:bg-red-500';
-      case 'warning': return 'bg-yellow-700 hover:bg-yellow-500';
-      case 'info': return 'bg-blue-700 hover:bg-blue-500';
-      default: return 'bg-red-700 hover:bg-red-500';
+      case 'danger':
+        return 'bg-red-700 hover:bg-red-500';
+      case 'warning':
+        return 'bg-yellow-700 hover:bg-yellow-500';
+      case 'info':
+        return 'bg-blue-700 hover:bg-blue-500';
+      default:
+        return 'bg-red-700 hover:bg-red-500';
     }
   };
 
   return (
-    <Dialog open={open} onClose={onCancel} className="relative z-10">
+    <Dialog open={isOpen} onClose={onCancel} className="relative z-10">
       <DialogBackdrop
         transition
         className="fixed inset-0 bg-gray-900/75 transition-opacity data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in"
@@ -98,7 +131,9 @@ export default function ConfirmModal() {
           >
             <div className="bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
               <div className="sm:flex sm:items-start">
-                <div className={`mx-auto flex size-12 shrink-0 items-center justify-center rounded-full ${getBgColor()} sm:mx-0 sm:size-10`}>
+                <div
+                  className={`mx-auto flex size-12 shrink-0 items-center justify-center rounded-full ${getBgColor()} sm:mx-0 sm:size-10`}
+                >
                   <Icon aria-hidden="true" className={`size-6 ${getTextColor()}`} />
                 </div>
                 <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
@@ -106,9 +141,7 @@ export default function ConfirmModal() {
                     {confirm?.title}
                   </DialogTitle>
                   <div className="mt-2">
-                    <p className="text-sm text-gray-200">
-                      {confirm?.message}
-                    </p>
+                    <p className="text-sm text-gray-200">{confirm?.message}</p>
                   </div>
                 </div>
               </div>
@@ -116,7 +149,7 @@ export default function ConfirmModal() {
             <div className="bg-gray-700 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
               <button
                 type="button"
-                onClick={onCancel}
+                onClick={onConfirm}
                 className={`inline-flex w-full justify-center rounded-md ${getButtonBgColor()} px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto`}
               >
                 {confirm?.confirmText || 'Confirm'}
@@ -124,7 +157,7 @@ export default function ConfirmModal() {
               <button
                 type="button"
                 data-autofocus
-                onClick={onConfirm}
+                onClick={onCancel}
                 className="mt-3 inline-flex w-full justify-center rounded-md bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800 sm:mt-0 sm:w-auto ring-0"
               >
                 Cancel
