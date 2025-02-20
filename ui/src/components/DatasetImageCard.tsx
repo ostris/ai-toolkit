@@ -1,6 +1,7 @@
-import React, { useRef, useEffect, useState, ReactNode } from 'react';
+import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
 import { FaTrashAlt } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
+import classNames from 'classnames';
 
 interface DatasetImageCardProps {
   imageUrl: string;
@@ -22,6 +23,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [loaded, setLoaded] = useState<boolean>(false);
   const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
   const [caption, setCaption] = useState<string>('');
+  const [savedCaption, setSavedCaption] = useState<string>('');
   const isGettingCaption = useRef<boolean>(false);
 
   const fetchCaption = async () => {
@@ -31,10 +33,31 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       const response = await fetch(`/api/caption/${encodeURIComponent(imageUrl)}`);
       const data = await response.text();
       setCaption(data);
+      setSavedCaption(data);
       setIsCaptionLoaded(true);
     } catch (error) {
       console.error('Error fetching caption:', error);
     }
+  };
+
+  const saveCaption = () => {
+    const trimmedCaption = caption.trim();
+    if (trimmedCaption === savedCaption) return;
+    fetch('/api/img/caption', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ imgPath: imageUrl, caption: trimmedCaption }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        console.log('Caption saved:', data);
+        setSavedCaption(trimmedCaption);
+      })
+      .catch(error => {
+        console.error('Error saving caption:', error);
+      });
   };
 
   useEffect(() => {
@@ -65,6 +88,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const handleLoad = (): void => {
     setLoaded(true);
   };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // If Enter is pressed without Shift, prevent default behavior and save
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      saveCaption();
+    }
+  };
+
+  const isCaptionCurrent = caption.trim() === savedCaption;
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -122,10 +155,27 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       </div>
 
       {/* Text area below the image */}
-      <div className="w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px]">
+      <div
+        className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px]', {
+          'border-blue-500 border-2': !isCaptionCurrent,
+          'border-transparent border-2': isCaptionCurrent,
+        })}
+      >
         {isVisible && isCaptionLoaded && (
-          <form>
-            <textarea className="w-full bg-transparent resize-none" defaultValue={caption} rows={3} />
+          <form
+            onSubmit={e => {
+              e.preventDefault();
+              saveCaption();
+            }}
+            onBlur={saveCaption}
+          >
+            <textarea
+              className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
+              value={caption}
+              rows={3}
+              onChange={e => setCaption(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
           </form>
         )}
       </div>
