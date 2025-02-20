@@ -5,32 +5,12 @@ import Card from '@/components/Card';
 import { Modal } from '@/components/Modal';
 import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
+import useDatasetList from '@/hooks/useDatasetList';
 
 export default function Datasets() {
-  const [datasets, setDatasets] = useState([]);
+  const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-
-  const refreshDatasets = () => {
-    setStatus('loading');
-    fetch('/api/datasets/list')
-      .then(res => res.json())
-      .then(data => {
-        console.log('Datasets:', data);
-        // sort
-        data.sort((a: string, b: string) => a.localeCompare(b));
-        setDatasets(data);
-        setStatus('success');
-      })
-      .catch(error => {
-        console.error('Error fetching datasets:', error);
-        setStatus('error');
-      });
-  };
-  useEffect(() => {
-    refreshDatasets();
-  }, []);
   return (
     <>
       <div className="space-y-6">

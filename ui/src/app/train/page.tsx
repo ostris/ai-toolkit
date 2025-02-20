@@ -1,27 +1,49 @@
 'use client';
 // todo update training folder from settings
 
-import { useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { options } from './options';
-import { GPUApiResponse } from '@/types';
 import { defaultJobConfig, defaultDatasetConfig } from './jobConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { Trash, X } from 'lucide-react';
+import { X } from 'lucide-react';
+import useSettings from '@/hooks/useSettings';
+import useGPUInfo from '@/hooks/useGPUInfo';
+import useDatasetList from '@/hooks/useDatasetList';
+import path from 'path';
 
 export default function TrainingForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const runId = searchParams.get('id');
   const [gpuID, setGpuID] = useState<number | null>(null);
-  const [gpuList, setGpuList] = useState<number[]>([]);
+  const { settings, isSettingsLoaded } = useSettings();
+  const { gpuList, isGPUInfoLoaded } = useGPUInfo();
+  const { datasets, status: datasetFetchStatus } = useDatasetList();
+  const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
 
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!isSettingsLoaded) return;
+    if (datasetFetchStatus !== 'success') return;
+
+    const datasetOptions = datasets.map(name => ({ value: path.join(settings.DATASETS_FOLDER, name), label: name }));
+    setDatasetOptions(datasetOptions);
+    const defaultDatasetPath = defaultDatasetConfig.folder_path;
+
+    for(let i = 0; i < jobConfig.config.process[0].datasets.length; i++) {
+      const dataset = jobConfig.config.process[0].datasets[i];
+      if (dataset.folder_path === defaultDatasetPath) {
+        setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+      }
+    }
+  }, [datasets, settings, isSettingsLoaded, datasetFetchStatus]);
 
   useEffect(() => {
     if (runId) {
@@ -36,33 +58,18 @@ export default function TrainingForm() {
   }, [runId]);
 
   useEffect(() => {
-    const fetchGpuInfo = async () => {
-      try {
-        const response = await fetch('/api/gpu');
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-
-        const data: GPUApiResponse = await response.json();
-        setGpuList(data.gpus.map(gpu => gpu.index).sort());
-      } catch (err) {
-        console.log(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        // setLoading(false);
+    if (isGPUInfoLoaded) {
+      if (gpuID === null && gpuList.length > 0) {
+        setGpuID(gpuList[0]);
       }
-    };
+    }
+  }, [gpuList, isGPUInfoLoaded]);
 
-    fetch('/api/settings')
-      .then(res => res.json())
-      .then(data => {
-        setJobConfig(data.TRAINING_FOLDER, 'config.process[0].training_folder');
-      })
-      .catch(error => console.error('Error fetching settings:', error));
-
-    // Fetch immediately on component mount
-    fetchGpuInfo();
-  }, []);
+  useEffect(() => {
+    if (isSettingsLoaded) {
+      setJobConfig(settings.TRAINING_FOLDER, 'config.process[0].training_folder');
+    }
+  }, [settings, isSettingsLoaded]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -296,14 +303,20 @@ export default function TrainingForm() {
                   <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <div>
-                      <TextInput
+                      <SelectInput
+                        label="Dataset"
+                        value={dataset.folder_path}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
+                        options={datasetOptions}
+                      />
+                      {/* <TextInput
                         label="Folder Path"
                         value={dataset.folder_path}
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
                         placeholder="eg. /path/to/images/folder"
                         required
-                      />
-                      <TextInput
+                      /> */}
+                      {/* <TextInput
                         label="Mask Folder Path"
                         className="pt-2"
                         value={dataset.mask_path || ''}
@@ -325,7 +338,7 @@ export default function TrainingForm() {
                         min={0}
                         max={1}
                         required
-                      />
+                      /> */}
                     </div>
                     <div>
                       <TextInput

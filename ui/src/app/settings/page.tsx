@@ -1,28 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import useSettings from '@/hooks/useSettings';
 
 export default function Settings() {
-  const [settings, setSettings] = useState({
-    HF_TOKEN: '',
-    TRAINING_FOLDER: '',
-    DATASETS_FOLDER: '',
-  });
+  const { settings, setSettings } = useSettings();
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
-
-  useEffect(() => {
-    // Fetch current settings
-    fetch('/api/settings')
-      .then(res => res.json())
-      .then(data => {
-        setSettings({
-          HF_TOKEN: data.HF_TOKEN || '',
-          TRAINING_FOLDER: data.TRAINING_FOLDER || '',
-          DATASETS_FOLDER: data.DATASETS_FOLDER || '',
-        });
-      })
-      .catch(error => console.error('Error fetching settings:', error));
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
