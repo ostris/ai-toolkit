@@ -19,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <div className="flex h-screen bg-gray-950">
             <Sidebar />
-            <main className="flex-1 p-8 overflow-auto bg-gray-950 text-gray-100">{children}</main>
+            <main className="flex-1 p-8 overflow-auto bg-gray-950 text-gray-100 relative">{children}</main>
           </div>
         </ThemeProvider>
         <ConfirmModal />

@@ -1,19 +1,15 @@
 'use client';
 
 import { useEffect, useState, use } from 'react';
-import Card from '@/components/Card';
-import { Modal } from '@/components/Modal';
-import Link from 'next/link';
-import { TextInput } from '@/components/formInputs';
-import { useRouter } from 'next/router';
+import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
+import { Button } from '@headlessui/react';
+import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
   const usableParams = use(params as any) as { datasetName: string };
   const datasetName = usableParams.datasetName;
-  const [newDatasetName, setNewDatasetName] = useState('');
-  const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   const refreshImageList = (dbName: string) => {
@@ -43,31 +39,42 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       refreshImageList(datasetName);
     }
   }, [datasetName]);
+
   return (
     <>
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-xl font-bold mb-8">Dataset: {datasetName}</h1>
-          </div>
+      {/* Fixed top bar */}
+      <div className="absolute top-0 left-0 w-full h-12  dark:bg-gray-900 shadow-sm z-10 flex items-center px-2">
+        <div>
+          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
+            <FaChevronLeft />
+          </Button>
         </div>
-        <Card title={`Images (${imgList.length})`}>
-          {status === 'loading' && <p>Loading...</p>}
-          {status === 'error' && <p>Error fetching images</p>}
-          {status === 'success' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {imgList.length === 0 && <p>No images found</p>}
-              {imgList.map(img => (
-                <DatasetImageCard
-                  key={img.img_path}
-                  alt="image"
-                  imageUrl={img.img_path}
-                />
-              ))}
-            </div>
-          )}
-        </Card>
+        <div>
+          <h1 className="text-lg">Dataset: {datasetName}</h1>
+        </div>
+        <div className="flex-1"></div>
+        <div>
+          <Button
+            className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
+            onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
+          >
+            Add Images
+          </Button>
+        </div>
       </div>
+      <div className="pt-16 px-6 absolute top-0 left-0 w-full h-full overflow-auto">
+        {status === 'loading' && <p>Loading...</p>}
+        {status === 'error' && <p>Error fetching images</p>}
+        {status === 'success' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {imgList.length === 0 && <p>No images found</p>}
+            {imgList.map(img => (
+              <DatasetImageCard key={img.img_path} alt="image" imageUrl={img.img_path} />
+            ))}
+          </div>
+        )}
+      </div>
+      <AddImagesModal />
     </>
   );
 }

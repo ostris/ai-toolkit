@@ -13,7 +13,7 @@ export interface ConfirmState {
   onCancel?: () => void;
 }
 
-const confirmstate = createGlobalState<ConfirmState | null>(null);
+export const confirmstate = createGlobalState<ConfirmState | null>(null);
 
 
 export default function ConfirmModal() {

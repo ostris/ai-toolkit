@@ -9,6 +9,7 @@ from typing import List, Optional, Dict, Type, Union
 import torch
 from diffusers import UNet2DConditionModel, PixArtTransformer2DModel, AuraFlowTransformer2DModel
 from transformers import CLIPTextModel
+from toolkit.models.lokr import LokrModule
 
 from .config_modules import NetworkConfig
 from .lorm import count_parameters
