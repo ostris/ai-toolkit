@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import ConfirmModal from '@/components/ConfirmModal';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <main className="flex-1 p-8 overflow-auto bg-gray-950 text-gray-100">{children}</main>
           </div>
         </ThemeProvider>
+        <ConfirmModal />
       </body>
     </html>
   );

@@ -10,6 +10,7 @@
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,css,scss}\""
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.0",
     "@prisma/client": "^6.3.1",
     "classnames": "^2.5.1",
     "lucide-react": "^0.475.0",
@@ -17,6 +18,8 @@
     "prisma": "^6.3.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-global-hooks": "^1.3.5",
+    "react-icons": "^5.5.0",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
