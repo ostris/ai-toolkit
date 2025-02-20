@@ -69,7 +69,12 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {imgList.length === 0 && <p>No images found</p>}
             {imgList.map(img => (
-              <DatasetImageCard key={img.img_path} alt="image" imageUrl={img.img_path} />
+              <DatasetImageCard
+                key={img.img_path}
+                alt="image"
+                imageUrl={img.img_path}
+                onDelete={() => refreshImageList(datasetName)}
+              />
             ))}
           </div>
         )}

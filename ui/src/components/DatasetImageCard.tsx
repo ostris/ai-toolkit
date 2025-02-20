@@ -1,13 +1,22 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
+import { FaTrashAlt } from 'react-icons/fa';
+import { openConfirm } from './ConfirmModal';
 
 interface DatasetImageCardProps {
   imageUrl: string;
   alt: string;
   children?: ReactNode;
   className?: string;
+  onDelete?: () => void;
 }
 
-const DatasetImageCard: React.FC<DatasetImageCardProps> = ({ imageUrl, alt, children, className = '' }) => {
+const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
+  imageUrl,
+  alt,
+  children,
+  className = '',
+  onDelete = () => {},
+}) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
@@ -65,7 +74,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({ imageUrl, alt, chil
         className="relative w-full"
         style={{ paddingBottom: '100%' }} // Make it square
       >
-        <div className="absolute inset-0 overflow-hidden rounded-t-lg shadow-md">
+        <div className="absolute inset-0 rounded-t-lg shadow-md">
           {isVisible && (
             <img
               src={`/api/img/${encodeURIComponent(imageUrl)}`}
@@ -77,6 +86,38 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({ imageUrl, alt, chil
             />
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
+          <div className="absolute top-1 right-1">
+            <button
+              className="bg-gray-800 rounded-full p-2"
+              onClick={() => {
+                openConfirm({
+                  title: 'Delete Image',
+                  message: 'Are you sure you want to delete this image? This action cannot be undone.',
+                  type: 'warning',
+                  confirmText: 'Delete',
+                  onConfirm: () => {
+                    fetch('/api/img/delete', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({ imgPath: imageUrl }),
+                    })
+                      .then(res => res.json())
+                      .then(data => {
+                        console.log('Image deleted:', data);
+                        onDelete();
+                      })
+                      .catch(error => {
+                        console.error('Error deleting image:', error);
+                      });
+                  },
+                });
+              }}
+            >
+              <FaTrashAlt />
+            </button>
+          </div>
         </div>
       </div>
 
