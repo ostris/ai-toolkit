@@ -15,6 +15,8 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 import useDatasetList from '@/hooks/useDatasetList';
 import path from 'path';
 import { TopBar, MainContent } from '@/components/layout';
+import { Button } from '@headlessui/react';
+import { FaChevronLeft } from 'react-icons/fa';
 
 export default function TrainingForm() {
   const router = useRouter();
@@ -47,7 +49,7 @@ export default function TrainingForm() {
 
   useEffect(() => {
     if (runId) {
-      fetch(`/api/training?id=${runId}`)
+      fetch(`/api/jobs?id=${runId}`)
         .then(res => res.json())
         .then(data => {
           setGpuID(data.gpu_id);
@@ -76,7 +78,7 @@ export default function TrainingForm() {
     setStatus('saving');
 
     try {
-      const response = await fetch('/api/training', {
+      const response = await fetch('/api/jobs', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -94,7 +96,7 @@ export default function TrainingForm() {
       setStatus('success');
       if (!runId) {
         const data = await response.json();
-        router.push(`/training?id=${data.id}`);
+        router.push(`/jobs/${data.id}`);
       }
       setTimeout(() => setStatus('idle'), 2000);
     } catch (error) {
@@ -108,7 +110,12 @@ export default function TrainingForm() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">{runId ? 'Edit Training Run' : 'New Training Run'}</h1>
+          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
+            <FaChevronLeft />
+          </Button>
+        </div>
+        <div>
+          <h1 className="text-lg">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
         </div>
         <div className="flex-1"></div>
       </TopBar>

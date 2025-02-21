@@ -1428,7 +1428,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # run base sd process run
         self.sd.load_model()
         
-        self.sd.add_after_sample_image_hook(self.after_sample_image_hook)
+        self.sd.add_after_sample_image_hook(self.sample_step_hook)
 
         dtype = get_torch_dtype(self.train_config.dtype)
 

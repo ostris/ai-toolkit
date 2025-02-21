@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:../aitk_db.db"
+  url      = "file:../../aitk_db.db"
 }
 
 model Settings {
@@ -13,9 +13,9 @@ model Settings {
   value String
 }
 
-model Training {
+model Job {
   id         String   @id @default(uuid())
-  name       String
+  name       String   @unique
   gpu_id     Int
   job_config String // JSON string
   created_at DateTime @default(now())

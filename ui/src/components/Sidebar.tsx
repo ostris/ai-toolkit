@@ -4,7 +4,7 @@ import { Home, Settings, BrainCircuit, Images } from 'lucide-react';
 const Sidebar = () => {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
-    { name: 'Train', href: '/train', icon: BrainCircuit },
+    { name: 'Training Jobs', href: '/jobs', icon: BrainCircuit },
     { name: 'Datasets', href: '/datasets', icon: Images },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];

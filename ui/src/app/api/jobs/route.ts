@@ -9,17 +9,18 @@ export async function GET(request: Request) {
 
   try {
     if (id) {
-      const training = await prisma.training.findUnique({
+      const training = await prisma.job.findUnique({
         where: { id },
       });
       return NextResponse.json(training);
     }
 
-    const trainings = await prisma.training.findMany({
+    const trainings = await prisma.job.findMany({
       orderBy: { created_at: 'desc' },
     });
     return NextResponse.json(trainings);
   } catch (error) {
+    console.error(error);
     return NextResponse.json({ error: 'Failed to fetch training data' }, { status: 500 });
   }
 }
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
 
     if (id) {
       // Update existing training
-      const training = await prisma.training.update({
+      const training = await prisma.job.update({
         where: { id },
         data: {
           name,
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
       return NextResponse.json(training);
     } else {
       // Create new training
-      const training = await prisma.training.create({
+      const training = await prisma.job.create({
         data: {
           name,
           gpu_id,
