@@ -5,6 +5,7 @@ import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
+import { TopBar, MainContent } from '@/components/layout';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -43,7 +44,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   return (
     <>
       {/* Fixed top bar */}
-      <div className="absolute top-0 left-0 w-full h-12  dark:bg-gray-900 shadow-sm z-10 flex items-center px-2">
+      <TopBar>
         <div>
           <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
             <FaChevronLeft />
@@ -61,8 +62,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             Add Images
           </Button>
         </div>
-      </div>
-      <div className="pt-16 px-6 absolute top-0 left-0 w-full h-full overflow-auto">
+      </TopBar>
+      <MainContent>
         {status === 'loading' && <p>Loading...</p>}
         {status === 'error' && <p>Error fetching images</p>}
         {status === 'success' && (
@@ -78,7 +79,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             ))}
           </div>
         )}
-      </div>
+      </MainContent>
       <AddImagesModal />
     </>
   );

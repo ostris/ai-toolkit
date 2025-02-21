@@ -1,12 +1,20 @@
 'use client';
 
 import GpuMonitor from '@/components/GPUMonitor';
+import { TopBar, MainContent } from '@/components/layout';
 
 export default function Dashboard() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-xl font-bold mb-8">Dashboard</h1>
-      <GpuMonitor />
-    </div>
+    <>
+      <TopBar>
+        <div>
+          <h1 className="text-lg">Dashboard</h1>
+        </div>
+        <div className="flex-1"></div>
+      </TopBar>
+      <MainContent>
+        <GpuMonitor />
+      </MainContent>
+    </>
   );
 }

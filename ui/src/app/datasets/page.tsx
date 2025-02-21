@@ -8,6 +8,7 @@ import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
 import { FaRegTrashAlt } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
+import { TopBar, MainContent } from '@/components/layout';
 
 export default function Datasets() {
   const { datasets, status, refreshDatasets } = useDatasetList();
@@ -15,7 +16,7 @@ export default function Datasets() {
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
   return (
     <>
-      <div className="absolute top-0 left-0 w-full h-12  dark:bg-gray-900 shadow-sm z-10 flex items-center px-2">
+      <TopBar>
         <div>
           <h1 className="text-lg">Datasets</h1>
         </div>
@@ -28,8 +29,8 @@ export default function Datasets() {
             New Dataset
           </Button>
         </div>
-      </div>
-      <div className="pt-16 px-4 absolute top-0 left-0 w-full h-full overflow-auto">
+      </TopBar>
+      <MainContent>
         {status === 'loading' && <p>Loading...</p>}
         {status === 'error' && <p>Error fetching datasets</p>}
         {status === 'success' && (
@@ -79,7 +80,7 @@ export default function Datasets() {
             ))}
           </div>
         )}
-      </div>
+      </MainContent>
       <Modal
         isOpen={isNewDatasetModalOpen}
         onClose={() => setIsNewDatasetModalOpen(false)}
