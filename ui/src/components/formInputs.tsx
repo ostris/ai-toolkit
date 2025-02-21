@@ -51,10 +51,29 @@ export const NumberInput = (props: NumberInputProps) => {
         type="number"
         value={value}
         onChange={(e) => {
-          let value = Number(e.target.value);
-          if (isNaN(value)) value = 0;
+          // Use parseFloat instead of Number to properly handle decimal values
+          const rawValue = e.target.value;
+          
+          // Special handling for empty or partial inputs
+          if (rawValue === '' || rawValue === '-' || rawValue === '.') {
+            // For empty or partial inputs (like just a minus sign or decimal point),
+            // we need to maintain the raw input in the input field
+            // but pass a valid number to onChange
+            onChange(0);
+            return;
+          }
+          
+          let value = parseFloat(rawValue);
+          
+          // Handle NaN cases
+          if (isNaN(value)) {
+            value = 0;
+          }
+          
+          // Apply min/max constraints only for valid numbers
           if (min !== undefined && value < min) value = min;
           if (max !== undefined && value > max) value = max;
+          
           onChange(value);
         }}
         className={inputClasses}
@@ -62,6 +81,8 @@ export const NumberInput = (props: NumberInputProps) => {
         required={required}
         min={min}
         max={max}
+        // Allow decimal points
+        step="any"
       />
     </div>
   );

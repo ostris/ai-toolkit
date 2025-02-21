@@ -121,7 +121,8 @@ export interface SampleConfig {
 }
 
 export interface ProcessConfig {
-  type: 'sd_trainer';
+  type: 'ui_trainer';
+  sqlite_db_path?: string;
   training_folder: string;
   device: string;
   network?: NetworkConfig;

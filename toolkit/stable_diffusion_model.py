@@ -202,6 +202,7 @@ class StableDiffusion:
 
         # merge in and preview active with -1 weight
         self.invert_assistant_lora = False
+        self._after_sample_img_hooks = []
 
     def load_model(self):
         if self.is_loaded:
@@ -1032,6 +1033,14 @@ class StableDiffusion:
             self.refiner_unet = refiner.unet
             del refiner
             flush()
+            
+    def _after_sample_image(self, img_num, total_imgs):
+        # process all hooks
+        for hook in self._after_sample_img_hooks:
+            hook(img_num, total_imgs)
+    
+    def add_after_sample_image_hook(self, func):
+        self._after_sample_img_hooks.append(func)
 
     @torch.no_grad()
     def generate_images(
@@ -1598,6 +1607,7 @@ class StableDiffusion:
 
                     gen_config.save_image(img, i)
                     gen_config.log_image(img, i)
+                    self._after_sample_image(i, len(image_configs))
                     flush()
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):

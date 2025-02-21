@@ -88,6 +88,7 @@ def main():
         except Exception as e:
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
+            job.process[0].on_error(e)
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e

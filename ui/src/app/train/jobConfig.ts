@@ -19,8 +19,9 @@ export const defaultJobConfig: JobConfig = {
     name: 'my_first_flex_lora_v1',
     process: [
       {
-        type: 'sd_trainer',
+        type: 'ui_trainer',
         training_folder: 'output',
+        sqlite_db_path: './aitk_db.db',
         device: 'cuda:0',
         network: {
           type: 'lora',

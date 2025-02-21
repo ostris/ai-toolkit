@@ -13,12 +13,15 @@ model Settings {
   value String
 }
 
-
 model Training {
-  id          String   @id @default(uuid())
-  name        String
-  gpu_id      Int
-  job_config  String   // JSON string
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  id         String   @id @default(uuid())
+  name       String
+  gpu_id     Int
+  job_config String // JSON string
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  status     String   @default("stopped")
+  stop       Boolean  @default(false)
+  step       Int      @default(0)
+  info       String   @default("")
 }
