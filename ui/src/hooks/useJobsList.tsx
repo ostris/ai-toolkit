@@ -13,8 +13,13 @@ export default function useJobsList() {
       .then(res => res.json())
       .then(data => {
         console.log('Jobs:', data);
-        setJobs(data);
-        setStatus('success');
+        if (data.error) {
+          console.log('Error fetching jobs:', data.error);
+          setStatus('error');
+        } else {
+          setJobs(data.jobs);
+          setStatus('success');
+        }
       })
       .catch(error => {
         console.error('Error fetching datasets:', error);

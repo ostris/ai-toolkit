@@ -58,7 +58,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
                 <h2 className="text-lg font-semibold">Job Details</h2>
                   <p className="text-gray-400">ID: {job.id}</p>
                   <p className="text-gray-400">Name: {job.name}</p>
-                  <p className="text-gray-400">GPU: {job.gpu_id}</p>
+                  <p className="text-gray-400">GPUs: {job.gpu_ids}</p>
                   <p className="text-gray-400">Status: {job.status}</p>
                   <p className="text-gray-400">Info: {job.info}</p>
                   <p className="text-gray-400">Step: {job.step}</p>

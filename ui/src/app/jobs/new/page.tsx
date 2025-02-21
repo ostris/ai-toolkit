@@ -22,7 +22,7 @@ export default function TrainingForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const runId = searchParams.get('id');
-  const [gpuID, setGpuID] = useState<number | null>(null);
+  const [gpuIDs, setGpuIDs] = useState<string | null>(null);
   const { settings, isSettingsLoaded } = useSettings();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
   const { datasets, status: datasetFetchStatus } = useDatasetList();
@@ -52,7 +52,7 @@ export default function TrainingForm() {
       fetch(`/api/jobs?id=${runId}`)
         .then(res => res.json())
         .then(data => {
-          setGpuID(data.gpu_id);
+          setGpuIDs(data.gpu_ids);
           setJobConfig(JSON.parse(data.job_config));
         })
         .catch(error => console.error('Error fetching training:', error));
@@ -61,8 +61,8 @@ export default function TrainingForm() {
 
   useEffect(() => {
     if (isGPUInfoLoaded) {
-      if (gpuID === null && gpuList.length > 0) {
-        setGpuID(gpuList[0]);
+      if (gpuIDs === null && gpuList.length > 0) {
+        setGpuIDs(`${gpuList[0]}`);
       }
     }
   }, [gpuList, isGPUInfoLoaded]);
@@ -73,8 +73,8 @@ export default function TrainingForm() {
     }
   }, [settings, isSettingsLoaded]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveJob = async () => {
+    if (status === 'saving') return;
     setStatus('saving');
 
     try {
@@ -86,7 +86,7 @@ export default function TrainingForm() {
         body: JSON.stringify({
           id: runId,
           name: jobConfig.config.name,
-          gpu_id: gpuID,
+          gpu_ids: gpuIDs,
           job_config: jobConfig,
         }),
       });
@@ -106,6 +106,11 @@ export default function TrainingForm() {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    saveJob();
+  };
+
   return (
     <>
       <TopBar>
@@ -118,6 +123,15 @@ export default function TrainingForm() {
           <h1 className="text-lg">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
         </div>
         <div className="flex-1"></div>
+        <div>
+          <Button
+            className="text-gray-200 bg-green-800 px-3 py-1 rounded-md"
+            onClick={() => saveJob()}
+            disabled={status === 'saving'}
+          >
+            {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+          </Button>
+        </div>
       </TopBar>
       <MainContent>
         <form onSubmit={handleSubmit} className="space-y-8">
@@ -132,9 +146,9 @@ export default function TrainingForm() {
               />
               <SelectInput
                 label="GPU ID"
-                value={`${gpuID}`}
+                value={`${gpuIDs}`}
                 className="pt-2"
-                onChange={value => setGpuID(parseInt(value))}
+                onChange={value => setGpuIDs(value)}
                 options={gpuList.map(gpu => ({ value: `${gpu}`, label: `GPU #${gpu}` }))}
               />
             </Card>
@@ -553,17 +567,10 @@ export default function TrainingForm() {
             </Card>
           </div>
 
-          <button
-            type="submit"
-            disabled={status === 'saving'}
-            className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {status === 'saving' ? 'Saving...' : runId ? 'Update Training' : 'Create Training'}
-          </button>
-
           {status === 'success' && <p className="text-green-500 text-center">Training saved successfully!</p>}
           {status === 'error' && <p className="text-red-500 text-center">Error saving training. Please try again.</p>}
         </form>
+        <div className="pt-20"></div>
       </MainContent>
     </>
   );

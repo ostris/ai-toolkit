@@ -9,16 +9,16 @@ export async function GET(request: Request) {
 
   try {
     if (id) {
-      const training = await prisma.job.findUnique({
+      const job = await prisma.job.findUnique({
         where: { id },
       });
-      return NextResponse.json(training);
+      return NextResponse.json(job);
     }
 
-    const trainings = await prisma.job.findMany({
+    const jobs = await prisma.job.findMany({
       orderBy: { created_at: 'desc' },
     });
-    return NextResponse.json(trainings);
+    return NextResponse.json({ jobs: jobs });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: 'Failed to fetch training data' }, { status: 500 });
@@ -28,7 +28,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { id, name, job_config, gpu_id } = body;
+    const { id, name, job_config, gpu_ids } = body;
 
     if (id) {
       // Update existing training
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
         where: { id },
         data: {
           name,
-          gpu_id,
+          gpu_ids,
           job_config: JSON.stringify(job_config),
         },
       });
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       const training = await prisma.job.create({
         data: {
           name,
-          gpu_id,
+          gpu_ids,
           job_config: JSON.stringify(job_config),
         },
       });

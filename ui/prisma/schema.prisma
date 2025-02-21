@@ -16,7 +16,7 @@ model Settings {
 model Job {
   id         String   @id @default(uuid())
   name       String   @unique
-  gpu_id     Int
+  gpu_ids    String
   job_config String // JSON string
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

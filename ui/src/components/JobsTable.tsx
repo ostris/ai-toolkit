@@ -38,7 +38,7 @@ export default function JobsTable(props: JobsTableProps) {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((job, index) => {
+              {jobs?.map((job, index) => {
                 const jobConfig: JobConfig = JSON.parse(job.job_config);
                 const totalSteps = jobConfig.config.process[0].train.steps;
 
@@ -68,7 +68,7 @@ export default function JobsTable(props: JobsTableProps) {
                         </div>
                       </div>
                     </td>
-                    <td className="px-3 py-2">{job.gpu_id}</td>
+                    <td className="px-3 py-2">{job.gpu_ids}</td>
                     <td className={`px-3 py-2 ${statusClass}`}>{job.status}</td>
                     <td className="px-3 py-2 truncate max-w-xs">{job.info}</td>
                   </tr>

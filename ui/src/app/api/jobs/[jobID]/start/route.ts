@@ -70,7 +70,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ error: 'run.py not found' }, { status: 500 });
   }
 
-  console.log('Spawning command:', `AITK_JOB_ID=${jobID} CUDA_VISIBLE_DEVICES=${job.gpu_id} ${pythonPath} ${runFilePath} ${configPath}`);
+  console.log('Spawning command:', `AITK_JOB_ID=${jobID} CUDA_VISIBLE_DEVICES=${job.gpu_ids} ${pythonPath} ${runFilePath} ${configPath}`);
 
   // start job
   const subprocess = spawn(pythonPath, [runFilePath, configPath], {
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     env: {
       ...process.env,
       AITK_JOB_ID: jobID,
-      CUDA_VISIBLE_DEVICES: `${job.gpu_id}`,
+      CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
     },
     cwd: TOOLKIT_ROOT,
   });
