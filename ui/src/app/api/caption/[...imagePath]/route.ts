@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getDatasetsRoot } from '@/app/api/datasets/utils';
+import { getDatasetsRoot } from '@/server/settings';
 
 export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
   const { imagePath } = await params;

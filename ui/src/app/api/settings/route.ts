@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { defaultTrainFolder, defaultDatasetsFolder } from '@/paths';
+import {flushCache} from '@/server/settings';
 
 const prisma = new PrismaClient();
 
@@ -48,6 +49,8 @@ export async function POST(request: Request) {
         create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
       }),
     ]);
+
+    flushCache();
 
     return NextResponse.json({ success: true });
   } catch (error) {

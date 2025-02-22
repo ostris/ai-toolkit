@@ -3,17 +3,18 @@
 import { useEffect, useState } from 'react';
 import { Job } from '@prisma/client';
 
-export default function useJob(jobID: string, reloadInterval: null | number = null) {
-  const [job, setJob] = useState<Job | null>(null);
+export default function useSampleImages(jobID: string, reloadInterval: null | number = null) {
+  const [sampleImages, setSampleImages] = useState<string[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
-  const refreshJob = () => {
+  const refreshSampleImages = () => {
     setStatus('loading');
-    fetch(`/api/jobs?id=${jobID}`)
+    fetch(`/api/jobs/${jobID}/samples`)
       .then(res => res.json())
       .then(data => {
-        console.log('Job:', data);
-        setJob(data);
+        if (data.samples) {
+          setSampleImages(data.samples);
+        }
         setStatus('success');
       })
       .catch(error => {
@@ -23,18 +24,18 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
   };
 
   useEffect(() => {
-    refreshJob();
+    refreshSampleImages();
 
     if (reloadInterval) {
       const interval = setInterval(() => {
-        refreshJob();
+        refreshSampleImages();
       }, reloadInterval);
 
       return () => {
         clearInterval(interval);
-      }
+      };
     }
   }, [jobID]);
 
-  return { job, setJob, status, refreshJob };
+  return { sampleImages, setSampleImages, status, refreshSampleImages };
 }

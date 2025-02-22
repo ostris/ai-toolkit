@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
-import { getDatasetsRoot } from '@/app/api/datasets/utils';
+import { getDatasetsRoot } from '@/server/settings';
 
 export async function GET() {
   try {

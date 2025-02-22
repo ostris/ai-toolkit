@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getDatasetsRoot } from '@/app/api/datasets/utils';
+import { getDatasetsRoot } from '@/server/settings';
 
 export async function POST(request: Request) {
   const datasetsPath = await getDatasetsRoot();

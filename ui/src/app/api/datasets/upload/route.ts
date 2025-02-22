@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
-import { getDatasetsRoot } from '@/app/api/datasets/utils';
+import { getDatasetsRoot } from '@/server/settings';
 
 export async function POST(request: NextRequest) {
   try {

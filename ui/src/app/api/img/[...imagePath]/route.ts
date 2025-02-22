@@ -2,23 +2,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getDatasetsRoot } from '@/app/api/datasets/utils';
+import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
 
 export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
   const { imagePath } = await params;
   try {
     // Decode the path
     const filepath = decodeURIComponent(imagePath);
-    console.log('Serving image:', filepath);
 
     // Get allowed directories
-    const allowedDir = await getDatasetsRoot();
+    const datasetRoot = await getDatasetsRoot();
+    const trainingRoot = await getTrainingFolder();
+
+    const allowedDirs = [datasetRoot, trainingRoot];
 
     // Security check: Ensure path is in allowed directory
-    const isAllowed = filepath.startsWith(allowedDir) && !filepath.includes('..');
+    const isAllowed = allowedDirs.some(allowedDir => filepath.startsWith(allowedDir)) && !filepath.includes('..');
 
     if (!isAllowed) {
-      console.warn(`Access denied: ${filepath} not in ${allowedDir}`);
+      console.warn(`Access denied: ${filepath} not in ${allowedDirs.join(', ')}`);
       return new NextResponse('Access denied', { status: 403 });
     }
 

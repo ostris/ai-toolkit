@@ -20,7 +20,7 @@ export const TopBar: React.FC<Props> = ({ children, className }) => {
 
 export const MainContent: React.FC<Props> = ({ children, className }) => {
   return (
-    <div className={classNames('pt-16 px-4 absolute top-0 left-0 w-full h-full overflow-auto', className)}>
+    <div className={classNames('pt-14 px-4 absolute top-0 left-0 w-full h-full overflow-auto', className)}>
       {children ? children : null}
     </div>
   );

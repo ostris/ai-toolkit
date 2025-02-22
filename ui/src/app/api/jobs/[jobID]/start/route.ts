@@ -4,7 +4,7 @@ import { TOOLKIT_ROOT, defaultTrainFolder } from '@/paths';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-
+import { getTrainingFolder } from '@/server/settings';
 
 const prisma = new PrismaClient();
 
@@ -30,18 +30,10 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   });
 
   // setup the training
-  const settings = await prisma.settings.findMany();
-  const settingsObject = settings.reduce((acc: any, setting) => {
-    acc[setting.key] = setting.value;
-    return acc;
-  }, {});
 
-  // if TRAINING_FOLDER is not set, use default
-  if (!settingsObject.TRAINING_FOLDER || settingsObject.TRAINING_FOLDER === '') {
-    settingsObject.TRAINING_FOLDER = defaultTrainFolder;
-  }
+  const trainingRoot = await getTrainingFolder();
 
-  const trainingFolder = path.join(settingsObject.TRAINING_FOLDER, job.name);
+  const trainingFolder = path.join(trainingRoot, job.name);
   if (!fs.existsSync(trainingFolder)) {
     fs.mkdirSync(trainingFolder, { recursive: true });
   }
@@ -52,7 +44,6 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   // update the config dataset path
   const jobConfig = JSON.parse(job.job_config);
   jobConfig.config.process[0].sqlite_db_path = path.join(TOOLKIT_ROOT, 'aitk_db.db');
-
 
   // write the config file
   fs.writeFileSync(configPath, JSON.stringify(jobConfig, null, 2));
@@ -70,7 +61,10 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ error: 'run.py not found' }, { status: 500 });
   }
 
-  console.log('Spawning command:', `AITK_JOB_ID=${jobID} CUDA_VISIBLE_DEVICES=${job.gpu_ids} ${pythonPath} ${runFilePath} ${configPath}`);
+  console.log(
+    'Spawning command:',
+    `AITK_JOB_ID=${jobID} CUDA_VISIBLE_DEVICES=${job.gpu_ids} ${pythonPath} ${runFilePath} ${configPath}`,
+  );
 
   // start job
   const subprocess = spawn(pythonPath, [runFilePath, configPath], {
@@ -83,7 +77,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     },
     cwd: TOOLKIT_ROOT,
   });
-  
+
   subprocess.unref();
 
   return NextResponse.json(job);
