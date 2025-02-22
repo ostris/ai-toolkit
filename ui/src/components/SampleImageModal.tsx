@@ -118,6 +118,7 @@ export default function SampleImageModal() {
     const maxIdx = stepMinIdx + imageModal.numSamples - 1;
     const nextIdx = currentIdx + 1;
     if (nextIdx > maxIdx) return;
+    if (nextIdx >= imageModal.sampleImages.length) return;
     openSampleImage({
       imgPath: imageModal.sampleImages[nextIdx],
       numSamples: imageModal.numSamples,

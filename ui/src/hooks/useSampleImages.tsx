@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Job } from '@prisma/client';
 
 export default function useSampleImages(jobID: string, reloadInterval: null | number = null) {
   const [sampleImages, setSampleImages] = useState<string[]>([]);

@@ -1,6 +1,7 @@
 import { Job } from '@prisma/client';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import GPUWidget from '@/components/GPUWidget';
+import FilesWidget from '@/components/FilesWidget';
 import { getJobConfig, getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info } from 'lucide-react';
 import { useMemo } from 'react';
@@ -92,7 +93,12 @@ export default function JobOverview({ job }: JobOverviewProps) {
       </div>
 
       {/* GPU Widget Panel */}
-      <div className="col-span-1">{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
+      <div className="col-span-1">
+        <div>{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
+        <div className='mt-4'>
+          <FilesWidget jobID={job.id} />
+        </div>
+      </div>
     </div>
   );
 }
