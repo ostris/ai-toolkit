@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Job } from '@prisma/client';
 
-export default function useJobsList() {
+export default function useJobsList(onlyActive = false) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
@@ -17,6 +17,9 @@ export default function useJobsList() {
           console.log('Error fetching jobs:', data.error);
           setStatus('error');
         } else {
+          if (onlyActive) {
+            data.jobs = data.jobs.filter((job: Job) => job.status === 'running');
+          }
           setJobs(data.jobs);
           setStatus('success');
         }

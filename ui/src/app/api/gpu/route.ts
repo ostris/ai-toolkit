@@ -47,9 +47,9 @@ async function checkNvidiaSmi(): Promise<boolean> {
 }
 
 async function getGpuStats() {
-  // Get detailed GPU information in JSON format
+  // Get detailed GPU information in JSON format including fan speed
   const { stdout } = await execAsync(
-    'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory --format=csv,noheader,nounits',
+    'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits',
   );
 
   // Parse CSV output
@@ -71,6 +71,7 @@ async function getGpuStats() {
         powerLimit,
         clockGraphics,
         clockMemory,
+        fanSpeed,
       ] = line.split(', ').map(item => item.trim());
 
       return {
@@ -94,6 +95,9 @@ async function getGpuStats() {
         clocks: {
           graphics: parseInt(clockGraphics),
           memory: parseInt(clockMemory),
+        },
+        fan: {
+          speed: parseInt(fanSpeed), // Fan speed as percentage
         },
       };
     });

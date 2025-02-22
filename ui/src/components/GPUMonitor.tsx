@@ -1,4 +1,3 @@
-// components/GpuMonitor.tsx
 import React, { useState, useEffect } from 'react';
 import { GPUApiResponse } from '@/types';
 import Loading from '@/components/Loading';
@@ -40,6 +39,30 @@ const GpuMonitor: React.FC = () => {
     return () => clearInterval(intervalId);
   }, []);
 
+  const getGridClasses = (gpuCount: number): string => {
+    switch (gpuCount) {
+      case 1:
+        return 'grid-cols-1';
+      case 2:
+        return 'grid-cols-2';
+      case 3:
+        return 'grid-cols-3';
+      case 4:
+        return 'grid-cols-4';
+      case 5:
+      case 6:
+        return 'grid-cols-3';
+      case 7:
+      case 8:
+        return 'grid-cols-4';
+      case 9:
+      case 10:
+        return 'grid-cols-5';
+      default:
+        return 'grid-cols-3';
+    }
+  };
+
   if (loading) {
     return <Loading />;
   }
@@ -79,16 +102,18 @@ const GpuMonitor: React.FC = () => {
     );
   }
 
+  const gridClass = getGridClasses(gpuData.gpus.length);
+
   return (
-    <div className="">
+    <div className="w-full">
       <div className="flex justify-between items-center mb-2">
         <h1 className="text-md">GPU Monitor</h1>
         <div className="text-xs text-gray-500">Last updated: {lastUpdated?.toLocaleTimeString()}</div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {gpuData.gpus.map(gpu => (
-          <GPUWidget key={gpu.index} gpu={gpu} />
+      <div className={`grid ${gridClass} gap-3`}>
+        {gpuData.gpus.map((gpu, idx) => (
+          <GPUWidget key={idx} gpu={gpu} />
         ))}
       </div>
     </div>

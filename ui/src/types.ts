@@ -23,6 +23,10 @@ export interface GpuClocks {
   memory: number;
 }
 
+export interface GpuFan {
+  speed: number;
+}
+
 export interface GpuInfo {
   index: number;
   name: string;
@@ -32,6 +36,7 @@ export interface GpuInfo {
   memory: GpuMemory;
   power: GpuPower;
   clocks: GpuClocks;
+  fan: GpuFan;
 }
 
 export interface GPUApiResponse {

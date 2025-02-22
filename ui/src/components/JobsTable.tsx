@@ -2,16 +2,14 @@ import useJobsList from '@/hooks/useJobsList';
 import Link from 'next/link';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { JobConfig } from '@/types';
-import { Eye, Trash2, Pen, Play, Pause } from 'lucide-react';
-import { Button } from '@headlessui/react';
-import { openConfirm } from '@/components/ConfirmModal';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions } from '@/utils/jobs';
 import JobActionBar from './JobActionBar';
 
-interface JobsTableProps {}
+interface JobsTableProps {
+  onlyActive?: boolean;
+}
 
-export default function JobsTable(props: JobsTableProps) {
-  const { jobs, status, refreshJobs } = useJobsList();
+export default function JobsTable({ onlyActive = false }: JobsTableProps) {
+  const { jobs, status, refreshJobs } = useJobsList(onlyActive);
   const isLoading = status === 'loading';
 
   const columns: TableColumn[] = [
