@@ -63,3 +63,13 @@ export const getAvaliableJobActions = (job: Job) => {
   }
   return { canDelete, canEdit, canStop, canStart };
 };
+
+export const getNumberOfSamples = (job: Job) => {
+  const jobConfig = getJobConfig(job);
+  return jobConfig.config.process[0].sample?.prompts?.length || 0;
+}
+
+export const getTotalSteps = (job: Job) => {
+  const jobConfig = getJobConfig(job);
+  return jobConfig.config.process[0].train.steps;
+}

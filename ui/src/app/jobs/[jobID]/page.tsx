@@ -9,6 +9,8 @@ import { startJob, stopJob } from '@/utils/jobs';
 import SampleImages from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { JobConfig } from '@/types';
+import { redirect } from 'next/navigation';
+import JobActionBar from '@/components/JobActionBar';
 
 type PageKey = 'overview' | 'samples';
 
@@ -28,21 +30,12 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
 
-  const numSamples = useMemo(() => {
-    if (job?.job_config) {
-      const jobConfig = JSON.parse(job.job_config) as JobConfig;
-      const sampleConfig = jobConfig.config.process[0].sample;
-      return sampleConfig.prompts.length;
-    }
-    return 10;
-  }, [job]);
-
   return (
     <>
       {/* Fixed top bar */}
       <TopBar>
         <div>
-          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
+          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => redirect('/jobs')}>
             <FaChevronLeft />
           </Button>
         </div>
@@ -50,27 +43,15 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           <h1 className="text-lg">Job: {job?.name}</h1>
         </div>
         <div className="flex-1"></div>
-        {job?.status === 'running' && (
-          <Button
-            onClick={async () => {
-              await stopJob(jobID);
-              refreshJob();
+        {job && (
+          <JobActionBar
+            job={job}
+            onRefresh={refreshJob}
+            hideView
+            afterDelete={() => {
+              redirect('/jobs');
             }}
-            className="bg-red-500 text-white px-4 py-1 rounded-sm"
-          >
-            Stop
-          </Button>
-        )}
-        {(job?.status === 'stopped' || job?.status === 'error') && (
-          <Button
-            onClick={async () => {
-              await startJob(jobID);
-              refreshJob();
-            }}
-            className="bg-green-800 text-white px-4 py-1 rounded-sm"
-          >
-            Start
-          </Button>
+          />
         )}
       </TopBar>
       <MainContent className="pt-24">
