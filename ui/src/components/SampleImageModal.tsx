@@ -38,6 +38,29 @@ export default function SampleImageModal() {
     setIsOpen(false);
   };
 
+  const imgInfo = useMemo(() => {
+    const ii = {
+      filename: '',
+      step: 0,
+      promptIdx: 0,
+    };
+    if (imageModal?.imgPath) {
+      const filename = imageModal.imgPath.split('/').pop();
+      if (!filename) return ii;
+      // filename is <timestep>__<zero_pad_step>_<prompt_idx>.<ext>
+      ii.filename = filename as string;
+      const parts = filename
+        .split('.')[0]
+        .split('_')
+        .filter(p => p !== '');
+      if (parts.length === 3) {
+        ii.step = parseInt(parts[1]);
+        ii.promptIdx = parseInt(parts[2]);
+      }
+    }
+    return ii;
+  }, [imageModal]);
+
   const handleArrowUp = () => {
     if (!imageModal) return;
     console.log('Arrow Up pressed');
@@ -70,12 +93,14 @@ export default function SampleImageModal() {
 
   const handleArrowLeft = () => {
     if (!imageModal) return;
+    if (imgInfo.promptIdx === 0) return;
     console.log('Arrow Left pressed');
     // go to previous sample
     const currentIdx = imageModal.sampleImages.findIndex(img => img === imageModal.imgPath);
     if (currentIdx === -1) return;
+    const minIdx = currentIdx - imgInfo.promptIdx;
     const nextIdx = currentIdx - 1;
-    if (nextIdx < 0) return;
+    if (nextIdx < minIdx) return;
     openSampleImage({
       imgPath: imageModal.sampleImages[nextIdx],
       numSamples: imageModal.numSamples,
@@ -89,8 +114,10 @@ export default function SampleImageModal() {
     // go to next sample
     const currentIdx = imageModal.sampleImages.findIndex(img => img === imageModal.imgPath);
     if (currentIdx === -1) return;
+    const stepMinIdx = currentIdx - imgInfo.promptIdx;
+    const maxIdx = stepMinIdx + imageModal.numSamples - 1;
     const nextIdx = currentIdx + 1;
-    if (nextIdx >= imageModal.sampleImages.length) return;
+    if (nextIdx > maxIdx) return;
     openSampleImage({
       imgPath: imageModal.sampleImages[nextIdx],
       numSamples: imageModal.numSamples,
@@ -129,30 +156,7 @@ export default function SampleImageModal() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, imageModal]);
-
-  const imgInfo = useMemo(() => {
-    const ii = {
-      filename: '',
-      step: 0,
-      promptIdx: 0,
-    };
-    if (imageModal?.imgPath) {
-      const filename = imageModal.imgPath.split('/').pop();
-      if (!filename) return ii;
-      // filename is <timestep>__<zero_pad_step>_<prompt_idx>.<ext>
-      ii.filename = filename as string;
-      const parts = filename
-        .split('.')[0]
-        .split('_')
-        .filter(p => p !== '');
-      if (parts.length === 3) {
-        ii.step = parseInt(parts[1]);
-        ii.promptIdx = parseInt(parts[2]);
-      }
-    }
-    return ii;
-  }, [imageModal]);
+  }, [isOpen, imageModal, imgInfo]);
 
   return (
     <Dialog open={isOpen} onClose={onCancel} className="relative z-10">
