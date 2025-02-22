@@ -28,7 +28,6 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             #{gpu.index}
           </span>
         </div>
-        <ChevronRight className="w-4 h-4 text-gray-400" />
       </div>
 
       <div className="p-4 space-y-4">

@@ -1,10 +1,10 @@
 'use client';
 
-import { GPUApiResponse } from '@/types';
+import { GPUApiResponse, GpuInfo } from '@/types';
 import { useEffect, useState } from 'react';
 
-export default function useGPUInfo() {
-  const [gpuList, setGpuList] = useState<number[]>([]);
+export default function useGPUInfo(gpuIds: null | number[] = null) {
+  const [gpuList, setGpuList] = useState<GpuInfo[]>([]);
   const [isGPUInfoLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
     const fetchGpuInfo = async () => {
@@ -16,7 +16,12 @@ export default function useGPUInfo() {
         }
 
         const data: GPUApiResponse = await response.json();
-        setGpuList(data.gpus.map(gpu => gpu.index).sort());
+        let gpus = data.gpus.sort((a, b) => a.index - b.index);
+        if (gpuIds) {
+          gpus = gpus.filter(gpu => gpuIds.includes(gpu.index));
+        }
+
+        setGpuList(gpus);
       } catch (err) {
         console.log(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
       } finally {

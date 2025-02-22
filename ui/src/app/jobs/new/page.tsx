@@ -64,7 +64,7 @@ export default function TrainingForm() {
   useEffect(() => {
     if (isGPUInfoLoaded) {
       if (gpuIDs === null && gpuList.length > 0) {
-        setGpuIDs(`${gpuList[0]}`);
+        setGpuIDs(`${gpuList[0].index}`);
       }
     }
   }, [gpuList, isGPUInfoLoaded]);
@@ -154,7 +154,7 @@ export default function TrainingForm() {
                 value={`${gpuIDs}`}
                 className="pt-2"
                 onChange={value => setGpuIDs(value)}
-                options={gpuList.map(gpu => ({ value: `${gpu}`, label: `GPU #${gpu}` }))}
+                options={gpuList.map(gpu => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
               />
             </Card>
 
