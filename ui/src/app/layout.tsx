@@ -16,6 +16,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <meta name="apple-mobile-web-app-title" content="AI-Toolkit" />
+      </head>
       <body className={inter.className}>
         <ThemeProvider>
           <div className="flex h-screen bg-gray-950">
