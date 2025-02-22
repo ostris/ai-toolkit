@@ -92,43 +92,37 @@ export default function AddImagesModal() {
             className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 sm:w-full sm:max-w-lg data-closed:sm:translate-y-0 data-closed:sm:scale-95"
           >
             <div className="bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-              <div className="sm:flex sm:items-start">
-                <div
-                  className="mx-auto flex size-12 shrink-0 items-center justify-center rounded-full bg-slate-600 sm:mx-0 sm:size-10"
-                >
-                  <FaUpload aria-hidden="true" className="size-6 bg-slate-600" />
-                </div>
-                <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                  <DialogTitle as="h3" className="text-base font-semibold text-gray-200">
-                    Add Images to: {addImagesModalInfo?.datasetName}
-                  </DialogTitle>
-                  <div className="mt-2">
-                    <div
-                      {...getRootProps()}
-                      className={`mt-4 p-6 border-2 border-dashed rounded-lg cursor-pointer
-                        ${isDragActive ? 'border-blue-500 bg-blue-50/10' : 'border-gray-600'}`}
-                    >
-                      <input {...getInputProps()} />
-                      <p className="text-sm text-gray-200 text-center">
-                        {isDragActive
-                          ? 'Drop the files here...'
-                          : 'Drag & drop files here, or click to select files'}
+              <div className="text-center">
+                <DialogTitle as="h3" className="text-base font-semibold text-gray-200 mb-4">
+                  Add Images to: {addImagesModalInfo?.datasetName}
+                </DialogTitle>
+                <div className="w-full">
+                  <div
+                    {...getRootProps()}
+                    className={`h-40 w-full flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200
+                      ${isDragActive ? 'border-blue-500 bg-blue-50/10' : 'border-gray-600'}`}
+                  >
+                    <input {...getInputProps()} />
+                    <FaUpload className="size-8 mb-3 text-gray-400" />
+                    <p className="text-sm text-gray-200 text-center">
+                      {isDragActive
+                        ? 'Drop the files here...'
+                        : 'Drag & drop files here, or click to select files'}
+                    </p>
+                  </div>
+                  {isUploading && (
+                    <div className="mt-4">
+                      <div className="w-full bg-gray-700 rounded-full h-2.5">
+                        <div
+                          className="bg-blue-600 h-2.5 rounded-full"
+                          style={{ width: `${uploadProgress}%` }}
+                        ></div>
+                      </div>
+                      <p className="text-sm text-gray-300 mt-2 text-center">
+                        Uploading... {uploadProgress}%
                       </p>
                     </div>
-                    {isUploading && (
-                      <div className="mt-4">
-                        <div className="w-full bg-gray-700 rounded-full h-2.5">
-                          <div
-                            className="bg-blue-600 h-2.5 rounded-full"
-                            style={{ width: `${uploadProgress}%` }}
-                          ></div>
-                        </div>
-                        <p className="text-sm text-gray-300 mt-2 text-center">
-                          Uploading... {uploadProgress}%
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
