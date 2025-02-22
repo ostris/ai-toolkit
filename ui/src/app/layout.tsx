@@ -4,6 +4,7 @@ import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import ConfirmModal from '@/components/ConfirmModal';
+import SampleImageModal from '@/components/SampleImageModal';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -23,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </ThemeProvider>
         <ConfirmModal />
+        <SampleImageModal />
       </body>
     </html>
   );

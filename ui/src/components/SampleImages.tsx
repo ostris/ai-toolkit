@@ -11,13 +11,13 @@ interface SampleImagesProps {
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
   const numSamples = useMemo(() => {
-      if (job?.job_config) {
-        const jobConfig = JSON.parse(job.job_config) as JobConfig;
-        const sampleConfig = jobConfig.config.process[0].sample;
-        return sampleConfig.prompts.length;
-      }
-      return 10;
-    }, [job]);
+    if (job?.job_config) {
+      const jobConfig = JSON.parse(job.job_config) as JobConfig;
+      const sampleConfig = jobConfig.config.process[0].sample;
+      return sampleConfig.prompts.length;
+    }
+    return 10;
+  }, [job]);
 
   // Use direct Tailwind class without string interpolation
   // This way Tailwind can properly generate the class
@@ -73,13 +73,19 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
   return (
     <div>
-      <div className='pb-4'>
+      <div className="pb-4">
         {status === 'loading' && sampleImages.length === 0 && <p>Loading...</p>}
         {status === 'error' && <p>Error fetching sample images</p>}
         {sampleImages && (
           <div className={`grid ${gridColsClass} gap-1`}>
             {sampleImages.map((sample: string) => (
-              <SampleImageCard key={sample} imageUrl={sample} alt="Sample Image" />
+              <SampleImageCard
+                key={sample}
+                imageUrl={sample}
+                numSamples={numSamples}
+                sampleImages={sampleImages}
+                alt="Sample Image"
+              />
             ))}
           </div>
         )}

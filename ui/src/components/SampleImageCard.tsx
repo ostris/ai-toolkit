@@ -1,14 +1,17 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
+import { sampleImageModalState } from '@/components/SampleImageModal';
 
 interface SampleImageCardProps {
   imageUrl: string;
   alt: string;
+  numSamples: number;
+  sampleImages: string[];
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
 }
 
-const SampleImageCard: React.FC<SampleImageCardProps> = ({ imageUrl, alt, children, className = '' }) => {
+const SampleImageCard: React.FC<SampleImageCardProps> = ({ imageUrl, alt, numSamples, sampleImages, children, className = '' }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
@@ -43,8 +46,9 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({ imageUrl, alt, childr
       {/* Square image container */}
       <div
         ref={cardRef}
-        className="relative w-full"
+        className="relative w-full cursor-pointer"
         style={{ paddingBottom: '100%' }} // Make it square
+        onClick={() => sampleImageModalState.set({ imgPath: imageUrl, numSamples, sampleImages })}
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
           {isVisible && (
