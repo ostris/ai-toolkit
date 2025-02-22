@@ -28,6 +28,7 @@ export default function TrainingForm() {
   const { datasets, status: datasetFetchStatus } = useDatasetList();
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
 
+
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
@@ -54,6 +55,7 @@ export default function TrainingForm() {
         .then(data => {
           setGpuIDs(data.gpu_ids);
           setJobConfig(JSON.parse(data.job_config));
+          // setJobConfig(data.name, 'config.name');
         })
         .catch(error => console.error('Error fetching training:', error));
     }
@@ -111,6 +113,8 @@ export default function TrainingForm() {
     saveJob();
   };
 
+  console.log('jobConfig.config.process[0].network.linear', jobConfig?.config?.process[0].network?.linear);
+
   return (
     <>
       <TopBar>
@@ -142,6 +146,7 @@ export default function TrainingForm() {
                 value={jobConfig.config.name}
                 onChange={value => setJobConfig(value, 'config.name')}
                 placeholder="Enter training name"
+                disabled={runId !== null}
                 required
               />
               <SelectInput
@@ -199,17 +204,18 @@ export default function TrainingForm() {
                 />
               </FormGroup>
             </Card>
-            {jobConfig.config.process[0].network?.linear && (
+            {jobConfig.config.process[0].network?.type && (
               <Card title="LoRA Configuration">
                 <NumberInput
                   label="Linear Rank"
                   value={jobConfig.config.process[0].network.linear}
                   onChange={value => {
+                    console.log('onChange', value);
                     setJobConfig(value, 'config.process[0].network.linear');
                     setJobConfig(value, 'config.process[0].network.linear_alpha');
                   }}
                   placeholder="eg. 16"
-                  min={1}
+                  min={0}
                   max={1024}
                   required
                 />

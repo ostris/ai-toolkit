@@ -16,20 +16,25 @@ export interface TextInputProps extends InputProps {
   value: string;
   onChange: (value: string) => void;
   type?: 'text' | 'password';
+  disabled?: boolean;
 }
 
 export const TextInput = (props: TextInputProps) => {
-  const { label, value, onChange, placeholder, required } = props;
+  const { label, value, onChange, placeholder, required, disabled } = props;
   return (
     <div className={classNames(props.className)}>
       {label && <label className={labelClasses}>{label}</label>}
       <input
         type={props.type || 'text'}
         value={value}
-        onChange={e => onChange(e.target.value)}
-        className={inputClasses}
+        onChange={e => {
+          if (disabled) return;
+          onChange(e.target.value);
+        }}
+        className={`${inputClasses} ${disabled && 'opacity-30 cursor-not-allowed'}`}
         placeholder={placeholder}
         required={required}
+        disabled={disabled}
       />
     </div>
   );
@@ -50,10 +55,10 @@ export const NumberInput = (props: NumberInputProps) => {
       <input
         type="number"
         value={value}
-        onChange={(e) => {
+        onChange={e => {
           // Use parseFloat instead of Number to properly handle decimal values
           const rawValue = e.target.value;
-          
+
           // Special handling for empty or partial inputs
           if (rawValue === '' || rawValue === '-' || rawValue === '.') {
             // For empty or partial inputs (like just a minus sign or decimal point),
@@ -62,18 +67,18 @@ export const NumberInput = (props: NumberInputProps) => {
             onChange(0);
             return;
           }
-          
-          let value = parseFloat(rawValue);
-          
+
+          let value = Number(rawValue);
+
           // Handle NaN cases
           if (isNaN(value)) {
             value = 0;
           }
-          
+
           // Apply min/max constraints only for valid numbers
           if (min !== undefined && value < min) value = min;
           if (max !== undefined && value > max) value = max;
-          
+
           onChange(value);
         }}
         className={inputClasses}
