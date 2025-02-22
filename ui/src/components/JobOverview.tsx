@@ -3,26 +3,34 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 import GPUWidget from '@/components/GPUWidget';
 import { getJobConfig, getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info } from 'lucide-react';
+import { useMemo } from 'react';
 
 interface JobOverviewProps {
   job: Job;
 }
 
 export default function JobOverview({ job }: JobOverviewProps) {
-  const gpuIds = job.gpu_ids.split(',').map(id => parseInt(id));
-  const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds);
+  const gpuIds = useMemo(() => job.gpu_ids.split(',').map(id => parseInt(id)), [job.gpu_ids]);
+
+  const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
   const totalSteps = getTotalSteps(job);
   const progress = (job.step / totalSteps) * 100;
   const isStopping = job.stop && job.status === 'running';
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
-      case 'running': return 'bg-emerald-500/10 text-emerald-500';
-      case 'stopping': return 'bg-amber-500/10 text-amber-500';
-      case 'stopped': return 'bg-gray-500/10 text-gray-400';
-      case 'completed': return 'bg-blue-500/10 text-blue-500';
-      case 'error': return 'bg-rose-500/10 text-rose-500';
-      default: return 'bg-gray-500/10 text-gray-400';
+      case 'running':
+        return 'bg-emerald-500/10 text-emerald-500';
+      case 'stopping':
+        return 'bg-amber-500/10 text-amber-500';
+      case 'stopped':
+        return 'bg-gray-500/10 text-gray-400';
+      case 'completed':
+        return 'bg-blue-500/10 text-blue-500';
+      case 'error':
+        return 'bg-rose-500/10 text-rose-500';
+      default:
+        return 'bg-gray-500/10 text-gray-400';
     }
   };
 
@@ -37,9 +45,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
       <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <h2 className="font-semibold text-gray-100">Job Details</h2>
-          <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>
-            {job.status}
-          </span>
+          <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>{job.status}</span>
         </div>
 
         <div className="p-4 space-y-6">
@@ -52,10 +58,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
               </span>
             </div>
             <div className="w-full bg-gray-800 rounded-full h-2">
-              <div
-                className="h-2 rounded-full bg-blue-500 transition-all"
-                style={{ width: `${progress}%` }}
-              />
+              <div className="h-2 rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
             </div>
           </div>
 
@@ -89,11 +92,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
       </div>
 
       {/* GPU Widget Panel */}
-      <div className="col-span-1">
-        {isGPUInfoLoaded && gpuList.length > 0 && (
-          <GPUWidget gpu={gpuList[0]} />
-        )}
-      </div>
+      <div className="col-span-1">{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
     </div>
   );
 }
