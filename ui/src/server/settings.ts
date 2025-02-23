@@ -29,7 +29,6 @@ export const getDatasetsRoot = async () => {
   return datasetsPath as string;
 };
 
-
 export const getTrainingFolder = async () => {
   const key = 'TRAINING_FOLDER';
   let trainingRoot = myCache.get(key) as string;
@@ -47,4 +46,23 @@ export const getTrainingFolder = async () => {
   }
   myCache.set(key, trainingRoot);
   return trainingRoot as string;
+};
+
+export const getHFToken = async () => {
+  const key = 'HF_TOKEN';
+  let token = myCache.get(key) as string;
+  if (token) {
+    return token;
+  }
+  let row = await prisma.settings.findFirst({
+    where: {
+      key: key,
+    },
+  });
+  token = '';
+  if (row?.value && row.value !== '') {
+    token = row.value;
+  }
+  myCache.set(key, token);
+  return token;
 };
