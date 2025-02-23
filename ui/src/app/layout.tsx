@@ -5,6 +5,7 @@ import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import ConfirmModal from '@/components/ConfirmModal';
 import SampleImageModal from '@/components/SampleImageModal';
+import { Suspense } from 'react';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -23,7 +24,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <div className="flex h-screen bg-gray-950">
             <Sidebar />
-            <main className="flex-1 overflow-auto bg-gray-950 text-gray-100 relative">{children}</main>
+
+            <main className="flex-1 overflow-auto bg-gray-950 text-gray-100 relative">
+              <Suspense>{children}</Suspense>
+            </main>
           </div>
         </ThemeProvider>
         <ConfirmModal />
