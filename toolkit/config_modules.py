@@ -379,7 +379,8 @@ class TrainConfig:
         self.do_prior_divergence = kwargs.get('do_prior_divergence', False)
 
         ema_config: Union[Dict, None] = kwargs.get('ema_config', None)
-        if ema_config is not None:
+        # if it is set explicitly to false, leave it false. 
+        if ema_config is not None and ema_config.get('use_ema', None) is not None:
             ema_config['use_ema'] = True
             print(f"Using EMA")
         else:

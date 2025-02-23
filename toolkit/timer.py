@@ -9,6 +9,7 @@ class Timer:
         self.timers = OrderedDict()
         self.active_timers = {}
         self.current_timer = None  # Used for the context manager functionality
+        self._after_print_hooks = []
 
     def start(self, timer_name):
         if timer_name not in self.timers:
@@ -34,12 +35,20 @@ class Timer:
         if len(self.timers[timer_name]) > self.max_buffer:
             self.timers[timer_name].popleft()
 
+    def add_after_print_hook(self, hook):
+        self._after_print_hooks.append(hook)
+
     def print(self):
         print(f"\nTimer '{self.name}':")
+        timing_dict = {}
         # sort by longest at top
         for timer_name, timings in sorted(self.timers.items(), key=lambda x: sum(x[1]), reverse=True):
             avg_time = sum(timings) / len(timings)
             print(f" - {avg_time:.4f}s avg - {timer_name}, num = {len(timings)}")
+            timing_dict[timer_name] = avg_time
+
+        for hook in self._after_print_hooks:
+            hook(timing_dict)
 
         print('')
 

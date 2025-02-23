@@ -161,6 +161,7 @@ cython_debug/
 
 /env.sh
 /models
+/datasets
 /custom/*
 !/custom/.gitkeep
 /.tmp
@@ -178,3 +179,4 @@ cython_debug/
 .vscode/settings.json
 .DS_Store
 ._.DS_Store
+aitk_db.db

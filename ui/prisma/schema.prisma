@@ -1,0 +1,28 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../../aitk_db.db"
+}
+
+model Settings {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+}
+
+model Job {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  gpu_ids    String
+  job_config String // JSON string
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  status     String   @default("stopped")
+  stop       Boolean  @default(false)
+  step       Int      @default(0)
+  info       String   @default("")
+  speed_string String @default("")
+}

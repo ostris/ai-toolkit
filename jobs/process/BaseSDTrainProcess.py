@@ -92,6 +92,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.step_num = 0
         self.start_step = 0
         self.epoch_num = 0
+        self.last_save_step = 0
         # start at 1 so we can do a sample at the start
         self.grad_accumulation_step = 1
         # if true, then we do not do an optimizer step. We are accumulating gradients
@@ -439,6 +440,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def post_save_hook(self, save_path):
         # override in subclass
         pass
+    
+    def done_hook(self):
+        pass
+    
+    def end_step_hook(self):
+        pass
 
     def save(self, step=None):
         if not self.accelerator.is_main_process:
@@ -453,6 +460,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         step_num = ''
         if step is not None:
+            self.last_save_step = step
             # zeropad 9 digits
             step_num = f"_{str(step).zfill(9)}"
 
@@ -648,6 +656,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.start()
         self.prepare_accelerator()
         
+    def sample_step_hook(self, img_num, total_imgs):
+        pass
     
     def prepare_accelerator(self):
         # set some config
@@ -722,6 +732,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_train_loop(self, batch):
         # return loss
         return 0.0
+    
+    def hook_after_sd_init_before_load(self):
+        pass
 
     def get_latest_save_path(self, name=None, post=''):
         if name == None:
@@ -1417,8 +1430,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             custom_pipeline=self.custom_pipeline,
             noise_scheduler=sampler,
         )
+        
+        self.hook_after_sd_init_before_load()
         # run base sd process run
         self.sd.load_model()
+        
+        self.sd.add_after_sample_image_hook(self.sample_step_hook)
 
         dtype = get_torch_dtype(self.train_config.dtype)
 
@@ -1812,6 +1829,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                                                 self.sd)
 
         flush()
+        self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
 
@@ -2091,6 +2109,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # update various steps
                 self.step_num = step + 1
                 self.grad_accumulation_step += 1
+                self.end_step_hook()
 
 
         ###################################################################
@@ -2110,13 +2129,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.finish()
         self.accelerator.end_training()
 
-        if self.save_config.push_to_hub:
-            if("HF_TOKEN" not in os.environ):
-                interpreter_login(new_session=False, write_permission=True)
-            self.push_to_hub(
-                repo_id=self.save_config.hf_repo_id,
-                private=self.save_config.hf_private
-            )
+        if self.accelerator.is_main_process:
+            # push to hub
+            if self.save_config.push_to_hub:
+                if("HF_TOKEN" not in os.environ):
+                    interpreter_login(new_session=False, write_permission=True)
+                self.push_to_hub(
+                    repo_id=self.save_config.hf_repo_id,
+                    private=self.save_config.hf_private
+                )
         del (
             self.sd,
             unet,
@@ -2128,6 +2149,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         )
 
         flush()
+        self.done_hook()
 
     def push_to_hub(
     self,
