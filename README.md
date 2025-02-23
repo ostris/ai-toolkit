@@ -7,7 +7,7 @@
 </a>
 
 
-I work on open source full time, which means I 100% rely on donations to make a living. If you find this project helpful, or use it in for commercial purposes, please consider donating to support my work on [Patreon](https://www.patreon.com/ostris) or [Gihub Sponsors](https://github.com/sponsors/ostris).
+I work on open source full time, which means I 100% rely on donations to make a living. If you find this project helpful, or use it in for commercial purposes, please consider donating to support my work on [Patreon](https://www.patreon.com/ostris) or [Github Sponsors](https://github.com/sponsors/ostris).
 
 ## Installation
 
