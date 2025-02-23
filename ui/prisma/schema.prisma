@@ -24,4 +24,5 @@ model Job {
   stop       Boolean  @default(false)
   step       Int      @default(0)
   info       String   @default("")
+  speed_string String @default("")
 }

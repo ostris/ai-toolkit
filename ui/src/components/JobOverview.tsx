@@ -68,24 +68,24 @@ export default function JobOverview({ job }: JobOverviewProps) {
             <div className="flex items-center space-x-4">
               <HardDrive className="w-5 h-5 text-blue-400" />
               <div>
-                <p className="text-sm font-medium text-gray-200">{job.name}</p>
                 <p className="text-xs text-gray-400">Job Name</p>
+                <p className="text-sm font-medium text-gray-200">{job.name}</p>
               </div>
             </div>
 
             <div className="flex items-center space-x-4">
               <Cpu className="w-5 h-5 text-purple-400" />
               <div>
-                <p className="text-sm font-medium text-gray-200">GPUs: {job.gpu_ids}</p>
                 <p className="text-xs text-gray-400">Assigned GPUs</p>
+                <p className="text-sm font-medium text-gray-200">GPUs: {job.gpu_ids}</p>
               </div>
             </div>
 
             <div className="flex items-center space-x-4">
               <Info className="w-5 h-5 text-amber-400" />
               <div>
-                <p className="text-sm font-medium text-gray-200">{job.info}</p>
                 <p className="text-xs text-gray-400">Additional Information</p>
+                <p className="text-sm font-medium text-gray-200">{job.info}</p>
               </div>
             </div>
           </div>
@@ -95,7 +95,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
       {/* GPU Widget Panel */}
       <div className="col-span-1">
         <div>{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
-        <div className='mt-4'>
+        <div className="mt-4">
           <FilesWidget jobID={job.id} />
         </div>
       </div>

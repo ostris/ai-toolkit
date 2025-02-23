@@ -92,6 +92,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.step_num = 0
         self.start_step = 0
         self.epoch_num = 0
+        self.last_save_step = 0
         # start at 1 so we can do a sample at the start
         self.grad_accumulation_step = 1
         # if true, then we do not do an optimizer step. We are accumulating gradients
@@ -459,6 +460,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         step_num = ''
         if step is not None:
+            self.last_save_step = step
             # zeropad 9 digits
             step_num = f"_{str(step).zfill(9)}"
 
@@ -1827,6 +1829,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                                                 self.sd)
 
         flush()
+        self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
 
