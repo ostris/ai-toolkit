@@ -700,7 +700,7 @@ class StableDiffusion:
             flush()
 
             scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(base_model_path, subfolder="scheduler")
-            self.print_and_status_update("Loading vae")
+            self.print_and_status_update("Loading VAE")
             vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
             flush()
             
@@ -709,7 +709,7 @@ class StableDiffusion:
                 text_encoder_2 = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder_2", torch_dtype=dtype)
                 
             else:
-                self.print_and_status_update("Loading t5")
+                self.print_and_status_update("Loading T5")
                 tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2", torch_dtype=dtype)
                 text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
                                                                 torch_dtype=dtype)
@@ -726,7 +726,7 @@ class StableDiffusion:
                 freeze(text_encoder_2)
                 flush()
                 
-            self.print_and_status_update("Loading clip")
+            self.print_and_status_update("Loading CLIP")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
             tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
             text_encoder.to(self.device_torch, dtype=dtype)

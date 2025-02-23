@@ -6,6 +6,7 @@ import concurrent.futures
 from extensions_built_in.sd_trainer.SDTrainer import SDTrainer
 from typing import Literal, Optional
 
+
 AITK_Status = Literal["running", "stopped", "error", "completed"]
 
 
@@ -81,10 +82,16 @@ class UITrainer(SDTrainer):
                 cursor = conn.cursor()
                 cursor.execute("BEGIN IMMEDIATE")
                 try:
+                    # Convert the value to string if it's not already
+                    if isinstance(value, str):
+                        value_to_insert = value
+                    else:
+                        value_to_insert = str(value)
+
+                    # Use parameterized query for both the column name and value
+                    update_query = f"UPDATE Job SET {key} = ? WHERE id = ?"
                     cursor.execute(
-                        f"UPDATE Job SET {key} = ? WHERE id = ?",
-                        (value, self.job_id)
-                    )
+                        update_query, (value_to_insert, self.job_id))
                 finally:
                     cursor.execute("COMMIT")
 
@@ -95,13 +102,10 @@ class UITrainer(SDTrainer):
         if self.accelerator.is_main_process:
             self._run_async_operation(self._update_key("step", self.step_num))
 
-
     def update_db_key(self, key, value):
         """Non-blocking update a key in the database."""
         if self.accelerator.is_main_process:
             self._run_async_operation(self._update_key(key, value))
-    
-    
 
     async def _update_status(self, status: AITK_Status, info: Optional[str] = None):
         if not self.accelerator.is_main_process:
@@ -151,6 +155,19 @@ class UITrainer(SDTrainer):
         asyncio.run(self.wait_for_all_async())
         self.thread_pool.shutdown(wait=True)
 
+    def handle_timing_print_hook(self, timing_dict):
+        if "train_loop" not in timing_dict:
+            print("train_loop not found in timing_dict", timing_dict)
+            return
+        seconds_per_iter = timing_dict["train_loop"]
+        # determine iter/sec or sec/iter
+        if seconds_per_iter < 1:
+            iters_per_sec = 1 / seconds_per_iter
+            self.update_db_key("speed_string", f"{iters_per_sec:.2f} iter/sec")
+        else:
+            self.update_db_key(
+                "speed_string", f"{seconds_per_iter:.2f} sec/iter")
+
     def done_hook(self):
         super(UITrainer, self).done_hook()
         self.update_status("completed", "Training completed")
@@ -178,6 +195,7 @@ class UITrainer(SDTrainer):
         self.maybe_stop()
         self.update_step()
         self.update_status("running", "Training")
+        self.timer.add_after_print_hook(self.handle_timing_print_hook)
 
     def status_update_hook_func(self, string):
         self.update_status("running", string)

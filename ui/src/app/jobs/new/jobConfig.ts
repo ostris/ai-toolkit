@@ -24,6 +24,7 @@ export const defaultJobConfig: JobConfig = {
         sqlite_db_path: './aitk_db.db',
         device: 'cuda:0',
         trigger_word: null,
+        performance_log_every: 10,
         network: {
           type: 'lora',
           linear: 16,
