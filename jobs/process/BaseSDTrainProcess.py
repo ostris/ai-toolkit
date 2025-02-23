@@ -730,6 +730,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_train_loop(self, batch):
         # return loss
         return 0.0
+    
+    def hook_after_sd_init_before_load(self):
+        pass
 
     def get_latest_save_path(self, name=None, post=''):
         if name == None:
@@ -1425,6 +1428,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             custom_pipeline=self.custom_pipeline,
             noise_scheduler=sampler,
         )
+        
+        self.hook_after_sd_init_before_load()
         # run base sd process run
         self.sd.load_model()
         
