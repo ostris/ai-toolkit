@@ -59,6 +59,7 @@ export interface SaveConfig {
   dtype: string;
   save_every: number;
   max_step_saves_to_keep: number;
+  save_format: string;
   push_to_hub: boolean;
 }
 
@@ -90,6 +91,8 @@ export interface TrainConfig {
   train_text_encoder: boolean;
   gradient_checkpointing: boolean;
   noise_scheduler: string;
+  timestep_type: string;
+  content_or_style: string;
   optimizer: string;
   lr: number;
   ema_config?: EMAConfig;
@@ -129,6 +132,7 @@ export interface ProcessConfig {
   type: 'ui_trainer';
   sqlite_db_path?: string;
   training_folder: string;
+  trigger_word: string | null;
   device: string;
   network?: NetworkConfig;
   save: SaveConfig;

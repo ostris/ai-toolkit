@@ -49,44 +49,55 @@ export interface NumberInputProps extends InputProps {
 
 export const NumberInput = (props: NumberInputProps) => {
   const { label, value, onChange, placeholder, required, min, max } = props;
+  
+  // Add controlled internal state to properly handle partial inputs
+  const [inputValue, setInputValue] = React.useState<string | number>(value ?? '');
+
+  // Sync internal state with prop value
+  React.useEffect(() => {
+    setInputValue(value ?? '');
+  }, [value]);
+
   return (
     <div className={classNames(props.className)}>
       {label && <label className={labelClasses}>{label}</label>}
       <input
         type="number"
-        value={value}
+        value={inputValue}
         onChange={e => {
-          // Use parseFloat instead of Number to properly handle decimal values
           const rawValue = e.target.value;
+          
+          // Update the input display with the raw value
+          setInputValue(rawValue);
 
-          // Special handling for empty or partial inputs
-          if (rawValue === '' || rawValue === '-' || rawValue === '.') {
-            // For empty or partial inputs (like just a minus sign or decimal point),
-            // we need to maintain the raw input in the input field
-            // but pass a valid number to onChange
-            onChange(0);
+          // Handle empty or partial inputs
+          if (rawValue === '' || rawValue === '-') {
+            // For empty or partial negative input, don't call onChange yet
             return;
           }
 
-          let value = Number(rawValue);
+          const numValue = Number(rawValue);
 
-          // Handle NaN cases
-          if (isNaN(value)) {
-            value = 0;
+          // Only apply constraints and call onChange when we have a valid number
+          if (!isNaN(numValue)) {
+            let constrainedValue = numValue;
+            
+            // Apply min/max constraints if they exist
+            if (min !== undefined && constrainedValue < min) {
+              constrainedValue = min;
+            }
+            if (max !== undefined && constrainedValue > max) {
+              constrainedValue = max;
+            }
+            
+            onChange(constrainedValue);
           }
-
-          // Apply min/max constraints only for valid numbers
-          if (min !== undefined && value < min) value = min;
-          if (max !== undefined && value > max) value = max;
-
-          onChange(value);
         }}
         className={inputClasses}
         placeholder={placeholder}
         required={required}
         min={min}
         max={max}
-        // Allow decimal points
         step="any"
       />
     </div>
@@ -126,36 +137,43 @@ export interface CheckboxProps {
 
 export const Checkbox = (props: CheckboxProps) => {
   const { label, checked, onChange, required, disabled } = props;
-  const id = React.useId(); // Generate unique ID for label association
+  const id = React.useId();
 
   return (
-    <div className={classNames('flex items-center', props.className)}>
-      <div className="relative flex items-start">
-        <div className="flex items-center h-5">
-          <input
-            id={id}
-            type="checkbox"
-            checked={checked}
-            onChange={e => onChange(e.target.checked)}
-            className="w-4 h-4 rounded border-gray-700 bg-gray-800 text-indigo-600 focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 focus:ring-offset-gray-900 cursor-pointer transition-colors"
-            required={required}
-            disabled={disabled}
-          />
-        </div>
-        {label && (
-          <div className="ml-3 text-sm">
-            <label
-              htmlFor={id}
-              className={classNames(
-                'font-medium cursor-pointer select-none',
-                disabled ? 'text-gray-500' : 'text-gray-300',
-              )}
-            >
-              {label}
-            </label>
-          </div>
+    <div className={classNames('flex items-center gap-3', props.className)}>
+      <button
+        type="button"
+        role="switch"
+        id={id}
+        aria-checked={checked}
+        aria-required={required}
+        disabled={disabled}
+        onClick={() => !disabled && onChange(!checked)}
+        className={classNames(
+          'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2',
+          checked ? 'bg-blue-600' : 'bg-gray-700',
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80'
         )}
-      </div>
+      >
+        <span className="sr-only">Toggle {label}</span>
+        <span
+          className={classNames(
+            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+            checked ? 'translate-x-5' : 'translate-x-0'
+          )}
+        />
+      </button>
+      {label && (
+        <label
+          htmlFor={id}
+          className={classNames(
+            'text-sm font-medium cursor-pointer select-none',
+            disabled ? 'text-gray-500' : 'text-gray-300'
+          )}
+        >
+          {label}
+        </label>
+      )}
     </div>
   );
 };

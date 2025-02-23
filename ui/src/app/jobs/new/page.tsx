@@ -28,7 +28,6 @@ export default function TrainingForm() {
   const { datasets, status: datasetFetchStatus } = useDatasetList();
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
 
-
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
@@ -152,9 +151,20 @@ export default function TrainingForm() {
               <SelectInput
                 label="GPU ID"
                 value={`${gpuIDs}`}
-                className="pt-2"
                 onChange={value => setGpuIDs(value)}
                 options={gpuList.map(gpu => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              />
+              <TextInput
+                label="Trigger Word"
+                value={jobConfig.config.process[0].trigger_word || ''}
+                onChange={(value: string | null) => {
+                  if (value?.trim() === '') {
+                    value = null;
+                  }
+                  setJobConfig(value, 'jobConfig.config.process[0].trigger_word');
+                }}
+                placeholder=""
+                required
               />
             </Card>
 
@@ -191,7 +201,8 @@ export default function TrainingForm() {
                   label: model.name_or_path,
                 }))}
               />
-              <FormGroup label="Quantize" className="pt-2">
+              <FormGroup label="Quantize">
+                <div className='grid grid-cols-2 gap-2'>
                 <Checkbox
                   label="Transformer"
                   checked={jobConfig.config.process[0].model.quantize}
@@ -202,6 +213,7 @@ export default function TrainingForm() {
                   checked={jobConfig.config.process[0].model.quantize_te}
                   onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
                 />
+                </div>
               </FormGroup>
             </Card>
             {jobConfig.config.process[0].network?.type && (
@@ -256,7 +268,6 @@ export default function TrainingForm() {
                 <div>
                   <NumberInput
                     label="Batch Size"
-                    className="pt-2"
                     value={jobConfig.config.process[0].train.batch_size}
                     onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
                     placeholder="eg. 4"
@@ -285,7 +296,6 @@ export default function TrainingForm() {
                 <div>
                   <SelectInput
                     label="Optimizer"
-                    className="pt-2"
                     value={jobConfig.config.process[0].train.optimizer}
                     onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
                     options={[
@@ -310,6 +320,54 @@ export default function TrainingForm() {
                     placeholder="eg. 0.0001"
                     min={0}
                     required
+                  />
+                </div>
+                <div>
+                  <SelectInput
+                    label="Timestep Type"
+                    value={jobConfig.config.process[0].train.timestep_type}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.timestep_type')}
+                    options={[
+                      { value: 'sigmoid', label: 'Sigmoid' },
+                      { value: 'linear', label: 'Linear' },
+                      { value: 'flux_shift', label: 'Flux Shift' },
+                    ]}
+                  />
+                  <SelectInput
+                    label="Timestep Bias"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.content_or_style}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.content_or_style')}
+                    options={[
+                      { value: 'balanced', label: 'Balanced' },
+                      { value: 'content', label: 'High Noise' },
+                      { value: 'style', label: 'Low Noise' },
+                    ]}
+                  />
+                  <SelectInput
+                    label="Noise Scheduler"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.noise_scheduler}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.noise_scheduler')}
+                    options={[{ value: 'flowmatch', label: 'FlowMatch' }]}
+                  />
+                </div>
+                <div>
+                  <FormGroup label="EMA (Exponential Moving Average)">
+                    <Checkbox
+                      label="Use EMA"
+                      className='pt-1'
+                      checked={jobConfig.config.process[0].train.ema_config?.use_ema || false}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
+                    />
+                  </FormGroup>
+                  <NumberInput
+                    label="EMA Decay"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
+                    placeholder="eg. 0.99"
+                    min={0}
                   />
                 </div>
               </div>
@@ -341,36 +399,13 @@ export default function TrainingForm() {
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
                           options={datasetOptions}
                         />
-                        {/* <TextInput
-                        label="Folder Path"
-                        value={dataset.folder_path}
-                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
-                        placeholder="eg. /path/to/images/folder"
-                        required
-                      /> */}
-                        {/* <TextInput
-                        label="Mask Folder Path"
-                        className="pt-2"
-                        value={dataset.mask_path || ''}
-                        onChange={value => {
-                          let setValue: string | null = value;
-                          if (!setValue || setValue.trim() === '') {
-                            setValue = null;
-                          }
-                          setJobConfig(setValue, `config.process[0].datasets[${i}].mask_path`);
-                        }}
-                        placeholder="eg. /path/to/masks/folder"
-                      />
-                      <NumberInput
-                        label="Mask Min Value"
-                        className="pt-2"
-                        value={dataset.mask_min_value}
-                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].mask_min_value`)}
-                        placeholder="eg. 0.1"
-                        min={0}
-                        max={1}
-                        required
-                      /> */}
+                        <NumberInput
+                          label="LoRA Weight"
+                          value={dataset.network_weight}
+                          className="pt-2"
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].network_weight`)}
+                          placeholder="eg. 1.0"
+                        />
                       </div>
                       <div>
                         <TextInput
@@ -378,14 +413,6 @@ export default function TrainingForm() {
                           value={dataset.default_caption}
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].default_caption`)}
                           placeholder="eg. A photo of a cat"
-                        />
-                        <TextInput
-                          label="Caption Extension"
-                          className="pt-2"
-                          value={dataset.caption_ext}
-                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].caption_ext`)}
-                          placeholder="eg. txt"
-                          required
                         />
                         <NumberInput
                           label="Caption Dropout Rate"
@@ -402,7 +429,7 @@ export default function TrainingForm() {
                       <div>
                         <FormGroup label="Settings" className="">
                           <Checkbox
-                            label="Cache Latents to Disk"
+                            label="Cache Latents"
                             checked={dataset.cache_latents_to_disk || false}
                             onChange={value =>
                               setJobConfig(value, `config.process[0].datasets[${i}].cache_latents_to_disk`)
@@ -410,7 +437,6 @@ export default function TrainingForm() {
                           />
                           <Checkbox
                             label="Is Regularization"
-                            className="pt-2"
                             checked={dataset.is_reg || false}
                             onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].is_reg`)}
                           />
@@ -418,19 +444,28 @@ export default function TrainingForm() {
                       </div>
                       <div>
                         <FormGroup label="Resolutions" className="pt-2">
-                          {[256, 512, 768, 1024, 1280].map(res => (
-                            <Checkbox
-                              key={res}
-                              label={res.toString()}
-                              checked={dataset.resolution.includes(res)}
-                              onChange={value => {
-                                const resolutions = dataset.resolution.includes(res)
-                                  ? dataset.resolution.filter(r => r !== res)
-                                  : [...dataset.resolution, res];
-                                setJobConfig(resolutions, `config.process[0].datasets[${i}].resolution`);
-                              }}
-                            />
-                          ))}
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              [256, 512, 768],
+                              [1024, 1280, 1536],
+                            ].map(resGroup => (
+                              <div key={resGroup[0]} className="space-y-2">
+                                {resGroup.map(res => (
+                                  <Checkbox
+                                    key={res}
+                                    label={res.toString()}
+                                    checked={dataset.resolution.includes(res)}
+                                    onChange={value => {
+                                      const resolutions = dataset.resolution.includes(res)
+                                        ? dataset.resolution.filter(r => r !== res)
+                                        : [...dataset.resolution, res];
+                                      setJobConfig(resolutions, `config.process[0].datasets[${i}].resolution`);
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ))}
+                          </div>
                         </FormGroup>
                       </div>
                     </div>

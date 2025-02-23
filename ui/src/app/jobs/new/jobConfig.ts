@@ -23,6 +23,7 @@ export const defaultJobConfig: JobConfig = {
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
         device: 'cuda:0',
+        trigger_word: null,
         network: {
           type: 'lora',
           linear: 16,
@@ -32,6 +33,7 @@ export const defaultJobConfig: JobConfig = {
           dtype: 'bf16',
           save_every: 250,
           max_step_saves_to_keep: 4,
+          save_format: 'diffusers',
           push_to_hub: false,
         },
         datasets: [
@@ -47,6 +49,8 @@ export const defaultJobConfig: JobConfig = {
           gradient_checkpointing: true,
           noise_scheduler: 'flowmatch',
           optimizer: 'adamw8bit',
+          timestep_type: 'sigmoid',
+          content_or_style: 'balanced',
           optimizer_params: {
             weight_decay: 1e-4
           },
