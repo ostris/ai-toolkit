@@ -116,8 +116,6 @@ export default function TrainingForm() {
     saveJob();
   };
 
-  console.log('jobConfig.config.process[0].network.linear', jobConfig?.config?.process[0].network?.linear);
-
   return (
     <>
       <TopBar>
@@ -165,7 +163,7 @@ export default function TrainingForm() {
                   if (value?.trim() === '') {
                     value = null;
                   }
-                  setJobConfig(value, 'jobConfig.config.process[0].trigger_word');
+                  setJobConfig(value, 'config.process[0].trigger_word');
                 }}
                 placeholder=""
                 required
