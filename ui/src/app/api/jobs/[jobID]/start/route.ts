@@ -6,6 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { getTrainingFolder, getHFToken } from '@/server/settings';
+const isWindows = process.platform === 'win32';
 
 const prisma = new PrismaClient();
 
@@ -52,13 +53,13 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   let pythonPath = 'python';
   // use .venv or venv if it exists
   if (fs.existsSync(path.join(TOOLKIT_ROOT, '.venv'))) {
-    if (os.platform() === 'win32') {
+    if (isWindows) {
       pythonPath = path.join(TOOLKIT_ROOT, '.venv', 'Scripts', 'python.exe');
     } else {
       pythonPath = path.join(TOOLKIT_ROOT, '.venv', 'bin', 'python');
     }
   } else if (fs.existsSync(path.join(TOOLKIT_ROOT, 'venv'))) {
-    if (os.platform() === 'win32') {
+    if (isWindows) {
       pythonPath = path.join(TOOLKIT_ROOT, 'venv', 'Scripts', 'python.exe');
     } else {
       pythonPath = path.join(TOOLKIT_ROOT, 'venv', 'bin', 'python');
@@ -80,23 +81,55 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     additionalEnv.HF_TOKEN = hfToken;
   }
 
-  // console.log(
-  //   'Spawning command:',
-  //   `AITK_JOB_ID=${jobID} CUDA_VISIBLE_DEVICES=${job.gpu_ids} ${pythonPath} ${runFilePath} ${configPath}`,
-  // );
+  let cmd = `${pythonPath} ${runFilePath} ${configPath}`;
+  for (const key in additionalEnv) {
+    if (os.platform() === 'win32') {
+      cmd = `set ${key}=${additionalEnv[key]} && ${cmd}`;
+    } else {
+      cmd = `${key}=${additionalEnv[key]} ${cmd}`;
+    }
+  }
+
+  console.log('Spawning command:', cmd);
 
   // start job
-  const subprocess = spawn(pythonPath, [runFilePath, configPath], {
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      ...additionalEnv,
-    },
-    cwd: TOOLKIT_ROOT,
-  });
+  if (isWindows) {
+    // For Windows, use 'cmd.exe' to open a new command window
+    const subprocess = spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', pythonPath, runFilePath, configPath], {
+      env: {
+        ...process.env,
+        ...additionalEnv,
+      },
+      cwd: TOOLKIT_ROOT,
+      windowsHide: false,
+    });
+    
+    subprocess.unref();
+  } else {
+    // For non-Windows platforms, use your original approach
+    const subprocess = spawn(pythonPath, [runFilePath, configPath], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        ...additionalEnv,
+      },
+      cwd: TOOLKIT_ROOT,
+    });
+    
+    subprocess.unref();
+  }
+  // const subprocess = spawn(pythonPath, [runFilePath, configPath], {
+  //   detached: true,
+  //   stdio: 'ignore',
+  //   env: {
+  //     ...process.env,
+  //     ...additionalEnv,
+  //   },
+  //   cwd: TOOLKIT_ROOT,
+  // });
 
-  subprocess.unref();
+  // subprocess.unref();
 
   return NextResponse.json(job);
 }

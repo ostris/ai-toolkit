@@ -362,7 +362,10 @@ export default function TrainingForm() {
                     className="pt-2"
                     value={jobConfig.config.process[0].train.noise_scheduler}
                     onChange={value => setJobConfig(value, 'config.process[0].train.noise_scheduler')}
-                    options={[{ value: 'flowmatch', label: 'FlowMatch' }]}
+                    options={[
+                      { value: 'flowmatch', label: 'FlowMatch' },
+                      { value: 'ddpm', label: 'DDPM' },
+                    ]}
                   />
                 </div>
                 <div>
@@ -516,7 +519,10 @@ export default function TrainingForm() {
                     className="pt-2"
                     value={jobConfig.config.process[0].sample.sampler}
                     onChange={value => setJobConfig(value, 'config.process[0].sample.sampler')}
-                    options={[{ value: 'flowmatch', label: 'FlowMatch' }]}
+                    options={[
+                      { value: 'flowmatch', label: 'FlowMatch' },
+                      { value: 'ddpm', label: 'DDPM' },
+                    ]}
                   />
                 </div>
                 <div>

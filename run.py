@@ -95,6 +95,14 @@ def main():
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
+        except KeyboardInterrupt as e:
+            try:
+                job.process[0].on_error(e)
+            except Exception as e2:
+                print_acc(f"Error running on_error: {e2}")
+            if not args.recover:
+                print_end_message(jobs_completed, jobs_failed)
+                raise e
 
 
 if __name__ == '__main__':

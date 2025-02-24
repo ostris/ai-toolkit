@@ -18,6 +18,8 @@ export const options = {
         'config.process[0].model.quantize_te': [true, false],
         'config.process[0].model.is_flux': [true, false],
         'config.process[0].train.bypass_guidance_embedding': [true, false],
+        'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       },
     },
     {
@@ -27,6 +29,8 @@ export const options = {
         'config.process[0].model.quantize': [true, false],
         'config.process[0].model.quantize_te': [true, false],
         'config.process[0].model.is_flux': [true, false],
+        'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       },
     },
     {
@@ -36,12 +40,16 @@ export const options = {
         'config.process[0].model.quantize': [false, false],
         'config.process[0].model.quantize_te': [true, false],
         'config.process[0].model.is_lumina2': [true, false],
+        'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       },
     },
     {
       name_or_path: 'ostris/objective-reality',
       dev_only: true,
       defaults: {
+        'config.process[0].sample.sampler': ['ddpm', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['ddpm', 'flowmatch'],
       },
     },
   ],

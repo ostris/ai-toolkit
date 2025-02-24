@@ -14,8 +14,12 @@ class UITrainer(SDTrainer):
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         super(UITrainer, self).__init__(process_id, job, config, **kwargs)
         self.sqlite_db_path = self.config.get("sqlite_db_path", "./aitk_db.db")
+        if not os.path.exists(self.sqlite_db_path):
+            raise Exception(f"SQLite database not found at {self.sqlite_db_path}")
         print(f"Using SQLite database at {self.sqlite_db_path}")
         self.job_id = os.environ.get("AITK_JOB_ID", None)
+        self.job_id = self.job_id.strip() if self.job_id is not None else None
+        print(f"Job ID: \"{self.job_id}\"")
         if self.job_id is None:
             raise Exception("AITK_JOB_ID not set")
         self.is_stopping = False
