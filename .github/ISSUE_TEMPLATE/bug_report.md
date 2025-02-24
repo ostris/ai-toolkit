@@ -17,4 +17,3 @@ You verified that this is a bug and not a feature request or question by asking 
 Yes/No
 
 ## Describe the bug
-

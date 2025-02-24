@@ -1,5 +1,6 @@
 export interface Model {
   name_or_path: string;
+  dev_only?: boolean;
   defaults?: { [key: string]: any };
 }
 
@@ -35,6 +36,12 @@ export const options = {
         'config.process[0].model.quantize': [false, false],
         'config.process[0].model.quantize_te': [true, false],
         'config.process[0].model.is_lumina2': [true, false],
+      },
+    },
+    {
+      name_or_path: 'ostris/objective-reality',
+      dev_only: true,
+      defaults: {
       },
     },
   ],

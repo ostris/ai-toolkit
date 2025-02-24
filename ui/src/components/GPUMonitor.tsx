@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GPUApiResponse } from '@/types';
 import Loading from '@/components/Loading';
 import GPUWidget from '@/components/GPUWidget';
@@ -8,10 +8,15 @@ const GpuMonitor: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const isFetchingGpuRef = useRef(false);
 
   useEffect(() => {
     const fetchGpuInfo = async () => {
       try {
+        if (isFetchingGpuRef.current) {
+          return;
+        }
+        isFetchingGpuRef.current = true;
         const response = await fetch('/api/gpu');
 
         if (!response.ok) {
@@ -25,6 +30,7 @@ const GpuMonitor: React.FC = () => {
       } catch (err) {
         setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
+        isFetchingGpuRef.current = false;
         setLoading(false);
       }
     };

@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import os from 'os';
 
 const execAsync = promisify(exec);
 
 export async function GET() {
   try {
+    // Get platform
+    const platform = os.platform();
+    const isWindows = platform === 'win32';
+    
     // Check if nvidia-smi is available
-    const hasNvidiaSmi = await checkNvidiaSmi();
+    const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
 
     if (!hasNvidiaSmi) {
       return NextResponse.json({
@@ -18,7 +23,7 @@ export async function GET() {
     }
 
     // Get GPU stats
-    const gpuStats = await getGpuStats();
+    const gpuStats = await getGpuStats(isWindows);
 
     return NextResponse.json({
       hasNvidiaSmi: true,
@@ -37,20 +42,29 @@ export async function GET() {
   }
 }
 
-async function checkNvidiaSmi(): Promise<boolean> {
+async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
   try {
-    await execAsync('which nvidia-smi');
+    if (isWindows) {
+      // Check if nvidia-smi is available on Windows
+      // It's typically located in C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe
+      // but we'll just try to run it directly as it may be in PATH
+      await execAsync('nvidia-smi -L');
+    } else {
+      // Linux/macOS check
+      await execAsync('which nvidia-smi');
+    }
     return true;
   } catch (error) {
     return false;
   }
 }
 
-async function getGpuStats() {
-  // Get detailed GPU information in JSON format including fan speed
-  const { stdout } = await execAsync(
-    'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits',
-  );
+async function getGpuStats(isWindows: boolean) {
+  // Command is the same for both platforms, but the path might be different
+  const command = 'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits';
+  
+  // Execute command
+  const { stdout } = await execAsync(command);
 
   // Parse CSV output
   const gpus = stdout
@@ -97,7 +111,7 @@ async function getGpuStats() {
           memory: parseInt(clockMemory),
         },
         fan: {
-          speed: parseInt(fanSpeed), // Fan speed as percentage
+          speed: parseInt(fanSpeed) || 0, // Some GPUs might not report fan speed, default to 0
         },
       };
     });

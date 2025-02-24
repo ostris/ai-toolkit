@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
-import { TOOLKIT_ROOT, defaultTrainFolder } from '@/paths';
+import { TOOLKIT_ROOT } from '@/paths';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { getTrainingFolder, getHFToken } from '@/server/settings';
 
 const prisma = new PrismaClient();
@@ -51,9 +52,17 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   let pythonPath = 'python';
   // use .venv or venv if it exists
   if (fs.existsSync(path.join(TOOLKIT_ROOT, '.venv'))) {
-    pythonPath = path.join(TOOLKIT_ROOT, '.venv', 'bin', 'python');
+    if (os.platform() === 'win32') {
+      pythonPath = path.join(TOOLKIT_ROOT, '.venv', 'Scripts', 'python.exe');
+    } else {
+      pythonPath = path.join(TOOLKIT_ROOT, '.venv', 'bin', 'python');
+    }
   } else if (fs.existsSync(path.join(TOOLKIT_ROOT, 'venv'))) {
-    pythonPath = path.join(TOOLKIT_ROOT, 'venv', 'bin', 'python');
+    if (os.platform() === 'win32') {
+      pythonPath = path.join(TOOLKIT_ROOT, 'venv', 'Scripts', 'python.exe');
+    } else {
+      pythonPath = path.join(TOOLKIT_ROOT, 'venv', 'bin', 'python');
+    }
   }
 
   const runFilePath = path.join(TOOLKIT_ROOT, 'run.py');

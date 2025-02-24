@@ -18,6 +18,8 @@ import { TopBar, MainContent } from '@/components/layout';
 import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
 
+const isDev = process.env.NODE_ENV === 'development';
+
 export default function TrainingForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,7 +44,9 @@ export default function TrainingForm() {
     for (let i = 0; i < jobConfig.config.process[0].datasets.length; i++) {
       const dataset = jobConfig.config.process[0].datasets[i];
       if (dataset.folder_path === defaultDatasetPath) {
-        setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+        if (datasetOptions.length > 0) {
+          setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+        }
       }
     }
   }, [datasets, settings, isSettingsLoaded, datasetFetchStatus]);
@@ -196,23 +200,32 @@ export default function TrainingForm() {
                     }
                   }
                 }}
-                options={options.model.map(model => ({
-                  value: model.name_or_path,
-                  label: model.name_or_path,
-                }))}
+                options={
+                  options.model
+                    .map(model => {
+                      if (model.dev_only && !isDev) {
+                        return null;
+                      }
+                      return {
+                        value: model.name_or_path,
+                        label: model.name_or_path,
+                      };
+                    })
+                    .filter(x => x) as { value: string; label: string }[]
+                }
               />
               <FormGroup label="Quantize">
-                <div className='grid grid-cols-2 gap-2'>
-                <Checkbox
-                  label="Transformer"
-                  checked={jobConfig.config.process[0].model.quantize}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.quantize')}
-                />
-                <Checkbox
-                  label="Text Encoder"
-                  checked={jobConfig.config.process[0].model.quantize_te}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <Checkbox
+                    label="Transformer"
+                    checked={jobConfig.config.process[0].model.quantize}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize')}
+                  />
+                  <Checkbox
+                    label="Text Encoder"
+                    checked={jobConfig.config.process[0].model.quantize_te}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
+                  />
                 </div>
               </FormGroup>
             </Card>
@@ -356,7 +369,7 @@ export default function TrainingForm() {
                   <FormGroup label="EMA (Exponential Moving Average)">
                     <Checkbox
                       label="Use EMA"
-                      className='pt-1'
+                      className="pt-1"
                       checked={jobConfig.config.process[0].train.ema_config?.use_ema || false}
                       onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
                     />
@@ -531,7 +544,7 @@ export default function TrainingForm() {
                     value={jobConfig.config.process[0].sample.width}
                     onChange={value => setJobConfig(value, 'config.process[0].sample.width')}
                     placeholder="eg. 1024"
-                    min={256}
+                    min={0}
                     required
                   />
                   <NumberInput
@@ -540,7 +553,7 @@ export default function TrainingForm() {
                     onChange={value => setJobConfig(value, 'config.process[0].sample.height')}
                     placeholder="eg. 1024"
                     className="pt-2"
-                    min={256}
+                    min={0}
                     required
                   />
                 </div>

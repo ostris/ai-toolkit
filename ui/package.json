@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start --port 8675",
     "lint": "next lint",
-    "update_db": "npx prisma generate ; npx prisma db push",
+    "update_db": "npx prisma generate && npx prisma db push",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,css,scss}\""
   },
   "dependencies": {

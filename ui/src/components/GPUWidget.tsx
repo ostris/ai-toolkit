@@ -98,8 +98,8 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <div>
               <p className="text-xs text-gray-400">Power Draw</p>
               <p className="text-sm text-gray-200">
-                {gpu.power.draw.toFixed(1)}W
-                <span className="text-gray-400 text-xs"> / {gpu.power.limit.toFixed(1)}W</span>
+                {gpu.power.draw?.toFixed(1)}W
+                <span className="text-gray-400 text-xs"> / {gpu.power.limit?.toFixed(1) || " ? "}W</span>
               </p>
             </div>
           </div>
