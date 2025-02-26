@@ -1362,7 +1362,9 @@ class SDTrainer(BaseSDTrainProcess):
                             
                             if self.train_config.diff_output_preservation:
                                 dop_prompts = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in conditioned_prompts]
-                                dop_prompts_2 = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in prompt_2]
+                                dop_prompts_2 = None
+                                if prompt_2 is not None:
+                                    dop_prompts_2 = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in prompt_2]
                                 self.diff_output_preservation_embeds = self.sd.encode_prompt(
                                     dop_prompts, dop_prompts_2,
                                     dropout_prob=self.train_config.prompt_dropout_prob,
