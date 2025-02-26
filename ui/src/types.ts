@@ -100,6 +100,9 @@ export interface TrainConfig {
   optimizer_params: {
     weight_decay: number;
   };
+  diff_output_preservation: boolean;
+  diff_output_preservation_multiplier: number;
+  diff_output_preservation_class: string;
 }
 
 export interface QuantizeKwargsConfig {

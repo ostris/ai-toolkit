@@ -275,7 +275,7 @@ export default function TrainingForm() {
           </div>
           <div>
             <Card title="Training Configuration">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
                 <div>
                   <NumberInput
                     label="Batch Size"
@@ -382,6 +382,31 @@ export default function TrainingForm() {
                     onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
                     placeholder="eg. 0.99"
                     min={0}
+                  />
+                </div>
+                <div>
+                  <FormGroup label="Regularization">
+                    <Checkbox
+                      label="Differtial Output Preservation"
+                      className="pt-1"
+                      checked={jobConfig.config.process[0].train.diff_output_preservation || false}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
+                    />
+                  </FormGroup>
+                  <NumberInput
+                    label="DFE Loss Multiplier"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
+                    placeholder="eg. 1.0"
+                    min={0}
+                  />
+                  <TextInput
+                    label="DFE Preservation Class"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
+                    placeholder="eg. woman"
                   />
                 </div>
               </div>

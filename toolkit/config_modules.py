@@ -341,6 +341,12 @@ class TrainConfig:
         # unmasked reign. It is unmasked regularization basically
         self.inverted_mask_prior = kwargs.get('inverted_mask_prior', False)
         self.inverted_mask_prior_multiplier = kwargs.get('inverted_mask_prior_multiplier', 0.5)
+        
+        # DOP will will run the same image and prompt through the network without the trigger word blank and use it as a target
+        self.diff_output_preservation = kwargs.get('diff_output_preservation', False)
+        self.diff_output_preservation_multiplier = kwargs.get('diff_output_preservation_multiplier', 1.0)
+        # If the trigger word is in the prompt, we will use this class name to replace it eg. "sks woman" -> "woman"
+        self.diff_output_preservation_class = kwargs.get('diff_output_preservation_class', '')
 
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
