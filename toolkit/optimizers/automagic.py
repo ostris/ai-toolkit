@@ -322,6 +322,8 @@ class Automagic(torch.optim.Optimizer):
     
     def load_state_dict(self, state_dict, strict=True):
         # load the lr_mask from the state_dict
+        # dont load state dict for now. Has a bug. Need to fix it.
+        return
         idx = 0
         for group in self.param_groups:
             for p in group['params']:
