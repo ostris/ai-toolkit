@@ -423,6 +423,9 @@ class TrainConfig:
         self.force_consistent_noise = kwargs.get('force_consistent_noise', False)
 
 
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+
+
 class ModelConfig:
     def __init__(self, **kwargs):
         self.name_or_path: str = kwargs.get('name_or_path', None)
@@ -500,6 +503,36 @@ class ModelConfig:
         self.split_model_other_module_param_count_scale = kwargs.get("split_model_other_module_param_count_scale", 0.3)
         
         self.te_name_or_path = kwargs.get("te_name_or_path", None)
+        
+        self.arch: ModelArch = kwargs.get("model_arch", None)
+        
+        # handle migrating to new model arch
+        if self.arch is None:
+            if kwargs.get('is_v2', False):
+                self.arch = 'sd2'
+            elif kwargs.get('is_v3', False):
+                self.arch = 'sd3'
+            elif kwargs.get('is_xl', False):
+                self.arch = 'sdxl'
+            elif kwargs.get('is_pixart', False):
+                self.arch = 'pixart'
+            elif kwargs.get('is_pixart_sigma', False):
+                self.arch = 'pixart_sigma'
+            elif kwargs.get('is_auraflow', False):
+                self.arch = 'auraflow'
+            elif kwargs.get('is_flux', False):
+                self.arch = 'flux'
+            elif kwargs.get('is_flex2', False):
+                self.arch = 'flex2'
+            elif kwargs.get('is_lumina2', False):
+                self.arch = 'lumina2'
+            elif kwargs.get('is_vega', False):
+                self.arch = 'vega'
+            elif kwargs.get('is_ssd', False):
+                self.arch = 'ssd'
+            else:
+                self.arch = 'sd1'
+        
 
 
 class EMAConfig:
