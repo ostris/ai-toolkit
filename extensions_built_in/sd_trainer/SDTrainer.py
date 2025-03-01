@@ -895,7 +895,7 @@ class SDTrainer(BaseSDTrainProcess):
             was_adapter_active = self.adapter.is_active
             self.adapter.is_active = False
 
-        if self.train_config.unload_text_encoder and self.adapter is not None:
+        if self.train_config.unload_text_encoder and self.adapter is not None and not isinstance(self.adapter, CustomAdapter):
             raise ValueError("Prior predictions currently do not support unloading text encoder with adapter")
         # do a prediction here so we can match its output with network multiplier set to 0.0
         with torch.no_grad():
