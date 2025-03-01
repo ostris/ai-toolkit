@@ -483,7 +483,7 @@ def show_tensors(imgs: torch.Tensor, name='AI Toolkit'):
 
 
 def show_latents(latents: torch.Tensor, vae: 'AutoencoderTiny', name='AI Toolkit'):
-    if vae.device == 'cpu':
+    if vae.device == torch.device('cpu'):
         vae.to(latents.device)
     latents = latents / vae.config['scaling_factor']
     imgs = vae.decode(latents).sample
