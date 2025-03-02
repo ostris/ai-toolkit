@@ -135,6 +135,15 @@ class NetworkConfig:
                 self.conv = 4
 
         self.transformer_only = kwargs.get('transformer_only', True)
+        
+        self.lokr_full_rank = kwargs.get('lokr_full_rank', False)
+        if self.lokr_full_rank:
+            self.linear = 9999999999
+            self.linear_alpha = 9999999999
+            self.conv = 9999999999
+            self.conv_alpha = 9999999999
+        # -1 automatically finds the largest factor
+        self.lokr_factor = kwargs.get('lokr_factor', -1)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net']
