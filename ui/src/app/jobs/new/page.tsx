@@ -227,8 +227,31 @@ export default function TrainingForm() {
                 </div>
               </FormGroup>
             </Card>
-            {jobConfig.config.process[0].network?.type && (
-              <Card title="LoRA Configuration">
+            <Card title="Target Configuration">
+            <SelectInput
+                label="Target Type"
+                value={jobConfig.config.process[0].network?.type ?? 'lora'}
+                onChange={value => setJobConfig(value, 'config.process[0].network.type')}
+                options={[
+                  { value: 'lora', label: 'LoRA' },
+                  { value: 'lokr', label: 'LoKr' },
+                ]}
+              />
+              {jobConfig.config.process[0].network?.type == 'lokr' && (
+                <SelectInput
+                  label="LoKr Factor"
+                  value={ `${jobConfig.config.process[0].network?.lokr_factor ?? -1}`}
+                  onChange={value => setJobConfig(parseInt(value), 'config.process[0].network.lokr_factor')}
+                  options={[
+                    { value: '-1', label: 'Auto' },
+                    { value: '4', label: '4' },
+                    { value: '8', label: '8' },
+                    { value: '16', label: '16' },
+                    { value: '32', label: '32' },
+                  ]}
+                />
+              )}
+              {jobConfig.config.process[0].network?.type == 'lora' && (
                 <NumberInput
                   label="Linear Rank"
                   value={jobConfig.config.process[0].network.linear}
@@ -242,8 +265,8 @@ export default function TrainingForm() {
                   max={1024}
                   required
                 />
-              </Card>
-            )}
+              )}
+            </Card>
             <Card title="Save Configuration">
               <SelectInput
                 label="Data Type"
@@ -397,7 +420,9 @@ export default function TrainingForm() {
                     label="DFE Loss Multiplier"
                     className="pt-2"
                     value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
+                    onChange={value =>
+                      setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')
+                    }
                     placeholder="eg. 1.0"
                     min={0}
                   />

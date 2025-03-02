@@ -50,9 +50,11 @@ export interface GPUApiResponse {
  */
 
 export interface NetworkConfig {
-  type: 'lora';
+  type: string;
   linear: number;
   linear_alpha: number;
+  lokr_full_rank: boolean;
+  lokr_factor: number;
 }
 
 export interface SaveConfig {

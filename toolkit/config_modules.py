@@ -137,7 +137,7 @@ class NetworkConfig:
         self.transformer_only = kwargs.get('transformer_only', True)
         
         self.lokr_full_rank = kwargs.get('lokr_full_rank', False)
-        if self.lokr_full_rank:
+        if self.lokr_full_rank and self.type.lower() == 'lokr':
             self.linear = 9999999999
             self.linear_alpha = 9999999999
             self.conv = 9999999999

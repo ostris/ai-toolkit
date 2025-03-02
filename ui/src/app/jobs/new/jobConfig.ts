@@ -29,6 +29,8 @@ export const defaultJobConfig: JobConfig = {
           type: 'lora',
           linear: 16,
           linear_alpha: 16,
+          lokr_full_rank: true,
+          lokr_factor: -1
         },
         save: {
           dtype: 'bf16',
