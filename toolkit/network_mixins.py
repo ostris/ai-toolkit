@@ -634,7 +634,10 @@ class ToolkitNetworkMixin:
         # without having to set it in every single module every time it changes
         multiplier = self._multiplier
         # get first module
-        first_module = self.get_all_modules()[0]
+        try:
+            first_module = self.get_all_modules()[0]
+        except IndexError:
+            raise ValueError("There are not any lora modules in this network. Check your config and try again")
         
         if hasattr(first_module, 'lora_down'):
             device = first_module.lora_down.weight.device

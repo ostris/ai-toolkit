@@ -101,6 +101,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         self.cp = False
         self.use_w1 = False
         self.use_w2 = False
+        self.can_merge_in = True
 
         self.shape = org_module.weight.shape
         if org_module.__class__.__name__ == 'Conv2d':
