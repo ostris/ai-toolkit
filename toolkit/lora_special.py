@@ -231,12 +231,18 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if self.network_type.lower() == "dora":
             self.module_class = DoRAModule
             module_class = DoRAModule
+        elif self.network_type.lower() == "lokr":
+            self.module_class = LokrModule
+            module_class = LokrModule
+        self.network_config: NetworkConfig = kwargs.get("network_config", None)
 
         self.peft_format = peft_format
 
         # always do peft for flux only for now
         if self.is_flux or self.is_v3 or self.is_lumina2:
-            self.peft_format = True
+            # don't do peft format for lokr
+            if self.network_type.lower() != "lokr":
+                self.peft_format = True
 
         if self.peft_format:
             # no alpha for peft
@@ -338,8 +344,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
                         if (is_linear or is_conv2d) and not skip:
 
-                            if self.only_if_contains is not None and not any([word in clean_name for word in self.only_if_contains]):
-                                continue
+                            if self.only_if_contains is not None:
+                                if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
+                                    continue
 
                             dim = None
                             alpha = None
@@ -373,6 +380,11 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                         self.conv_lora_dim is not None or conv_block_dims is not None):
                                     skipped.append(lora_name)
                                 continue
+                            
+                            module_kwargs = {}
+                            
+                            if self.network_type.lower() == "lokr":
+                                module_kwargs["factor"] = self.network_config.lokr_factor
 
                             lora = module_class(
                                 lora_name,
@@ -386,10 +398,16 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                 network=self,
                                 parent=module,
                                 use_bias=use_bias,
+                                **module_kwargs
                             )
                             loras.append(lora)
-                            lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)
-                            ]
+                            if self.network_type.lower() == "lokr":
+                                try:
+                                    lora_shape_dict[lora_name] = [list(lora.lokr_w1.weight.shape), list(lora.lokr_w2.weight.shape)]
+                                except:
+                                    pass
+                            else:
+                                lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)]
             return loras, skipped
 
         text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]
