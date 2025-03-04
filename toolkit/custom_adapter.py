@@ -591,9 +591,9 @@ class CustomAdapter(torch.nn.Module):
                                 tokened_prompt_parts.append(self.flag_word)
 
                                 if self.num_control_images > 1:
-                                    # add the rest
+                                    # repeat class word
                                     for _ in range(self.num_control_images - 1):
-                                        new_prompt_parts.extend(prompt_parts[idx + 1:])
+                                        new_prompt_parts.append(our_class)
 
                                 # add the rest
                                 tokened_prompt_parts.extend(prompt_parts[idx + 1:])
