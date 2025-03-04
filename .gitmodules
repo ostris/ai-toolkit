@@ -14,7 +14,3 @@
 	path = repositories/ipadapter
 	url = https://github.com/tencent-ailab/IP-Adapter.git
 	commit = 5a18b1f3660acaf8bee8250692d6fb3548a19b14
-[submodule "repositories/wan21"]
-	path = repositories/wan21
-	url = https://github.com/Wan-Video/Wan2.1.git
-	commit = a326079926a4a347ecda8863dc40ba2d7680a294
