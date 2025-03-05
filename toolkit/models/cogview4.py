@@ -15,7 +15,8 @@ from toolkit.config_modules import ModelConfig, GenerateImageConfig, ModelArch
 import torch
 import diffusers
 from diffusers import AutoencoderKL, CogView4Transformer2DModel, CogView4Pipeline
-from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
+from optimum.quanto import freeze, qfloat8, QTensor, qint4
+from toolkit.util.quantize import quantize
 from transformers import GlmModel, AutoTokenizer
 from diffusers import FlowMatchEulerDiscreteScheduler
 from typing import TYPE_CHECKING
@@ -142,12 +143,29 @@ class CogView4(BaseModel):
         flush()
 
         if self.model_config.quantize:
+            quantization_args = self.model_config.quantize_kwargs
+            if 'exclude' not in quantization_args:
+                quantization_args['exclude'] = []
+            if 'include' not in quantization_args:
+                quantization_args['include'] = []
+
+            # Be more specific with the include pattern to exactly match transformer blocks
+            quantization_args['include'] += ["transformer_blocks.*"]
+
+            # Exclude all LayerNorm layers within transformer blocks
+            quantization_args['exclude'] += [
+                "transformer_blocks.*.norm1",
+                "transformer_blocks.*.norm2",
+                "transformer_blocks.*.norm2_context",
+                "transformer_blocks.*.attn1.norm_q",
+                "transformer_blocks.*.attn1.norm_k"
+            ]
+
             # patch the state dict method
             patch_dequantization_on_save(transformer)
             quantization_type = qfloat8
             self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
+            quantize(transformer, weights=quantization_type, **quantization_args)
             freeze(transformer)
             transformer.to(self.device_torch)
         else:

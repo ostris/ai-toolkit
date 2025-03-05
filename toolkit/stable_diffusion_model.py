@@ -64,7 +64,8 @@ from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
 from huggingface_hub import hf_hub_download
 from toolkit.models.flux import add_model_gpu_splitter_to_flux, bypass_flux_guidance, restore_flux_guidance
 
-from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
+from optimum.quanto import freeze, qfloat8, QTensor, qint4
+from toolkit.util.quantize import quantize
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
