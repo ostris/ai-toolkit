@@ -1,3 +1,6 @@
+# DONT USE THIS!. IT DOES NOT WORK YET!
+# Will revisit this when they release more info on how it was trained. 
+
 import weakref
 from diffusers import CogView4Pipeline
 import torch
