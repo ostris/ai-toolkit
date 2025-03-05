@@ -5,29 +5,31 @@ import time
 from collections import OrderedDict
 from typing import List, Optional
 
+import numpy as np
+import torch
+from diffusers import AutoencoderKL
+from jobs.process import BaseTrainProcess
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-
+from safetensors.torch import load_file, save_file
 from toolkit.basic import flush
-from toolkit.models.RRDB import RRDBNet as ESRGAN, esrgan_safetensors_keys
-from safetensors.torch import save_file, load_file
-from torch.utils.data import DataLoader, ConcatDataset
-import torch
-from torch import nn
-from torchvision.transforms import transforms
-
-from jobs.process import BaseTrainProcess
 from toolkit.data_loader import AugmentedImageDataset
-from toolkit.esrgan_utils import convert_state_dict_to_basicsr, convert_basicsr_state_dict_to_save_format
-from toolkit.losses import ComparativeTotalVariation, get_gradient_penalty, PatternLoss
+from toolkit.esrgan_utils import (
+    convert_basicsr_state_dict_to_save_format,
+    convert_state_dict_to_basicsr,
+)
+from toolkit.losses import ComparativeTotalVariation, PatternLoss, get_gradient_penalty
 from toolkit.metadata import get_meta_for_safetensors
+from toolkit.models.RRDB import RRDBNet as ESRGAN
+from toolkit.models.RRDB import esrgan_safetensors_keys
 from toolkit.optimizer import get_optimizer
 from toolkit.style import get_style_model_and_losses
 from toolkit.train_tools import get_torch_dtype
-from diffusers import AutoencoderKL
+from torch import nn
+from torch.utils.data import ConcatDataset, DataLoader
+from torchvision.transforms import transforms
 from tqdm import tqdm
-import time
-import numpy as np
+
 from .models.vgg19_critic import Critic
 
 IMAGE_TRANSFORMS = transforms.Compose(
@@ -289,7 +291,6 @@ class TrainESRGANProcess(BaseTrainProcess):
         def process_and_save(img, target_img, save_path):
             img = img.to(self.device, dtype=self.esrgan_dtype)
             output = self.model(img)
-            # output = (output / 2 + 0.5).clamp(0, 1)
             output = output.clamp(0, 1)
             img = img.clamp(0, 1)
             # we always cast to float32 as this does not cause significant overhead and is compatible with bfloat16
@@ -330,6 +331,9 @@ class TrainESRGANProcess(BaseTrainProcess):
 
             output_img.save(save_path)
 
+            # Return the stacked image for TensorBoard logging
+            return output_img
+
         with torch.no_grad():
             for i, img_url in enumerate(self.sample_sources):
                 img = exif_transpose(Image.open(img_url))
@@ -345,8 +349,6 @@ class TrainESRGANProcess(BaseTrainProcess):
                 # downscale the image input
                 img = img.resize((self.resolution, self.resolution), resample=Image.BICUBIC)
 
-                # downscale the image input
-
                 img = IMAGE_TRANSFORMS(img).unsqueeze(0).to(self.device, dtype=self.esrgan_dtype)
                 img = img
 
@@ -358,7 +360,15 @@ class TrainESRGANProcess(BaseTrainProcess):
                 # zero-pad 2 digits
                 i_str = str(i).zfill(2)
                 filename = f"{seconds_since_epoch}{step_num}_{i_str}.jpg"
-                process_and_save(img, target_image, os.path.join(sample_folder, filename))
+                output_img = process_and_save(img, target_image, os.path.join(sample_folder, filename))
+
+                # Log to TensorBoard
+                if step is not None and hasattr(self, 'writer'):
+                    import torchvision.transforms as transforms
+                    # Convert PIL image to tensor
+                    img_tensor = transforms.ToTensor()(output_img)
+                    # Log the stacked image (input + output + target) to TensorBoard
+                    self.writer.add_image(f'sample_{i}', img_tensor, global_step=step)
 
             if batch is not None:
                 batch_targets = batch[0].detach()
@@ -374,7 +384,14 @@ class TrainESRGANProcess(BaseTrainProcess):
                     # zero-pad 2 digits
                     i_str = str(i).zfill(2)
                     filename = f"{seconds_since_epoch}{step_num}_{i_str}.jpg"
-                    process_and_save(batch_inputs[i], batch_targets[i], os.path.join(batch_sample_folder, filename))
+                    output_img = process_and_save(batch_inputs[i], batch_targets[i], os.path.join(batch_sample_folder, filename))
+
+                    # Log to TensorBoard
+                    if step is not None and hasattr(self, 'writer'):
+                        # Convert PIL image to tensor
+                        img_tensor = transforms.ToTensor()(output_img)
+                        # Log the stacked image (input + output + target) to TensorBoard
+                        self.writer.add_image(f'batch_sample_{i}', img_tensor, global_step=step)
 
         self.model.train()
 
