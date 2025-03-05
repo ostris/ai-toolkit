@@ -178,6 +178,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             transformer_only: bool = False,
             peft_format: bool = False,
             is_assistant_adapter: bool = False,
+            is_transformer: bool = False,
             **kwargs
     ) -> None:
         """
@@ -237,9 +238,11 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.network_config: NetworkConfig = kwargs.get("network_config", None)
 
         self.peft_format = peft_format
+        self.is_transformer = is_transformer
+        
 
         # always do peft for flux only for now
-        if self.is_flux or self.is_v3 or self.is_lumina2:
+        if self.is_flux or self.is_v3 or self.is_lumina2 or is_transformer:
             # don't do peft format for lokr
             if self.network_type.lower() != "lokr":
                 self.peft_format = True
@@ -282,7 +285,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             unet_prefix = self.LORA_PREFIX_UNET
             if self.peft_format:
                 unet_prefix = self.PEFT_PREFIX_UNET
-            if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2:
+            if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2 or self.is_transformer:
                 unet_prefix = f"lora_transformer"
                 if self.peft_format:
                     unet_prefix = "transformer"
@@ -339,6 +342,11 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                             if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
                                 skip = True
                         if self.transformer_only and self.is_v3 and is_unet:
+                            if "transformer_blocks" not in lora_name:
+                                skip = True
+                        
+                        # handle custom models
+                        if self.transformer_only and is_unet and hasattr(root_module, 'transformer_blocks'):
                             if "transformer_blocks" not in lora_name:
                                 skip = True
 

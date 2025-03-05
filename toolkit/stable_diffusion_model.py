@@ -29,7 +29,7 @@ from toolkit.ip_adapter import IPAdapter
 from library.model_util import convert_unet_state_dict_to_sd, convert_text_encoder_state_dict_to_sd_v2, \
     convert_vae_state_dict, load_vae
 from toolkit import train_tools
-from toolkit.config_modules import ModelConfig, GenerateImageConfig
+from toolkit.config_modules import ModelConfig, GenerateImageConfig, ModelArch
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.decorator import Decorator
 from toolkit.paths import REPOS_ROOT, KEYMAPS_ROOT
@@ -64,7 +64,8 @@ from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
 from huggingface_hub import hf_hub_download
 from toolkit.models.flux import add_model_gpu_splitter_to_flux, bypass_flux_guidance, restore_flux_guidance
 
-from optimum.quanto import freeze, qfloat8, quantize, QTensor, qint4
+from optimum.quanto import freeze, qfloat8, QTensor, qint4
+from toolkit.util.quantize import quantize
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
@@ -160,7 +161,6 @@ class StableDiffusion:
         self.pipeline: Union[None, 'StableDiffusionPipeline', 'CustomStableDiffusionXLPipeline', 'PixArtAlphaPipeline']
         self.vae: Union[None, 'AutoencoderKL']
         self.unet: Union[None, 'UNet2DConditionModel']
-        self.unet_unwrapped: Union[None, 'UNet2DConditionModel']
         self.text_encoder: Union[None, 'CLIPTextModel', List[Union['CLIPTextModel', 'CLIPTextModelWithProjection']]]
         self.tokenizer: Union[None, 'CLIPTokenizer', List['CLIPTokenizer']]
         self.noise_scheduler: Union[None, 'DDPMScheduler'] = noise_scheduler
@@ -177,16 +177,17 @@ class StableDiffusion:
         self.network = None
         self.adapter: Union['ControlNetModel', 'T2IAdapter', 'IPAdapter', 'ReferenceAdapter', None] = None
         self.decorator: Union[Decorator, None] = None
-        self.is_xl = model_config.is_xl
-        self.is_v2 = model_config.is_v2
-        self.is_ssd = model_config.is_ssd
-        self.is_v3 = model_config.is_v3
-        self.is_vega = model_config.is_vega
-        self.is_pixart = model_config.is_pixart
-        self.is_auraflow = model_config.is_auraflow
-        self.is_flux = model_config.is_flux
-        self.is_flex2 = model_config.is_flex2
-        self.is_lumina2 = model_config.is_lumina2
+        self.arch: ModelArch = model_config.arch
+        # self.is_xl = model_config.is_xl
+        # self.is_v2 = model_config.is_v2
+        # self.is_ssd = model_config.is_ssd
+        # self.is_v3 = model_config.is_v3
+        # self.is_vega = model_config.is_vega
+        # self.is_pixart = model_config.is_pixart
+        # self.is_auraflow = model_config.is_auraflow
+        # self.is_flux = model_config.is_flux
+        # self.is_flex2 = model_config.is_flex2
+        # self.is_lumina2 = model_config.is_lumina2
 
         self.use_text_encoder_1 = model_config.use_text_encoder_1
         self.use_text_encoder_2 = model_config.use_text_encoder_2
@@ -204,6 +205,53 @@ class StableDiffusion:
         self.invert_assistant_lora = False
         self._after_sample_img_hooks = []
         self._status_update_hooks = []
+        # todo update this based on the model
+        self.is_transformer = False
+        
+    # properties for old arch for backwards compatibility
+    @property
+    def is_xl(self):
+        return self.arch == 'sdxl'
+    
+    @property
+    def is_v2(self):
+        return self.arch == 'sd2'
+    
+    @property
+    def is_ssd(self):
+        return self.arch == 'ssd'
+    
+    @property
+    def is_v3(self):
+        return self.arch == 'sd3'
+    
+    @property
+    def is_vega(self):
+        return self.arch == 'vega'
+    
+    @property
+    def is_pixart(self):
+        return self.arch == 'pixart'
+    
+    @property
+    def is_auraflow(self):
+        return self.arch == 'auraflow'
+    
+    @property
+    def is_flux(self):
+        return self.arch == 'flux'
+    
+    @property
+    def is_flex2(self):
+        return self.arch == 'flex2'
+    
+    @property
+    def is_lumina2(self):
+        return self.arch == 'lumina2'
+    
+    @property
+    def unet_unwrapped(self):
+        return unwrap_model(self.unet)
 
     def load_model(self):
         if self.is_loaded:
@@ -935,7 +983,6 @@ class StableDiffusion:
         if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2:
             # pixart and sd3 dont use a unet
             self.unet = pipe.transformer
-            self.unet_unwrapped = pipe.transformer
         else:
             self.unet: 'UNet2DConditionModel' = pipe.unet
         self.vae: 'AutoencoderKL' = pipe.vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
@@ -1734,7 +1781,8 @@ class StableDiffusion:
             self,
             original_samples: torch.FloatTensor,
             noise: torch.FloatTensor,
-            timesteps: torch.IntTensor
+            timesteps: torch.IntTensor,
+            **kwargs,
     ) -> torch.FloatTensor:
         original_samples_chunks = torch.chunk(original_samples, original_samples.shape[0], dim=0)
         noise_chunks = torch.chunk(noise, noise.shape[0], dim=0)
