@@ -668,7 +668,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
         self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
-            self.sd.unet_unwrapped = self.sd.unet
             self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
@@ -1105,11 +1104,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     if timestep_type is None:
                         timestep_type = self.train_config.timestep_type
                     
+                    patch_size = 1
+                    if self.sd.is_flux:
+                        # flux is a patch size of 1, but latents are divided by 2, so we need to double it
+                        patch_size = 2
+                    elif hasattr(self.sd.unet.config, 'patch_size'):
+                        patch_size = self.sd.unet.config.patch_size
+                    
                     self.sd.noise_scheduler.set_train_timesteps(
                         num_train_timesteps,
                         device=self.device_torch,
                         timestep_type=timestep_type,
-                        latents=latents
+                        latents=latents,
+                        patch_size=patch_size,
                     )
                 else:
                     self.sd.noise_scheduler.set_timesteps(
@@ -1403,21 +1410,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 model_config_to_load.name_or_path = latest_save_path
                 self.load_training_state_from_metadata(latest_save_path)
 
-        # get the noise scheduler
-        arch = 'sd'
-        if self.model_config.is_pixart:
-            arch = 'pixart'
-        if self.model_config.is_flux:
-            arch = 'flux'
-        if self.model_config.is_lumina2:
-            arch = 'lumina2'
-        sampler = get_sampler(
-            self.train_config.noise_scheduler,
-            {
-                "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
-            },
-            arch=arch,
-        )
+        ModelClass = get_model_class(self.model_config)
+        # if the model class has get_train_scheduler static method
+        if hasattr(ModelClass, 'get_train_scheduler'):
+            sampler = ModelClass.get_train_scheduler()
+        else:
+            # get the noise scheduler
+            arch = 'sd'
+            if self.model_config.is_pixart:
+                arch = 'pixart'
+            if self.model_config.is_flux:
+                arch = 'flux'
+            if self.model_config.is_lumina2:
+                arch = 'lumina2'
+            sampler = get_sampler(
+                self.train_config.noise_scheduler,
+                {
+                    "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
+                },
+                arch=arch,
+            )
 
         if self.train_config.train_refiner and self.model_config.refiner_name_or_path is not None and self.network_config is None:
             previous_refiner_save = self.get_latest_save_path(self.job.name + '_refiner')
@@ -1425,7 +1437,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 model_config_to_load.refiner_name_or_path = previous_refiner_save
                 self.load_training_state_from_metadata(previous_refiner_save)
 
-        ModelClass = get_model_class(self.model_config)
         self.sd = ModelClass(
             device=self.device,
             model_config=model_config_to_load,
@@ -1562,6 +1573,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # if is_lycoris:
                 #     preset = PRESET['full']
                 # NetworkClass.apply_preset(preset)
+                
+                if hasattr(self.sd, 'target_lora_modules'):
+                    network_kwargs['target_lin_modules'] = self.sd.target_lora_modules
 
                 self.network = NetworkClass(
                     text_encoder=text_encoder,
@@ -1590,6 +1604,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     network_config=self.network_config,
                     network_type=self.network_config.type,
                     transformer_only=self.network_config.transformer_only,
+                    is_transformer=self.sd.is_transformer,
                     **network_kwargs
                 )
 

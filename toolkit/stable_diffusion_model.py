@@ -160,7 +160,6 @@ class StableDiffusion:
         self.pipeline: Union[None, 'StableDiffusionPipeline', 'CustomStableDiffusionXLPipeline', 'PixArtAlphaPipeline']
         self.vae: Union[None, 'AutoencoderKL']
         self.unet: Union[None, 'UNet2DConditionModel']
-        self.unet_unwrapped: Union[None, 'UNet2DConditionModel']
         self.text_encoder: Union[None, 'CLIPTextModel', List[Union['CLIPTextModel', 'CLIPTextModelWithProjection']]]
         self.tokenizer: Union[None, 'CLIPTokenizer', List['CLIPTokenizer']]
         self.noise_scheduler: Union[None, 'DDPMScheduler'] = noise_scheduler
@@ -205,6 +204,8 @@ class StableDiffusion:
         self.invert_assistant_lora = False
         self._after_sample_img_hooks = []
         self._status_update_hooks = []
+        # todo update this based on the model
+        self.is_transformer = False
         
     # properties for old arch for backwards compatibility
     @property
@@ -246,6 +247,10 @@ class StableDiffusion:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+    
+    @property
+    def unet_unwrapped(self):
+        return unwrap_model(self.unet)
 
     def load_model(self):
         if self.is_loaded:
@@ -977,7 +982,6 @@ class StableDiffusion:
         if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2:
             # pixart and sd3 dont use a unet
             self.unet = pipe.transformer
-            self.unet_unwrapped = pipe.transformer
         else:
             self.unet: 'UNet2DConditionModel' = pipe.unet
         self.vae: 'AutoencoderKL' = pipe.vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
@@ -1776,7 +1780,8 @@ class StableDiffusion:
             self,
             original_samples: torch.FloatTensor,
             noise: torch.FloatTensor,
-            timesteps: torch.IntTensor
+            timesteps: torch.IntTensor,
+            **kwargs,
     ) -> torch.FloatTensor:
         original_samples_chunks = torch.chunk(original_samples, original_samples.shape[0], dim=0)
         noise_chunks = torch.chunk(noise, noise.shape[0], dim=0)

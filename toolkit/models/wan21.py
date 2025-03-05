@@ -36,12 +36,11 @@ class Wan21(BaseModel):
         super().__init__(device, model_config, dtype,
                          custom_pipeline, noise_scheduler, **kwargs)
         self.is_flow_matching = True
+        raise NotImplementedError("Wan21 is not implemented yet")
     # these must be implemented in child classes
 
     def load_model(self):
-        self.pipeline = Wan21(
-            
-        )
+        pass
 
     def get_generation_pipeline(self):
         # override this in child classes
@@ -50,6 +49,7 @@ class Wan21(BaseModel):
 
     def generate_single_image(
         self,
+        pipeline,
         gen_config: GenerateImageConfig,
         conditional_embeds: PromptEmbeds,
         unconditional_embeds: PromptEmbeds,
@@ -72,3 +72,11 @@ class Wan21(BaseModel):
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         raise NotImplementedError(
             "get_prompt_embeds must be implemented in child classes")
+    
+    def get_model_has_grad(self):
+        raise NotImplementedError(
+            "get_model_has_grad must be implemented in child classes")
+        
+    def get_te_has_grad(self):
+        raise NotImplementedError(
+            "get_te_has_grad must be implemented in child classes")

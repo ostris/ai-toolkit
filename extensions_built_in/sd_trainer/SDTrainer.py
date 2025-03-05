@@ -380,9 +380,19 @@ class SDTrainer(BaseSDTrainProcess):
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
-
+        
+        elif hasattr(self.sd, 'get_loss_target'):
+            target = self.sd.get_loss_target(
+                noise=noise, 
+                batch=batch, 
+                timesteps=timesteps,
+            ).detach()
+            
         elif self.sd.is_flow_matching:
+            # forward ODE
             target = (noise - batch.latents).detach()
+            # reverse ODE
+            # target = (batch.latents - noise).detach()
         else:
             target = noise
             

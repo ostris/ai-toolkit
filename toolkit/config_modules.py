@@ -513,7 +513,7 @@ class ModelConfig:
         
         self.te_name_or_path = kwargs.get("te_name_or_path", None)
         
-        self.arch: ModelArch = kwargs.get("model_arch", None)
+        self.arch: ModelArch = kwargs.get("arch", None)
         
         # handle migrating to new model arch
         if self.arch is None:
