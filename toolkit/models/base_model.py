@@ -625,6 +625,15 @@ class BaseModel:
         )
         noise = apply_noise_offset(noise, noise_offset)
         return noise
+    
+    def get_latent_noise_from_latents(
+        self,
+        latents: torch.Tensor,
+        noise_offset=0.0
+    ):
+        noise = torch.randn_like(latents)
+        noise = apply_noise_offset(noise, noise_offset)
+        return noise
 
     def add_noise(
             self,

@@ -310,6 +310,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 refiner_start_at=sample_config.refiner_start_at,
                 extra_values=sample_config.extra_values,
                 logger=self.logger,
+                num_frames=sample_config.num_frames,
+                fps=sample_config.fps,
                 **extra_args
             ))
 
@@ -909,13 +911,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 raise ValueError("Batch must be provided for consistent noise")
             noise = self.get_consistent_noise(latents, batch, dtype=dtype)
         else:
-            # get noise
-            noise = self.sd.get_latent_noise(
-                height=latents.shape[2],
-                width=latents.shape[3],
-                batch_size=batch_size,
-                noise_offset=self.train_config.noise_offset,
-            ).to(self.device_torch, dtype=dtype)
+            if hasattr(self.sd, 'get_latent_noise_from_latents'):
+                noise = self.sd.get_latent_noise_from_latents(latents).to(self.device_torch, dtype=dtype)
+            else:
+                # get noise
+                noise = self.sd.get_latent_noise(
+                    height=latents.shape[2],
+                    width=latents.shape[3],
+                    batch_size=batch_size,
+                    noise_offset=self.train_config.noise_offset,
+                ).to(self.device_torch, dtype=dtype)
 
         if self.train_config.random_noise_shift > 0.0:
             # get random noise -1 to 1
@@ -929,9 +934,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             noise += noise_shift
 
         # standardize the noise
-        std = noise.std(dim=(2, 3), keepdim=True)
-        normalizer = 1 / (std + 1e-6)
-        noise = noise * normalizer
+        # shouldnt be needed?
+        # std = noise.std(dim=(2, 3), keepdim=True)
+        # normalizer = 1 / (std + 1e-6)
+        # noise = noise * normalizer
 
         return noise
 
