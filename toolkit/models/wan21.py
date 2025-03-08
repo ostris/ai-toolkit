@@ -327,7 +327,7 @@ class Wan21(BaseModel):
             transformer_path,
             subfolder=subfolder,
             torch_dtype=dtype,
-        )
+        ).to(dtype=dtype)
 
         if self.model_config.split_model_over_gpus:
             raise ValueError(
@@ -396,7 +396,7 @@ class Wan21(BaseModel):
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype)
         text_encoder = UMT5EncoderModel.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype)
+            base_model_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
@@ -416,7 +416,7 @@ class Wan21(BaseModel):
         self.print_and_status_update("Loading VAE")
         # todo, example does float 32? check if quality suffers
         vae = AutoencoderKLWan.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype)
+            base_model_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
         flush()
 
         self.print_and_status_update("Making pipe")
