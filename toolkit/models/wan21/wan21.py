@@ -42,6 +42,7 @@ from diffusers.pipelines.wan.pipeline_wan import XLA_AVAILABLE
 # from ...callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from typing import Any, Callable, Dict, List, Optional, Union
+from toolkit.models.wan21.wan_lora_convert import convert_to_diffusers, convert_to_original
 
 # for generation only?
 scheduler_configUniPC = {
@@ -160,14 +161,14 @@ class AggressiveWanUnloadPipeline(WanPipeline):
         # unload text encoder
         print("Unloading text encoder")
         self.text_encoder.to("cpu")
-        
-        self.transformer.to(self._execution_device)
+
+        self.transformer.to(device)
 
         transformer_dtype = self.transformer.dtype
-        prompt_embeds = prompt_embeds.to(transformer_dtype)
+        prompt_embeds = prompt_embeds.to(device, transformer_dtype)
         if negative_prompt_embeds is not None:
             negative_prompt_embeds = negative_prompt_embeds.to(
-                transformer_dtype)
+                device, transformer_dtype)
 
         # 4. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
@@ -198,7 +199,7 @@ class AggressiveWanUnloadPipeline(WanPipeline):
                     continue
 
                 self._current_timestep = t
-                latent_model_input = latents.to(transformer_dtype)
+                latent_model_input = latents.to(device, transformer_dtype)
                 timestep = t.expand(latents.shape[0])
 
                 noise_pred = self.transformer(
@@ -468,6 +469,8 @@ class Wan21(BaseModel):
                 scheduler=scheduler,
             )
 
+        pipeline = pipeline.to(self.device_torch)
+
         return pipeline
 
     def generate_single_image(
@@ -481,6 +484,7 @@ class Wan21(BaseModel):
     ):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
+        pipeline = pipeline.to(self.device_torch)
         # todo, figure out how to do video
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
@@ -619,3 +623,9 @@ class Wan21(BaseModel):
         if noise is None:
             raise ValueError("Noise is not provided")
         return (noise - batch.latents).detach()
+
+    def convert_lora_weights_before_save(self, state_dict):
+        return convert_to_original(state_dict)
+
+    def convert_lora_weights_before_load(self, state_dict):
+        return convert_to_diffusers(state_dict)

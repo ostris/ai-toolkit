@@ -554,6 +554,8 @@ class ToolkitNetworkMixin:
                 new_save_dict[new_key] = value
 
             save_dict = new_save_dict
+        
+        save_dict = self.base_model_ref().convert_lora_weights_before_save(save_dict)
 
         if metadata is None:
             metadata = OrderedDict()
@@ -579,6 +581,8 @@ class ToolkitNetworkMixin:
         else:
             # probably a state dict
             weights_sd = file
+        
+        weights_sd = self.base_model_ref().convert_lora_weights_before_load(weights_sd)
 
         load_sd = OrderedDict()
         for key, value in weights_sd.items():

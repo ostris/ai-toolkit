@@ -1433,3 +1433,11 @@ class BaseModel:
                 encoder.to(*args, **kwargs)
         else:
             self.text_encoder.to(*args, **kwargs)
+    
+    def convert_lora_weights_before_save(self, state_dict):
+        # can be overridden in child classes to convert weights before saving
+        return state_dict
+    
+    def convert_lora_weights_before_load(self, state_dict):
+        # can be overridden in child classes to convert weights before loading
+        return state_dict

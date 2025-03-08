@@ -1611,6 +1611,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     network_type=self.network_config.type,
                     transformer_only=self.network_config.transformer_only,
                     is_transformer=self.sd.is_transformer,
+                    base_model=self.sd,
                     **network_kwargs
                 )
 

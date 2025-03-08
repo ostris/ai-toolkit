@@ -1,0 +1,1 @@
+from .wan21 import Wan21
