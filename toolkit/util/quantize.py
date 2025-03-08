@@ -7,6 +7,7 @@ from optimum.quanto.tensor import Optimizer, qtype
 
 # the quantize function in quanto had a bug where it was using exclude instead of include
 
+Q_MODULES = ['QLinear', 'QConv2d', 'QEmbedding', 'QBatchNorm2d', 'QLayerNorm', 'QConvTranspose2d', 'QEmbeddingBag']
 
 def quantize(
     model: torch.nn.Module,
@@ -51,5 +52,13 @@ def quantize(
             continue
         if exclude is not None and any(fnmatch(name, pattern) for pattern in exclude):
             continue
-        _quantize_submodule(model, name, m, weights=weights,
-                            activations=activations, optimizer=optimizer)
+        try:
+            # check if m is QLinear or QConv2d
+            if m.__class__.__name__ in Q_MODULES:
+                continue
+            else:
+                _quantize_submodule(model, name, m, weights=weights,
+                                    activations=activations, optimizer=optimizer)
+        except Exception as e:
+            print(f"Failed to quantize {name}: {e}")
+            raise e
