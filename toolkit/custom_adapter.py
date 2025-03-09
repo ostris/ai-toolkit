@@ -299,6 +299,15 @@ class CustomAdapter(torch.nn.Module):
             self.vision_encoder = SiglipVisionModel.from_pretrained(
                 adapter_config.image_encoder_path,
                 ignore_mismatched_sizes=True).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
+        elif self.config.image_encoder_arch == 'siglip2':
+            from transformers import SiglipImageProcessor, SiglipVisionModel
+            try:
+                self.image_processor = SiglipImageProcessor.from_pretrained(adapter_config.image_encoder_path)
+            except EnvironmentError:
+                self.image_processor = SiglipImageProcessor()
+            self.vision_encoder = SiglipVisionModel.from_pretrained(
+                adapter_config.image_encoder_path,
+                ignore_mismatched_sizes=True).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         elif self.config.image_encoder_arch == 'pixtral':
             self.image_processor = PixtralVisionImagePreprocessorCompatible(
                 max_image_size=self.config.pixtral_max_image_size,
