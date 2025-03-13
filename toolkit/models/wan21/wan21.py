@@ -116,9 +116,11 @@ class AggressiveWanUnloadPipeline(WanPipeline):
         vae_device = self.vae.device
         transformer_device = self.transformer.device
         text_encoder_device = self.text_encoder.device
+        device = self.transformer.device
+        
         print("Unloading vae")
         self.vae.to("cpu")
-        self.text_encoder.to(self._execution_device)
+        self.text_encoder.to(device)
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -135,8 +137,6 @@ class AggressiveWanUnloadPipeline(WanPipeline):
         self._attention_kwargs = attention_kwargs
         self._current_timestep = None
         self._interrupt = False
-
-        device = self._execution_device
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
