@@ -209,7 +209,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             ignore_if_contains = []
         self.ignore_if_contains = ignore_if_contains
         self.transformer_only = transformer_only
-        self.base_model_ref = base_model
+        self.base_model_ref = weakref.ref(base_model)
 
         self.only_if_contains: Union[List, None] = only_if_contains
 
