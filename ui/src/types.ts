@@ -99,6 +99,7 @@ export interface TrainConfig {
   lr: number;
   ema_config?: EMAConfig;
   dtype: string;
+  unload_text_encoder: boolean;
   optimizer_params: {
     weight_decay: number;
   };
@@ -113,11 +114,11 @@ export interface QuantizeKwargsConfig {
 
 export interface ModelConfig {
   name_or_path: string;
-  is_flux?: boolean;
-  is_lumina2?: boolean;
   quantize: boolean;
   quantize_te: boolean;
   quantize_kwargs?: QuantizeKwargsConfig;
+  arch: string;
+  low_vram: boolean;
 }
 
 export interface SampleConfig {
@@ -131,6 +132,8 @@ export interface SampleConfig {
   walk_seed: boolean;
   guidance_scale: number;
   sample_steps: number;
+  num_frames: number;
+  fps: number;
 }
 
 export interface ProcessConfig {

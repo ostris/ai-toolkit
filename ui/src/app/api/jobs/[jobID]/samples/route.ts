@@ -29,7 +29,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const samples = fs
     .readdirSync(samplesFolder)
     .filter(file => {
-      return file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg');
+      return file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg') || file.endsWith('.webp');
     })
     .map(file => {
       return path.join(samplesFolder, file);

@@ -8,6 +8,19 @@ export interface Option {
   model: Model[];
 }
 
+export const modelArchs = [
+  { name: 'flux', label: 'Flux.1' },
+  { name: 'wan21', label: 'Wan 2.1' },
+  { name: 'lumina2', label: 'Lumina2' },
+]
+
+export const isVideoModelFromArch = (arch: string) => {
+  const videoArches = ['wan21'];
+  return videoArches.includes(arch);
+};
+
+const defaultModelArch = 'flux';
+
 export const options = {
   model: [
     {
@@ -16,7 +29,7 @@ export const options = {
         // default updates when [selected, unselected] in the UI
         'config.process[0].model.quantize': [true, false],
         'config.process[0].model.quantize_te': [true, false],
-        'config.process[0].model.is_flux': [true, false],
+        'config.process[0].model.arch': ['flux', defaultModelArch],
         'config.process[0].train.bypass_guidance_embedding': [true, false],
         'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
         'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
@@ -28,9 +41,35 @@ export const options = {
         // default updates when [selected, unselected] in the UI
         'config.process[0].model.quantize': [true, false],
         'config.process[0].model.quantize_te': [true, false],
-        'config.process[0].model.is_flux': [true, false],
+        'config.process[0].model.arch': ['flux', defaultModelArch],
         'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
         'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      },
+    },
+    {
+      name_or_path: 'Wan-AI/Wan2.1-T2V-1.3B-Diffusers',
+      defaults: {
+        // default updates when [selected, unselected] in the UI
+        'config.process[0].model.quantize': [false, false],
+        'config.process[0].model.quantize_te': [true, false],
+        'config.process[0].model.arch': ['wan21', defaultModelArch],
+        'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+        'config.process[0].sample.num_frames': [40, 1],
+        'config.process[0].sample.fps': [15, 1],
+      },
+    },
+    {
+      name_or_path: 'Wan-AI/Wan2.1-T2V-14B-Diffusers',
+      defaults: {
+        // default updates when [selected, unselected] in the UI
+        'config.process[0].model.quantize': [true, false],
+        'config.process[0].model.quantize_te': [true, false],
+        'config.process[0].model.arch': ['wan21', defaultModelArch],
+        'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+        'config.process[0].sample.num_frames': [40, 1],
+        'config.process[0].sample.fps': [15, 1],
       },
     },
     {
@@ -39,7 +78,7 @@ export const options = {
         // default updates when [selected, unselected] in the UI
         'config.process[0].model.quantize': [false, false],
         'config.process[0].model.quantize_te': [true, false],
-        'config.process[0].model.is_lumina2': [true, false],
+        'config.process[0].model.arch': ['lumina2', defaultModelArch],
         'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
         'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       },
@@ -50,6 +89,7 @@ export const options = {
       defaults: {
         'config.process[0].sample.sampler': ['ddpm', 'flowmatch'],
         'config.process[0].train.noise_scheduler': ['ddpm', 'flowmatch'],
+        'config.process[0].model.arch': ['sd1', defaultModelArch],
       },
     },
   ],

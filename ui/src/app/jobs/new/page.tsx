@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { options } from './options';
+import { options, modelArchs, isVideoModelFromArch } from './options';
 import { defaultJobConfig, defaultDatasetConfig } from './jobConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
@@ -32,6 +32,8 @@ export default function TrainingForm() {
 
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+
+  const isVideoModel = isVideoModelFromArch(jobConfig.config.process[0].model.arch);
 
   useEffect(() => {
     if (!isSettingsLoaded) return;
@@ -207,6 +209,30 @@ export default function TrainingForm() {
                       return {
                         value: model.name_or_path,
                         label: model.name_or_path,
+                      };
+                    })
+                    .filter(x => x) as { value: string; label: string }[]
+                }
+              />
+              <SelectInput
+                label="Model Architecture"
+                value={jobConfig.config.process[0].model.arch}
+                onChange={value => {
+                  const currentArch = modelArchs.find(
+                    a => a.name === jobConfig.config.process[0].model.arch,
+                  );
+                  if (!currentArch || currentArch.name === value) {
+                    return;
+                  }
+                  // set new model
+                  setJobConfig(value, 'config.process[0].model.arch');
+                }}
+                options={
+                  modelArchs
+                    .map(model => {
+                      return {
+                        value: model.name,
+                        label: model.label,
                       };
                     })
                     .filter(x => x) as { value: string; label: string }[]
@@ -406,6 +432,15 @@ export default function TrainingForm() {
                     placeholder="eg. 0.99"
                     min={0}
                   />
+                  <FormGroup label="Unload Text Encoder" className="pt-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <Checkbox
+                        label="Unload TE"
+                        checked={jobConfig.config.process[0].train.unload_text_encoder || false}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.unload_text_encoder')}
+                      />
+                      </div>
+                  </FormGroup>
                 </div>
                 <div>
                   <FormGroup label="Regularization">
@@ -552,7 +587,7 @@ export default function TrainingForm() {
           </div>
           <div>
             <Card title="Sample Configuration">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className={isVideoModel ? "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"}>
                 <div>
                   <NumberInput
                     label="Sample Every"
@@ -628,6 +663,26 @@ export default function TrainingForm() {
                     onChange={value => setJobConfig(value, 'config.process[0].sample.walk_seed')}
                   />
                 </div>
+                { isVideoModel && (
+                  <div>
+                    <NumberInput
+                      label="Num Frames"
+                      value={jobConfig.config.process[0].sample.num_frames}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.num_frames')}
+                      placeholder="eg. 0"
+                      min={0}
+                      required
+                    />
+                    <NumberInput
+                      label="FPS"
+                      value={jobConfig.config.process[0].sample.fps}
+                      onChange={value => setJobConfig(value, 'config.process[0].sample.fps')}
+                      placeholder="eg. 0"
+                      min={0}
+                      required
+                    />
+                  </div>
+                )}
               </div>
               <FormGroup
                 label={`Sample Prompts (${jobConfig.config.process[0].sample.prompts.length})`}

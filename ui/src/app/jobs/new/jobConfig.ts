@@ -57,6 +57,7 @@ export const defaultJobConfig: JobConfig = {
           optimizer_params: {
             weight_decay: 1e-4
           },
+          unload_text_encoder: false,
           lr: 0.0001,
           ema_config: {
             use_ema: true,
@@ -70,9 +71,10 @@ export const defaultJobConfig: JobConfig = {
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
-          is_flux: true,
           quantize: true,
-          quantize_te: true
+          quantize_te: true,
+          arch: 'flux',
+          low_vram: false,
         },
         sample: {
           sampler: 'flowmatch',
@@ -96,6 +98,8 @@ export const defaultJobConfig: JobConfig = {
           walk_seed: true,
           guidance_scale: 4,
           sample_steps: 25,
+          num_frames: 1,
+          fps: 1,
         },
       },
     ],
