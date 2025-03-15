@@ -22,13 +22,13 @@ export const defaultJobConfig: JobConfig = {
         type: 'ui_trainer',
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
-        device: 'cuda:0',
+        device: 'cuda',
         trigger_word: null,
         performance_log_every: 10,
         network: {
           type: 'lora',
-          linear: 16,
-          linear_alpha: 16,
+          linear: 32,
+          linear_alpha: 32,
           lokr_full_rank: true,
           lokr_factor: -1
         },

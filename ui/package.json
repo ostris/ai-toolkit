@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
+    "@monaco-editor/react": "^4.7.0",
     "@prisma/client": "^6.3.1",
     "axios": "^1.7.9",
     "classnames": "^2.5.1",
@@ -24,7 +25,8 @@
     "react-dropzone": "^14.3.5",
     "react-global-hooks": "^1.3.5",
     "react-icons": "^5.5.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
     "@types/node": "^20",

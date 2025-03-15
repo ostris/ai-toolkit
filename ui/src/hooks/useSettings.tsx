@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from 'react';
 
+export interface Settings {
+  HF_TOKEN: string;
+  TRAINING_FOLDER: string;
+  DATASETS_FOLDER: string;
+}
+
 export default function useSettings() {
   const [settings, setSettings] = useState({
     HF_TOKEN: '',
