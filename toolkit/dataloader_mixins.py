@@ -770,6 +770,8 @@ class ClipImageFileItemDTOMixin:
     def load_clip_image(self: 'FileItemDTO'):
         is_dynamic_size_and_aspect = isinstance(self.clip_image_processor, PixtralVisionImagePreprocessorCompatible) or \
                                     isinstance(self.clip_image_processor, SiglipImageProcessor)
+        if self.clip_image_processor is None:
+            is_dynamic_size_and_aspect = True # serving it raw
         if self.is_vision_clip_cached:
             self.clip_image_embeds = load_file(self.get_clip_vision_embeddings_path())
 
