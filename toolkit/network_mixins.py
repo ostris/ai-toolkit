@@ -491,13 +491,8 @@ class ToolkitNetworkMixin:
                 keymap = new_keymap
 
         return keymap
-
-    def save_weights(
-            self: Network,
-            file, dtype=torch.float16,
-            metadata=None,
-            extra_state_dict: Optional[OrderedDict] = None
-    ):
+    
+    def get_state_dict(self: Network, extra_state_dict=None, dtype=torch.float16):
         keymap = self.get_keymap()
 
         save_keymap = {}
@@ -505,9 +500,6 @@ class ToolkitNetworkMixin:
             for ldm_key, diffusers_key in keymap.items():
                 #  invert them
                 save_keymap[diffusers_key] = ldm_key
-
-        if metadata is not None and len(metadata) == 0:
-            metadata = None
 
         state_dict = self.state_dict()
         save_dict = OrderedDict()
@@ -556,10 +548,22 @@ class ToolkitNetworkMixin:
             save_dict = new_save_dict
         
         save_dict = self.base_model_ref().convert_lora_weights_before_save(save_dict)
+        return save_dict
+
+    def save_weights(
+            self: Network,
+            file, dtype=torch.float16,
+            metadata=None,
+            extra_state_dict: Optional[OrderedDict] = None
+    ):
+        save_dict = self.get_state_dict(extra_state_dict=extra_state_dict, dtype=dtype)
+        
+        if metadata is not None and len(metadata) == 0:
+            metadata = None
 
         if metadata is None:
             metadata = OrderedDict()
-        metadata = add_model_hash_to_meta(state_dict, metadata)
+        metadata = add_model_hash_to_meta(save_dict, metadata)
         if os.path.splitext(file)[1] == ".safetensors":
             from safetensors.torch import save_file
             save_file(save_dict, file, metadata)

@@ -580,6 +580,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         direct_save = True
                     if self.adapter_config.type == 'redux':
                         direct_save = True
+                    if self.adapter_config.type == 'control_lora':
+                        direct_save = True
                     save_ip_adapter_from_diffusers(
                         state_dict,
                         output_file=file_path,
@@ -1362,6 +1364,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.adapter = CustomAdapter(
                 sd=self.sd,
                 adapter_config=self.adapter_config,
+                train_config=self.train_config,
             )
         self.adapter.to(self.device_torch, dtype=dtype)
         if latest_save_path is not None and not is_control_net:
