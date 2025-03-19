@@ -763,6 +763,22 @@ class DatasetConfig:
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
         self.replay_transforms: bool = kwargs.get('replay_transforms', True)
+        
+        # for video
+        # if num_frames is greater than 1, the dataloader will look for video files.
+        # num_frames will be the number of frames in the training batch. If num_frames is 1, it will look for images
+        self.num_frames: int = kwargs.get('num_frames', 1)
+        # if true, will shrink video to our frames. For instance, if we have a video with 100 frames and num_frames is 10,
+        # we would pull frame 0, 10, 20, 30, 40, 50, 60, 70, 80, 90 so they are evenly spaced
+        self.shrink_video_to_frames: bool = kwargs.get('shrink_video_to_frames', True)
+        # fps is only used if shrink_video_to_frames is false. This will attempt to pull the num_frames at the given fps
+        # it will select a random start frame and pull the frames at the given fps
+        # this could have various issues with shorter videos and videos with variable fps
+        # I recommend trimming your videos to the desired length and using shrink_video_to_frames(default)
+        self.fps: int = kwargs.get('fps', 16)
+        
+        # debug the frame count and frame selection. You dont need this. It is for debugging.
+        self.debug: bool = kwargs.get('debug', False)
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

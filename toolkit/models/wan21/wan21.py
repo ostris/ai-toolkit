@@ -585,7 +585,6 @@ class Wan21(BaseModel):
         if dtype is None:
             dtype = self.vae_torch_dtype
 
-        latent_list = []
         # Move to vae to device if on cpu
         if self.vae.device == 'cpu':
             self.vae.to(device)
@@ -593,18 +592,43 @@ class Wan21(BaseModel):
         self.vae.requires_grad_(False)
         # move to device and dtype
         image_list = [image.to(device, dtype=dtype) for image in image_list]
+        
+        # We need to detect video if we have it. 
+        # videos come in (num_frames, channels, height, width)
+        # images come in (channels, height, width)
+        # we need to add a frame dimension to images and remap the video to (channels, num_frames, height, width)
+        
+        if len(image_list[0].shape) == 3:
+            image_list = [image.unsqueeze(1) for image in image_list]
+        elif len(image_list[0].shape) == 4:
+            image_list = [image.permute(1, 0, 2, 3) for image in image_list]
+        else:
+            raise ValueError(f"Image shape is not correct, got {list(image_list[0].shape)}")
 
         VAE_SCALE_FACTOR = 8
 
         # resize images if not divisible by 8
+        # now we need to resize considering the shape (channels, num_frames, height, width)
         for i in range(len(image_list)):
             image = image_list[i]
-            if image.shape[1] % VAE_SCALE_FACTOR != 0 or image.shape[2] % VAE_SCALE_FACTOR != 0:
-                image_list[i] = Resize((image.shape[1] // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR,
-                                        image.shape[2] // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR))(image)
+            if image.shape[2] % VAE_SCALE_FACTOR != 0 or image.shape[3] % VAE_SCALE_FACTOR != 0:
+                # Create resized frames by handling each frame separately
+                c, f, h, w = image.shape
+                target_h = h // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR
+                target_w = w // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR
+                
+                # We need to process each frame separately
+                resized_frames = []
+                for frame_idx in range(f):
+                    frame = image[:, frame_idx, :, :]  # Extract single frame (channels, height, width)
+                    resized_frame = Resize((target_h, target_w))(frame)
+                    resized_frames.append(resized_frame.unsqueeze(1))  # Add frame dimension back
+                    
+                # Concatenate all frames back together along the frame dimension
+                image_list[i] = torch.cat(resized_frames, dim=1)
 
         images = torch.stack(image_list)
-        images = images.unsqueeze(2)
+        # images = images.unsqueeze(2)  # adds frame dimension so (bs, ch, h, w) -> (bs, ch, 1, h, w)
         latents = self.vae.encode(images).latent_dist.sample()
 
         latents_mean = (

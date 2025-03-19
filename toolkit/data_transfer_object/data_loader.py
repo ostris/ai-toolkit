@@ -2,6 +2,7 @@ import os
 import weakref
 from _weakref import ReferenceType
 from typing import TYPE_CHECKING, List, Union
+import cv2
 import torch
 import random
 
@@ -43,6 +44,7 @@ class FileItemDTO(
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get('path', '')
         self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        self.is_video = self.dataset_config.num_frames > 1
         size_database = kwargs.get('size_database', {})
         dataset_root =  kwargs.get('dataset_root', None)
         if dataset_root is not None:
@@ -52,6 +54,21 @@ class FileItemDTO(
             file_key = os.path.basename(self.path)
         if file_key in size_database:
             w, h = size_database[file_key]
+        elif self.is_video:
+            # Open the video file
+            video = cv2.VideoCapture(self.path)
+            
+            # Check if video opened successfully
+            if not video.isOpened():
+                raise Exception(f"Error: Could not open video file {self.path}")
+            
+            # Get width and height
+            width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            
+            # Release the video capture object immediately
+            video.release()
+            size_database[file_key] = (width, height)
         else:
             # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method for now.
             # process width and height

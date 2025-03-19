@@ -33,3 +33,4 @@ huggingface_hub
 peft
 gradio
 python-slugify
+opencv-python

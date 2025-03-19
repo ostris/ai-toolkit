@@ -7,6 +7,7 @@ import os
 import random
 from collections import OrderedDict
 from typing import TYPE_CHECKING, List, Dict, Union
+import traceback
 
 import cv2
 import numpy as np
@@ -430,11 +431,205 @@ class CaptionProcessingDTOMixin:
 
 
 class ImageProcessingDTOMixin:
+    def load_and_process_video(
+        self: 'FileItemDTO',
+        transform: Union[None, transforms.Compose],
+        only_load_latents=False
+    ):
+        if self.is_latent_cached:
+            raise Exception('Latent caching not supported for videos')
+        
+        if self.augments is not None and len(self.augments) > 0:
+            raise Exception('Augments not supported for videos')
+            
+        if self.has_augmentations:
+            raise Exception('Augmentations not supported for videos')
+        
+        if not self.dataset_config.buckets:
+            raise Exception('Buckets required for video processing')
+        
+        try:
+            # Use OpenCV to capture video frames
+            cap = cv2.VideoCapture(self.path)
+            
+            if not cap.isOpened():
+                raise Exception(f"Failed to open video file: {self.path}")
+            
+            # Get video properties
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_fps = cap.get(cv2.CAP_PROP_FPS)
+            
+            # Calculate the max valid frame index (accounting for zero-indexing)
+            max_frame_index = total_frames - 1
+            
+            # Only log video properties if in debug mode
+            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                print_acc(f"Video properties: {self.path}")
+                print_acc(f"  Total frames: {total_frames}")
+                print_acc(f"  Max valid frame index: {max_frame_index}")
+                print_acc(f"  FPS: {video_fps}")
+            
+            frames_to_extract = []
+            
+            # Always stretch/shrink to the requested number of frames if needed
+            if self.dataset_config.shrink_video_to_frames or total_frames < self.dataset_config.num_frames:
+                # Distribute frames evenly across the entire video
+                interval = max_frame_index / (self.dataset_config.num_frames - 1) if self.dataset_config.num_frames > 1 else 0
+                frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.dataset_config.num_frames)]
+            else:
+                # Calculate frame interval based on FPS ratio
+                fps_ratio = video_fps / self.dataset_config.fps
+                frame_interval = max(1, int(round(fps_ratio)))
+                
+                # Calculate max consecutive frames we can extract at desired FPS
+                max_consecutive_frames = (total_frames // frame_interval)
+                
+                if max_consecutive_frames < self.dataset_config.num_frames:
+                    # Not enough frames at desired FPS, so stretch instead
+                    interval = max_frame_index / (self.dataset_config.num_frames - 1) if self.dataset_config.num_frames > 1 else 0
+                    frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.dataset_config.num_frames)]
+                else:
+                    # Calculate max start frame to ensure we can get all num_frames
+                    max_start_frame = max_frame_index - ((self.dataset_config.num_frames - 1) * frame_interval)
+                    start_frame = random.randint(0, max(0, max_start_frame))
+                    
+                    # Generate list of frames to extract
+                    frames_to_extract = [start_frame + (i * frame_interval) for i in range(self.dataset_config.num_frames)]
+                    
+            # Final safety check - ensure no frame exceeds max valid index
+            frames_to_extract = [min(frame_idx, max_frame_index) for frame_idx in frames_to_extract]
+            
+            # Only log frames to extract if in debug mode
+            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                print_acc(f"  Frames to extract: {frames_to_extract}")
+            
+            # Extract frames
+            frames = []
+            for frame_idx in frames_to_extract:
+                # Safety check - ensure frame_idx is within bounds (silently fix)
+                if frame_idx > max_frame_index:
+                    frame_idx = max_frame_index
+                
+                # Set frame position
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                
+                # Silently verify position was set correctly (no warnings unless debug mode)
+                if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                    actual_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                    if actual_pos != frame_idx:
+                        print_acc(f"Warning: Failed to set exact frame position. Requested: {frame_idx}, Actual: {actual_pos}")
+                
+                ret, frame = cap.read()
+                if not ret:
+                    # Try to provide more detailed error information
+                    actual_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                    frame_pos_info = f"Requested frame: {frame_idx}, Actual frame position: {actual_frame}"
+                    
+                    # Try to read the next available frame as a fallback
+                    fallback_success = False
+                    for fallback_offset in [1, -1, 5, -5, 10, -10]:
+                        fallback_pos = max(0, min(frame_idx + fallback_offset, max_frame_index))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, fallback_pos)
+                        fallback_ret, fallback_frame = cap.read()
+                        if fallback_ret:
+                            # Only log in debug mode
+                            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                                print_acc(f"Falling back to nearby frame {fallback_pos} instead of {frame_idx}")
+                            frame = fallback_frame
+                            fallback_success = True
+                            break
+                    else:
+                        # No fallback worked, raise a more detailed exception
+                        video_info = f"Video: {self.path}, Total frames: {total_frames}, FPS: {video_fps}"
+                        raise Exception(f"Failed to read frame {frame_idx} from video. {frame_pos_info}. {video_info}")
+                
+                # Convert BGR to RGB
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Convert to PIL Image
+                img = Image.fromarray(frame)
+                
+                # Apply the same processing as for single images
+                img = img.convert('RGB')
+                
+                if self.flip_x:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if self.flip_y:
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                
+                # Apply bucketing
+                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                img = img.crop((
+                    self.crop_x,
+                    self.crop_y,
+                    self.crop_x + self.crop_width,
+                    self.crop_y + self.crop_height
+                ))
+                
+                # Apply transform if provided
+                if transform:
+                    img = transform(img)
+                
+                frames.append(img)
+            
+            # Release the video capture
+            cap.release()
+            
+            # Stack frames into tensor [frames, channels, height, width]
+            self.tensor = torch.stack(frames)
+            
+            # Only log success in debug mode
+            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                print_acc(f"Successfully loaded video with {len(frames)} frames: {self.path}")
+        
+        except Exception as e:
+            # Print full traceback
+            traceback.print_exc()
+            
+            # Provide more context about the error
+            error_msg = str(e)
+            try:
+                if 'Failed to read frame' in error_msg and cap is not None:
+                    # Try to get more info about the video that failed
+                    cap_status = "Opened" if cap.isOpened() else "Closed"
+                    current_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) if cap.isOpened() else "Unknown"
+                    reported_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else "Unknown"
+                    
+                    print_acc(f"Video details when error occurred:")
+                    print_acc(f"  Cap status: {cap_status}")
+                    print_acc(f"  Current position: {current_pos}")
+                    print_acc(f"  Reported total frames: {reported_total}")
+                    
+                    # Try to verify if the video is corrupted
+                    if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Go to start
+                        start_ret, _ = cap.read()
+                        
+                        # Try to read the last frame to check if it's accessible
+                        if reported_total > 0:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, reported_total - 1)
+                            end_ret, _ = cap.read()
+                            print_acc(f"  Can read first frame: {start_ret}, Can read last frame: {end_ret}")
+                    
+                    # Close the cap if it's still open
+                    cap.release()
+            except Exception as debug_err:
+                print_acc(f"Error during error diagnosis: {debug_err}")
+            
+            print_acc(f"Error: {error_msg}")
+            print_acc(f"Error loading video: {self.path}")
+            
+            # Re-raise with more detailed information
+            raise Exception(f"Video loading error ({self.path}): {error_msg}") from e
+        
     def load_and_process_image(
             self: 'FileItemDTO',
             transform: Union[None, transforms.Compose],
             only_load_latents=False
     ):
+        if self.dataset_config.num_frames > 1:
+            self.load_and_process_video(transform, only_load_latents)
+            return
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
@@ -1379,6 +1574,8 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
+        if self.dataset_config.num_frames > 1:
+            raise Exception("Error: caching latents is not supported for multi-frame datasets")
         with accelerator.main_process_first():
             print_acc(f"Caching latents for {self.dataset_path}")
             # cache all latents to disk
@@ -1409,7 +1606,7 @@ class LatentCachingMixin:
                 elif self.sd.model_config.is_pixart_sigma:
                     file_item.latent_space_version = 'sdxl'
                 else:
-                    file_item.latent_space_version = 'sd1'
+                    file_item.latent_space_version = self.sd.model_config.arch
                 file_item.is_caching_to_disk = to_disk
                 file_item.is_caching_to_memory = to_memory
                 file_item.latent_load_device = self.sd.device
