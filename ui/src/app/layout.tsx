@@ -8,6 +8,8 @@ import SampleImageModal from '@/components/SampleImageModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 
+export const dynamic = 'force-dynamic';
+
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
