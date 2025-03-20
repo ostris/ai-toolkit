@@ -49,7 +49,7 @@ export interface NumberInputProps extends InputProps {
 
 export const NumberInput = (props: NumberInputProps) => {
   const { label, value, onChange, placeholder, required, min, max } = props;
-  
+
   // Add controlled internal state to properly handle partial inputs
   const [inputValue, setInputValue] = React.useState<string | number>(value ?? '');
 
@@ -66,7 +66,7 @@ export const NumberInput = (props: NumberInputProps) => {
         value={inputValue}
         onChange={e => {
           const rawValue = e.target.value;
-          
+
           // Update the input display with the raw value
           setInputValue(rawValue);
 
@@ -81,7 +81,7 @@ export const NumberInput = (props: NumberInputProps) => {
           // Only apply constraints and call onChange when we have a valid number
           if (!isNaN(numValue)) {
             let constrainedValue = numValue;
-            
+
             // Apply min/max constraints if they exist
             if (min !== undefined && constrainedValue < min) {
               constrainedValue = min;
@@ -89,7 +89,7 @@ export const NumberInput = (props: NumberInputProps) => {
             if (max !== undefined && constrainedValue > max) {
               constrainedValue = max;
             }
-            
+
             onChange(constrainedValue);
           }
         }}
@@ -152,14 +152,14 @@ export const Checkbox = (props: CheckboxProps) => {
         className={classNames(
           'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2',
           checked ? 'bg-blue-600' : 'bg-gray-700',
-          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80'
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80',
         )}
       >
         <span className="sr-only">Toggle {label}</span>
         <span
           className={classNames(
             'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-            checked ? 'translate-x-5' : 'translate-x-0'
+            checked ? 'translate-x-5' : 'translate-x-0',
           )}
         />
       </button>
@@ -168,7 +168,7 @@ export const Checkbox = (props: CheckboxProps) => {
           htmlFor={id}
           className={classNames(
             'text-sm font-medium cursor-pointer select-none',
-            disabled ? 'text-gray-500' : 'text-gray-300'
+            disabled ? 'text-gray-500' : 'text-gray-300',
           )}
         >
           {label}

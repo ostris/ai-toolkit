@@ -6,6 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start --port 8675",
+    "build_and_start": "npm install && npm run update_db && npm run build && npm run start",
     "lint": "next lint",
     "update_db": "npx prisma generate && npx prisma db push",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,css,scss}\""

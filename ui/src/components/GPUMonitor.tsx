@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { GPUApiResponse } from '@/types';
 import Loading from '@/components/Loading';
 import GPUWidget from '@/components/GPUWidget';
+import { apiClient } from '@/utils/api';
 
 const GpuMonitor: React.FC = () => {
   const [gpuData, setGpuData] = useState<GPUApiResponse | null>(null);
@@ -12,27 +13,26 @@ const GpuMonitor: React.FC = () => {
 
   useEffect(() => {
     const fetchGpuInfo = async () => {
-      try {
-        if (isFetchingGpuRef.current) {
-          return;
-        }
-        isFetchingGpuRef.current = true;
-        const response = await fetch('/api/gpu');
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-
-        const data: GPUApiResponse = await response.json();
-        setGpuData(data);
-        setLastUpdated(new Date());
-        setError(null);
-      } catch (err) {
-        setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        isFetchingGpuRef.current = false;
-        setLoading(false);
+      if (isFetchingGpuRef.current) {
+        return;
       }
+      setLoading(true);
+      isFetchingGpuRef.current = true;
+      apiClient
+        .get('/api/gpu')
+        .then(res => res.data)
+        .then(data => {
+          setGpuData(data);
+          setLastUpdated(new Date());
+          setError(null);
+        })
+        .catch(err => {
+          setError(`Failed to fetch GPU data: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => {
+          isFetchingGpuRef.current = false;
+          setLoading(false);
+        });
     };
 
     // Fetch immediately on component mount
@@ -69,46 +69,63 @@ const GpuMonitor: React.FC = () => {
     }
   };
 
-  if (loading) {
-    return <Loading />;
-  }
+  console.log('state', {
+    loading,
+    gpuData,
+    error,
+    lastUpdated,
+  });
 
-  if (error) {
+  const content = useMemo(() => {
+    if (loading && !gpuData) {
+      return <Loading />;
+    }
+
+    if (error) {
+      return (
+        <div className="bg-red-900 border border-red-600 text-red-200 px-4 py-3 rounded relative" role="alert">
+          <strong className="font-bold">Error!</strong>
+          <span className="block sm:inline"> {error}</span>
+        </div>
+      );
+    }
+
+    if (!gpuData) {
+      return (
+        <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
+          <span className="block sm:inline">No GPU data available.</span>
+        </div>
+      );
+    }
+
+    if (!gpuData.hasNvidiaSmi) {
+      return (
+        <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
+          <strong className="font-bold">No NVIDIA GPUs detected!</strong>
+          <span className="block sm:inline"> nvidia-smi is not available on this system.</span>
+          {gpuData.error && <p className="mt-2 text-sm">{gpuData.error}</p>}
+        </div>
+      );
+    }
+
+    if (gpuData.gpus.length === 0) {
+      return (
+        <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
+          <span className="block sm:inline">No GPUs found, but nvidia-smi is available.</span>
+        </div>
+      );
+    }
+
+    const gridClass = getGridClasses(gpuData?.gpus?.length || 1);
+
     return (
-      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-        <strong className="font-bold">Error!</strong>
-        <span className="block sm:inline"> {error}</span>
+      <div className={`grid ${gridClass} gap-3`}>
+        {gpuData.gpus.map((gpu, idx) => (
+          <GPUWidget key={idx} gpu={gpu} />
+        ))}
       </div>
     );
-  }
-
-  if (!gpuData) {
-    return (
-      <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative" role="alert">
-        <span className="block sm:inline">No GPU data available.</span>
-      </div>
-    );
-  }
-
-  if (!gpuData.hasNvidiaSmi) {
-    return (
-      <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative" role="alert">
-        <strong className="font-bold">No NVIDIA GPUs detected!</strong>
-        <span className="block sm:inline"> nvidia-smi is not available on this system.</span>
-        {gpuData.error && <p className="mt-2 text-sm">{gpuData.error}</p>}
-      </div>
-    );
-  }
-
-  if (gpuData.gpus.length === 0) {
-    return (
-      <div className="bg-yellow-100 border border-yellow-400 text-yellow-700 px-4 py-3 rounded relative" role="alert">
-        <span className="block sm:inline">No GPUs found, but nvidia-smi is available.</span>
-      </div>
-    );
-  }
-
-  const gridClass = getGridClasses(gpuData.gpus.length);
+  }, [loading, gpuData, error]);
 
   return (
     <div className="w-full">
@@ -116,12 +133,7 @@ const GpuMonitor: React.FC = () => {
         <h1 className="text-md">GPU Monitor</h1>
         <div className="text-xs text-gray-500">Last updated: {lastUpdated?.toLocaleTimeString()}</div>
       </div>
-
-      <div className={`grid ${gridClass} gap-3`}>
-        {gpuData.gpus.map((gpu, idx) => (
-          <GPUWidget key={idx} gpu={gpu} />
-        ))}
-      </div>
+      {content}
     </div>
   );
 };

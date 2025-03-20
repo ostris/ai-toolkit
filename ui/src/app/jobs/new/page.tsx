@@ -19,6 +19,7 @@ import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
 import SimpleJob from './SimpleJob';
 import AdvancedJob from './AdvancedJob';
+import { apiClient } from '@/utils/api';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -56,12 +57,13 @@ export default function TrainingForm() {
 
   useEffect(() => {
     if (runId) {
-      fetch(`/api/jobs?id=${runId}`)
-        .then(res => res.json())
+      apiClient
+        .get(`/api/jobs?id=${runId}`)
+        .then(res => res.data)
         .then(data => {
+          console.log('Training:', data);
           setGpuIDs(data.gpu_ids);
           setJobConfig(JSON.parse(data.job_config));
-          // setJobConfig(data.name, 'config.name');
         })
         .catch(error => console.error('Error fetching training:', error));
     }
@@ -85,33 +87,30 @@ export default function TrainingForm() {
     if (status === 'saving') return;
     setStatus('saving');
 
-    try {
-      const response = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id: runId,
-          name: jobConfig.config.name,
-          gpu_ids: gpuIDs,
-          job_config: jobConfig,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to save training');
-
-      setStatus('success');
-      if (!runId) {
-        const data = await response.json();
-        router.push(`/jobs/${data.id}`);
-      }
-      setTimeout(() => setStatus('idle'), 2000);
-    } catch (error) {
-      console.error('Error saving training:', error);
-      setStatus('error');
-      setTimeout(() => setStatus('idle'), 2000);
-    }
+    apiClient
+      .post('/api/jobs', {
+        id: runId,
+        name: jobConfig.config.name,
+        gpu_ids: gpuIDs,
+        job_config: jobConfig,
+      })
+      .then(res => {
+        setStatus('success');
+        if (runId) {
+          router.push(`/jobs/${runId}`);
+        } else {
+          router.push(`/jobs/${res.data.id}`);
+        }
+      })
+      .catch(error => {
+        console.error('Error saving training:', error);
+        setStatus('error');
+      })
+      .finally(() =>
+        setTimeout(() => {
+          setStatus('idle');
+        }, 2000),
+      );
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

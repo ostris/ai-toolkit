@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import useSettings from '@/hooks/useSettings';
 import { TopBar, MainContent } from '@/components/layout';
+import { apiClient } from '@/utils/api';
 
 export default function Settings() {
   const { settings, setSettings } = useSettings();
@@ -12,24 +13,18 @@ export default function Settings() {
     e.preventDefault();
     setStatus('saving');
 
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(settings),
+    apiClient
+      .post('/api/settings', settings)
+      .then(() => {
+        setStatus('success');
+      })
+      .catch(error => {
+        console.error('Error saving settings:', error);
+        setStatus('error');
+      })
+      .finally(() => {
+        setTimeout(() => setStatus('idle'), 2000);
       });
-
-      if (!response.ok) throw new Error('Failed to save settings');
-
-      setStatus('success');
-      setTimeout(() => setStatus('idle'), 2000);
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      setStatus('error');
-      setTimeout(() => setStatus('idle'), 2000);
-    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

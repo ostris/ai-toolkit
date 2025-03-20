@@ -4,7 +4,7 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/re
 import { FaUpload } from 'react-icons/fa';
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
+import { apiClient } from '@/utils/api';
 
 export interface AddImagesModalState {
   datasetName: string;
@@ -15,7 +15,7 @@ export const addImagesModalState = createGlobalState<AddImagesModalState | null>
 
 export const openImagesModal = (datasetName: string, onComplete: () => void) => {
   addImagesModalState.set({ datasetName, onComplete });
-}
+};
 
 export default function AddImagesModal() {
   const [addImagesModalInfo, setAddImagesModalInfo] = addImagesModalState.use();
@@ -36,46 +36,49 @@ export default function AddImagesModal() {
     }
   };
 
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    if (acceptedFiles.length === 0) return;
+  const onDrop = useCallback(
+    async (acceptedFiles: File[]) => {
+      if (acceptedFiles.length === 0) return;
 
-    setIsUploading(true);
-    setUploadProgress(0);
-
-    const formData = new FormData();
-    acceptedFiles.forEach(file => {
-      formData.append('files', file);
-    });
-    formData.append('datasetName', addImagesModalInfo?.datasetName || '');
-
-    try {
-      await axios.post(`/api/datasets/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
-          setUploadProgress(percentCompleted);
-        },
-        timeout: 0, // Disable timeout
-      });
-
-      onDone();
-    } catch (error) {
-      console.error('Upload failed:', error);
-    } finally {
-      setIsUploading(false);
+      setIsUploading(true);
       setUploadProgress(0);
-    }
-  }, [addImagesModalInfo]);
+
+      const formData = new FormData();
+      acceptedFiles.forEach(file => {
+        formData.append('files', file);
+      });
+      formData.append('datasetName', addImagesModalInfo?.datasetName || '');
+
+      try {
+        await apiClient.post(`/api/datasets/upload`, formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          onUploadProgress: progressEvent => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
+            setUploadProgress(percentCompleted);
+          },
+          timeout: 0, // Disable timeout
+        });
+
+        onDone();
+      } catch (error) {
+        console.error('Upload failed:', error);
+      } finally {
+        setIsUploading(false);
+        setUploadProgress(0);
+      }
+    },
+    [addImagesModalInfo],
+  );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
       'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.bmp'],
-      'text/*': ['.txt']
+      'text/*': ['.txt'],
     },
-    multiple: true
+    multiple: true,
   });
 
   return (
@@ -105,22 +108,15 @@ export default function AddImagesModal() {
                     <input {...getInputProps()} />
                     <FaUpload className="size-8 mb-3 text-gray-400" />
                     <p className="text-sm text-gray-200 text-center">
-                      {isDragActive
-                        ? 'Drop the files here...'
-                        : 'Drag & drop files here, or click to select files'}
+                      {isDragActive ? 'Drop the files here...' : 'Drag & drop files here, or click to select files'}
                     </p>
                   </div>
                   {isUploading && (
                     <div className="mt-4">
                       <div className="w-full bg-gray-700 rounded-full h-2.5">
-                        <div
-                          className="bg-blue-600 h-2.5 rounded-full"
-                          style={{ width: `${uploadProgress}%` }}
-                        ></div>
+                        <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${uploadProgress}%` }}></div>
                       </div>
-                      <p className="text-sm text-gray-300 mt-2 text-center">
-                        Uploading... {uploadProgress}%
-                      </p>
+                      <p className="text-sm text-gray-300 mt-2 text-center">Uploading... {uploadProgress}%</p>
                     </div>
                   )}
                 </div>

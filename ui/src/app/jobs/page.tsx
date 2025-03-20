@@ -13,10 +13,7 @@ export default function Dashboard() {
         </div>
         <div className="flex-1"></div>
         <div>
-          <Link
-            href="/jobs/new"
-            className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
-          >
+          <Link href="/jobs/new" className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md">
             New Training Job
           </Link>
         </div>

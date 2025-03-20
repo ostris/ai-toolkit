@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 're
 import { FaTrashAlt } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
+import { apiClient } from '@/utils/api';
 
 interface DatasetImageCardProps {
   imageUrl: string;
@@ -27,30 +28,32 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const isGettingCaption = useRef<boolean>(false);
 
   const fetchCaption = async () => {
-    try {
-      if (isGettingCaption.current || isCaptionLoaded) return;
-      isGettingCaption.current = true;
-      const response = await fetch(`/api/caption/${encodeURIComponent(imageUrl)}`);
-      const data = await response.text();
-      setCaption(data);
-      setSavedCaption(data);
-      setIsCaptionLoaded(true);
-    } catch (error) {
-      console.error('Error fetching caption:', error);
-    }
+    if (isGettingCaption.current || isCaptionLoaded) return;
+    isGettingCaption.current = true;
+    apiClient
+      .get(`/api/caption/${encodeURIComponent(imageUrl)}`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Caption fetched:', data);
+
+        setCaption(data || '');
+        setSavedCaption(data || '');
+        setIsCaptionLoaded(true);
+      })
+      .catch(error => {
+        console.error('Error fetching caption:', error);
+      })
+      .finally(() => {
+        isGettingCaption.current = false;
+      });
   };
 
   const saveCaption = () => {
     const trimmedCaption = caption.trim();
     if (trimmedCaption === savedCaption) return;
-    fetch('/api/img/caption', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ imgPath: imageUrl, caption: trimmedCaption }),
-    })
-      .then(res => res.json())
+    apiClient
+      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
+      .then(res => res.data)
       .then(data => {
         console.log('Caption saved:', data);
         setSavedCaption(trimmedCaption);
@@ -129,16 +132,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   type: 'warning',
                   confirmText: 'Delete',
                   onConfirm: () => {
-                    fetch('/api/img/delete', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({ imgPath: imageUrl }),
-                    })
-                      .then(res => res.json())
-                      .then(data => {
-                        console.log('Image deleted:', data);
+                    apiClient
+                      .post('/api/img/delete', { imgPath: imageUrl })
+                      .then(() => {
+                        console.log('Image deleted:', imageUrl);
                         onDelete();
                       })
                       .catch(error => {

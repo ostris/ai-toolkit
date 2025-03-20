@@ -103,7 +103,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
       cwd: TOOLKIT_ROOT,
       windowsHide: false,
     });
-    
+
     subprocess.unref();
   } else {
     // For non-Windows platforms, use your original approach
@@ -116,7 +116,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
       },
       cwd: TOOLKIT_ROOT,
     });
-    
+
     subprocess.unref();
   }
   // const subprocess = spawn(pythonPath, [runFilePath, configPath], {

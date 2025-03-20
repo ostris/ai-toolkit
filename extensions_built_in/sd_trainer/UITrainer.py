@@ -15,7 +15,8 @@ class UITrainer(SDTrainer):
         super(UITrainer, self).__init__(process_id, job, config, **kwargs)
         self.sqlite_db_path = self.config.get("sqlite_db_path", "./aitk_db.db")
         if not os.path.exists(self.sqlite_db_path):
-            raise Exception(f"SQLite database not found at {self.sqlite_db_path}")
+            raise Exception(
+                f"SQLite database not found at {self.sqlite_db_path}")
         print(f"Using SQLite database at {self.sqlite_db_path}")
         self.job_id = os.environ.get("AITK_JOB_ID", None)
         self.job_id = self.job_id.strip() if self.job_id is not None else None
@@ -147,6 +148,8 @@ class UITrainer(SDTrainer):
 
         try:
             await asyncio.gather(*self._async_tasks)
+        except Exception as e:
+            print(f"Error waiting for async operations: {e}")
         finally:
             # Clear the task list after completion
             self._async_tasks.clear()

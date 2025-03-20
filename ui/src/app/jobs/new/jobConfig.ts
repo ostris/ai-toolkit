@@ -30,7 +30,7 @@ export const defaultJobConfig: JobConfig = {
           linear: 32,
           linear_alpha: 32,
           lokr_full_rank: true,
-          lokr_factor: -1
+          lokr_factor: -1,
         },
         save: {
           dtype: 'bf16',
@@ -39,9 +39,7 @@ export const defaultJobConfig: JobConfig = {
           save_format: 'diffusers',
           push_to_hub: false,
         },
-        datasets: [
-          defaultDatasetConfig
-        ],
+        datasets: [defaultDatasetConfig],
         train: {
           batch_size: 1,
           bypass_guidance_embedding: true,
@@ -55,7 +53,7 @@ export const defaultJobConfig: JobConfig = {
           timestep_type: 'sigmoid',
           content_or_style: 'balanced',
           optimizer_params: {
-            weight_decay: 1e-4
+            weight_decay: 1e-4,
           },
           unload_text_encoder: false,
           lr: 0.0001,
@@ -66,8 +64,7 @@ export const defaultJobConfig: JobConfig = {
           dtype: 'bf16',
           diff_output_preservation: false,
           diff_output_preservation_multiplier: 1.0,
-          diff_output_preservation_class: 'person'
-
+          diff_output_preservation_class: 'person',
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',

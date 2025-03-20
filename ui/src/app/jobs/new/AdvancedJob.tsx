@@ -33,11 +33,7 @@ const yamlConfig: YAML.DocumentOptions &
   directives: true,
 };
 
-export default function AdvancedJob({
-  jobConfig,
-  setJobConfig,
-  settings,
-}: Props) {
+export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props) {
   const [editorValue, setEditorValue] = useState<string>('');
   const lastJobConfigUpdateStringRef = useRef('');
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);

@@ -11,7 +11,14 @@ interface SampleImageCardProps {
   onDelete?: () => void;
 }
 
-const SampleImageCard: React.FC<SampleImageCardProps> = ({ imageUrl, alt, numSamples, sampleImages, children, className = '' }) => {
+const SampleImageCard: React.FC<SampleImageCardProps> = ({
+  imageUrl,
+  alt,
+  numSamples,
+  sampleImages,
+  children,
+  className = '',
+}) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);

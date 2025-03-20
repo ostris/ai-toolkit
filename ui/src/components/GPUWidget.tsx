@@ -24,9 +24,7 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
       <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <h2 className="font-semibold text-gray-100">{gpu.name}</h2>
-          <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">
-            #{gpu.index}
-          </span>
+          <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">#{gpu.index}</span>
         </div>
       </div>
 
@@ -38,18 +36,14 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
               <Thermometer className={`w-4 h-4 ${getTemperatureColor(gpu.temperature)}`} />
               <div>
                 <p className="text-xs text-gray-400">Temperature</p>
-                <p className={`text-sm font-medium ${getTemperatureColor(gpu.temperature)}`}>
-                  {gpu.temperature}°C
-                </p>
+                <p className={`text-sm font-medium ${getTemperatureColor(gpu.temperature)}`}>{gpu.temperature}°C</p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
               <Fan className="w-4 h-4 text-blue-400" />
               <div>
                 <p className="text-xs text-gray-400">Fan Speed</p>
-                <p className="text-sm font-medium text-blue-400">
-                  {gpu.fan.speed}%
-                </p>
+                <p className="text-sm font-medium text-blue-400">{gpu.fan.speed}%</p>
               </div>
             </div>
           </div>
@@ -99,7 +93,7 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
               <p className="text-xs text-gray-400">Power Draw</p>
               <p className="text-sm text-gray-200">
                 {gpu.power.draw?.toFixed(1)}W
-                <span className="text-gray-400 text-xs"> / {gpu.power.limit?.toFixed(1) || " ? "}W</span>
+                <span className="text-gray-400 text-xs"> / {gpu.power.limit?.toFixed(1) || ' ? '}W</span>
               </p>
             </div>
           </div>

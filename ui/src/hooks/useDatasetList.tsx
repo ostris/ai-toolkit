@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiClient } from '@/utils/api';
 
 export default function useDatasetList() {
   const [datasets, setDatasets] = useState<string[]>([]);
@@ -8,8 +9,9 @@ export default function useDatasetList() {
 
   const refreshDatasets = () => {
     setStatus('loading');
-    fetch('/api/datasets/list')
-      .then(res => res.json())
+    apiClient
+      .get('/api/datasets/list')
+      .then(res => res.data)
       .then(data => {
         console.log('Datasets:', data);
         // sort

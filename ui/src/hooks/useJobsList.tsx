@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Job } from '@prisma/client';
+import { apiClient } from '@/utils/api';
 
 export default function useJobsList(onlyActive = false) {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -9,8 +10,9 @@ export default function useJobsList(onlyActive = false) {
 
   const refreshJobs = () => {
     setStatus('loading');
-    fetch('/api/jobs')
-      .then(res => res.json())
+    apiClient
+      .get('/api/jobs')
+      .then(res => res.data)
       .then(data => {
         console.log('Jobs:', data);
         if (data.error) {

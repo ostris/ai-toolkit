@@ -10,7 +10,7 @@ export async function GET() {
     // Get platform
     const platform = os.platform();
     const isWindows = platform === 'win32';
-    
+
     // Check if nvidia-smi is available
     const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
 
@@ -61,8 +61,9 @@ async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
 
 async function getGpuStats(isWindows: boolean) {
   // Command is the same for both platforms, but the path might be different
-  const command = 'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits';
-  
+  const command =
+    'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits';
+
   // Execute command
   const { stdout } = await execAsync(command);
 

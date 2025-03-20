@@ -1,10 +1,12 @@
 import { JobConfig } from '@/types';
 import { Job } from '@prisma/client';
+import { apiClient } from '@/utils/api';
 
 export const startJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
-    fetch(`/api/jobs/${jobID}/start`)
-      .then(res => res.json())
+    apiClient
+      .get(`/api/jobs/${jobID}/start`)
+      .then(res => res.data)
       .then(data => {
         console.log('Job started:', data);
         resolve();
@@ -18,8 +20,9 @@ export const startJob = (jobID: string) => {
 
 export const stopJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
-    fetch(`/api/jobs/${jobID}/stop`)
-      .then(res => res.json())
+    apiClient
+      .get(`/api/jobs/${jobID}/stop`)
+      .then(res => res.data)
       .then(data => {
         console.log('Job stopped:', data);
         resolve();
@@ -33,8 +36,9 @@ export const stopJob = (jobID: string) => {
 
 export const deleteJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
-    fetch(`/api/jobs/${jobID}/delete`)
-      .then(res => res.json())
+    apiClient
+      .get(`/api/jobs/${jobID}/delete`)
+      .then(res => res.data)
       .then(data => {
         console.log('Job deleted:', data);
         resolve();
@@ -67,9 +71,9 @@ export const getAvaliableJobActions = (job: Job) => {
 export const getNumberOfSamples = (job: Job) => {
   const jobConfig = getJobConfig(job);
   return jobConfig.config.process[0].sample?.prompts?.length || 0;
-}
+};
 
 export const getTotalSteps = (job: Job) => {
   const jobConfig = getJobConfig(job);
   return jobConfig.config.process[0].train.steps;
-}
+};

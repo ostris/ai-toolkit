@@ -10,6 +10,7 @@ import { FaRegTrashAlt } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
+import { apiClient } from '@/utils/api';
 
 export default function Datasets() {
   const { datasets, status, refreshDatasets } = useDatasetList();
@@ -54,16 +55,10 @@ export default function Datasets() {
       type: 'warning',
       confirmText: 'Delete',
       onConfirm: () => {
-        fetch('/api/datasets/delete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ name: datasetName }),
-        })
-          .then(res => res.json())
-          .then(data => {
-            console.log('Dataset deleted:', data);
+        apiClient
+          .post('/api/datasets/delete', { name: datasetName })
+          .then(() => {
+            console.log('Dataset deleted:', datasetName);
             refreshDatasets();
           })
           .catch(error => {
@@ -76,14 +71,7 @@ export default function Datasets() {
   const handleCreateDataset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch('/api/datasets/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: newDatasetName }),
-      });
-      const data = await response.json();
+      const data = await apiClient.post('/api/datasets/create', { name: newDatasetName }).then(res => res.data);
       console.log('New dataset created:', data);
       refreshDatasets();
       setNewDatasetName('');

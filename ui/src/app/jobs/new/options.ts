@@ -12,7 +12,7 @@ export const modelArchs = [
   { name: 'flux', label: 'Flux.1' },
   { name: 'wan21', label: 'Wan 2.1' },
   { name: 'lumina2', label: 'Lumina2' },
-]
+];
 
 export const isVideoModelFromArch = (arch: string) => {
   const videoArches = ['wan21'];

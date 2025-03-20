@@ -45,7 +45,9 @@ export default function JobOverview({ job }: JobOverviewProps) {
       {/* Job Information Panel */}
       <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
-          <h2 className="text-gray-100"><Info className="w-5 h-5 mr-2 -mt-1 text-amber-400 inline-block" /> {job.info}</h2>
+          <h2 className="text-gray-100">
+            <Info className="w-5 h-5 mr-2 -mt-1 text-amber-400 inline-block" /> {job.info}
+          </h2>
           <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>{job.status}</span>
         </div>
 
@@ -85,7 +87,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
               <Gauge className="w-5 h-5 text-green-400" />
               <div>
                 <p className="text-xs text-gray-400">Speed</p>
-                <p className="text-sm font-medium text-gray-200">{job.speed_string == "" ? "?" : job.speed_string}</p>
+                <p className="text-sm font-medium text-gray-200">{job.speed_string == '' ? '?' : job.speed_string}</p>
               </div>
             </div>
           </div>

@@ -79,7 +79,7 @@ export function useNestedState<T>(initialState: T): [T, (value: any, path?: stri
   const setValue = React.useCallback((value: any, path?: string) => {
     if (path === undefined) {
       setState(value);
-      return
+      return;
     }
     setState(prevState => setNestedValue(prevState, value, path));
   }, []);
