@@ -1,5 +1,5 @@
-torch==2.5.1
-torchvision==0.20.1
+torch==2.6.0
+torchvision==0.21.0
 safetensors
 git+https://github.com/huggingface/diffusers@363d1ab7e24c5ed6c190abb00df66d9edb74383b
 transformers==4.49.0

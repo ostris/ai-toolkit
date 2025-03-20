@@ -508,6 +508,8 @@ class ModelConfig:
         # only for flux for now
         self.quantize = kwargs.get("quantize", False)
         self.quantize_te = kwargs.get("quantize_te", self.quantize)
+        self.qtype = kwargs.get("qtype", "qfloat8")
+        self.qtype_te = kwargs.get("qtype_te", "qfloat8")
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:

@@ -29,7 +29,7 @@ import copy
 from toolkit.config_modules import ModelConfig, GenerateImageConfig, ModelArch
 import torch
 from optimum.quanto import freeze, qfloat8, QTensor, qint4
-from toolkit.util.quantize import quantize
+from toolkit.util.quantize import quantize, get_qtype
 from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 from typing import TYPE_CHECKING, List
 from toolkit.accelerator import unwrap_model
@@ -377,7 +377,7 @@ class Wan21(BaseModel):
                 quantization_args['exclude'] = []
             # patch the state dict method
             patch_dequantization_on_save(transformer)
-            quantization_type = qfloat8
+            quantization_type = get_qtype(self.model_config.qtype)
             self.print_and_status_update("Quantizing transformer")
             if self.model_config.low_vram:
                 print("Quantizing blocks")
@@ -425,7 +425,7 @@ class Wan21(BaseModel):
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing UMT5EncoderModel")
-            quantize(text_encoder, weights=qfloat8)
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
             freeze(text_encoder)
             flush()
 
