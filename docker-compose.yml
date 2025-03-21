@@ -11,6 +11,7 @@ services:
       - ./aitk_db.db:/app/ai-toolkit/aitk_db.db
       - ./datasets:/app/ai-toolkit/datasets
       - ./output:/app/ai-toolkit/output
+      - ./config:/app/ai-toolkit/config
     environment:
       - AI_TOOLKIT_AUTH=${AI_TOOLKIT_AUTH:-password}
       - NODE_ENV=production
