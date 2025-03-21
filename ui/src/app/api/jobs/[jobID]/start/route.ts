@@ -96,6 +96,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const additionalEnv: any = {
     AITK_JOB_ID: jobID,
     CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
+    IS_AI_TOOLKIT_UI: '1'
   };
 
   // HF_TOKEN

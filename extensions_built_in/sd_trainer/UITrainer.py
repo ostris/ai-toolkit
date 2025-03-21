@@ -149,7 +149,7 @@ class UITrainer(SDTrainer):
         try:
             await asyncio.gather(*self._async_tasks)
         except Exception as e:
-            print(f"Error waiting for async operations: {e}")
+            pass
         finally:
             # Clear the task list after completion
             self._async_tasks.clear()
