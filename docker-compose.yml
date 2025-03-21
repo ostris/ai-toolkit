@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  ai-toolkit:
+    image: ostris/aitoolkit:latest
+    restart: unless-stopped
+    ports:
+      - "8675:8675"
+    volumes:
+      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub
+      - ./aitk_db.db:/app/ai-toolkit/aitk_db.db
+      - ./datasets:/app/ai-toolkit/datasets
+      - ./output:/app/ai-toolkit/output
+    environment:
+      - AI_TOOLKIT_AUTH=${AI_TOOLKIT_AUTH:-password}
+      - NODE_ENV=production
+      - TZ=UTC
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
