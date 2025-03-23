@@ -1063,7 +1063,6 @@ class SDTrainer(BaseSDTrainProcess):
         if self.adapter and isinstance(self.adapter, CustomAdapter):
             # condition the prompt
             # todo handle more than one adapter image
-            self.adapter.num_control_images = 1
             conditioned_prompts = self.adapter.condition_prompt(conditioned_prompts)
 
         network_weight_list = batch.get_network_weight_list()

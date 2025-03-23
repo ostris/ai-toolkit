@@ -46,14 +46,14 @@ class ImgEmbedder(torch.nn.Module):
         cls, 
         model: FluxTransformer2DModel, 
         adapter: 'ControlLoraAdapter', 
-        num_channel_multiplier=2
+        num_control_images=1
     ):
         if model.__class__.__name__ == 'FluxTransformer2DModel':
             x_embedder: torch.nn.Linear = model.x_embedder
             img_embedder = cls(
                 adapter, 
                 orig_layer=x_embedder,
-                in_channels=x_embedder.in_features * (num_channel_multiplier - 1), # only our new channels
+                in_channels=x_embedder.in_features * num_control_images,
                 out_channels=x_embedder.out_features, 
             )
             
@@ -62,7 +62,7 @@ class ImgEmbedder(torch.nn.Module):
             x_embedder.forward = img_embedder.forward
 
             # update the config of the transformer
-            model.config.in_channels = model.config.in_channels * num_channel_multiplier
+            model.config.in_channels = model.config.in_channels * (num_control_images + 1)
             model.config["in_channels"] = model.config.in_channels
             
             return img_embedder
@@ -178,7 +178,11 @@ class ControlLoraAdapter(torch.nn.Module):
             if self.train_config.gradient_checkpointing:
                 self.control_lora.enable_gradient_checkpointing()
             
-        self.x_embedder = ImgEmbedder.from_model(sd.unet, self)
+        self.x_embedder = ImgEmbedder.from_model(
+            sd.unet, 
+            self,
+            num_control_images=config.num_control_images
+        )
         self.x_embedder.to(self.device_torch)
 
     def get_params(self):
@@ -230,6 +234,16 @@ class ControlLoraAdapter(torch.nn.Module):
         # todo process state dict before loading
         if self.control_lora is not None:
             self.control_lora.load_weights(lora_sd)
+        # automatically upgrade the x imbedder if more dims are added
+        if self.x_embedder.weight.shape[1] > img_embedder_sd['weight'].shape[1]:
+            print("Upgrading x_embedder from {} to {}".format(
+                img_embedder_sd['weight'].shape[1], 
+                self.x_embedder.weight.shape[1]
+            ))
+            while img_embedder_sd['weight'].shape[1] < self.x_embedder.weight.shape[1]:
+                img_embedder_sd['weight'] = torch.cat([img_embedder_sd['weight'] ] * 2, dim=1)
+            if img_embedder_sd['weight'].shape[1] > self.x_embedder.weight.shape[1]:
+                img_embedder_sd['weight'] = img_embedder_sd['weight'][:, :self.x_embedder.weight.shape[1]]
         self.x_embedder.load_state_dict(img_embedder_sd, strict=False)
         
     def get_state_dict(self):
