@@ -251,6 +251,7 @@ class AdapterConfig:
         # decimal for how often the control is dropped out and replaced with noise 1.0 is 100%
         self.control_image_dropout: float = kwargs.get('control_image_dropout', 0.0)
         self.has_inpainting_input: bool = kwargs.get('has_inpainting_input', False)
+        self.invert_inpaint_mask_chance: float = kwargs.get('invert_inpaint_mask_chance', 0.0)
 
 
 class EmbeddingConfig:

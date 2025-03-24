@@ -1609,8 +1609,8 @@ class FluxAdvancedControlPipeline(FluxControlPipeline):
             mask = control_img_array[:, :, 3:4]
             # scale it to 0 - 1
             mask = mask / 255.0
-            # multiply rgb by mask
-            control_img_array = control_img_array[:, :, :3] * mask
+            # control image ideally would be a full image here
+            control_img_array = control_img_array[:, :, :3]
             control_image = Image.fromarray(control_img_array.astype(np.uint8))
 
         control_image = self.prepare_image(
@@ -1636,7 +1636,10 @@ class FluxAdvancedControlPipeline(FluxControlPipeline):
                 # resize mask to match control image
                 mask = F.interpolate(mask, size=(control_image.shape[2], control_image.shape[3]), mode="bilinear", align_corners=False)
                 mask = mask.to(device)
-                # invert mask
+                # apply the mask to the control image so the inpaint latent area is 0
+                # mask is currently 0 for inpaint area and 1 for image area
+                control_image = control_image * mask
+                # invert mask so it is 1 for inpaint area and 0 for image area
                 mask = 1 - mask
                 control_image = torch.cat([control_image, mask], dim=1)
                 num_control_channels += 1
