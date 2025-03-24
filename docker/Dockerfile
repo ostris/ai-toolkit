@@ -38,8 +38,7 @@ RUN curl -sL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh && \
 WORKDIR /app
 
 # Set aliases for python and pip
-RUN echo 'alias python=python3' >> /etc/bash.bashrc && \
-    echo 'alias pip=pip3' >> /etc/bash.bashrc
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # install pytorch before cache bust to avoid redownloading pytorch
 RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
