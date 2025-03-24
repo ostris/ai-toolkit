@@ -252,9 +252,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         test_image_paths = []
         if self.adapter_config is not None and self.adapter_config.test_img_path is not None:
-            test_image_path_list = self.adapter_config.test_img_path.split(',')
-            test_image_path_list = [p.strip() for p in test_image_path_list]
-            test_image_path_list = [p for p in test_image_path_list if p != '']
+            test_image_path_list = self.adapter_config.test_img_path
             # divide up images so they are evenly distributed across prompts
             for i in range(len(sample_config.prompts)):
                 test_image_paths.append(test_image_path_list[i % len(test_image_path_list)])

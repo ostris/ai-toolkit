@@ -569,13 +569,56 @@ class CustomAdapter(torch.nn.Module):
     def condition_noisy_latents(self, latents: torch.Tensor, batch:DataLoaderBatchDTO):
         with torch.no_grad():
             if self.adapter_type in ['control_lora']:
+                # inpainting input is 0-1 (bs, 4, h, w) on batch.inpaint_tensor
+                # 4th channel is the mask with 1 being keep area and 0 being area to inpaint.
                 sd: StableDiffusion = self.sd_ref()
-                control_tensor = batch.control_tensor
+                inpainting_latent = None
+                if self.config.has_inpainting_input:
+                    do_dropout = random.random() < self.config.control_image_dropout
+                    if batch.inpaint_tensor is not None and not do_dropout:
+                        # currently 0-1, we need rgb to be -1 to 1 before encoding with the vae
+                        inpainting_tensor_rgba = batch.inpaint_tensor.to(latents.device, dtype=latents.dtype)
+                        inpainting_tensor_mask = inpainting_tensor_rgba[:, 3:4, :, :]
+                        inpainting_tensor_rgb = inpainting_tensor_rgba[:, :3, :, :]
+                        # we need to make sure the inpaint area is black multiply the rgb channels by the mask
+                        inpainting_tensor_rgb = inpainting_tensor_rgb * inpainting_tensor_mask
+                        
+                        # if it is not the size of batch.tensor, (bs,ch,h,w) then we need to resize it
+                        if inpainting_tensor_rgb.shape[2] != batch.tensor.shape[2] or inpainting_tensor_rgb.shape[3] != batch.tensor.shape[3]:
+                            inpainting_tensor_rgb = F.interpolate(inpainting_tensor_rgb, size=(batch.tensor.shape[2], batch.tensor.shape[3]), mode='bilinear')
+                        
+                        # scale to -1 to 1
+                        inpainting_tensor_rgb = inpainting_tensor_rgb * 2 - 1
+                        
+                        # encode it
+                        inpainting_latent = sd.encode_images(inpainting_tensor_rgb).to(latents.device, latents.dtype)
+                        
+                        # resize the mask to match the new encoded size
+                        inpainting_tensor_mask = F.interpolate(inpainting_tensor_mask, size=(inpainting_latent.shape[2], inpainting_latent.shape[3]), mode='bilinear')
+                        inpainting_tensor_mask = inpainting_tensor_mask.to(latents.device, latents.dtype)
+                        # mask needs to be 1 for inpaint area and 0 for area to leave alone. So flip it.
+                        inpainting_tensor_mask = 1 - inpainting_tensor_mask
+                        # leave the mask as 0-1 and concat on channel of latents
+                        inpainting_latent = torch.cat((inpainting_latent, inpainting_tensor_mask), dim=1)
+                    else:
+                        # we have iinpainting but didnt get a control. or we are doing a dropout
+                        # the input needs to be all zeros for the latents and all 1s for the mask
+                        inpainting_latent = torch.zeros_like(latents)
+                        # add ones for the mask since we are technically inpainting everything
+                        inpainting_latent = torch.cat((inpainting_latent, torch.ones_like(inpainting_latent[:, :1, :, :])), dim=1)
+                    
+                    if self.config.num_control_images == 1:
+                        # this is our only control
+                        control_latent = inpainting_latent.to(latents.device, latents.dtype)
+                        latents = torch.cat((latents, control_latent), dim=1)
+                        return latents.detach()
+                    
+                control_tensor = batch.control_tensor.to(latents.device, dtype=latents.dtype)
                 if control_tensor is None:
                     # concat random normal noise onto the latents
                     # check dimension, this is before they are rearranged
                     # it is latent_model_input = torch.cat([latents, control_image], dim=2) after rearranging
-                    ctrl = torch.randn(
+                    ctrl = torch.zeros(
                         latents.shape[0], # bs
                         latents.shape[1] * self.num_control_images, # ch
                         latents.shape[2], 
@@ -583,6 +626,9 @@ class CustomAdapter(torch.nn.Module):
                         device=latents.device, 
                         dtype=latents.dtype
                     )
+                    if inpainting_latent is not None:
+                        # inpainting always comes first
+                        ctrl = torch.cat((inpainting_latent, ctrl), dim=1)
                     latents = torch.cat((latents, ctrl), dim=1)
                     return latents.detach()
                 # if we have multiple control tensors, they come in like [bs, num_control_images, ch, h, w]
@@ -622,6 +668,9 @@ class CustomAdapter(torch.nn.Module):
                         control_latent_list.append(control_latent)
                 # stack them on the channel dimension
                 control_latent = torch.cat(control_latent_list, dim=1)
+                if inpainting_latent is not None:
+                    # inpainting always comes first
+                    control_latent = torch.cat((inpainting_latent, control_latent), dim=1)
                 # concat it onto the latents
                 latents = torch.cat((latents, control_latent), dim=1)
                 return latents.detach()

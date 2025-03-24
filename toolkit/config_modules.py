@@ -165,7 +165,13 @@ class AdapterConfig:
         self.downscale_factor: int = kwargs.get('downscale_factor', 8)
         self.adapter_type: str = kwargs.get('adapter_type', 'full_adapter')
         self.image_dir: str = kwargs.get('image_dir', None)
-        self.test_img_path: str = kwargs.get('test_img_path', None)
+        self.test_img_path: List[str] = kwargs.get('test_img_path', None)
+        if self.test_img_path is not None:
+            if isinstance(self.test_img_path, str):
+                self.test_img_path = self.test_img_path.split(',')
+                self.test_img_path = [p.strip() for p in self.test_img_path]
+                self.test_img_path = [p for p in self.test_img_path if p != '']
+                
         self.train: str = kwargs.get('train', False)
         self.image_encoder_path: str = kwargs.get('image_encoder_path', None)
         self.name_or_path = kwargs.get('name_or_path', None)
@@ -244,6 +250,7 @@ class AdapterConfig:
         self.num_control_images: int = kwargs.get('num_control_images', 1)
         # decimal for how often the control is dropped out and replaced with noise 1.0 is 100%
         self.control_image_dropout: float = kwargs.get('control_image_dropout', 0.0)
+        self.has_inpainting_input: bool = kwargs.get('has_inpainting_input', False)
 
 
 class EmbeddingConfig:
@@ -714,6 +721,9 @@ class DatasetConfig:
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
+        # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
+        # be the part conditioned to be inpainted. The alpha 1 (visible) section will be the part that is ignored
+        self.inpaint_path: Union[str,List[str]] = kwargs.get('inpaint_path', None)
         # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
         self.full_size_control_images: bool = kwargs.get('full_size_control_images', False)
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
