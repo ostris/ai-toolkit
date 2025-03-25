@@ -1,5 +1,4 @@
 import torch
-from transformers import Adafactor, AdamW
 
 
 def get_optimizer(
