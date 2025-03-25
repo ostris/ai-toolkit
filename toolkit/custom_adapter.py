@@ -24,6 +24,8 @@ from toolkit.train_tools import get_torch_dtype
 from toolkit.models.pixtral_vision import PixtralVisionEncoderCompatible, PixtralVisionImagePreprocessorCompatible
 import random
 
+from toolkit.util.mask import generate_random_mask
+
 sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
 from collections import OrderedDict
@@ -575,10 +577,27 @@ class CustomAdapter(torch.nn.Module):
                 inpainting_latent = None
                 if self.config.has_inpainting_input:
                     do_dropout = random.random() < self.config.control_image_dropout
-                    if batch.inpaint_tensor is not None and not do_dropout:
-                        # currently 0-1, we need rgb to be -1 to 1 before encoding with the vae
-                        inpainting_tensor_rgba = batch.inpaint_tensor.to(latents.device, dtype=latents.dtype)
-                        inpainting_tensor_mask = inpainting_tensor_rgba[:, 3:4, :, :]
+                    # do random mask if we dont have one
+                    inpaint_tensor = batch.inpaint_tensor
+                    if inpaint_tensor is None and not do_dropout:
+                        # generate a random one since we dont have one
+                        # this will make random blobs, invert the blobs for now as we normanlly inpaint the alpha
+                        inpaint_tensor = 1 - generate_random_mask(
+                            batch_size=latents.shape[0],
+                            height=latents.shape[2],
+                            width=latents.shape[3],
+                            device=latents.device,
+                        ).to(latents.device, latents.dtype)
+                    if inpaint_tensor is not None and not do_dropout:
+                        
+                        if inpaint_tensor.shape[1] == 4:
+                            # get just the mask
+                            inpainting_tensor_mask = inpaint_tensor[:, 3:4, :, :].to(latents.device, dtype=latents.dtype)
+                        elif inpaint_tensor.shape[1] == 3:
+                            # rgb mask. Just get one channel
+                            inpainting_tensor_mask = inpaint_tensor[:, 0:1, :, :].to(latents.device, dtype=latents.dtype)
+                        else:
+                            inpainting_tensor_mask = inpaint_tensor
                         
                         # # use our batch latents so we cna avoid ancoding again
                         inpainting_latent = batch.latents
