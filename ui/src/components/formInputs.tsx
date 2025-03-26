@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 import classNames from 'classnames';
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
@@ -19,26 +19,30 @@ export interface TextInputProps extends InputProps {
   disabled?: boolean;
 }
 
-export const TextInput = (props: TextInputProps) => {
-  const { label, value, onChange, placeholder, required, disabled } = props;
-  return (
-    <div className={classNames(props.className)}>
-      {label && <label className={labelClasses}>{label}</label>}
-      <input
-        type={props.type || 'text'}
-        value={value}
-        onChange={e => {
-          if (disabled) return;
-          onChange(e.target.value);
-        }}
-        className={`${inputClasses} ${disabled && 'opacity-30 cursor-not-allowed'}`}
-        placeholder={placeholder}
-        required={required}
-        disabled={disabled}
-      />
-    </div>
-  );
-};
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
+  ({ label, value, onChange, placeholder, required, disabled, type = 'text', className }, ref) => {
+    return (
+      <div className={classNames(className)}>
+        {label && <label className={labelClasses}>{label}</label>}
+        <input
+          ref={ref}
+          type={type}
+          value={value}
+          onChange={e => {
+            if (!disabled) onChange(e.target.value);
+          }}
+          className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
+          placeholder={placeholder}
+          required={required}
+          disabled={disabled}
+        />
+      </div>
+    );
+  }
+);
+
+// 👇 Helpful for debugging
+TextInput.displayName = 'TextInput';
 
 export interface NumberInputProps extends InputProps {
   value: number;

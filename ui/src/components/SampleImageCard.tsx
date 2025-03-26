@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
 import { sampleImageModalState } from '@/components/SampleImageModal';
+import { isVideo } from '@/utils/basic';
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -47,6 +48,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const handleLoad = (): void => {
     setLoaded(true);
   };
+  console.log('imgurl',imageUrl.toLowerCase().slice(-4))
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -59,14 +61,27 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
           {isVisible && (
-            <img
-              src={`/api/img/${encodeURIComponent(imageUrl)}`}
-              alt={alt}
-              onLoad={handleLoad}
-              className={`w-full h-full object-contain transition-opacity duration-300 ${
-                loaded ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
+            <>
+              {isVideo(imageUrl) ? (
+                <video
+                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  className={`w-full h-full object-cover`}
+                  autoPlay={false}
+                  loop
+                  muted
+                  playsInline
+                />
+              ) : (
+                <img
+                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  alt={alt}
+                  onLoad={handleLoad}
+                  className={`w-full h-full object-cover transition-opacity duration-300 ${
+                    loaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              )}
+            </>
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
         </div>

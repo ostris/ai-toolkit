@@ -1,15 +1,21 @@
 'use client';
+import { useRef } from 'react';
 import { useState, useEffect } from 'react';
 import { createGlobalState } from 'react-global-hooks';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaExclamationTriangle, FaInfo } from 'react-icons/fa';
+import { TextInput } from './formInputs';
+import React from 'react';
+import { useFromNull } from '@/hooks/useFromNull';
+import classNames from 'classnames';
 
 export interface ConfirmState {
   title: string;
   message?: string;
   confirmText?: string;
   type?: 'danger' | 'warning' | 'info';
-  onConfirm?: () => void;
+  inputTitle?: string;
+  onConfirm?: (value?: string) => void | Promise<void>;
   onCancel?: () => void;
 }
 
@@ -22,10 +28,21 @@ export const openConfirm = (confirmProps: ConfirmState) => {
 export default function ConfirmModal() {
   const [confirm, setConfirm] = confirmstate.use();
   const [isOpen, setIsOpen] = useState(false);
+  const [inputValue, setInputValue] = useState<string>('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useFromNull(() => {
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }, 100);
+  }, [confirm]);
 
   useEffect(() => {
     if (confirm) {
       setIsOpen(true);
+      setInputValue('');
     }
   }, [confirm]);
 
@@ -47,7 +64,7 @@ export default function ConfirmModal() {
 
   const onConfirm = () => {
     if (confirm?.onConfirm) {
-      confirm.onConfirm();
+      confirm.onConfirm(inputValue);
     }
     setIsOpen(false);
   };
@@ -136,12 +153,25 @@ export default function ConfirmModal() {
                 >
                   <Icon aria-hidden="true" className={`size-6 ${getTextColor()}`} />
                 </div>
-                <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left flex-1">
                   <DialogTitle as="h3" className={`text-base font-semibold ${getTitleColor()}`}>
                     {confirm?.title}
                   </DialogTitle>
                   <div className="mt-2">
                     <p className="text-sm text-gray-200">{confirm?.message}</p>
+                    <div className={classNames('mt-4 w-full', { hidden: !confirm?.inputTitle })}>
+                      <form onSubmit={(e) => {
+                        e.preventDefault()
+                        onConfirm()
+                      }}>
+                        <TextInput
+                          value={inputValue}
+                          ref={inputRef}
+                          onChange={setInputValue}
+                          placeholder={confirm?.inputTitle}
+                        />
+                      </form>
+                    </div>
                   </div>
                 </div>
               </div>

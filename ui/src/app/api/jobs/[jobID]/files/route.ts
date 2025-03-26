@@ -24,7 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ files: [] });
   }
 
-  // find all img (png, jpg, jpeg) files in the samples folder
+  // find all safetensors files in the job folder
   let files = fs
     .readdirSync(jobFolder)
     .filter(file => {

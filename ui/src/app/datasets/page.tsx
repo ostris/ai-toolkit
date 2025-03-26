@@ -11,8 +11,10 @@ import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { apiClient } from '@/utils/api';
+import { useRouter } from 'next/navigation';
 
 export default function Datasets() {
+  const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
@@ -81,6 +83,33 @@ export default function Datasets() {
     }
   };
 
+  const openNewDatasetModal = () => {
+    openConfirm({
+      title: 'New Dataset',
+      message: 'Enter the name of the new dataset:',
+      type: 'info',
+      confirmText: 'Create',
+      inputTitle: 'Dataset Name',
+      onConfirm: async (name?: string) => {
+        if (!name) {
+          console.error('Dataset name is required.');
+          return;
+        }
+        try {
+          const data = await apiClient.post('/api/datasets/create', { name }).then(res => res.data);
+          console.log('New dataset created:', data);
+          if (data.name) {
+            router.push(`/datasets/${data.name}`);
+          } else {
+            refreshDatasets();
+          }
+        } catch (error) {
+          console.error('Error creating new dataset:', error);
+        }
+      },
+    });
+  };
+
   return (
     <>
       <TopBar>
@@ -91,7 +120,7 @@ export default function Datasets() {
         <div>
           <Button
             className="text-gray-200 bg-slate-600 px-4 py-2 rounded-md hover:bg-slate-500 transition-colors"
-            onClick={() => setIsNewDatasetModalOpen(true)}
+            onClick={() => openNewDatasetModal()}
           >
             New Dataset
           </Button>

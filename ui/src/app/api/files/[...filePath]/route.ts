@@ -50,6 +50,14 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       '.svg': 'image/svg+xml',
       '.bmp': 'image/bmp',
       '.safetensors': 'application/octet-stream',
+      // Videos
+      '.mp4': 'video/mp4',
+      '.avi': 'video/x-msvideo',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.wmv': 'video/x-ms-wmv',
+      '.m4v': 'video/x-m4v',
+      '.flv': 'video/x-flv'
     };
 
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
