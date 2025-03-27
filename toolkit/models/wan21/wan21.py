@@ -300,6 +300,7 @@ class AggressiveWanUnloadPipeline(WanPipeline):
 
 
 class Wan21(BaseModel):
+    arch = 'wan21'
     def __init__(
             self,
             device,

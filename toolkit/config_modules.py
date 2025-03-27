@@ -405,7 +405,7 @@ class TrainConfig:
         self.correct_pred_norm = kwargs.get('correct_pred_norm', False)
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
-        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet
+        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace
 
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
@@ -470,9 +470,6 @@ class ModelConfig:
         self.is_auraflow: bool = kwargs.get('is_auraflow', False)
         self.is_v3: bool = kwargs.get('is_v3', False)
         self.is_flux: bool = kwargs.get('is_flux', False)
-        self.is_flex2: bool = kwargs.get('is_flex2', False)
-        if self.is_flex2:
-            self.is_flux = True
         self.is_lumina2: bool = kwargs.get('is_lumina2', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
@@ -540,6 +537,9 @@ class ModelConfig:
         
         self.arch: ModelArch = kwargs.get("arch", None)
         
+        # kwargs to pass to the model
+        self.model_kwargs = kwargs.get("model_kwargs", {})
+        
         # handle migrating to new model arch
         if self.arch is not None:
             # reverse the arch to the old style
@@ -557,8 +557,6 @@ class ModelConfig:
                 self.is_auraflow = True
             elif self.arch == 'flux':
                 self.is_flux = True
-            elif self.arch == 'flex2':
-                self.is_flex2 = True
             elif self.arch == 'lumina2':
                 self.is_lumina2 = True
             elif self.arch == 'vega':
@@ -582,8 +580,6 @@ class ModelConfig:
                 self.arch = 'auraflow'
             elif kwargs.get('is_flux', False):
                 self.arch = 'flux'
-            elif kwargs.get('is_flex2', False):
-                self.arch = 'flex2'
             elif kwargs.get('is_lumina2', False):
                 self.arch = 'lumina2'
             elif kwargs.get('is_vega', False):
@@ -878,6 +874,7 @@ class GenerateImageConfig:
         self.extra_values = extra_values if extra_values is not None else []
         self.num_frames = num_frames
         self.fps = fps
+        self.ctrl_img = None
         self.ctrl_idx = ctrl_idx
         
 
@@ -1072,6 +1069,8 @@ class GenerateImageConfig:
                         self.num_frames = int(content)
                     elif flag == 'fps':
                         self.fps = int(content)
+                    elif flag == 'ctrl_img':
+                        self.ctrl_img = content
                     elif flag == 'ctrl_idx':
                         self.ctrl_idx = int(content)
 

@@ -1675,9 +1675,12 @@ class SDTrainer(BaseSDTrainProcess):
                 else:
                     if unconditional_embeds is not None:
                         unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=dtype).detach()
-                    if self.adapter and isinstance(self.adapter, CustomAdapter):
-                        with self.timer('condition_noisy_latents'):
+                    with self.timer('condition_noisy_latents'):
+                        # do it for the model
+                        noisy_latents = self.sd.condition_noisy_latents(noisy_latents, batch)
+                        if self.adapter and isinstance(self.adapter, CustomAdapter):
                             noisy_latents = self.adapter.condition_noisy_latents(noisy_latents, batch)
+                    
                     with self.timer('predict_unet'):
                         noise_pred = self.predict_noise(
                             noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),

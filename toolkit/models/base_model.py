@@ -42,6 +42,7 @@ from toolkit.print import print_acc
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
+    from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
 # tell it to shut up
 diffusers.logging.set_verbosity(diffusers.logging.ERROR)
@@ -97,6 +98,8 @@ UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも
 
 
 class BaseModel:
+    # override these in child classes
+    arch = None
 
     def __init__(
             self,
@@ -174,6 +177,14 @@ class BaseModel:
     @unet.setter
     def unet(self, value):
         self.model = value
+        
+    @property
+    def transformer(self):
+        return self.model
+    
+    @transformer.setter
+    def transformer(self, value):
+        self.model = value
 
     @property
     def unet_unwrapped(self):
@@ -214,10 +225,6 @@ class BaseModel:
     @property
     def is_flux(self):
         return self.arch == 'flux'
-
-    @property
-    def is_flex2(self):
-        return self.arch == 'flex2'
 
     @property
     def is_lumina2(self):
@@ -385,8 +392,13 @@ class BaseModel:
                     extra = {}
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
-                        validation_image = Image.open(
-                            gen_config.adapter_image_path).convert("RGB")
+                        validation_image = Image.open(gen_config.adapter_image_path)
+                        if ".inpaint." not in gen_config.adapter_image_path:
+                            validation_image = validation_image.convert("RGB")
+                        else:
+                            # make sure it has an alpha
+                            if validation_image.mode != "RGBA":
+                                raise ValueError("Inpainting images must have an alpha channel")
                         if isinstance(self.adapter, T2IAdapter):
                             # not sure why this is double??
                             validation_image = validation_image.resize(
@@ -398,6 +410,10 @@ class BaseModel:
                                 (gen_config.width, gen_config.height))
                             extra['image'] = validation_image
                             extra['controlnet_conditioning_scale'] = gen_config.adapter_conditioning_scale
+                        if isinstance(self.adapter, CustomAdapter) and self.adapter.control_lora is not None:
+                            validation_image = validation_image.resize((gen_config.width, gen_config.height))
+                            extra['control_image'] = validation_image
+                            extra['control_image_idx'] = gen_config.ctrl_idx
                         if isinstance(self.adapter, IPAdapter) or isinstance(self.adapter, ClipVisionAdapter):
                             transform = transforms.Compose([
                                 transforms.ToTensor(),
@@ -786,6 +802,8 @@ class BaseModel:
             latent_model_input=latent_model_input,
             timestep=timestep,
             text_embeddings=text_embeddings,
+            guidance_embedding_scale=guidance_embedding_scale,
+            bypass_guidance_embedding=bypass_guidance_embedding,
             **kwargs
         )
 
@@ -1431,3 +1449,7 @@ class BaseModel:
     def convert_lora_weights_before_load(self, state_dict):
         # can be overridden in child classes to convert weights before loading
         return state_dict
+    
+    def condition_noisy_latents(self, latents: torch.Tensor, batch:'DataLoaderBatchDTO'):
+        # can be overridden in child classes to condition latents before noise prediction
+        return latents

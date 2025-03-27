@@ -60,6 +60,7 @@ scheduler_config = {
 
 
 class CogView4(BaseModel):
+    arch = 'cogview4'
     def __init__(
             self,
             device,
