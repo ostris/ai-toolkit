@@ -503,7 +503,7 @@ def save_tensors(imgs: torch.Tensor, path='output.png'):
     img_pil.save(path)
 
 def show_latents(latents: torch.Tensor, vae: 'AutoencoderTiny', name='AI Toolkit'):
-    if vae.device == 'cpu':
+    if vae.device == torch.device('cpu'):
         vae.to(latents.device)
     latents = latents / vae.config['scaling_factor']
     imgs = vae.decode(latents).sample
