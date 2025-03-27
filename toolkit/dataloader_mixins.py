@@ -771,7 +771,7 @@ class InpaintControlFileItemDTOMixin:
             img = Image.open(self.inpaint_path)
             # make sure has aplha
             if img.mode != 'RGBA':
-                raise ValueError(f"Image must have alpha channel for inpaint: {self.inpaint_path}")
+                return
             img = exif_transpose(img)
         
             w, h = img.size

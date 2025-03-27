@@ -64,4 +64,9 @@ RUN npm install && \
 # Expose port (assuming the application runs on port 3000)
 EXPOSE 8675
 
-CMD ["npm", "run", "start"]
+WORKDIR /
+
+COPY docker/start.sh /start.sh
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]
