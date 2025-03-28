@@ -23,6 +23,11 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     htop \
     nvtop \
     python3-opencv \
+    openssh-client \
+    openssh-server \
+    openssl \
+    rsync \
+    unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
