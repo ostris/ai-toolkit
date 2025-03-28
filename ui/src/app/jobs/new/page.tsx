@@ -19,6 +19,7 @@ import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
 import SimpleJob from './SimpleJob';
 import AdvancedJob from './AdvancedJob';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -179,17 +180,23 @@ export default function TrainingForm() {
         </div>
       ) : (
         <MainContent>
-          <SimpleJob
-            jobConfig={jobConfig}
-            setJobConfig={setJobConfig}
-            status={status}
-            handleSubmit={handleSubmit}
-            runId={runId}
-            gpuIDs={gpuIDs}
-            setGpuIDs={setGpuIDs}
-            gpuList={gpuList}
-            datasetOptions={datasetOptions}
-          />
+          <ErrorBoundary fallback={
+            <div className="flex items-center justify-center h-64 text-lg text-red-600 font-medium bg-red-100 dark:bg-red-900/20 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-lg">
+              Advanced job detected. Please switch to advanced view to continue.
+            </div>
+          }>
+            <SimpleJob
+              jobConfig={jobConfig}
+              setJobConfig={setJobConfig}
+              status={status}
+              handleSubmit={handleSubmit}
+              runId={runId}
+              gpuIDs={gpuIDs}
+              setGpuIDs={setGpuIDs}
+              gpuList={gpuList}
+              datasetOptions={datasetOptions}
+            />
+          </ErrorBoundary>
 
           <div className="pt-20"></div>
         </MainContent>
