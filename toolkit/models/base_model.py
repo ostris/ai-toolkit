@@ -1,5 +1,6 @@
 import copy
 import gc
+import inspect
 import json
 import random
 import shutil
@@ -229,6 +230,20 @@ class BaseModel:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+
+    def get_bucket_divisibility(self):
+        if self.vae is None:
+            return 8
+        try:
+            divisibility = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        except:
+            # if we have a custom vae, it might not have this
+            divisibility = 8
+        
+        # flux packs this again,
+        if self.is_flux:
+            divisibility = divisibility * 4
+        return divisibility
 
     # these must be implemented in child classes
     def load_model(self):
@@ -797,13 +812,20 @@ class BaseModel:
             self.unet.to(self.device_torch)
         if self.unet.dtype != self.torch_dtype:
             self.unet = self.unet.to(dtype=self.torch_dtype)
+            
+        # check if get_noise prediction has guidance_embedding_scale
+        # if it does not, we dont pass it
+        signatures =  inspect.signature(self.get_noise_prediction).parameters
+        
+        if 'guidance_embedding_scale' in signatures:
+            kwargs['guidance_embedding_scale'] = guidance_embedding_scale
+        if 'bypass_guidance_embedding' in signatures:
+            kwargs['bypass_guidance_embedding'] = bypass_guidance_embedding
 
         noise_pred = self.get_noise_prediction(
             latent_model_input=latent_model_input,
             timestep=timestep,
             text_embeddings=text_embeddings,
-            guidance_embedding_scale=guidance_embedding_scale,
-            bypass_guidance_embedding=bypass_guidance_embedding,
             **kwargs
         )
 

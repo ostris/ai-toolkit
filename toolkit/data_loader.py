@@ -381,6 +381,8 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
             sd: 'StableDiffusion' = None,
     ):
         self.dataset_config = dataset_config
+        # update bucket divisibility
+        self.dataset_config.bucket_tolerance = sd.get_bucket_divisibility()
         self.is_video = dataset_config.num_frames > 1
         super().__init__()
         folder_path = dataset_config.folder_path

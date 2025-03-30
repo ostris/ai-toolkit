@@ -13,7 +13,7 @@ SaveFormat = Literal['safetensors', 'diffusers']
 
 if TYPE_CHECKING:
     from toolkit.guidance import GuidanceType
-    from toolkit.logging import EmptyLogger
+    from toolkit.logging_aitk import EmptyLogger
 else:
     EmptyLogger = None
 
@@ -252,6 +252,9 @@ class AdapterConfig:
         self.control_image_dropout: float = kwargs.get('control_image_dropout', 0.0)
         self.has_inpainting_input: bool = kwargs.get('has_inpainting_input', False)
         self.invert_inpaint_mask_chance: float = kwargs.get('invert_inpaint_mask_chance', 0.0)
+        
+        # for subpixel adapter
+        self.subpixel_downscale_factor: int = kwargs.get('subpixel_downscale_factor', 8)
 
 
 class EmbeddingConfig:

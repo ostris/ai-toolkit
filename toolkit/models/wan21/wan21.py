@@ -318,6 +318,9 @@ class Wan21(BaseModel):
 
         # cache for holding noise
         self.effective_noise = None
+        
+    def get_bucket_divisibility(self):
+        return 16
 
     # static method to get the scheduler
     @staticmethod
