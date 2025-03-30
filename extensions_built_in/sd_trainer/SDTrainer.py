@@ -197,7 +197,10 @@ class SDTrainer(BaseSDTrainProcess):
                 flush()
         
         if self.train_config.diffusion_feature_extractor_path is not None:
-            self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path)
+            vae = None
+            if self.model_config.arch != "flux":
+                vae = self.sd.vae
+            self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path, vae=vae)
             self.dfe.to(self.device_torch)
             self.dfe.eval()
 

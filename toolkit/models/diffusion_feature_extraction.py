@@ -154,11 +154,12 @@ class DiffusionFeatureExtractor(nn.Module):
 
 
 class DiffusionFeatureExtractor3(nn.Module):
-    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
         super().__init__()
         self.version = 3
-        vae = AutoencoderTiny.from_pretrained(
-            "madebyollin/taef1", torch_dtype=torch.bfloat16)
+        if vae is None:
+            vae = AutoencoderTiny.from_pretrained(
+                "madebyollin/taef1", torch_dtype=torch.bfloat16)
         self.vae = vae
         image_encoder_path = "google/siglip-so400m-patch14-384"
         try:
@@ -342,9 +343,9 @@ class DiffusionFeatureExtractor3(nn.Module):
         return total_loss
 
 
-def load_dfe(model_path) -> DiffusionFeatureExtractor:
+def load_dfe(model_path, vae=None) -> DiffusionFeatureExtractor:
     if model_path == "v3":
-        dfe = DiffusionFeatureExtractor3()
+        dfe = DiffusionFeatureExtractor3(vae=vae)
         dfe.eval()
         return dfe
     if not os.path.exists(model_path):
