@@ -242,7 +242,7 @@ class BaseModel:
         
         # flux packs this again,
         if self.is_flux:
-            divisibility = divisibility * 4
+            divisibility = divisibility * 2
         return divisibility
 
     # these must be implemented in child classes
