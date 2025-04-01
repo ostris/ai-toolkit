@@ -39,7 +39,7 @@ git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 git submodule update --init --recursive
 python3 -m venv venv
-t csource venv/bin/activate
+source venv/bin/activate
 # install torch first
 pip3 install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
