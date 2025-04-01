@@ -458,7 +458,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
             dataset_folder = os.path.dirname(dataset_folder)
         
         dataset_size_file = os.path.join(dataset_folder, '.aitk_size.json')
-        dataloader_version = "0.1.1"
+        dataloader_version = "0.1.2"
         if os.path.exists(dataset_size_file):
             try:
                 with open(dataset_size_file, 'r') as f:

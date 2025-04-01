@@ -1,4 +1,5 @@
 import gc
+import os
 
 import torch
 
@@ -54,3 +55,12 @@ def adain(content_features, style_features):
     stylized_content = normalized_content * style_std + style_mean
 
     return stylized_content
+
+def get_quick_signature_string(file_path):
+    try:
+        file_stats = os.stat(file_path)
+        # Combine size and mtime into a single string
+        return f"{file_stats.st_size}:{int(file_stats.st_mtime)}"
+    except Exception as e:
+        print(f"Error accessing file {file_path}: {e}")
+        return None
