@@ -72,6 +72,9 @@ class Flex2(BaseModel):
     def get_train_scheduler():
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
+    def get_bucket_divisibility(self):
+        return 16
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Flux2 model")

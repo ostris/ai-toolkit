@@ -198,7 +198,7 @@ class SDTrainer(BaseSDTrainProcess):
         
         if self.train_config.diffusion_feature_extractor_path is not None:
             vae = None
-            if self.model_config.arch != "flux":
+            if self.model_config.arch != "flux" or self.sd.vae.__class__.__name__ == "AutoencoderPixelMixer":
                 vae = self.sd.vae
             self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path, vae=vae)
             self.dfe.to(self.device_torch)
