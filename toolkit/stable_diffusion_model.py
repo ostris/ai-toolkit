@@ -256,7 +256,7 @@ class StableDiffusion:
         divisibility = 2 ** (len(self.vae.config['block_out_channels']) - 1)
         
         # flux packs this again,
-        if self.is_flux:
+        if self.is_flux or self.is_v3:
             divisibility = divisibility * 2
         return divisibility
         
