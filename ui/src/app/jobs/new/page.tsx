@@ -104,8 +104,12 @@ export default function TrainingForm() {
         }
       })
       .catch(error => {
-        console.error('Error saving training:', error);
-        setStatus('error');
+        if (error.response?.status === 409) {
+          alert('Training name already exists. Please choose a different name.');
+        } else {
+          alert('Failed to save job. Please try again.');
+        }
+        console.log('Error saving training:', error);
       })
       .finally(() =>
         setTimeout(() => {

@@ -52,7 +52,13 @@ export async function POST(request: Request) {
       });
       return NextResponse.json(training);
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      // Handle unique constraint violation, 409=Conflict
+      return NextResponse.json({ error: 'Job name already exists' }, { status: 409 });
+    }
+    console.error(error);
+    // Handle other errors
     return NextResponse.json({ error: 'Failed to save training data' }, { status: 500 });
   }
 }
