@@ -45,6 +45,7 @@ config:
         # "C:\\path\\to\\images\\folder"
         - folder_path: "/path/to/images/folder"
           # clip_image_path is directory containting your control images. They must have filename as their train image. (extension does not matter)
+          # for normal redux, we are just recreating the same image, so you can use the same folder path above
           clip_image_path: "/path/to/control/images/folder"
           caption_ext: "txt"
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
