@@ -149,7 +149,12 @@ def concat_prompt_embeds(prompt_embeds: list[PromptEmbeds]):
     pooled_embeds = None
     if prompt_embeds[0].pooled_embeds is not None:
         pooled_embeds = torch.cat([p.pooled_embeds for p in prompt_embeds], dim=0)
-    return PromptEmbeds([text_embeds, pooled_embeds])
+    attention_mask = None
+    if prompt_embeds[0].attention_mask is not None:
+        attention_mask = torch.cat([p.attention_mask for p in prompt_embeds], dim=0)
+    pe = PromptEmbeds([text_embeds, pooled_embeds])
+    pe.attention_mask = attention_mask
+    return pe
 
 
 def concat_prompt_pairs(prompt_pairs: list[EncodedPromptPair]):

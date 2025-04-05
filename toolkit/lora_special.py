@@ -361,6 +361,10 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         if self.transformer_only and is_unet and hasattr(root_module, 'blocks'):
                             if "blocks" not in lora_name:
                                 skip = True
+                        
+                        if self.transformer_only and is_unet and hasattr(root_module, 'single_blocks'):
+                            if "single_blocks" not in lora_name and "double_blocks" not in lora_name:
+                                skip = True
 
                         if (is_linear or is_conv2d) and not skip:
 

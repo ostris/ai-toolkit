@@ -246,7 +246,7 @@ def generate_readme(supporters):
             f.write("### GitHub Sponsors\n\n")
             for sponsor in github_sponsors:
                 if sponsor['profile_image']:
-                    f.write(f"<a href=\"{sponsor['profile_url']}\" title=\"{sponsor['name']}\"><img src=\"{sponsor['profile_image']}\" width=\"50\" height=\"50\" alt=\"{sponsor['name']}\" style=\"border-radius:50%\"></a> ")
+                    f.write(f"<a href=\"{sponsor['profile_url']}\" title=\"{sponsor['name']}\"><img src=\"{sponsor['profile_image']}\" width=\"50\" height=\"50\" alt=\"{sponsor['name']}\" style=\"border-radius:50%;display:inline-block;\"></a> ")
                 else:
                     f.write(f"[{sponsor['name']}]({sponsor['profile_url']}) ")
             f.write("\n\n")
@@ -257,7 +257,7 @@ def generate_readme(supporters):
             f.write("### Patreon Supporters\n\n")
             for supporter in patreon_supporters:
                 if supporter['profile_image']:
-                    f.write(f"<a href=\"{supporter['profile_url']}\" title=\"{supporter['name']}\"><img src=\"{supporter['profile_image']}\" width=\"50\" height=\"50\" alt=\"{supporter['name']}\" style=\"border-radius:50%\"></a> ")
+                    f.write(f"<a href=\"{supporter['profile_url']}\" title=\"{supporter['name']}\"><img src=\"{supporter['profile_image']}\" width=\"50\" height=\"50\" alt=\"{supporter['name']}\" style=\"border-radius:50%;display:inline-block;\"></a> ")
                 else:
                     f.write(f"[{supporter['name']}]({supporter['profile_url']}) ")
             f.write("\n\n")

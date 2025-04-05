@@ -424,7 +424,9 @@ class Flex2(BaseModel):
                 if self.random_blur_mask:
                     # blur the mask
                     # Give it a channel dim of 1
-                    inpainting_tensor_mask = inpainting_tensor_mask.unsqueeze(1)
+                    if len(inpainting_tensor_mask.shape) == 3:
+                        # if it is 3d, add a channel dim
+                        inpainting_tensor_mask = inpainting_tensor_mask.unsqueeze(1)
                     # we are at latent size, so keep kernel smaller
                     inpainting_tensor_mask = random_blur(
                         inpainting_tensor_mask,
@@ -432,8 +434,6 @@ class Flex2(BaseModel):
                         max_kernel_size=8,
                         p=0.5
                     )
-                    # remove the channel dim
-                    inpainting_tensor_mask = inpainting_tensor_mask.squeeze(1)
                 
                 do_mask_invert = False
                 if self.invert_inpaint_mask_chance > 0.0:
