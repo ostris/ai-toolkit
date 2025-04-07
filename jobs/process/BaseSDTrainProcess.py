@@ -7,6 +7,7 @@ import shutil
 from collections import OrderedDict
 import os
 import re
+import traceback
 from typing import Union, List, Optional
 
 import numpy as np
@@ -2008,7 +2009,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # flush()
             ### HOOK ###
             with self.accelerator.accumulate(self.modules_being_trained):
-                loss_dict = self.hook_train_loop(batch_list)
+                try:
+                    loss_dict = self.hook_train_loop(batch_list)
+                except Exception as e:
+                    traceback.print_exc()
+                    #print batch info
+                    print("Batch Items:")
+                    for batch in batch_list:
+                        for item in batch.file_items:
+                            print(f" - {item.path}")
+                    raise e
+                    
             self.timer.stop('train_loop')
             if not did_first_flush:
                 flush()
