@@ -62,7 +62,7 @@ class FileItemDTO(
         use_db_entry = False
         if file_key in size_database:
             db_entry = size_database[file_key]
-            if db_entry is not None and db_entry[2] == file_signature:
+            if db_entry is not None and len(db_entry) >= 3 and db_entry[2] == file_signature:
                 use_db_entry = True
         
         if use_db_entry:
@@ -81,7 +81,7 @@ class FileItemDTO(
             
             # Release the video capture object immediately
             video.release()
-            size_database[file_key] = (width, height)
+            size_database[file_key] = (width, height, file_signature)
         else:
             # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method for now.
             # process width and height
