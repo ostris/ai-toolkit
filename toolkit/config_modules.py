@@ -540,6 +540,11 @@ class ModelConfig:
         
         self.arch: ModelArch = kwargs.get("arch", None)
         
+        # can be used to load the extras like text encoder or vae from here
+        # only setup for some models but will prevent having to download the te for
+        # 20 different model variants
+        self.extras_name_or_path = kwargs.get("extras_name_or_path", self.name_or_path)
+        
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         

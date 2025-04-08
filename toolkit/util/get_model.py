@@ -7,11 +7,12 @@ from toolkit.paths import TOOLKIT_ROOT
 import importlib
 import pkgutil
 
-from toolkit.models.wan21 import Wan21
+from toolkit.models.wan21 import Wan21, Wan21I2V
 from toolkit.models.cogview4 import CogView4
 
 BUILT_IN_MODELS = [
     Wan21,
+    Wan21I2V,
     CogView4,
 ]
 

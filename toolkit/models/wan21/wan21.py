@@ -330,23 +330,22 @@ class Wan21(BaseModel):
 
     def load_model(self):
         dtype = self.torch_dtype
-        # todo , will this work with other wan models?
-        base_model_path = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
         model_path = self.model_config.name_or_path
 
         self.print_and_status_update("Loading Wan2.1 model")
-        # base_model_path = "black-forest-labs/FLUX.1-schnell"
-        base_model_path = self.model_config.name_or_path_original
         subfolder = 'transformer'
         transformer_path = model_path
         if os.path.exists(transformer_path):
             subfolder = None
             transformer_path = os.path.join(transformer_path, 'transformer')
-            # check if the path is a full checkpoint.
-            te_folder_path = os.path.join(model_path, 'text_encoder')
-            # if we have the te, this folder is a full checkpoint, use it as the base
-            if os.path.exists(te_folder_path):
-                base_model_path = model_path
+        
+        te_path = self.model_config.extras_name_or_path    
+        if os.path.exists(os.path.join(model_path, 'text_encoder')):
+            te_path = model_path
+        
+        vae_path = self.model_config.extras_name_or_path
+        if os.path.exists(os.path.join(model_path, 'vae')):
+            vae_path = model_path
 
         self.print_and_status_update("Loading transformer")
         transformer = WanTransformer3DModel.from_pretrained(
@@ -420,9 +419,9 @@ class Wan21(BaseModel):
 
         self.print_and_status_update("Loading UMT5EncoderModel")
         tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+            te_path, subfolder="tokenizer", torch_dtype=dtype)
         text_encoder = UMT5EncoderModel.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
+            te_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
@@ -442,7 +441,7 @@ class Wan21(BaseModel):
         self.print_and_status_update("Loading VAE")
         # todo, example does float 32? check if quality suffers
         vae = AutoencoderKLWan.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
+            vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
         flush()
 
         self.print_and_status_update("Making pipe")

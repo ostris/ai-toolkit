@@ -1831,6 +1831,7 @@ class StableDiffusion:
             return_conditional_pred=False,
             guidance_embedding_scale=1.0,
             bypass_guidance_embedding=False,
+            batch: Union[None, 'DataLoaderBatchDTO'] = None,
             **kwargs,
     ):
         conditional_pred = None

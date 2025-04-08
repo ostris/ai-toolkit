@@ -1313,6 +1313,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.network_config is not None:
             adapter_name = f"{adapter_name}_{suffix}"
         latest_save_path = self.get_latest_save_path(adapter_name)
+        
+        if latest_save_path is not None and not self.adapter_config.train:
+            # the save path is for something else since we are not training
+            latest_save_path = self.adapter_config.name_or_path
 
         dtype = get_torch_dtype(self.train_config.dtype)
         if is_t2i:

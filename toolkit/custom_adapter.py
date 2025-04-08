@@ -1161,8 +1161,9 @@ class CustomAdapter(torch.nn.Module):
                     else:
                         with torch.no_grad():
                             self.vision_encoder.eval()
+                    self.vision_encoder.to(self.device)
                     clip_output = self.vision_encoder(
-                        clip_image,
+                        clip_image.to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype)),
                         output_hidden_states=True,
                     )
                     if self.config.clip_layer == 'penultimate_hidden_states':
