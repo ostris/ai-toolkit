@@ -22,7 +22,7 @@ k-diffusion
 open_clip_torch
 timm
 prodigyopt
-controlnet_aux==0.0.7
+controlnet_aux==0.0.9
 python-dotenv
 bitsandbytes
 hf_transfer
@@ -36,3 +36,4 @@ gradio
 python-slugify
 opencv-python
 pytorch-wavelets==1.3.0
+matplotlib==3.10.1

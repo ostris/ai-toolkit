@@ -687,6 +687,7 @@ class SliderConfig:
                 self.targets.append(target)
         print(f"Built {len(self.targets)} slider targets (with permutations)")
 
+ControlTypes = Literal['depth', 'line', 'pose', 'inpaint', 'mask']
 
 class DatasetConfig:
     """
@@ -803,6 +804,13 @@ class DatasetConfig:
         
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
+        
+        # automatic controls
+        self.controls: List[ControlTypes] = kwargs.get('controls', [])
+        if isinstance(self.controls, str):
+            self.controls = [self.controls]
+        # remove empty strings
+        self.controls = [control for control in self.controls if control.strip() != '']
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
