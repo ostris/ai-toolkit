@@ -164,11 +164,12 @@ def get_sampler(
         config_to_use = copy.deepcopy(flux_config)
         if arch == "sd":
             config_to_use = copy.deepcopy(sd_flow_config)
-        if arch == "flux":
+        elif arch == "flux":
             config_to_use = copy.deepcopy(flux_config)
         elif arch == "lumina2":
             config_to_use = copy.deepcopy(lumina2_config)
         else:
+            print(f"Unknown architecture {arch}, using default flux config")
             # use flux by default
             config_to_use = copy.deepcopy(flux_config)
     else:

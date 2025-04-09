@@ -321,8 +321,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.ema is not None:
             self.ema.eval()
 
+        # let adapter know we are sampling
+        if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
+            self.adapter.is_sampling = True
+        
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+
+        
+        if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
+            self.adapter.is_sampling = False
 
         if self.ema is not None:
             self.ema.train()
@@ -579,7 +587,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         direct_save = True
                     if self.adapter_config.type == 'redux':
                         direct_save = True
-                    if self.adapter_config.type in ['control_lora', 'subpixel']:
+                    if self.adapter_config.type in ['control_lora', 'subpixel', 'i2v']:
                         direct_save = True
                     save_ip_adapter_from_diffusers(
                         state_dict,

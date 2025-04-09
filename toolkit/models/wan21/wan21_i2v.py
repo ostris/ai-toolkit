@@ -211,7 +211,7 @@ class AggressiveWanI2VUnloadPipeline(WanImageToVideoPipeline):
                         hidden_states=latent_model_input,
                         timestep=timestep,
                         encoder_hidden_states=negative_prompt_embeds,
-                        encoder_hidden_states_image=image_embeds,
+                        encoder_hidden_states_image=image_embeds,  # todo I think unconditional should be scaled down version
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
                     )[0]
