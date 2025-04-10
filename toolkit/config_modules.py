@@ -714,7 +714,10 @@ class DatasetConfig:
                 random_triggers = [line for line in random_triggers if line.strip() != '']
         self.random_triggers: List[str] = random_triggers
         self.random_triggers_max: int = kwargs.get('random_triggers_max', 1)
-        self.caption_ext: str = kwargs.get('caption_ext', None)
+        self.caption_ext: str = kwargs.get('caption_ext', '.txt')
+        # if caption_ext doesnt start with a dot, add it
+        if self.caption_ext and not self.caption_ext.startswith('.'):
+            self.caption_ext = '.' + self.caption_ext
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)

@@ -62,7 +62,6 @@ transforms_dict = {
     'RandomEqualize': transforms.RandomEqualize(p=0.2),
 }
 
-caption_ext_list = ['txt', 'json', 'caption']
 img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
 
 
@@ -91,15 +90,16 @@ def standardize_images(images):
     return standardized_images
 
 def clean_caption(caption):
-    # remove any newlines
-    caption = caption.replace('\n', ', ')
-    # remove new lines for all operating systems
-    caption = caption.replace('\r', ', ')
-    caption_split = caption.split(',')
-    # remove empty strings
-    caption_split = [p.strip() for p in caption_split if p.strip()]
-    # join back together
-    caption = ', '.join(caption_split)
+    # this doesnt make any sense anymore in a world that is not based on comma seperated tokens
+    # # remove any newlines
+    # caption = caption.replace('\n', ', ')
+    # # remove new lines for all operating systems
+    # caption = caption.replace('\r', ', ')
+    # caption_split = caption.split(',')
+    # # remove empty strings
+    # caption_split = [p.strip() for p in caption_split if p.strip()]
+    # # join back together
+    # caption = ', '.join(caption_split)
     return caption
 
 
@@ -115,22 +115,17 @@ class CaptionMixin:
             # check if either has a prompt file
             path_no_ext = os.path.splitext(img_path)[0]
             prompt_path = None
-            for ext in caption_ext_list:
-                prompt_path = path_no_ext + '.' + ext
-                if os.path.exists(prompt_path):
-                    break
+            ext = self.dataset_config.caption_ext
+            prompt_path = path_no_ext + ext
         else:
             img_path = img_path_or_tuple if isinstance(img_path_or_tuple, str) else img_path_or_tuple.path
             # see if prompt file exists
             path_no_ext = os.path.splitext(img_path)[0]
-            prompt_path = None
-            for ext in caption_ext_list:
-                prompt_path = path_no_ext + '.' + ext
-                if os.path.exists(prompt_path):
-                    break
+            prompt_path = path_no_ext + ext
                 
         # allow folders to have a default prompt
         default_prompt_path = os.path.join(os.path.dirname(img_path), 'default.txt')
+        default_prompt_path_with_ext = os.path.join(os.path.dirname(img_path), 'default' + ext)
 
         if os.path.exists(prompt_path):
             with open(prompt_path, 'r', encoding='utf-8') as f:
@@ -141,6 +136,10 @@ class CaptionMixin:
                     if 'caption' in prompt:
                         prompt = prompt['caption']
 
+                prompt = clean_caption(prompt)
+        elif os.path.exists(default_prompt_path_with_ext):
+            with open(default_prompt_path, 'r', encoding='utf-8') as f:
+                prompt = f.read()
                 prompt = clean_caption(prompt)
         elif os.path.exists(default_prompt_path):
             with open(default_prompt_path, 'r', encoding='utf-8') as f:
