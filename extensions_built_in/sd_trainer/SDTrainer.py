@@ -771,7 +771,11 @@ class SDTrainer(BaseSDTrainProcess):
 
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         self.timer.start('preprocess_batch')
+        if isinstance(self.adapter, CustomAdapter):
+            batch = self.adapter.edit_batch_raw(batch)
         batch = self.preprocess_batch(batch)
+        if isinstance(self.adapter, CustomAdapter):
+            batch = self.adapter.edit_batch_processed(batch)
         dtype = get_torch_dtype(self.train_config.dtype)
         # sanity check
         if self.sd.vae.dtype != self.sd.vae_torch_dtype:

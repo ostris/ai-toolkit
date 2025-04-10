@@ -592,6 +592,36 @@ class I2VAdapter(torch.nn.Module):
     def condition_noisy_latents(self, latents: torch.Tensor, batch:DataLoaderBatchDTO):
         # todo handle start frame
         return latents
+    
+    def edit_batch_processed(self, batch: DataLoaderBatchDTO):
+        with torch.no_grad():
+            # we will alway get a clip image frame, if one is not passed, use image
+            # or if video, pull from the first frame
+            # edit the batch to pull the first frame out of a video if we have it
+            # videos come in (bs, num_frames, channels, height, width)
+            tensor = batch.tensor
+            if batch.clip_image_tensor is None:
+                if len(tensor.shape) == 5:
+                    # we have a video
+                    first_frames = tensor[:, 0, :, :, :].clone()
+                else:
+                    # we have a single image
+                    first_frames = tensor.clone()
+                    
+                # it is -1 to 1, change it to 0 to 1
+                first_frames = (first_frames + 1) / 2
+                    
+                # clip image tensors are preprocessed. 
+                tensors_0_1 = first_frames.to(dtype=torch.float16)
+                clip_out = self.adapter_ref().clip_image_processor(
+                    images=tensors_0_1,
+                    return_tensors="pt",
+                    do_resize=True,
+                    do_rescale=False,
+                ).pixel_values
+                
+                batch.clip_image_tensor = clip_out.to(self.device_torch)
+        return batch
 
     @property
     def is_active(self):

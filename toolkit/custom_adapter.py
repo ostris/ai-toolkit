@@ -302,6 +302,16 @@ class CustomAdapter(torch.nn.Module):
         # else:
         raise NotImplementedError
 
+    def edit_batch_raw(self, batch: DataLoaderBatchDTO):
+        # happens on a raw batch before latents are created
+        return batch
+    
+    def edit_batch_processed(self, batch: DataLoaderBatchDTO):
+        # happens after the latents are processed
+        if self.adapter_type == "i2v":
+            return self.i2v_adapter.edit_batch_processed(batch)
+        return batch
+
     def setup_clip(self):
         adapter_config = self.config
         sd = self.sd_ref()
