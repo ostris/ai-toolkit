@@ -78,6 +78,7 @@ class FileItemDTO(
             # Get width and height
             width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            w, h = width, height
             
             # Release the video capture object immediately
             video.release()
