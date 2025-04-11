@@ -38,7 +38,8 @@ def load_assistant_lora_from_path(adapter_path, sd: 'StableDiffusion') -> LoRASp
         network_config=network_config,
         network_type=network_config.type,
         transformer_only=network_config.transformer_only,
-        is_assistant_adapter=True
+        is_assistant_adapter=True,
+        base_model=sd
     )
     network.apply_to(
         pipe.text_encoder,
