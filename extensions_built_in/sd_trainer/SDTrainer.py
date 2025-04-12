@@ -1046,10 +1046,11 @@ class SDTrainer(BaseSDTrainProcess):
                     quad_count = random.randint(1, 4)
                     self.adapter.train()
                     self.adapter.trigger_pre_te(
-                        tensors_0_1=clip_images if not is_reg else None,  # on regs we send none to get random noise
+                        tensors_preprocessed=clip_images if not is_reg else None,  # on regs we send none to get random noise
                         is_training=True,
                         has_been_preprocessed=True,
                         quad_count=quad_count,
+                        batch_tensor=batch.tensor if not is_reg else None,
                         batch_size=noisy_latents.shape[0]
                     )
 

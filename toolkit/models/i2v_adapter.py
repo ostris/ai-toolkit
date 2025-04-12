@@ -9,7 +9,6 @@ from diffusers import WanTransformer3DModel
 from transformers import SiglipImageProcessor, SiglipVisionModel, CLIPImageProcessor, CLIPVisionModelWithProjection
 from diffusers.models.attention_processor import Attention
 from diffusers.models.transformers.transformer_wan import WanImageEmbedding, WanTimeTextImageEmbedding
-
 from toolkit.util.shuffle import shuffle_tensor_along_axis
 
 if TYPE_CHECKING:
@@ -98,15 +97,18 @@ class FrameEmbedder(torch.nn.Module):
     def __init__(
         self,
         adapter: 'I2VAdapter',
-        orig_layer: torch.nn.Linear,
-        in_channels=64,
-        out_channels=3072
+        orig_layer: torch.nn.Conv3d,
+        in_channels=20, # wan is 16 normally, and 36 with i2v so 20 new channels
     ):
         super().__init__()
-        # only do the weight for the new input. We combine with the original linear layer
-        init = torch.randn(out_channels, in_channels,
-                           device=orig_layer.weight.device, dtype=orig_layer.weight.dtype) * 0.01
-        self.weight = torch.nn.Parameter(init)
+        # goes through a conv patch embedding first and is then flattened
+        # hidden_states = self.patch_embedding(hidden_states)
+        # hidden_states = hidden_states.flatten(2).transpose(1, 2)
+        
+        inner_dim = orig_layer.out_channels
+        patch_size = adapter.sd_ref().model.config.patch_size
+        
+        self.patch_embedding = torch.nn.Conv3d(in_channels, inner_dim, kernel_size=patch_size, stride=patch_size)
 
         self.adapter_ref: weakref.ref = weakref.ref(adapter)
         self.orig_layer_ref: weakref.ref = weakref.ref(orig_layer)
@@ -116,35 +118,24 @@ class FrameEmbedder(torch.nn.Module):
         cls,
         model: WanTransformer3DModel,
         adapter: 'I2VAdapter',
-        num_control_images=1,
-        has_inpainting_input=False
     ):
-        # TODO implement this
         if model.__class__.__name__ == 'WanTransformer3DModel':
-            num_adapter_in_channels = model.x_embedder.in_features * num_control_images
+            new_channels = 20 # wan is 16 normally, and 36 with i2v so 20 new channels
 
-            if has_inpainting_input:
-                # inpainting has the mask before packing latents. it is normally 16 ch + 1ch mask
-                # packed it is 64ch + 4ch mask
-                # so we need to add 4 to the input channels
-                num_adapter_in_channels += 4
-
-            x_embedder: torch.nn.Linear = model.x_embedder
+            orig_patch_embedding: torch.nn.Conv3d = model.patch_embedding
             img_embedder = cls(
                 adapter,
-                orig_layer=x_embedder,
-                in_channels=num_adapter_in_channels,
-                out_channels=x_embedder.out_features,
+                orig_layer=orig_patch_embedding,
+                in_channels=new_channels,
             )
 
             # hijack the forward method
-            x_embedder._orig_ctrl_lora_forward = x_embedder.forward
-            x_embedder.forward = img_embedder.forward
+            orig_patch_embedding._orig_i2v_adapter_forward = orig_patch_embedding.forward
+            orig_patch_embedding.forward = img_embedder.forward
 
-            # update the config of the transformer
-            model.config.in_channels = model.config.in_channels * \
-                (num_control_images + 1)
-            model.config["in_channels"] = model.config.in_channels
+            # update the config of the transformer, only needed when merged in
+            # model.config.in_channels = model.config.in_channels + new_channels
+            # model.config["in_channels"] = model.config.in_channels + new_channels
 
             return img_embedder
         else:
@@ -159,30 +150,37 @@ class FrameEmbedder(torch.nn.Module):
             # make sure lora is not active
             if self.adapter_ref().control_lora is not None:
                 self.adapter_ref().control_lora.is_active = False
-            return self.orig_layer_ref()._orig_ctrl_lora_forward(x)
+            
+            if x.shape[1] > self.orig_layer_ref().in_channels:
+                # we have i2v, so we need to remove the extra channels
+                x = x[:, :self.orig_layer_ref().in_channels, :, :, :]
+            return self.orig_layer_ref()._orig_i2v_adapter_forward(x)
 
         # make sure lora is active
         if self.adapter_ref().control_lora is not None:
             self.adapter_ref().control_lora.is_active = True
+            
+        # x is arranged channels cat(orig_input = 16, temporal_conditioning_mask = 4, encoded_first_frame=16)
+        # (16 + 4 + 16) = 36 channels
+        # (batch_size, 36, num_frames, latent_height, latent_width)
 
         orig_device = x.device
         orig_dtype = x.dtype
+        
+        orig_in = x[:, :16, :, :, :]
+        orig_out = self.orig_layer_ref()._orig_i2v_adapter_forward(orig_in)
+        
+        # remove original stuff
+        x = x[:, 16:, :, :, :]
 
-        x = x.to(self.weight.device, dtype=self.weight.dtype)
+        x = x.to(self.patch_embedding.weight.device, dtype=self.patch_embedding.weight.dtype)
 
-        orig_weight = self.orig_layer_ref().weight.data.detach()
-        orig_weight = orig_weight.to(
-            self.weight.device, dtype=self.weight.dtype)
-        linear_weight = torch.cat([orig_weight, self.weight], dim=1)
-
-        bias = None
-        if self.orig_layer_ref().bias is not None:
-            bias = self.orig_layer_ref().bias.data.detach().to(
-                self.weight.device, dtype=self.weight.dtype)
-
-        x = torch.nn.functional.linear(x, linear_weight, bias)
-
+        x = self.patch_embedding(x)
+        
         x = x.to(orig_device, dtype=orig_dtype)
+        
+        # add the original out
+        x = x + orig_out
         return x
 
 
@@ -299,6 +297,8 @@ def new_wan_forward(
     return_dict: bool = True,
     attention_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+    # prevent circular import
+    from toolkit.models.wan21.wan_utils import add_first_frame_conditioning
     adapter:'I2VAdapter' = self._i2v_adapter_ref()
     
     if adapter.is_active:
@@ -336,6 +336,30 @@ def new_wan_forward(
             # doing a normal training run, always use conditional embeds
             encoder_hidden_states_image = adapter.adapter_ref().conditional_embeds
         
+        # add the first frame conditioning
+        if adapter.frame_embedder is not None:
+            with torch.no_grad():
+                # add the first frame conditioning
+                conditioning_frame = adapter.adapter_ref().cached_control_image_0_1
+                if conditioning_frame is None:
+                    raise ValueError("No conditioning frame found")
+
+                # make it -1 to 1
+                conditioning_frame = (conditioning_frame * 2) - 1
+                conditioning_frame = conditioning_frame.to(
+                    hidden_states.device, dtype=hidden_states.dtype
+                )
+                    
+                # if doing a full denoise, the latent input may be full channels here, only get first 16
+                if hidden_states.shape[1] > 16:
+                    hidden_states = hidden_states[:, :16, :, :, :]
+                
+                
+                hidden_states = add_first_frame_conditioning(
+                    latent_model_input=hidden_states,
+                    first_frame=conditioning_frame,
+                    vae=adapter.adapter_ref().sd_ref().vae,
+                )
     else:
         # not active deactivate the condition embedder
         self.condition_embedder.image_embedder = None
@@ -450,9 +474,7 @@ class I2VAdapter(torch.nn.Module):
         if self.config.i2v_do_start_frame:
             self.frame_embedder = FrameEmbedder.from_model(
                 sd.unet,
-                self,
-                num_control_images=config.num_control_images,
-                has_inpainting_input=config.has_inpainting_input
+                self
             )
             self.frame_embedder.to(self.device_torch)
 

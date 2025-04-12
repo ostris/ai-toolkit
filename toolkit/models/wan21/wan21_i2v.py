@@ -41,6 +41,8 @@ from .wan21 import \
     scheduler_config, \
     Wan21
 
+from .wan_utils import add_first_frame_conditioning
+
 
 class AggressiveWanI2VUnloadPipeline(WanImageToVideoPipeline):
     def __init__(
@@ -269,6 +271,9 @@ class AggressiveWanI2VUnloadPipeline(WanImageToVideoPipeline):
         image = {k: v.to(self.image_encoder.device, dtype=self.image_encoder.dtype) for k, v in image.items()}
         image_embeds = self.image_encoder(**image, output_hidden_states=True)
         return image_embeds.hidden_states[-2]
+    
+
+
 
 
 class Wan21I2V(Wan21):
@@ -488,46 +493,12 @@ class Wan21I2V(Wan21):
             image_embeds = image_embeds_full.hidden_states[-2]
             image_embeds = image_embeds.to(self.device_torch, dtype=self.torch_dtype)
             
-            # condition latent
-            # first_frames shape is (bs, channels, height, width)
-            # wan needs latends in (bs, channels, num_frames, height, width)
-            first_frames = first_frames.unsqueeze(2)
-            # video condition is first frame is the frame, the rest are zeros
-            num_frames = frames.shape[1]
-            
-            zero_frame = torch.zeros_like(first_frames)
-            video_condition = torch.cat([
-                first_frames, 
-                *[zero_frame for _ in range(num_frames - 1)]
-            ], dim=2)
-            
-            # our vae encoder expects (bs, num_frames, channels, height, width)
-            # permute to (bs, channels, num_frames, height, width)
-            video_condition = video_condition.permute(0, 2, 1, 3, 4)
-            
-            latent_condition = self.encode_images(
-                video_condition,
-                device=self.device_torch,
-                dtype=self.torch_dtype,
+            # Add conditioning using the standalone function
+            conditioned_latent = add_first_frame_conditioning(
+                latent_model_input=latent_model_input,
+                first_frame=first_frames,
+                vae=self.vae
             )
-            latent_condition = latent_condition.to(self.device_torch, dtype=self.torch_dtype)
-            
-            batch_size = frames.shape[0]
-            latent_height = latent_condition.shape[3]
-            latent_width = latent_condition.shape[4]
-            
-            mask_lat_size = torch.ones(batch_size, 1, num_frames, latent_height, latent_width)
-            mask_lat_size[:, :, list(range(1, num_frames))] = 0
-            first_frame_mask = mask_lat_size[:, :, 0:1]
-            first_frame_mask = torch.repeat_interleave(first_frame_mask, dim=2, repeats=self.pipeline.vae_scale_factor_temporal)
-            mask_lat_size = torch.concat([first_frame_mask, mask_lat_size[:, :, 1:, :]], dim=2)
-            mask_lat_size = mask_lat_size.view(batch_size, -1, self.pipeline.vae_scale_factor_temporal, latent_height, latent_width)
-            mask_lat_size = mask_lat_size.transpose(1, 2)
-            mask_lat_size = mask_lat_size.to(self.device_torch, dtype=self.torch_dtype)
-            
-            # return latents, torch.concat([mask_lat_size, latent_condition], dim=1)
-            first_frame_condition = torch.concat([mask_lat_size, latent_condition], dim=1)
-            conditioned_latent = torch.cat([latent_model_input, first_frame_condition], dim=1)
         
         noise_pred = self.model(
             hidden_states=conditioned_latent,
