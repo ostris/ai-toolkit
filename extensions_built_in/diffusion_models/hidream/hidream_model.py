@@ -122,11 +122,6 @@ class HidreamModel(BaseModel):
         flush()
         
         self.print_and_status_update("Loading transformer")
-        
-        transformer_kwargs = {}
-        if self.model_config.quantize:
-            quant_type = f"{self.model_config.qtype}wo"
-            transformer_kwargs['quantization_config'] = TorchAoConfig(quant_type)
             
         transformer = HiDreamImageTransformer2DModel.from_pretrained(
             model_path, 
@@ -352,9 +347,10 @@ class HidreamModel(BaseModel):
             else:
                 img_sizes = img_ids = None
 
-        cast_dtype = self.model.dtype
+        dtype = self.model.dtype
+        device = self.device_torch
         
-        # nosie pred here
+        # Pack the latent
         if latent_model_input.shape[-2] != latent_model_input.shape[-1]:
             B, C, H, W = latent_model_input.shape
             patch_size = self.transformer.config.patch_size
@@ -365,14 +361,18 @@ class HidreamModel(BaseModel):
                 device=latent_model_input.device
             )
             latent_model_input = einops.rearrange(latent_model_input, 'B C (H p1) (W p2) -> B C (H W) (p1 p2)', p1=patch_size, p2=patch_size)
-            out[:, :, 0:pH*pW] = latent_model_input
+            out[:, :, 0:pH*pW] = latent_model_input 
             latent_model_input = out
 
+        text_embeds = text_embeddings.text_embeds
+        # run the to for the list
+        text_embeds = [te.to(device, dtype=dtype) for te in text_embeds]
+        
         noise_pred = self.transformer(
             hidden_states = latent_model_input,
             timesteps = timestep,
-            encoder_hidden_states = text_embeddings.text_embeds.to(cast_dtype, dtype=cast_dtype),
-            pooled_embeds = text_embeddings.pooled_embeds.text_embeds.to(cast_dtype, dtype=cast_dtype),
+            encoder_hidden_states = text_embeds,
+            pooled_embeds = text_embeddings.pooled_embeds.to(device, dtype=dtype),
             img_sizes = img_sizes,
             img_ids = img_ids,
             return_dict = False,
@@ -395,9 +395,8 @@ class HidreamModel(BaseModel):
             max_sequence_length = max_sequence_length,
         )
         pe = PromptEmbeds(
-            prompt_embeds
+            [prompt_embeds, pooled_prompt_embeds]
         )
-        pe.pooled_embeds = pooled_prompt_embeds
         return pe
     
     def get_model_has_grad(self):
