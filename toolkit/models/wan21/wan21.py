@@ -36,7 +36,7 @@ from toolkit.accelerator import unwrap_model
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 from torchvision.transforms import Resize, ToPILImage
 from tqdm import tqdm
-
+import torch.nn.functional as F
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 from diffusers.pipelines.wan.pipeline_wan import XLA_AVAILABLE
 # from ...callbacks import MultiPipelineCallbacks, PipelineCallback
@@ -588,50 +588,37 @@ class Wan21(BaseModel):
         if dtype is None:
             dtype = self.vae_torch_dtype
 
-        # Move to vae to device if on cpu
         if self.vae.device == 'cpu':
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
-        # move to device and dtype
+
         image_list = [image.to(device, dtype=dtype) for image in image_list]
-        
-        # We need to detect video if we have it. 
-        # videos come in (num_frames, channels, height, width)
-        # images come in (channels, height, width)
-        # we need to add a frame dimension to images and remap the video to (channels, num_frames, height, width)
-        
-        if len(image_list[0].shape) == 3:
-            image_list = [image.unsqueeze(1) for image in image_list]
-        elif len(image_list[0].shape) == 4:
-            image_list = [image.permute(1, 0, 2, 3) for image in image_list]
-        else:
-            raise ValueError(f"Image shape is not correct, got {list(image_list[0].shape)}")
 
-        VAE_SCALE_FACTOR = 8
+        # Normalize shapes
+        norm_images = []
+        for image in image_list:
+            if image.ndim == 3:
+                # (C, H, W) -> (C, 1, H, W)
+                norm_images.append(image.unsqueeze(1))
+            elif image.ndim == 4:
+                # (T, C, H, W) -> (C, T, H, W)
+                norm_images.append(image.permute(1, 0, 2, 3))
+            else:
+                raise ValueError(f"Invalid image shape: {image.shape}")
 
-        # resize images if not divisible by 8
-        # now we need to resize considering the shape (channels, num_frames, height, width)
-        for i in range(len(image_list)):
-            image = image_list[i]
-            if image.shape[2] % VAE_SCALE_FACTOR != 0 or image.shape[3] % VAE_SCALE_FACTOR != 0:
-                # Create resized frames by handling each frame separately
-                c, f, h, w = image.shape
-                target_h = h // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR
-                target_w = w // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR
-                
-                # We need to process each frame separately
-                resized_frames = []
-                for frame_idx in range(f):
-                    frame = image[:, frame_idx, :, :]  # Extract single frame (channels, height, width)
-                    resized_frame = Resize((target_h, target_w))(frame)
-                    resized_frames.append(resized_frame.unsqueeze(1))  # Add frame dimension back
-                    
-                # Concatenate all frames back together along the frame dimension
-                image_list[i] = torch.cat(resized_frames, dim=1)
+        # Stack to (B, C, T, H, W)
+        images = torch.stack(norm_images)
+        B, C, T, H, W = images.shape
 
-        images = torch.stack(image_list)
-        # images = images.unsqueeze(2)  # adds frame dimension so (bs, ch, h, w) -> (bs, ch, 1, h, w)
+        # Resize if needed (B * T, C, H, W)
+        if H % 8 != 0 or W % 8 != 0:
+            target_h = H // 8 * 8
+            target_w = W // 8 * 8
+            images = images.permute(0, 2, 1, 3, 4).reshape(B * T, C, H, W)
+            images = F.interpolate(images, size=(target_h, target_w), mode='bilinear', align_corners=False)
+            images = images.view(B, T, C, target_h, target_w).permute(0, 2, 1, 3, 4)
+
         latents = self.vae.encode(images).latent_dist.sample()
 
         latents_mean = (
@@ -644,9 +631,7 @@ class Wan21(BaseModel):
         )
         latents = (latents - latents_mean) * latents_std
 
-        latents = latents.to(device, dtype=dtype)
-
-        return latents
+        return latents.to(device, dtype=dtype)
 
     def get_model_has_grad(self):
         return self.model.proj_out.weight.requires_grad

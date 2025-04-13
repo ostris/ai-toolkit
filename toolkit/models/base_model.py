@@ -5,7 +5,7 @@ import json
 import random
 import shutil
 import typing
-from typing import Union, List, Literal
+from typing import Optional, Union, List, Literal
 import os
 from collections import OrderedDict
 import copy
@@ -1478,3 +1478,7 @@ class BaseModel:
     def condition_noisy_latents(self, latents: torch.Tensor, batch:'DataLoaderBatchDTO'):
         # can be overridden in child classes to condition latents before noise prediction
         return latents
+    
+    def get_transformer_block_names(self) -> Optional[List[str]]:
+        # override in child classes to get transformer block names for lora targeting
+        return None
