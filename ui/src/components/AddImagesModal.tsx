@@ -39,28 +39,48 @@ export default function AddImagesModal() {
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
       if (acceptedFiles.length === 0) return;
-
       setIsUploading(true);
       setUploadProgress(0);
-
-      const formData = new FormData();
-      acceptedFiles.forEach(file => {
-        formData.append('files', file);
-      });
-      formData.append('datasetName', addImagesModalInfo?.datasetName || '');
-
+      
+      const batchSize = 1000;
+      const batches: File[][] = [];
+      
+      for (let i = 0; i < acceptedFiles.length; i += batchSize) {
+        batches.push(acceptedFiles.slice(i, i + batchSize));
+      }
+      
+      const totalFiles = acceptedFiles.length;
+      let filesUploaded = 0;
+      
       try {
-        await apiClient.post(`/api/datasets/upload`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          onUploadProgress: progressEvent => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
-            setUploadProgress(percentCompleted);
-          },
-          timeout: 0, // Disable timeout
-        });
-
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          const batch = batches[batchIndex];
+          const formData = new FormData();
+          
+          batch.forEach(file => {
+            formData.append('files', file);
+          });
+          
+          formData.append('datasetName', addImagesModalInfo?.datasetName || '');
+          
+          const baseProgress = (filesUploaded / totalFiles) * 100;
+          const batchWeight = batch.length / totalFiles;
+          
+          await apiClient.post(`/api/datasets/upload`, formData, {
+            headers: {
+              'Content-Type': 'multipart/form-data',
+            },
+            onUploadProgress: progressEvent => {
+              const batchProgress = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
+              const currentBatchContribution = (batchProgress / 100) * batchWeight * 100;
+              const overallProgress = Math.round(baseProgress + currentBatchContribution);
+              setUploadProgress(overallProgress);
+            },
+            timeout: 0, // Disable timeout
+          });
+          filesUploaded += batch.length;
+        }
+        
         onDone();
       } catch (error) {
         console.error('Upload failed:', error);
