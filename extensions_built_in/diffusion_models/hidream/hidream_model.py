@@ -129,14 +129,6 @@ class HidreamModel(BaseModel):
             torch_dtype=torch.bfloat16
         )
         
-        # count the params
-        sd = transformer.state_dict()
-        num_params = sum(p.numel() for p in sd.values())
-        print(f"Number of params in transformer: {num_params}")
-        # count params with name expert in them
-        num_expert_params = sum(p.numel() for k, p in sd.items() if 'expert' in k)
-        print(f"Number of params in transformer with expert in them: {num_expert_params}")
-        
         if not self.low_vram:
             transformer.to(self.device_torch, dtype=dtype)
         

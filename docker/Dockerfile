@@ -58,7 +58,8 @@ RUN echo "Cache bust: ${CACHEBUST}" && \
 WORKDIR /app/ai-toolkit
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install flash-attn --no-build-isolation  --no-cache-dir
 
 # Build UI
 WORKDIR /app/ai-toolkit/ui
