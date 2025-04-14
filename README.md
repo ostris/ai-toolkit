@@ -28,21 +28,51 @@ _Last updated: 2025-04-04_
 
 Requirements:
 - python >3.10
-- Nvidia GPU with enough ram to do what you need
+- Nvidia or AMD GPU with enough ram to do what you need
 - python venv
 - git
 
 
 Linux:
+
+For NVIDIA GPUs:
+
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 git submodule update --init --recursive
 python3 -m venv venv
-t csource venv/bin/activate
+source venv/bin/activate
 # install torch first
 pip3 install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
+```
+
+For AMD Instict GPUs:
+
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+git submodule update --init --recursive
+python3 -m venv venv
+source venv/bin/activate
+# install torch first
+pip3 install torch torchvision torchao --index-url https://download.pytorch.org/whl/rocm6.2.4
+pip3 install -r requirements-amd.txt
+```
+***Note***: You can find the latest stable or nightly `index-url` for ROCm builds onm [PyTorch's official installation page](https://pytorch.org/) 
+
+Install ROCm fork of bitsandbytes:
+
+```bash
+git clone --recurse https://github.com/ROCm/bitsandbytes
+cd bitsandbytes
+git checkout rocm_enabled_multi_backend
+pip install -r requirements-dev.txt
+#Use -DBNB_ROCM_ARCH="gfx90a;gfx942" to target specific gpu arch
+cmake -DCOMPUTE_BACKEND=hip -S . #Use -DBNB_ROCM_ARCH="gfx90a;gfx942" to target specific gpu arch
+make
+pip install .
 ```
 
 Windows:
