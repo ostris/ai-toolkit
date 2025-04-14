@@ -60,7 +60,7 @@ source venv/bin/activate
 pip3 install torch torchvision torchao --index-url https://download.pytorch.org/whl/rocm6.2.4
 pip3 install -r requirements-amd.txt
 ```
-***Note***: You can find the latest stable or nightly `index-url` for ROCm builds onm [PyTorch's official installation page](https://pytorch.org/) 
+***Note***: You can find the latest stable or nightly `index-url` for ROCm builds on [PyTorch's official installation page](https://pytorch.org/) 
 
 Install ROCm fork of bitsandbytes:
 
@@ -70,8 +70,7 @@ cd bitsandbytes
 git checkout rocm_enabled_multi_backend
 pip install -r requirements-dev.txt
 #Use -DBNB_ROCM_ARCH="gfx90a;gfx942" to target specific gpu arch
-cmake -DCOMPUTE_BACKEND=hip -S . #Use -DBNB_ROCM_ARCH="gfx90a;gfx942" to target specific gpu arch
-make
+cmake -DCOMPUTE_BACKEND=hip -S . 
 pip install .
 ```
 
