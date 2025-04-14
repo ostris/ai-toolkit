@@ -48,7 +48,7 @@ pip3 install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https:/
 pip3 install -r requirements.txt
 ```
 
-For AMD Instict GPUs:
+For AMD Instinct GPUs:
 
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
@@ -57,8 +57,9 @@ git submodule update --init --recursive
 python3 -m venv venv
 source venv/bin/activate
 # install torch first
-pip3 install torch torchvision torchao --index-url https://download.pytorch.org/whl/rocm6.2.4
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/rocm6.2.4
 pip3 install -r requirements-amd.txt
+pip install --pre torchao --index-url https://download.pytorch.org/whl/nightly/rocm6.2.4
 ```
 ***Note***: You can find the latest stable or nightly `index-url` for ROCm builds on [PyTorch's official installation page](https://pytorch.org/) 
 
@@ -67,11 +68,9 @@ Install ROCm fork of bitsandbytes:
 ```bash
 git clone --recurse https://github.com/ROCm/bitsandbytes
 cd bitsandbytes
-git checkout rocm_enabled_multi_backend
-pip install -r requirements-dev.txt
-#Use -DBNB_ROCM_ARCH="gfx90a;gfx942" to target specific gpu arch
-cmake -DCOMPUTE_BACKEND=hip -S . 
-pip install .
+git checkout rocm6.2_internal_testing 
+make hip 
+python setup.py install
 ```
 
 Windows:
