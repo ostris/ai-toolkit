@@ -341,7 +341,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                             skip = True
                         
                         if self.transformer_only and is_unet:
-                            transformer_block_names = base_model.get_transformer_block_names()
+                            transformer_block_names = None
+                            if base_model is not None:
+                                transformer_block_names = base_model.get_transformer_block_names()
                             
                             if transformer_block_names is not None:
                                 if not any([name in lora_name for name in transformer_block_names]):
