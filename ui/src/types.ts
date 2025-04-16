@@ -55,6 +55,9 @@ export interface NetworkConfig {
   linear_alpha: number;
   lokr_full_rank: boolean;
   lokr_factor: number;
+  network_kwargs: {
+    ignore_if_contains: string[];
+  }
 }
 
 export interface SaveConfig {

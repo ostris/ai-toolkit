@@ -29,7 +29,8 @@ config:
           # it is probably best to ignore the mixture of experts since only 2 are active each block. It works activating it, but I wouldnt.
           # proper training of it is not fully implemented
           ignore_if_contains:
-            - "ff_i"
+            - "ff_i.experts"
+            - "ff_i.gate"
       save:
         dtype: bfloat16 # precision to save
         save_every: 250 # save every this many steps
