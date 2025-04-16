@@ -12,6 +12,7 @@ export const modelArchs = [
   { name: 'flux', label: 'Flux.1' },
   { name: 'wan21', label: 'Wan 2.1' },
   { name: 'lumina2', label: 'Lumina2' },
+  { name: 'hidream', label: 'HiDream' },
 ];
 
 export const isVideoModelFromArch = (arch: string) => {
@@ -81,6 +82,20 @@ export const options = {
         'config.process[0].model.arch': ['lumina2', defaultModelArch],
         'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
         'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      },
+    },
+    {
+      name_or_path: 'HiDream-ai/HiDream-I1-Full',
+      defaults: {
+        // default updates when [selected, unselected] in the UI
+        'config.process[0].model.quantize': [true, false],
+        'config.process[0].model.quantize_te': [true, false],
+        'config.process[0].model.arch': ['hidream', defaultModelArch],
+        'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+        'config.process[0].train.lr': [0.0002, 0.0001],
+        'config.process[0].train.timestep_type': ['shift', 'sigmoid'],
+        'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
       },
     },
     {

@@ -649,11 +649,13 @@ def targeted_flow_guidance(
             noise,
             timesteps
         ).detach()
+        unconditional_noisy_latents = sd.condition_noisy_latents(unconditional_noisy_latents, batch)
         conditional_noisy_latents = sd.add_noise(
             conditional_latents,
             noise,
             timesteps
         ).detach()
+        conditional_noisy_latents = sd.condition_noisy_latents(conditional_noisy_latents, batch)
         
         # disable the lora to get a baseline prediction
         sd.network.is_active = False

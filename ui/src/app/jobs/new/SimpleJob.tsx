@@ -283,7 +283,7 @@ export default function SimpleJob({
                   options={[
                     { value: 'sigmoid', label: 'Sigmoid' },
                     { value: 'linear', label: 'Linear' },
-                    { value: 'flux_shift', label: 'Flux Shift' },
+                    { value: 'shift', label: 'Shift' },
                   ]}
                 />
                 <SelectInput
