@@ -308,6 +308,8 @@ class CaptionProcessingDTOMixin:
             self.raw_caption = caption_dict[self.path]["caption"]
             if 'caption_short' in caption_dict[self.path]:
                 self.raw_caption_short = caption_dict[self.path]["caption_short"]
+                if self.dataset_config.use_short_captions:
+                    self.raw_caption = caption_dict[self.path]["caption_short"]
         else:
             # see if prompt file exists
             path_no_ext = os.path.splitext(self.path)[0]
@@ -330,7 +332,8 @@ class CaptionProcessingDTOMixin:
                             prompt = prompt_json['caption']
                         if 'caption_short' in prompt_json:
                             short_caption = prompt_json['caption_short']
-
+                            if self.dataset_config.use_short_captions:
+                                prompt = short_caption
                         if 'extra_values' in prompt_json:
                             self.extra_values = prompt_json['extra_values']
 
