@@ -52,8 +52,7 @@ RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url http
 ARG CACHEBUST=1234
 RUN echo "Cache bust: ${CACHEBUST}" && \
     git clone https://github.com/ostris/ai-toolkit.git && \
-    cd ai-toolkit && \
-    git submodule update --init --recursive
+    cd ai-toolkit
 
 WORKDIR /app/ai-toolkit
 
