@@ -7,9 +7,6 @@ from typing import TYPE_CHECKING, List, Dict, Any
 from toolkit.models.clip_fusion import ZipperBlock
 from toolkit.models.zipper_resampler import ZipperModule, ZipperResampler
 import sys
-from toolkit.paths import REPOS_ROOT
-sys.path.append(REPOS_ROOT)
-from ipadapter.ip_adapter.resampler import  Resampler
 from collections import OrderedDict
 
 if TYPE_CHECKING:

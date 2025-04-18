@@ -5,23 +5,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 import weakref
 from typing import Union, TYPE_CHECKING
-
-
-from transformers import T5EncoderModel, CLIPTextModel, CLIPTokenizer, T5Tokenizer, CLIPTextModelWithProjection
-from diffusers.models.embeddings import PixArtAlphaTextProjection
-
+from transformers import T5EncoderModel, CLIPTokenizer, T5Tokenizer, CLIPTextModelWithProjection
 from toolkit import train_tools
-from toolkit.paths import REPOS_ROOT
 from toolkit.prompt_utils import PromptEmbeds
 from diffusers import Transformer2DModel
-
-sys.path.append(REPOS_ROOT)
-
-from ipadapter.ip_adapter.attention_processor import AttnProcessor2_0
+from toolkit.util.ip_adapter_utils import AttnProcessor2_0
 
 
 if TYPE_CHECKING:
-    from toolkit.stable_diffusion_model import StableDiffusion, PixArtSigmaPipeline
+    from toolkit.stable_diffusion_model import StableDiffusion
     from toolkit.custom_adapter import CustomAdapter
 
 

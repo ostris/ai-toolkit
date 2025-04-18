@@ -10,12 +10,6 @@ from transformers import T5EncoderModel, CLIPTextModel, CLIPTokenizer, T5Tokeniz
 from transformers.models.clip.modeling_clip import CLIPEncoder, CLIPAttention
 
 from toolkit.models.zipper_resampler import ZipperResampler, ZipperModule
-from toolkit.paths import REPOS_ROOT
-from toolkit.resampler import Resampler
-
-sys.path.append(REPOS_ROOT)
-
-from ipadapter.ip_adapter.attention_processor import AttnProcessor2_0
 
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion

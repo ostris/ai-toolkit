@@ -13,8 +13,6 @@ from toolkit.models.pixtral_vision import PixtralVisionEncoder, PixtralVisionIma
 from transformers import SiglipImageProcessor, SiglipVisionModel
 import traceback
 from toolkit.config_modules import AdapterConfig
-from toolkit.paths import REPOS_ROOT
-sys.path.append(REPOS_ROOT)
 
 
 if TYPE_CHECKING:

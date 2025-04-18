@@ -31,10 +31,6 @@ from toolkit.util.mask import generate_random_mask
 sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
 from collections import OrderedDict
-from ipadapter.ip_adapter.attention_processor import AttnProcessor, IPAttnProcessor, IPAttnProcessor2_0, \
-    AttnProcessor2_0
-from ipadapter.ip_adapter.ip_adapter import ImageProjModel
-from ipadapter.ip_adapter.resampler import Resampler
 from toolkit.config_modules import AdapterConfig, AdapterTypes, TrainConfig
 from toolkit.prompt_utils import PromptEmbeds
 import weakref

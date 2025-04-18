@@ -3,7 +3,6 @@ import random
 import torch
 import sys
 
-from PIL import Image
 from diffusers import Transformer2DModel
 from torch import nn
 from torch.nn import Parameter
@@ -12,18 +11,14 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 
 from toolkit.models.clip_pre_processor import CLIPImagePreProcessor
 from toolkit.models.zipper_resampler import ZipperResampler
-from toolkit.paths import REPOS_ROOT
 from toolkit.saving import load_ip_adapter_model
 from toolkit.train_tools import get_torch_dtype
 from toolkit.util.inverse_cfg import inverse_classifier_guidance
 
-sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional
 from collections import OrderedDict
-from ipadapter.ip_adapter.attention_processor import AttnProcessor, IPAttnProcessor, IPAttnProcessor2_0, \
-    AttnProcessor2_0
-from ipadapter.ip_adapter.ip_adapter import ImageProjModel
-from ipadapter.ip_adapter.resampler import PerceiverAttention, FeedForward, Resampler
+from toolkit.util.ip_adapter_utils import AttnProcessor2_0, IPAttnProcessor2_0, ImageProjModel
+from toolkit.resampler import Resampler
 from toolkit.config_modules import AdapterConfig
 from toolkit.prompt_utils import PromptEmbeds
 import weakref
@@ -35,9 +30,7 @@ if TYPE_CHECKING:
 from transformers import (
     CLIPImageProcessor,
     CLIPVisionModelWithProjection,
-    CLIPVisionModel,
     AutoImageProcessor,
-    ConvNextModel,
     ConvNextV2ForImageClassification,
     ConvNextForImageClassification,
     ConvNextImageProcessor
@@ -47,9 +40,6 @@ from toolkit.models.size_agnostic_feature_encoder import SAFEImageProcessor, SAF
 from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
 
 from transformers import ViTFeatureExtractor, ViTForImageClassification
-
-# gradient checkpointing
-from torch.utils.checkpoint import checkpoint
 
 import torch.nn.functional as F
 
