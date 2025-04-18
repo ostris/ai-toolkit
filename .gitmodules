@@ -2,7 +2,3 @@
 	path = repositories/sd-scripts
 	url = https://github.com/kohya-ss/sd-scripts.git
 	commit = b78c0e2a69e52ce6c79abc6c8c82d1a9cabcf05c
-[submodule "repositories/leco"]
-	path = repositories/leco
-	url = https://github.com/p1atdev/LECO
-	commit = 9294adf40218e917df4516737afb13f069a6789d
