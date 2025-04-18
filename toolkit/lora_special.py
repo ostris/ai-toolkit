@@ -14,15 +14,10 @@ from toolkit.models.lokr import LokrModule
 from .config_modules import NetworkConfig
 from .lorm import count_parameters
 from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, ExtractableModuleMixin
-from .paths import SD_SCRIPTS_ROOT
 
-sys.path.append(SD_SCRIPTS_ROOT)
-
-from networks.lora import LoRANetwork, get_block_index
+from toolkit.kohya_lora import LoRANetwork
 from toolkit.models.DoRA import DoRAModule
 from typing import TYPE_CHECKING
-
-from torch.utils.checkpoint import checkpoint
 
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
@@ -389,15 +384,6 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                 if lora_name in modules_dim:
                                     dim = modules_dim[lora_name]
                                     alpha = modules_alpha[lora_name]
-                            elif is_unet and block_dims is not None:
-                                # U-Netでblock_dims指定あり
-                                block_idx = get_block_index(lora_name)
-                                if is_linear or is_conv2d_1x1:
-                                    dim = block_dims[block_idx]
-                                    alpha = block_alphas[block_idx]
-                                elif conv_block_dims is not None:
-                                    dim = conv_block_dims[block_idx]
-                                    alpha = conv_block_alphas[block_idx]
                             else:
                                 # 通常、すべて対象とする
                                 if is_linear or is_conv2d_1x1:

@@ -19,16 +19,12 @@ from toolkit.models.te_adapter import TEAdapter
 from toolkit.models.te_aug_adapter import TEAugAdapter
 from toolkit.models.vd_adapter import VisionDirectAdapter
 from toolkit.models.redux import ReduxImageEncoder
-from toolkit.paths import REPOS_ROOT
 from toolkit.photomaker import PhotoMakerIDEncoder, FuseModule, PhotoMakerCLIPEncoder
 from toolkit.saving import load_ip_adapter_model, load_custom_adapter_model
 from toolkit.train_tools import get_torch_dtype
 from toolkit.models.pixtral_vision import PixtralVisionEncoderCompatible, PixtralVisionImagePreprocessorCompatible
 import random
-
 from toolkit.util.mask import generate_random_mask
-
-sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
 from collections import OrderedDict
 from toolkit.config_modules import AdapterConfig, AdapterTypes, TrainConfig

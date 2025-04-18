@@ -7,12 +7,7 @@ from collections import OrderedDict
 from typing import List
 from jobs.process import BaseExtractProcess, TrainFineTuneProcess
 from datetime import datetime
-import yaml
-from toolkit.paths import REPOS_ROOT
 
-import sys
-
-sys.path.append(REPOS_ROOT)
 
 process_dict = {
     'vae': 'TrainVAEProcess',

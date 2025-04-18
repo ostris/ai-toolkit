@@ -11,13 +11,9 @@ import random
 from transformers import CLIPImageProcessor
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from toolkit.paths import SD_SCRIPTS_ROOT
 import torchvision.transforms.functional
 from toolkit.image_utils import save_tensors, show_img, show_tensors
 
-sys.path.append(SD_SCRIPTS_ROOT)
-
-from library.model_util import load_vae
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.data_loader import AiToolkitDataset, get_dataloader_from_datasets, \
     trigger_dataloader_setup_epoch

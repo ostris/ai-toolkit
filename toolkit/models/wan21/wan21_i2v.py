@@ -6,7 +6,6 @@ from toolkit.accelerator import unwrap_model
 from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.prompt_utils import PromptEmbeds
-from toolkit.paths import REPOS_ROOT
 from transformers import AutoTokenizer, UMT5EncoderModel
 from diffusers import AutoencoderKLWan, WanImageToVideoPipeline, WanTransformer3DModel
 import os
