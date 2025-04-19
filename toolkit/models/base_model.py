@@ -1486,3 +1486,7 @@ class BaseModel:
     def get_transformer_block_names(self) -> Optional[List[str]]:
         # override in child classes to get transformer block names for lora targeting
         return None
+    
+    def get_base_model_version() -> str:
+        # override in child classes to get the base model version
+        return "unknown"

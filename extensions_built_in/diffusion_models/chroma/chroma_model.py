@@ -386,3 +386,6 @@ class ChromaModel(BaseModel):
             new_key = key.replace("diffusion_model.", "transformer.")
             new_sd[new_key] = value
         return new_sd
+    
+    def get_base_model_version(self):
+        return "chroma"

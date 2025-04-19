@@ -663,3 +663,6 @@ class Wan21(BaseModel):
 
     def convert_lora_weights_before_load(self, state_dict):
         return convert_to_diffusers(state_dict)
+    
+    def get_base_model_version(self):
+        return "wan_2.1"

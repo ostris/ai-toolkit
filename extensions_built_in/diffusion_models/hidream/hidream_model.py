@@ -443,3 +443,6 @@ class HidreamModel(BaseModel):
             new_sd[new_key] = value
         return new_sd
     
+    def get_base_model_version(self):
+        return "hidream_i1"
+    

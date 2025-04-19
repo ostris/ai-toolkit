@@ -339,18 +339,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         o_dict = OrderedDict({
             "training_info": self.get_training_info()
         })
-        if self.model_config.is_v2:
-            o_dict['ss_v2'] = True
-            o_dict['ss_base_model_version'] = 'sd_2.1'
-
-        elif self.model_config.is_xl:
-            o_dict['ss_base_model_version'] = 'sdxl_1.0'
-        elif self.model_config.is_flux:
-            o_dict['ss_base_model_version'] = 'flux.1'
-        elif self.model_config.is_lumina2:
-            o_dict['ss_base_model_version'] = 'lumina2'
-        else:
-            o_dict['ss_base_model_version'] = 'sd_1.5'
+        o_dict['ss_base_model_version'] = self.sd.get_base_model_version()
 
         o_dict = add_base_model_info_to_meta(
             o_dict,

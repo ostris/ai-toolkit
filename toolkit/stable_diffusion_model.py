@@ -3082,3 +3082,24 @@ class StableDiffusion:
     def get_transformer_block_names(self) -> Optional[List[str]]:
         # override in child classes to get transformer block names for lora targeting
         return None
+    
+    def get_base_model_version(self) -> str:
+        if self.is_pixart:
+            return 'pixart'
+        if self.is_v3:
+            return 'sd_3'
+        if self.is_auraflow:
+            return 'auraflow'
+        if self.is_flux:
+            return 'flux.1'
+        if self.is_lumina2:
+            return 'lumina2'
+        if self.is_ssd:
+            return 'ssd'
+        if self.is_vega:
+            return 'vega'
+        if self.is_xl:
+            return 'sdxl_1.0'
+        if self.is_v2:
+            return 'sd_2.1'
+        return 'sd_1.5'
