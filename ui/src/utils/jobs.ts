@@ -34,6 +34,22 @@ export const stopJob = (jobID: string) => {
   });
 };
 
+export const forceStopJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/forcestop`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job Force stopped:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error force stopping job:', error);
+        reject(error);
+      });
+  });
+};
+
 export const deleteJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
