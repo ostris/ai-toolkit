@@ -41,6 +41,9 @@ def shuffle_tensor_along_axis(tensor, axis=0, seed=None):
         
         # Apply the shuffle
         shuffled_tensor = tensor[slices]
+        
+    except Exception as e:
+        raise RuntimeError(f"Error during shuffling: {e}")
     
     finally:
         # Restore original random states

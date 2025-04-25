@@ -1160,12 +1160,12 @@ class BaseModel:
             if self.model_config.ignore_if_contains is not None:
                 # remove params that contain the ignore_if_contains from named params
                 for key in list(named_params.keys()):
-                    if any([s in key for s in self.model_config.ignore_if_contains]):
+                    if any([s in f"transformer.{key}" for s in self.model_config.ignore_if_contains]):
                         del named_params[key]
             if self.model_config.only_if_contains is not None:
                 # remove params that do not contain the only_if_contains from named params
                 for key in list(named_params.keys()):
-                    if not any([s in key for s in self.model_config.only_if_contains]):
+                    if not any([s in f"transformer.{key}" for s in self.model_config.only_if_contains]):
                         del named_params[key]
 
         if refiner:

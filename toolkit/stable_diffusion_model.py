@@ -1401,8 +1401,7 @@ class StableDiffusion:
                         conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(validation_image)
                         self.adapter(conditional_clip_embeds)
 
-                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter)  \
-                            and gen_config.adapter_image_path is not None:
+                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
                         # handle condition the prompts
                         gen_config.prompt = self.adapter.condition_prompt(
                             gen_config.prompt,
@@ -1456,7 +1455,7 @@ class StableDiffusion:
                         conditional_embeds = self.adapter(conditional_embeds, conditional_clip_embeds, is_unconditional=False)
                         unconditional_embeds = self.adapter(unconditional_embeds, unconditional_clip_embeds, is_unconditional=True)
 
-                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter) and validation_image is not None:
+                    if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
                         conditional_embeds = self.adapter.condition_encoded_embeds(
                             tensors_0_1=validation_image,
                             prompt_embeds=conditional_embeds,
