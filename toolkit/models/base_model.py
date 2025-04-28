@@ -113,15 +113,15 @@ class BaseModel:
     ):
         self.accelerator = get_accelerator()
         self.custom_pipeline = custom_pipeline
-        self.device = str(self.accelerator.device)
+        self.device = device
         self.dtype = dtype
         self.torch_dtype = get_torch_dtype(dtype)
-        self.device_torch = self.accelerator.device
+        self.device_torch = torch.device(device)
 
-        self.vae_device_torch = self.accelerator.device
+        self.vae_device_torch = torch.device(device)
         self.vae_torch_dtype = get_torch_dtype(model_config.vae_dtype)
 
-        self.te_device_torch = self.accelerator.device
+        self.te_device_torch = torch.device(device)
         self.te_torch_dtype = get_torch_dtype(model_config.te_dtype)
 
         self.model_config = model_config
