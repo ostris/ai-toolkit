@@ -10,7 +10,7 @@ def load_vae(vae_path, dtype):
     except Exception as e:
         try:
             vae = AutoencoderKL.from_pretrained(
-                vae_path.vae_path,
+                vae_path,
                 subfolder="vae",
                 torch_dtype=dtype,
             )
