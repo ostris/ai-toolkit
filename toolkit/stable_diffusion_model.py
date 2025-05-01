@@ -2283,6 +2283,7 @@ class StableDiffusion:
             bleed_latents: torch.FloatTensor = None,
             is_input_scaled=False,
             return_first_prediction=False,
+            bypass_guidance_embedding=False,
             **kwargs,
     ):
         timesteps_to_run = self.noise_scheduler.timesteps[start_timesteps:total_timesteps]
@@ -2299,6 +2300,7 @@ class StableDiffusion:
                 add_time_ids=add_time_ids,
                 is_input_scaled=is_input_scaled,
                 return_conditional_pred=True,
+                bypass_guidance_embedding=bypass_guidance_embedding,
                 **kwargs,
             )
             # some schedulers need to run separately, so do that. (euler for example)
