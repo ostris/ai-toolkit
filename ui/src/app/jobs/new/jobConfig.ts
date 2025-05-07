@@ -11,6 +11,7 @@ export const defaultDatasetConfig: DatasetConfig = {
   is_reg: false,
   network_weight: 1,
   resolution: [512, 768, 1024],
+  controls: []
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -75,6 +76,7 @@ export const defaultJobConfig: JobConfig = {
           quantize_te: true,
           arch: 'flex1',
           low_vram: false,
+          model_kwargs: {},
         },
         sample: {
           sampler: 'flowmatch',

@@ -80,6 +80,7 @@ export interface DatasetConfig {
   network_weight: number;
   cache_latents_to_disk?: boolean;
   resolution: number[];
+  controls: string[];
 }
 
 export interface EMAConfig {
@@ -122,6 +123,7 @@ export interface ModelConfig {
   quantize_kwargs?: QuantizeKwargsConfig;
   arch: string;
   low_vram: boolean;
+  model_kwargs: {[key: string]: any};
 }
 
 export interface SampleConfig {

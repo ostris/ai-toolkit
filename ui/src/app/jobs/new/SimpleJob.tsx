@@ -1,6 +1,6 @@
 'use client';
-
-import { options, modelArchs, isVideoModelFromArch } from './options';
+import { useMemo } from 'react';
+import { modelArchs, ModelArch } from './options';
 import { defaultDatasetConfig } from './jobConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
@@ -33,7 +33,13 @@ export default function SimpleJob({
   gpuList,
   datasetOptions,
 }: Props) {
-  const isVideoModel = isVideoModelFromArch(jobConfig.config.process[0].model.arch);
+
+  const modelArch = useMemo(() => {
+    return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
+  }, [jobConfig.config.process[0].model.arch]);
+
+  const isVideoModel = !!modelArch?.isVideoModel;
+
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-8">
@@ -91,6 +97,16 @@ export default function SimpleJob({
                 }
                 // set new model
                 setJobConfig(value, 'config.process[0].model.arch');
+
+                // update controls for datasets
+                const controls = newArch?.controls ?? [];
+                const datasets = jobConfig.config.process[0].datasets.map(dataset => {
+                  const newDataset = objectCopy(dataset);
+                  newDataset.controls = controls;
+                  return newDataset;
+                }
+                );
+                setJobConfig(datasets, 'config.process[0].datasets');
               }}
               options={
                 modelArchs
@@ -445,12 +461,16 @@ export default function SimpleJob({
               ))}
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  const newDataset = objectCopy(defaultDatasetConfig);
+                  // automaticallt add the controls for a new dataset
+                  const controls = modelArch?.controls ?? [];
+                  newDataset.controls = controls;
                   setJobConfig(
-                    [...jobConfig.config.process[0].datasets, objectCopy(defaultDatasetConfig)],
+                    [...jobConfig.config.process[0].datasets, newDataset],
                     'config.process[0].datasets',
                   )
-                }
+                }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
               >
                 Add Dataset
