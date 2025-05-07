@@ -70,52 +70,24 @@ export default function SimpleJob({
           {/* Model Configuration Section */}
           <Card title="Model Configuration">
             <SelectInput
-              label="Name or Path"
-              value={jobConfig.config.process[0].model.name_or_path}
-              onChange={value => {
-                // see if model changed
-                const currentModel = options.model.find(
-                  model => model.name_or_path === jobConfig.config.process[0].model.name_or_path,
-                );
-                if (!currentModel || currentModel.name_or_path === value) {
-                  // model has not changed
-                  return;
-                }
-                // revert defaults from previous model
-                for (const key in currentModel.defaults) {
-                  setJobConfig(currentModel.defaults[key][1], key);
-                }
-                // set new model
-                setJobConfig(value, 'config.process[0].model.name_or_path');
-                // update the defaults when a model is selected
-                const model = options.model.find(model => model.name_or_path === value);
-                if (model?.defaults) {
-                  for (const key in model.defaults) {
-                    setJobConfig(model.defaults[key][0], key);
-                  }
-                }
-              }}
-              options={
-                options.model
-                  .map(model => {
-                    if (model.dev_only && !isDev) {
-                      return null;
-                    }
-                    return {
-                      value: model.name_or_path,
-                      label: model.name_or_path,
-                    };
-                  })
-                  .filter(x => x) as { value: string; label: string }[]
-              }
-            />
-            <SelectInput
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
               onChange={value => {
                 const currentArch = modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch);
                 if (!currentArch || currentArch.name === value) {
                   return;
+                }
+
+                // revert defaults from previous model
+                for (const key in currentArch.defaults) {
+                  setJobConfig(currentArch.defaults[key][1], key);
+                }
+                // update the defaults when a model is selected
+                const newArch = modelArchs.find(model => model.name === value);
+                if (newArch?.defaults) {
+                  for (const key in newArch.defaults) {
+                    setJobConfig(newArch.defaults[key][0], key);
+                  }
                 }
                 // set new model
                 setJobConfig(value, 'config.process[0].model.arch');
@@ -130,6 +102,18 @@ export default function SimpleJob({
                   })
                   .filter(x => x) as { value: string; label: string }[]
               }
+            />
+            <TextInput
+              label="Name or Path"
+              value={jobConfig.config.process[0].model.name_or_path}
+              onChange={(value: string | null) => {
+                if (value?.trim() === '') {
+                  value = null;
+                }
+                setJobConfig(value, 'config.process[0].model.name_or_path');
+              }}
+              placeholder=""
+              required
             />
             <FormGroup label="Quantize">
               <div className="grid grid-cols-2 gap-2">

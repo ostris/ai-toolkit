@@ -463,7 +463,7 @@ class TrainConfig:
         self.blended_blur_noise = kwargs.get('blended_blur_noise', False)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
 
 
 class ModelConfig:
@@ -552,6 +552,15 @@ class ModelConfig:
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
+        
+        # allow frontend to pass arch with a color like arch:tag
+        # but remove the tag
+        if self.arch is not None:
+            if ':' in self.arch:
+                self.arch = self.arch.split(':')[0]
+        
+        if self.arch == "flex1":
+            self.arch = "flux"
         
         # handle migrating to new model arch
         if self.arch is not None:

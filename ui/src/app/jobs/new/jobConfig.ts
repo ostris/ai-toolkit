@@ -73,7 +73,7 @@ export const defaultJobConfig: JobConfig = {
           name_or_path: 'ostris/Flex.1-alpha',
           quantize: true,
           quantize_te: true,
-          arch: 'flux',
+          arch: 'flex1',
           low_vram: false,
         },
         sample: {

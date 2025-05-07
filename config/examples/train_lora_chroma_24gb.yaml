@@ -65,7 +65,14 @@ config:
         # Download the whichever model you prefer from the Chroma repo
         # https://huggingface.co/lodestones/Chroma/tree/main
         # point to it here.
-        name_or_path: "/path/to/chroma/chroma-unlocked-vVERSION.safetensors"
+        # name_or_path: "/path/to/chroma/chroma-unlocked-vVERSION.safetensors"
+
+        # using lodestones/Chroma will automatically use the latest version
+        name_or_path: "lodestones/Chroma"
+
+        # # You can also select a version of Chroma like so
+        # name_or_path: "lodestones/Chroma/v28"
+        
         arch: "chroma"
         quantize: true  # run 8bit mixed precision
       sample:

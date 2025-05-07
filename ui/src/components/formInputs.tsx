@@ -1,5 +1,9 @@
+'use client';
+
 import React, { forwardRef } from 'react';
 import classNames from 'classnames';
+import dynamic from "next/dynamic";
+const Select = dynamic(() => import("react-select"), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
 const inputClasses =
@@ -116,16 +120,21 @@ export interface SelectInputProps extends InputProps {
 
 export const SelectInput = (props: SelectInputProps) => {
   const { label, value, onChange, options } = props;
+  const selectedOption = options.find(option => option.value === value);
   return (
     <div className={classNames(props.className)}>
       {label && <label className={labelClasses}>{label}</label>}
-      <select value={value} onChange={e => onChange(e.target.value)} className={inputClasses}>
-        {options.map(option => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <Select 
+        value={selectedOption} 
+        options={options}
+        className="aitk-react-select-container"
+        classNamePrefix="aitk-react-select"
+        onChange={selected => {
+          if (selected) {
+            onChange((selected as { value: string }).value);
+          }
+        }}
+      />
     </div>
   );
 };

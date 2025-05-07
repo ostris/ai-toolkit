@@ -363,7 +363,8 @@ class TrainSliderProcess(BaseSDTrainProcess):
                     ]
                     pred_kwargs['down_block_additional_residuals'] = down_block_additional_residuals
 
-                denoised_latents = torch.cat([noisy_latents] * self.prompt_chunk_size, dim=0)
+                # denoised_latents = torch.cat([noisy_latents] * self.prompt_chunk_size, dim=0)
+                denoised_latents = noisy_latents
                 current_timestep = timesteps
             else:
                 if self.train_config.noise_scheduler == 'flowmatch':
@@ -417,25 +418,24 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 self.network.multiplier = prompt_pair.multiplier_list + prompt_pair.multiplier_list
                 denoised_latents = self.sd.diffuse_some_steps(
                     latents,  # pass simple noise latents
-                    train_tools.concat_prompt_embeddings(
-                        prompt_pair.positive_target,  # unconditional
-                        prompt_pair.target_class,  # target
-                        self.train_config.batch_size,
-                    ),
+                    prompt_pair.target_class,
                     start_timesteps=0,
                     total_timesteps=timesteps_to,
                     guidance_scale=3,
+                    bypass_guidance_embedding=False
                 )
-
-
-                noise_scheduler.set_timesteps(1000)
+                if hasattr(self.sd.noise_scheduler, 'set_train_timesteps'):
+                    noise_scheduler.set_train_timesteps(1000, device=self.device_torch)
+                else:
+                    noise_scheduler.set_timesteps(1000)
 
                 current_timestep_index = int(timesteps_to * 1000 / self.train_config.max_denoising_steps)
                 current_timestep = noise_scheduler.timesteps[current_timestep_index]
 
             # split the latents into out prompt pair chunks
-            denoised_latent_chunks = torch.chunk(denoised_latents, self.prompt_chunk_size, dim=0)
-            denoised_latent_chunks = [x.detach() for x in denoised_latent_chunks]
+            # denoised_latent_chunks = torch.chunk(denoised_latents, self.prompt_chunk_size, dim=0)
+            # denoised_latent_chunks = [x.detach() for x in denoised_latent_chunks]
+            denoised_latent_chunks = [denoised_latents]
 
             # flush()  # 4.2GB to 3GB on 512x512
             mask_multiplier = torch.ones((denoised_latents.shape[0], 1, 1, 1), device=self.device_torch, dtype=dtype)
@@ -467,35 +467,62 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 unmasked_target = None
 
             # 4.20 GB RAM for 512x512
-            positive_latents = get_noise_pred(
-                prompt_pair.positive_target,  # negative prompt
-                prompt_pair.negative_target,  # positive prompt
-                1,
-                current_timestep,
-                denoised_latents
-            )
-            positive_latents = positive_latents.detach()
-            positive_latents.requires_grad = False
+            # positive_latents = get_noise_pred(
+            #     prompt_pair.positive_target,  # negative prompt
+            #     prompt_pair.negative_target,  # positive prompt
+            #     1,
+            #     current_timestep,
+            #     denoised_latents
+            # )
+            # positive_latents = positive_latents.detach()
+            # positive_latents.requires_grad = False
 
-            neutral_latents = get_noise_pred(
-                prompt_pair.positive_target,  # negative prompt
-                prompt_pair.empty_prompt,  # positive prompt (normally neutral
-                1,
-                current_timestep,
-                denoised_latents
-            )
-            neutral_latents = neutral_latents.detach()
-            neutral_latents.requires_grad = False
+            # neutral_latents = get_noise_pred(
+            #     prompt_pair.positive_target,  # negative prompt
+            #     prompt_pair.empty_prompt,  # positive prompt (normally neutral
+            #     1,
+            #     current_timestep,
+            #     denoised_latents
+            # )
+            # neutral_latents = neutral_latents.detach()
+            # neutral_latents.requires_grad = False
 
-            unconditional_latents = get_noise_pred(
-                prompt_pair.positive_target,  # negative prompt
-                prompt_pair.positive_target,  # positive prompt
-                1,
-                current_timestep,
-                denoised_latents
+            # unconditional_latents = get_noise_pred(
+            #     prompt_pair.positive_target,  # negative prompt
+            #     prompt_pair.positive_target,  # positive prompt
+            #     1,
+            #     current_timestep,
+            #     denoised_latents
+            # )
+            # unconditional_latents = unconditional_latents.detach()
+            # unconditional_latents.requires_grad = False
+            
+            # we just need positive target, negative target, and empty prompt to calculate all
+            # since we are in no grad, we can easily do it in a single step
+            embeddings = train_tools.concat_prompt_embeddings(
+                prompt_pair.positive_target,
+                prompt_pair.empty_prompt,
+                1
             )
-            unconditional_latents = unconditional_latents.detach()
-            unconditional_latents.requires_grad = False
+            embeddings = train_tools.concat_prompt_embeddings(
+                embeddings,
+                prompt_pair.negative_target,
+                1
+            )
+            all_pred = self.sd.predict_noise(
+                latents=torch.cat([denoised_latents] * 3, dim=0),
+                text_embeddings=embeddings,
+                timestep=torch.cat([current_timestep] * 3, dim=0),
+            )
+            all_pred = all_pred.detach()
+            all_pred.requires_grad = False
+            positive_pred, neutral_pred, unconditional_pred = torch.chunk(all_pred, 3, dim=0)
+            
+            # doing them backward here as it was originally for erasing
+            positive_latents = unconditional_pred
+            neutral_latents = neutral_pred
+            unconditional_latents = positive_pred
+            
 
             denoised_latents = denoised_latents.detach()
 
@@ -505,60 +532,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
         self.optimizer.zero_grad(set_to_none=True)
 
         anchor_loss_float = None
-        if len(self.anchor_pairs) > 0:
-            with torch.no_grad():
-                # get a random anchor pair
-                anchor: EncodedAnchor = self.anchor_pairs[
-                    torch.randint(0, len(self.anchor_pairs), (1,)).item()
-                ]
-                anchor.to(self.device_torch, dtype=dtype)
-
-                # first we get the target prediction without network active
-                anchor_target_noise = get_noise_pred(
-                    anchor.neg_prompt, anchor.prompt, 1, current_timestep, denoised_latents
-                    # ).to("cpu", dtype=torch.float32)
-                ).requires_grad_(False)
-
-                # to save vram, we will run these through separately while tracking grads
-                # otherwise it consumes a ton of vram and this isn't our speed bottleneck
-                anchor_chunks = split_anchors(anchor, self.prompt_chunk_size)
-                anchor_target_noise_chunks = torch.chunk(anchor_target_noise, self.prompt_chunk_size, dim=0)
-                assert len(anchor_chunks) == len(denoised_latent_chunks)
-
-            # 4.32 GB RAM for 512x512
-            with self.network:
-                assert self.network.is_active
-                anchor_float_losses = []
-                for anchor_chunk, denoised_latent_chunk, anchor_target_noise_chunk in zip(
-                        anchor_chunks, denoised_latent_chunks, anchor_target_noise_chunks
-                ):
-                    self.network.multiplier = anchor_chunk.multiplier_list + anchor_chunk.multiplier_list
-
-                    anchor_pred_noise = get_noise_pred(
-                        anchor_chunk.neg_prompt, anchor_chunk.prompt, 1, current_timestep, denoised_latent_chunk
-                    )
-                    # 9.42 GB RAM for 512x512 -> 4.20 GB RAM for 512x512 with new grad_checkpointing
-                    anchor_loss = loss_function(
-                        anchor_target_noise_chunk,
-                        anchor_pred_noise,
-                    )
-                    anchor_float_losses.append(anchor_loss.item())
-                    # compute anchor loss gradients
-                    # we will accumulate them later
-                    # this saves a ton of memory doing them separately
-                    anchor_loss.backward()
-                    del anchor_pred_noise
-                    del anchor_target_noise_chunk
-                    del anchor_loss
-                    flush()
-
-            anchor_loss_float = sum(anchor_float_losses) / len(anchor_float_losses)
-            del anchor_chunks
-            del anchor_target_noise_chunks
-            del anchor_target_noise
-            # move anchor back to cpu
-            anchor.to("cpu")
-
+        
         with torch.no_grad():
             if self.slider_config.low_ram:
                 prompt_pair_chunks = split_prompt_pairs(prompt_pair.detach(), self.prompt_chunk_size)
@@ -607,13 +581,12 @@ class TrainSliderProcess(BaseSDTrainProcess):
                 mask_multiplier_chunks,
                 unmasked_target_chunks
             ):
-                self.network.multiplier = prompt_pair_chunk.multiplier_list + prompt_pair_chunk.multiplier_list
-                target_latents = get_noise_pred(
-                    prompt_pair_chunk.positive_target,
-                    prompt_pair_chunk.target_class,
-                    1,
-                    current_timestep,
-                    denoised_latent_chunk
+                self.network.multiplier = prompt_pair_chunk.multiplier_list
+                
+                target_latents = self.sd.predict_noise(
+                    latents=denoised_latent_chunk.detach(),
+                    text_embeddings=prompt_pair_chunk.target_class,
+                    timestep=current_timestep,
                 )
 
                 guidance_scale = 1.0
