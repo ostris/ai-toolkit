@@ -2,6 +2,7 @@ torch==2.6.0
 torchvision==0.21.0
 torchao==0.9.0
 safetensors
+git+https://github.com/jaretburkett/easy_dwpose.git
 git+https://github.com/huggingface/diffusers@363d1ab7e24c5ed6c190abb00df66d9edb74383b
 transformers==4.49.0
 lycoris-lora==1.8.3
@@ -22,7 +23,7 @@ k-diffusion
 open_clip_torch
 timm
 prodigyopt
-controlnet_aux==0.0.9
+controlnet_aux==0.0.10
 python-dotenv
 bitsandbytes
 hf_transfer
