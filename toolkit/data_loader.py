@@ -18,7 +18,7 @@ import albumentations as A
 
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
@@ -30,6 +30,10 @@ def is_native_windows():
 
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
+    
+
+image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
 
 
 class RescaleTransform:
@@ -368,7 +372,7 @@ class PairedImageDataset(Dataset):
         return img, prompt, (self.neg_weight, self.pos_weight)
 
 
-class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, CaptionMixin, Dataset):
+class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin, BucketsMixin, CaptionMixin, Dataset):
 
     def __init__(
             self,
@@ -376,8 +380,11 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
             batch_size=1,
             sd: 'StableDiffusion' = None,
     ):
-        super().__init__()
         self.dataset_config = dataset_config
+        # update bucket divisibility
+        self.dataset_config.bucket_tolerance = sd.get_bucket_divisibility()
+        self.is_video = dataset_config.num_frames > 1
+        super().__init__()
         folder_path = dataset_config.folder_path
         self.dataset_path = dataset_config.dataset_path
         if self.dataset_path is None:
@@ -387,6 +394,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         self.is_caching_latents_to_memory = dataset_config.cache_latents
         self.is_caching_latents_to_disk = dataset_config.cache_latents_to_disk
         self.is_caching_clip_vision_to_disk = dataset_config.cache_clip_vision_to_disk
+        self.is_generating_controls = len(dataset_config.controls) > 0
         self.epoch_num = 0
 
         self.sd = sd
@@ -407,13 +415,20 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
 
         # check if dataset_path is a folder or json
         if os.path.isdir(self.dataset_path):
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+            extensions = image_extensions
+            if self.is_video:
+                # only look for videos
+                extensions = video_extensions
+            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
                 self.caption_dict = json.load(f)
                 # keys are file paths
                 file_list = list(self.caption_dict.keys())
+                
+        # remove items in the _controls_ folder
+        file_list = [x for x in file_list if not os.path.basename(os.path.dirname(x)) == "_controls"]
 
         if self.dataset_config.num_repeats > 1:
             # repeat the list
@@ -438,13 +453,16 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
 
         # this might take a while
         print_acc(f"Dataset: {self.dataset_path}")
-        print_acc(f"  -  Preprocessing image dimensions")
+        if self.is_video:
+            print_acc(f"  -  Preprocessing video dimensions")
+        else:
+            print_acc(f"  -  Preprocessing image dimensions")
         dataset_folder = self.dataset_path
         if not os.path.isdir(self.dataset_path):
             dataset_folder = os.path.dirname(dataset_folder)
         
         dataset_size_file = os.path.join(dataset_folder, '.aitk_size.json')
-        dataloader_version = "0.1.1"
+        dataloader_version = "0.1.2"
         if os.path.exists(dataset_size_file):
             try:
                 with open(dataset_size_file, 'r') as f:
@@ -477,17 +495,23 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                 self.file_list.append(file_item)
             except Exception as e:
                 print_acc(traceback.format_exc())
-                print_acc(f"Error processing image: {file}")
+                if self.is_video:
+                    print_acc(f"Error processing video: {file}")
+                else:
+                    print_acc(f"Error processing image: {file}")
                 print_acc(e)
                 bad_count += 1
 
         # save the size database
         with open(dataset_size_file, 'w') as f:
             json.dump(self.size_database, f)
-
-        print_acc(f"  -  Found {len(self.file_list)} images")
-        # print_acc(f"  -  Found {bad_count} images that are too small")
-        assert len(self.file_list) > 0, f"no images found in {self.dataset_path}"
+        
+        if self.is_video:
+            print_acc(f"  -  Found {len(self.file_list)} videos")
+            assert len(self.file_list) > 0, f"no videos found in {self.dataset_path}"
+        else:
+            print_acc(f"  -  Found {len(self.file_list)} images")
+            assert len(self.file_list) > 0, f"no images found in {self.dataset_path}"
 
         # handle x axis flips
         if self.dataset_config.flip_x:
@@ -510,8 +534,10 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                 self.file_list.append(new_file_item)
 
         if self.dataset_config.flip_x or self.dataset_config.flip_y:
-            print_acc(f"  -  Found {len(self.file_list)} images after adding flips")
-
+            if self.is_video:
+                print_acc(f"  -  Found {len(self.file_list)} videos after adding flips")
+            else:
+                print_acc(f"  -  Found {len(self.file_list)} images after adding flips")
 
         self.setup_epoch()
 
@@ -526,6 +552,9 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
                 self.cache_latents_all_latents()
             if self.is_caching_clip_vision_to_disk:
                 self.cache_clip_vision_to_disk()
+            if self.is_generating_controls:
+                # always do this last
+                self.setup_controls()
         else:
             if self.dataset_config.poi is not None:
                 # handle cropping to a specific point of interest
@@ -539,7 +568,7 @@ class AiToolkitDataset(LatentCachingMixin, CLIPCachingMixin, BucketsMixin, Capti
         return len(self.file_list)
 
     def _get_single_item(self, index) -> 'FileItemDTO':
-        file_item = copy.deepcopy(self.file_list[index])
+        file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
         file_item.load_and_process_image(self.transform)
         file_item.load_caption(self.caption_dict)
         return file_item

@@ -24,9 +24,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         <div className="flex items-center space-x-2">
           <Brain className="w-5 h-5 text-purple-400" />
           <h2 className="font-semibold text-gray-100">Checkpoints</h2>
-          <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">
-            {files.length}
-          </span>
+          <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">{files.length}</span>
         </div>
       </div>
 
@@ -50,9 +48,9 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
               const fileName = file.path.split('/').pop() || '';
               const nameWithoutExt = fileName.replace('.safetensors', '');
               return (
-                <a 
+                <a
                   key={index}
-                  target='_blank'
+                  target="_blank"
                   href={`/api/files/${encodeURIComponent(file.path)}`}
                   className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-800 transition-all duration-200"
                 >
@@ -80,9 +78,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         )}
 
         {['success', 'refreshing'].includes(status) && files.length === 0 && (
-          <div className="text-center py-4 text-gray-400 text-sm">
-            No checkpoints available
-          </div>
+          <div className="text-center py-4 text-gray-400 text-sm">No checkpoints available</div>
         )}
       </div>
     </div>

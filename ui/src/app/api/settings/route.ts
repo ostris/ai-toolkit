@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { defaultTrainFolder, defaultDatasetsFolder } from '@/paths';
-import {flushCache} from '@/server/settings';
+import { flushCache } from '@/server/settings';
 
 const prisma = new PrismaClient();
 

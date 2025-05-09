@@ -10,8 +10,11 @@ import { FaRegTrashAlt } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
+import { apiClient } from '@/utils/api';
+import { useRouter } from 'next/navigation';
 
 export default function Datasets() {
+  const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
@@ -54,16 +57,10 @@ export default function Datasets() {
       type: 'warning',
       confirmText: 'Delete',
       onConfirm: () => {
-        fetch('/api/datasets/delete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ name: datasetName }),
-        })
-          .then(res => res.json())
-          .then(data => {
-            console.log('Dataset deleted:', data);
+        apiClient
+          .post('/api/datasets/delete', { name: datasetName })
+          .then(() => {
+            console.log('Dataset deleted:', datasetName);
             refreshDatasets();
           })
           .catch(error => {
@@ -76,14 +73,7 @@ export default function Datasets() {
   const handleCreateDataset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch('/api/datasets/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: newDatasetName }),
-      });
-      const data = await response.json();
+      const data = await apiClient.post('/api/datasets/create', { name: newDatasetName }).then(res => res.data);
       console.log('New dataset created:', data);
       refreshDatasets();
       setNewDatasetName('');
@@ -91,6 +81,33 @@ export default function Datasets() {
     } catch (error) {
       console.error('Error creating new dataset:', error);
     }
+  };
+
+  const openNewDatasetModal = () => {
+    openConfirm({
+      title: 'New Dataset',
+      message: 'Enter the name of the new dataset:',
+      type: 'info',
+      confirmText: 'Create',
+      inputTitle: 'Dataset Name',
+      onConfirm: async (name?: string) => {
+        if (!name) {
+          console.error('Dataset name is required.');
+          return;
+        }
+        try {
+          const data = await apiClient.post('/api/datasets/create', { name }).then(res => res.data);
+          console.log('New dataset created:', data);
+          if (data.name) {
+            router.push(`/datasets/${data.name}`);
+          } else {
+            refreshDatasets();
+          }
+        } catch (error) {
+          console.error('Error creating new dataset:', error);
+        }
+      },
+    });
   };
 
   return (
@@ -103,7 +120,7 @@ export default function Datasets() {
         <div>
           <Button
             className="text-gray-200 bg-slate-600 px-4 py-2 rounded-md hover:bg-slate-500 transition-colors"
-            onClick={() => setIsNewDatasetModalOpen(true)}
+            onClick={() => openNewDatasetModal()}
           >
             New Dataset
           </Button>

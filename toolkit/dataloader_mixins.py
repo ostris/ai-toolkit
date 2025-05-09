@@ -7,6 +7,7 @@ import os
 import random
 from collections import OrderedDict
 from typing import TYPE_CHECKING, List, Dict, Union
+import traceback
 
 import cv2
 import numpy as np
@@ -17,6 +18,8 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, Sigl
 
 from toolkit.basic import flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
+from toolkit.config_modules import ControlTypes
+from toolkit.control_generator import ControlGenerator
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.pixtral_vision import PixtralVisionImagePreprocessorCompatible
 from toolkit.prompt_utils import inject_trigger_into_prompt
@@ -60,7 +63,7 @@ transforms_dict = {
     'RandomEqualize': transforms.RandomEqualize(p=0.2),
 }
 
-caption_ext_list = ['txt', 'json', 'caption']
+img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
 
 
 def standardize_images(images):
@@ -88,15 +91,16 @@ def standardize_images(images):
     return standardized_images
 
 def clean_caption(caption):
-    # remove any newlines
-    caption = caption.replace('\n', ', ')
-    # remove new lines for all operating systems
-    caption = caption.replace('\r', ', ')
-    caption_split = caption.split(',')
-    # remove empty strings
-    caption_split = [p.strip() for p in caption_split if p.strip()]
-    # join back together
-    caption = ', '.join(caption_split)
+    # this doesnt make any sense anymore in a world that is not based on comma seperated tokens
+    # # remove any newlines
+    # caption = caption.replace('\n', ', ')
+    # # remove new lines for all operating systems
+    # caption = caption.replace('\r', ', ')
+    # caption_split = caption.split(',')
+    # # remove empty strings
+    # caption_split = [p.strip() for p in caption_split if p.strip()]
+    # # join back together
+    # caption = ', '.join(caption_split)
     return caption
 
 
@@ -112,22 +116,17 @@ class CaptionMixin:
             # check if either has a prompt file
             path_no_ext = os.path.splitext(img_path)[0]
             prompt_path = None
-            for ext in caption_ext_list:
-                prompt_path = path_no_ext + '.' + ext
-                if os.path.exists(prompt_path):
-                    break
+            ext = self.dataset_config.caption_ext
+            prompt_path = path_no_ext + ext
         else:
             img_path = img_path_or_tuple if isinstance(img_path_or_tuple, str) else img_path_or_tuple.path
             # see if prompt file exists
             path_no_ext = os.path.splitext(img_path)[0]
-            prompt_path = None
-            for ext in caption_ext_list:
-                prompt_path = path_no_ext + '.' + ext
-                if os.path.exists(prompt_path):
-                    break
+            prompt_path = path_no_ext + ext
                 
         # allow folders to have a default prompt
         default_prompt_path = os.path.join(os.path.dirname(img_path), 'default.txt')
+        default_prompt_path_with_ext = os.path.join(os.path.dirname(img_path), 'default' + ext)
 
         if os.path.exists(prompt_path):
             with open(prompt_path, 'r', encoding='utf-8') as f:
@@ -138,6 +137,10 @@ class CaptionMixin:
                     if 'caption' in prompt:
                         prompt = prompt['caption']
 
+                prompt = clean_caption(prompt)
+        elif os.path.exists(default_prompt_path_with_ext):
+            with open(default_prompt_path, 'r', encoding='utf-8') as f:
+                prompt = f.read()
                 prompt = clean_caption(prompt)
         elif os.path.exists(default_prompt_path):
             with open(default_prompt_path, 'r', encoding='utf-8') as f:
@@ -306,6 +309,8 @@ class CaptionProcessingDTOMixin:
             self.raw_caption = caption_dict[self.path]["caption"]
             if 'caption_short' in caption_dict[self.path]:
                 self.raw_caption_short = caption_dict[self.path]["caption_short"]
+                if self.dataset_config.use_short_captions:
+                    self.raw_caption = caption_dict[self.path]["caption_short"]
         else:
             # see if prompt file exists
             path_no_ext = os.path.splitext(self.path)[0]
@@ -328,7 +333,8 @@ class CaptionProcessingDTOMixin:
                             prompt = prompt_json['caption']
                         if 'caption_short' in prompt_json:
                             short_caption = prompt_json['caption_short']
-
+                            if self.dataset_config.use_short_captions:
+                                prompt = short_caption
                         if 'extra_values' in prompt_json:
                             self.extra_values = prompt_json['extra_values']
 
@@ -430,16 +436,212 @@ class CaptionProcessingDTOMixin:
 
 
 class ImageProcessingDTOMixin:
+    def load_and_process_video(
+        self: 'FileItemDTO',
+        transform: Union[None, transforms.Compose],
+        only_load_latents=False
+    ):
+        if self.is_latent_cached:
+            raise Exception('Latent caching not supported for videos')
+        
+        if self.augments is not None and len(self.augments) > 0:
+            raise Exception('Augments not supported for videos')
+            
+        if self.has_augmentations:
+            raise Exception('Augmentations not supported for videos')
+        
+        if not self.dataset_config.buckets:
+            raise Exception('Buckets required for video processing')
+        
+        try:
+            # Use OpenCV to capture video frames
+            cap = cv2.VideoCapture(self.path)
+            
+            if not cap.isOpened():
+                raise Exception(f"Failed to open video file: {self.path}")
+            
+            # Get video properties
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_fps = cap.get(cv2.CAP_PROP_FPS)
+            
+            # Calculate the max valid frame index (accounting for zero-indexing)
+            max_frame_index = total_frames - 1
+            
+            # Only log video properties if in debug mode
+            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                print_acc(f"Video properties: {self.path}")
+                print_acc(f"  Total frames: {total_frames}")
+                print_acc(f"  Max valid frame index: {max_frame_index}")
+                print_acc(f"  FPS: {video_fps}")
+            
+            frames_to_extract = []
+            
+            # Always stretch/shrink to the requested number of frames if needed
+            if self.dataset_config.shrink_video_to_frames or total_frames < self.dataset_config.num_frames:
+                # Distribute frames evenly across the entire video
+                interval = max_frame_index / (self.dataset_config.num_frames - 1) if self.dataset_config.num_frames > 1 else 0
+                frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.dataset_config.num_frames)]
+            else:
+                # Calculate frame interval based on FPS ratio
+                fps_ratio = video_fps / self.dataset_config.fps
+                frame_interval = max(1, int(round(fps_ratio)))
+                
+                # Calculate max consecutive frames we can extract at desired FPS
+                max_consecutive_frames = (total_frames // frame_interval)
+                
+                if max_consecutive_frames < self.dataset_config.num_frames:
+                    # Not enough frames at desired FPS, so stretch instead
+                    interval = max_frame_index / (self.dataset_config.num_frames - 1) if self.dataset_config.num_frames > 1 else 0
+                    frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.dataset_config.num_frames)]
+                else:
+                    # Calculate max start frame to ensure we can get all num_frames
+                    max_start_frame = max_frame_index - ((self.dataset_config.num_frames - 1) * frame_interval)
+                    start_frame = random.randint(0, max(0, max_start_frame))
+                    
+                    # Generate list of frames to extract
+                    frames_to_extract = [start_frame + (i * frame_interval) for i in range(self.dataset_config.num_frames)]
+                    
+            # Final safety check - ensure no frame exceeds max valid index
+            frames_to_extract = [min(frame_idx, max_frame_index) for frame_idx in frames_to_extract]
+            
+            # Only log frames to extract if in debug mode
+            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                print_acc(f"  Frames to extract: {frames_to_extract}")
+            
+            # Extract frames
+            frames = []
+            for frame_idx in frames_to_extract:
+                # Safety check - ensure frame_idx is within bounds (silently fix)
+                if frame_idx > max_frame_index:
+                    frame_idx = max_frame_index
+                
+                # Set frame position
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                
+                # Silently verify position was set correctly (no warnings unless debug mode)
+                if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                    actual_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                    if actual_pos != frame_idx:
+                        print_acc(f"Warning: Failed to set exact frame position. Requested: {frame_idx}, Actual: {actual_pos}")
+                
+                ret, frame = cap.read()
+                if not ret:
+                    # Try to provide more detailed error information
+                    actual_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+                    frame_pos_info = f"Requested frame: {frame_idx}, Actual frame position: {actual_frame}"
+                    
+                    # Try to read the next available frame as a fallback
+                    fallback_success = False
+                    for fallback_offset in [1, -1, 5, -5, 10, -10]:
+                        fallback_pos = max(0, min(frame_idx + fallback_offset, max_frame_index))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, fallback_pos)
+                        fallback_ret, fallback_frame = cap.read()
+                        if fallback_ret:
+                            # Only log in debug mode
+                            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                                print_acc(f"Falling back to nearby frame {fallback_pos} instead of {frame_idx}")
+                            frame = fallback_frame
+                            fallback_success = True
+                            break
+                    else:
+                        # No fallback worked, raise a more detailed exception
+                        video_info = f"Video: {self.path}, Total frames: {total_frames}, FPS: {video_fps}"
+                        raise Exception(f"Failed to read frame {frame_idx} from video. {frame_pos_info}. {video_info}")
+                
+                # Convert BGR to RGB
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Convert to PIL Image
+                img = Image.fromarray(frame)
+                
+                # Apply the same processing as for single images
+                img = img.convert('RGB')
+                
+                if self.flip_x:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if self.flip_y:
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+                
+                # Apply bucketing
+                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                img = img.crop((
+                    self.crop_x,
+                    self.crop_y,
+                    self.crop_x + self.crop_width,
+                    self.crop_y + self.crop_height
+                ))
+                
+                # Apply transform if provided
+                if transform:
+                    img = transform(img)
+                
+                frames.append(img)
+            
+            # Release the video capture
+            cap.release()
+            
+            # Stack frames into tensor [frames, channels, height, width]
+            self.tensor = torch.stack(frames)
+            
+            # Only log success in debug mode
+            if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                print_acc(f"Successfully loaded video with {len(frames)} frames: {self.path}")
+        
+        except Exception as e:
+            # Print full traceback
+            traceback.print_exc()
+            
+            # Provide more context about the error
+            error_msg = str(e)
+            try:
+                if 'Failed to read frame' in error_msg and cap is not None:
+                    # Try to get more info about the video that failed
+                    cap_status = "Opened" if cap.isOpened() else "Closed"
+                    current_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) if cap.isOpened() else "Unknown"
+                    reported_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else "Unknown"
+                    
+                    print_acc(f"Video details when error occurred:")
+                    print_acc(f"  Cap status: {cap_status}")
+                    print_acc(f"  Current position: {current_pos}")
+                    print_acc(f"  Reported total frames: {reported_total}")
+                    
+                    # Try to verify if the video is corrupted
+                    if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Go to start
+                        start_ret, _ = cap.read()
+                        
+                        # Try to read the last frame to check if it's accessible
+                        if reported_total > 0:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, reported_total - 1)
+                            end_ret, _ = cap.read()
+                            print_acc(f"  Can read first frame: {start_ret}, Can read last frame: {end_ret}")
+                    
+                    # Close the cap if it's still open
+                    cap.release()
+            except Exception as debug_err:
+                print_acc(f"Error during error diagnosis: {debug_err}")
+            
+            print_acc(f"Error: {error_msg}")
+            print_acc(f"Error loading video: {self.path}")
+            
+            # Re-raise with more detailed information
+            raise Exception(f"Video loading error ({self.path}): {error_msg}") from e
+        
     def load_and_process_image(
             self: 'FileItemDTO',
             transform: Union[None, transforms.Compose],
             only_load_latents=False
     ):
+        if self.dataset_config.num_frames > 1:
+            self.load_and_process_video(transform, only_load_latents)
+            return
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
             if self.has_control_image:
                 self.load_control_image()
+            if self.has_inpaint_image:
+                self.load_inpaint_image()
             if self.has_clip_image:
                 self.load_clip_image()
             if self.has_mask_image:
@@ -535,6 +737,8 @@ class ImageProcessingDTOMixin:
         if not only_load_latents:
             if self.has_control_image:
                 self.load_control_image()
+            if self.has_inpaint_image:
+                self.load_inpaint_image()
             if self.has_clip_image:
                 self.load_clip_image()
             if self.has_mask_image:
@@ -543,43 +747,38 @@ class ImageProcessingDTOMixin:
                 self.load_unconditional_image()
 
 
-class ControlFileItemDTOMixin:
+class InpaintControlFileItemDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):
         if hasattr(super(), '__init__'):
             super().__init__(*args, **kwargs)
-        self.has_control_image = False
-        self.control_path: Union[str, None] = None
-        self.control_tensor: Union[torch.Tensor, None] = None
+        self.has_inpaint_image = False
+        self.inpaint_path: Union[str, None] = None
+        self.inpaint_tensor: Union[torch.Tensor, None] = None
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
-        self.full_size_control_images = False
-        if dataset_config.control_path is not None:
+        if dataset_config.inpaint_path is not None:
             # find the control image path
-            control_path = dataset_config.control_path
-            self.full_size_control_images = dataset_config.full_size_control_images
+            inpaint_path = dataset_config.inpaint_path
             # we are using control images
             img_path = kwargs.get('path', None)
-            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+            img_inpaint_ext_list = ['.png', '.webp']
             file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
-            for ext in img_ext_list:
-                if os.path.exists(os.path.join(control_path, file_name_no_ext + ext)):
-                    self.control_path = os.path.join(control_path, file_name_no_ext + ext)
-                    self.has_control_image = True
+
+            for ext in img_inpaint_ext_list:
+                p = os.path.join(inpaint_path, file_name_no_ext + ext)
+                if os.path.exists(p):
+                    self.inpaint_path = p
+                    self.has_inpaint_image = True
                     break
-
-    def load_control_image(self: 'FileItemDTO'):
+                
+    def load_inpaint_image(self: 'FileItemDTO'):
         try:
-            img = Image.open(self.control_path).convert('RGB')
+            # image must have alpha channel for inpaint
+            img = Image.open(self.inpaint_path)
+            # make sure has aplha
+            if img.mode != 'RGBA':
+                return
             img = exif_transpose(img)
-        except Exception as e:
-            print_acc(f"Error: {e}")
-            print_acc(f"Error loading image: {self.control_path}")
-
-        if self.full_size_control_images:
-            # we just scale them to 512x512:
-            w, h = img.size
-            img = img.resize((512, 512), Image.BICUBIC)
-
-        else:
+        
             w, h = img.size
             if w > h and self.scale_to_width < self.scale_to_height:
                 # throw error, they should match
@@ -609,14 +808,126 @@ class ControlFileItemDTOMixin:
                     self.crop_y + self.crop_height
                 ))
             else:
-                raise Exception("Control images not supported for non-bucket datasets")
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-        ])
-        if self.aug_replay_spatial_transforms:
-            self.control_tensor = self.augment_spatial_control(img, transform=transform)
+                raise Exception("Inpaint images not supported for non-bucket datasets")
+            
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+            ])
+            if self.aug_replay_spatial_transforms:
+                tensor = self.augment_spatial_control(img, transform=transform)
+            else:
+                tensor = transform(img)
+            
+            # is 0 to 1 with alpha
+            self.inpaint_tensor = tensor
+        
+        except Exception as e:
+            print_acc(f"Error: {e}")
+            print_acc(f"Error loading image: {self.inpaint_path}")
+
+    
+    def cleanup_inpaint(self: 'FileItemDTO'):
+        self.inpaint_tensor = None
+                
+
+class ControlFileItemDTOMixin:
+    def __init__(self: 'FileItemDTO', *args, **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(*args, **kwargs)
+        self.has_control_image = False
+        self.control_path: Union[str, List[str], None] = None
+        self.control_tensor: Union[torch.Tensor, None] = None
+        dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        self.full_size_control_images = False
+        if dataset_config.control_path is not None:
+            # find the control image path
+            control_path_list = dataset_config.control_path
+            if not isinstance(control_path_list, list):
+                control_path_list = [control_path_list]
+            self.full_size_control_images = dataset_config.full_size_control_images
+            # we are using control images
+            img_path = kwargs.get('path', None)
+            file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
+            
+            found_control_images = []
+            for control_path in control_path_list:
+                for ext in img_ext_list:
+                    if os.path.exists(os.path.join(control_path, file_name_no_ext + ext)):
+                        found_control_images.append(os.path.join(control_path, file_name_no_ext + ext))
+                        self.has_control_image = True
+                        break
+            self.control_path = found_control_images
+            if len(self.control_path) == 0:
+                self.control_path = None
+            elif len(self.control_path) == 1:
+                # only do one
+                self.control_path = self.control_path[0]
+
+    def load_control_image(self: 'FileItemDTO'):
+        control_tensors = []
+        control_path_list = self.control_path
+        if not isinstance(self.control_path, list):
+            control_path_list = [self.control_path]
+        
+        for control_path in control_path_list:
+            try:
+                img = Image.open(control_path).convert('RGB')
+                img = exif_transpose(img)
+            except Exception as e:
+                print_acc(f"Error: {e}")
+                print_acc(f"Error loading image: {control_path}")
+
+            if not self.full_size_control_images:
+                # we just scale them to 512x512:
+                w, h = img.size
+                img = img.resize((512, 512), Image.BICUBIC)
+
+            else:
+                w, h = img.size
+                if w > h and self.scale_to_width < self.scale_to_height:
+                    # throw error, they should match
+                    raise ValueError(
+                        f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+                elif h > w and self.scale_to_height < self.scale_to_width:
+                    # throw error, they should match
+                    raise ValueError(
+                        f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+
+                if self.flip_x:
+                    # do a flip
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if self.flip_y:
+                    # do a flip
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                if self.dataset_config.buckets:
+                    # scale and crop based on file item
+                    img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                    # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+                    # crop
+                    img = img.crop((
+                        self.crop_x,
+                        self.crop_y,
+                        self.crop_x + self.crop_width,
+                        self.crop_y + self.crop_height
+                    ))
+                else:
+                    raise Exception("Control images not supported for non-bucket datasets")
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+            ])
+            if self.aug_replay_spatial_transforms:
+                tensor = self.augment_spatial_control(img, transform=transform)
+            else:
+                tensor = transform(img)
+            control_tensors.append(tensor)
+            
+        if len(control_tensors) == 0:
+            self.control_tensor = None
+        elif len(control_tensors) == 1:
+            self.control_tensor = control_tensors[0]
         else:
-            self.control_tensor = transform(img)
+            self.control_tensor = torch.stack(control_tensors, dim=0)
 
     def cleanup_control(self: 'FileItemDTO'):
         self.control_tensor = None
@@ -652,7 +963,6 @@ class ClipImageFileItemDTOMixin:
             clip_image_path = dataset_config.clip_image_path
             # we are using control images
             img_path = kwargs.get('path', None)
-            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
             file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
             for ext in img_ext_list:
                 if os.path.exists(os.path.join(clip_image_path, file_name_no_ext + ext)):
@@ -755,7 +1065,6 @@ class ClipImageFileItemDTOMixin:
             # randomly grab an image path from the same folder
             pool_folder = os.path.dirname(self.path)
             # find all images in the folder
-            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
             img_files = []
             for ext in img_ext_list:
                 img_files += glob.glob(os.path.join(pool_folder, f'*{ext}'))
@@ -770,6 +1079,8 @@ class ClipImageFileItemDTOMixin:
     def load_clip_image(self: 'FileItemDTO'):
         is_dynamic_size_and_aspect = isinstance(self.clip_image_processor, PixtralVisionImagePreprocessorCompatible) or \
                                     isinstance(self.clip_image_processor, SiglipImageProcessor)
+        if self.clip_image_processor is None:
+            is_dynamic_size_and_aspect = True # serving it raw
         if self.is_vision_clip_cached:
             self.clip_image_embeds = load_file(self.get_clip_vision_embeddings_path())
 
@@ -972,7 +1283,6 @@ class MaskFileItemDTOMixin:
             mask_path = dataset_config.mask_path if dataset_config.mask_path is not None else dataset_config.alpha_mask
             # we are using control images
             img_path = kwargs.get('path', None)
-            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
             file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
             for ext in img_ext_list:
                 if os.path.exists(os.path.join(mask_path, file_name_no_ext + ext)):
@@ -1076,7 +1386,6 @@ class UnconditionalFileItemDTOMixin:
         if dataset_config.unconditional_path is not None:
             # we are using control images
             img_path = kwargs.get('path', None)
-            img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
             file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
             for ext in img_ext_list:
                 if os.path.exists(os.path.join(dataset_config.unconditional_path, file_name_no_ext + ext)):
@@ -1377,6 +1686,8 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
+        if self.dataset_config.num_frames > 1:
+            raise Exception("Error: caching latents is not supported for multi-frame datasets")
         with accelerator.main_process_first():
             print_acc(f"Caching latents for {self.dataset_path}")
             # cache all latents to disk
@@ -1407,7 +1718,7 @@ class LatentCachingMixin:
                 elif self.sd.model_config.is_pixart_sigma:
                     file_item.latent_space_version = 'sdxl'
                 else:
-                    file_item.latent_space_version = 'sd1'
+                    file_item.latent_space_version = self.sd.model_config.arch
                 file_item.is_caching_to_disk = to_disk
                 file_item.is_caching_to_memory = to_memory
                 file_item.latent_load_device = self.sd.device
@@ -1633,3 +1944,55 @@ class CLIPCachingMixin:
 
         # restore device state
         self.sd.restore_device_state()
+
+
+
+class ControlCachingMixin:
+    def __init__(self: 'AiToolkitDataset', **kwargs):
+        if hasattr(super(), '__init__'):
+            super().__init__(**kwargs)
+            self.control_generator: ControlGenerator = None
+    
+    def add_control_path_to_file_item(self: 'AiToolkitDataset', file_item: 'FileItemDTO', control_path: str, control_type: ControlTypes):
+        if control_type == 'inpaint':
+            file_item.inpaint_path = control_path
+            file_item.has_inpaint_image = True
+        elif control_type == 'mask':
+            file_item.mask_path = control_path
+            file_item.has_mask_image = True
+        else:
+            if file_item.control_path is None:
+                file_item.control_path = [control_path]
+            elif isinstance(file_item.control_path, str):
+                file_item.control_path = [file_item.control_path, control_path]
+            elif isinstance(file_item.control_path, list):
+                file_item.control_path.append(control_path)
+            else:
+                raise Exception(f"Error: control_path is not a string or list: {file_item.control_path}")
+            file_item.has_control_image = True
+
+    def setup_controls(self: 'AiToolkitDataset'):
+        if not self.is_generating_controls:
+            return
+        with torch.no_grad():
+            print_acc(f"Generating controls for {self.dataset_path}")
+            device = self.sd.device
+            
+            self.control_generator = ControlGenerator(
+                device=device,
+                sd=self.sd,
+            )
+
+            # use tqdm to show progress
+            for file_item in tqdm(self.file_list, desc=f'Generating Controls'):
+                for control_type in self.dataset_config.controls:
+                    # generates the control if it is not already there
+                    control_path = self.control_generator.get_control_path(file_item.path, control_type)
+                    if control_path is not None:
+                        self.add_control_path_to_file_item(file_item, control_path, control_type)
+                
+            # remove models
+            self.control_generator.cleanup()
+            self.control_generator = None
+            
+            flush()

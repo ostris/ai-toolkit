@@ -14,15 +14,10 @@ from toolkit.models.lokr import LokrModule
 from .config_modules import NetworkConfig
 from .lorm import count_parameters
 from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, ExtractableModuleMixin
-from .paths import SD_SCRIPTS_ROOT
 
-sys.path.append(SD_SCRIPTS_ROOT)
-
-from networks.lora import LoRANetwork, get_block_index
+from toolkit.kohya_lora import LoRANetwork
 from toolkit.models.DoRA import DoRAModule
 from typing import TYPE_CHECKING
-
-from torch.utils.checkpoint import checkpoint
 
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
@@ -209,7 +204,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             ignore_if_contains = []
         self.ignore_if_contains = ignore_if_contains
         self.transformer_only = transformer_only
-        self.base_model_ref = weakref.ref(base_model)
+        self.base_model_ref = None
+        if base_model is not None:
+            self.base_model_ref = weakref.ref(base_model)
 
         self.only_if_contains: Union[List, None] = only_if_contains
 
@@ -337,28 +334,41 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         # see if it is over threshold
                         if count_parameters(child_module) < parameter_threshold:
                             skip = True
-
-                        if self.transformer_only and self.is_pixart and is_unet:
-                            if "transformer_blocks" not in lora_name:
-                                skip = True
-                        if self.transformer_only and self.is_flux and is_unet:
-                            if "transformer_blocks" not in lora_name:
-                                skip = True
-                        if self.transformer_only and self.is_lumina2 and is_unet:
-                            if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
-                                skip = True
-                        if self.transformer_only and self.is_v3 and is_unet:
-                            if "transformer_blocks" not in lora_name:
-                                skip = True
                         
-                        # handle custom models
-                        if self.transformer_only and is_unet and hasattr(root_module, 'transformer_blocks'):
-                            if "transformer_blocks" not in lora_name:
-                                skip = True
+                        if self.transformer_only and is_unet:
+                            transformer_block_names = None
+                            if base_model is not None:
+                                transformer_block_names = base_model.get_transformer_block_names()
+                            
+                            if transformer_block_names is not None:
+                                if not any([name in lora_name for name in transformer_block_names]):
+                                    skip = True
+                            else:
+                                if self.is_pixart:
+                                    if "transformer_blocks" not in lora_name:
+                                        skip = True
+                                if self.is_flux:
+                                    if "transformer_blocks" not in lora_name:
+                                        skip = True
+                                if self.is_lumina2:
+                                    if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
+                                        skip = True
+                                if  self.is_v3:
+                                    if "transformer_blocks" not in lora_name:
+                                        skip = True
                                 
-                        if self.transformer_only and is_unet and hasattr(root_module, 'blocks'):
-                            if "blocks" not in lora_name:
-                                skip = True
+                                # handle custom models
+                                if hasattr(root_module, 'transformer_blocks'):
+                                    if "transformer_blocks" not in lora_name:
+                                        skip = True
+                                        
+                                if hasattr(root_module, 'blocks'):
+                                    if "blocks" not in lora_name:
+                                        skip = True
+                                
+                                if hasattr(root_module, 'single_blocks'):
+                                    if "single_blocks" not in lora_name and "double_blocks" not in lora_name:
+                                        skip = True
 
                         if (is_linear or is_conv2d) and not skip:
 
@@ -374,15 +384,6 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                 if lora_name in modules_dim:
                                     dim = modules_dim[lora_name]
                                     alpha = modules_alpha[lora_name]
-                            elif is_unet and block_dims is not None:
-                                # U-Netでblock_dims指定あり
-                                block_idx = get_block_index(lora_name)
-                                if is_linear or is_conv2d_1x1:
-                                    dim = block_dims[block_idx]
-                                    alpha = block_alphas[block_idx]
-                                elif conv_block_dims is not None:
-                                    dim = conv_block_dims[block_idx]
-                                    alpha = conv_block_alphas[block_idx]
                             else:
                                 # 通常、すべて対象とする
                                 if is_linear or is_conv2d_1x1:

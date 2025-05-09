@@ -65,8 +65,8 @@ class LLMAdapter(torch.nn.Module):
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        # self.system_prompt = ""
-        self.system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts. <Prompt Start> "
+        self.system_prompt = ""
+        # self.system_prompt = "You are an assistant designed to generate superior images with the superior degree of image-text alignment based on textual prompts or user prompts. <Prompt Start> "
         
         # determine length of system prompt
         sys_prompt_tokenized = tokenizer(

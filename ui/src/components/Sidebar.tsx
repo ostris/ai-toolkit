@@ -1,9 +1,10 @@
 import Link from 'next/link';
-import { Home, Settings, BrainCircuit, Images } from 'lucide-react';
+import { Home, Settings, BrainCircuit, Images, Plus } from 'lucide-react';
 
 const Sidebar = () => {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
+    { name: 'New Job', href: '/jobs/new', icon: Plus },
     { name: 'Training Jobs', href: '/jobs', icon: BrainCircuit },
     { name: 'Datasets', href: '/datasets', icon: Images },
     { name: 'Settings', href: '/settings', icon: Settings },
@@ -33,7 +34,7 @@ const Sidebar = () => {
         </ul>
       </nav>
       <a href="https://patreon.com/ostris" target="_blank" rel="noreferrer" className="flex items-center space-x-2 p-4">
-      <div className='min-w-[26px] min-h-[26px]'>
+        <div className="min-w-[26px] min-h-[26px]">
           <svg
             viewBox="0 0 512 512"
             xmlns="http://www.w3.org/2000/svg"

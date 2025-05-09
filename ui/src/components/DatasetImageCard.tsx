@@ -1,7 +1,9 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
+import { apiClient } from '@/utils/api';
+import { isVideo } from '@/utils/basic';
 
 interface DatasetImageCardProps {
   imageUrl: string;
@@ -20,6 +22,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
+  const [inViewport, setInViewport] = useState<boolean>(false);
   const [loaded, setLoaded] = useState<boolean>(false);
   const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
   const [caption, setCaption] = useState<string>('');
@@ -27,30 +30,32 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const isGettingCaption = useRef<boolean>(false);
 
   const fetchCaption = async () => {
-    try {
-      if (isGettingCaption.current || isCaptionLoaded) return;
-      isGettingCaption.current = true;
-      const response = await fetch(`/api/caption/${encodeURIComponent(imageUrl)}`);
-      const data = await response.text();
-      setCaption(data);
-      setSavedCaption(data);
-      setIsCaptionLoaded(true);
-    } catch (error) {
-      console.error('Error fetching caption:', error);
-    }
+    if (isGettingCaption.current || isCaptionLoaded) return;
+    isGettingCaption.current = true;
+    apiClient
+      .get(`/api/caption/${encodeURIComponent(imageUrl)}`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Caption fetched:', data);
+
+        setCaption(data || '');
+        setSavedCaption(data || '');
+        setIsCaptionLoaded(true);
+      })
+      .catch(error => {
+        console.error('Error fetching caption:', error);
+      })
+      .finally(() => {
+        isGettingCaption.current = false;
+      });
   };
 
   const saveCaption = () => {
     const trimmedCaption = caption.trim();
     if (trimmedCaption === savedCaption) return;
-    fetch('/api/img/caption', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ imgPath: imageUrl, caption: trimmedCaption }),
-    })
-      .then(res => res.json())
+    apiClient
+      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
+      .then(res => res.data)
       .then(data => {
         console.log('Caption saved:', data);
         setSavedCaption(trimmedCaption);
@@ -60,17 +65,25 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       });
   };
 
+  // Only fetch caption when the component is both in viewport and visible
   useEffect(() => {
-    isVisible && fetchCaption();
-  }, [isVisible]);
+    if (inViewport && isVisible) {
+      fetchCaption();
+    }
+  }, [inViewport, isVisible]);
 
   useEffect(() => {
-    // Create intersection observer to check visibility
+    // Create intersection observer to check viewport visibility
     const observer = new IntersectionObserver(
       entries => {
         if (entries[0].isIntersecting) {
-          setIsVisible(true);
-          observer.disconnect();
+          setInViewport(true);
+          // Initialize isVisible to true when first coming into view
+          if (!isVisible) {
+            setIsVisible(true);
+          }
+        } else {
+          setInViewport(false);
         }
       },
       { threshold: 0.1 },
@@ -84,6 +97,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       observer.disconnect();
     };
   }, []);
+
+  const toggleVisibility = (): void => {
+    setIsVisible(prev => !prev);
+    if (!isVisible && !isCaptionLoaded) {
+      fetchCaption();
+    }
+  };
 
   const handleLoad = (): void => {
     setLoaded(true);
@@ -99,6 +119,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
+  const isItAVideo = isVideo(imageUrl);
+
   return (
     <div className={`flex flex-col ${className}`}>
       {/* Square image container */}
@@ -108,37 +130,50 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         style={{ paddingBottom: '100%' }} // Make it square
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
-          {isVisible && (
-            <img
-              src={`/api/img/${encodeURIComponent(imageUrl)}`}
-              alt={alt}
-              onLoad={handleLoad}
-              className={`w-full h-full object-contain transition-opacity duration-300 ${
-                loaded ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
+          {inViewport && isVisible && (
+            <>
+              {isItAVideo ? (
+                <video
+                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  className={`w-full h-full object-contain`}
+                  autoPlay={false}
+                  loop
+                  muted
+                  controls
+                />
+              ) : (
+                <img
+                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  alt={alt}
+                  onLoad={handleLoad}
+                  className={`w-full h-full object-contain transition-opacity duration-300 ${
+                    loaded ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              )}
+            </>
+          )}
+          {!isVisible && (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-800 bg-opacity-75 rounded-t-lg">
+              <span className="text-white text-lg"></span>
+            </div>
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
-          <div className="absolute top-1 right-1">
+          <div className="absolute top-1 right-1 flex space-x-2">
+            
             <button
               className="bg-gray-800 rounded-full p-2"
               onClick={() => {
                 openConfirm({
-                  title: 'Delete Image',
-                  message: 'Are you sure you want to delete this image? This action cannot be undone.',
+                  title: `Delete ${isItAVideo ? 'video' : 'image'}`,
+                  message: `Are you sure you want to delete this ${isItAVideo ? 'video' : 'image'}? This action cannot be undone.`,
                   type: 'warning',
                   confirmText: 'Delete',
                   onConfirm: () => {
-                    fetch('/api/img/delete', {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                      },
-                      body: JSON.stringify({ imgPath: imageUrl }),
-                    })
-                      .then(res => res.json())
-                      .then(data => {
-                        console.log('Image deleted:', data);
+                    apiClient
+                      .post('/api/img/delete', { imgPath: imageUrl })
+                      .then(() => {
+                        console.log('Image deleted:', imageUrl);
                         onDelete();
                       })
                       .catch(error => {
@@ -161,7 +196,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'border-transparent border-2': isCaptionCurrent,
         })}
       >
-        {isVisible && isCaptionLoaded && (
+        {inViewport && isVisible && isCaptionLoaded && (
           <form
             onSubmit={e => {
               e.preventDefault();
@@ -177,6 +212,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               onKeyDown={handleKeyDown}
             />
           </form>
+        )}
+        {(!inViewport || !isVisible) && isCaptionLoaded && (
+          <div className="w-full h-full flex items-center justify-center text-gray-400">
+            {isVisible ? "Scroll into view to edit caption" : "Show content to edit caption"}
+          </div>
+        )}
+        {!isCaptionLoaded && (
+          <div className="w-full h-full flex items-center justify-center text-gray-400">
+            Loading caption...
+          </div>
         )}
       </div>
     </div>

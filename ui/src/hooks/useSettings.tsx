@@ -1,6 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiClient } from '@/utils/api';
+
+export interface Settings {
+  HF_TOKEN: string;
+  TRAINING_FOLDER: string;
+  DATASETS_FOLDER: string;
+}
 
 export default function useSettings() {
   const [settings, setSettings] = useState({
@@ -10,10 +17,11 @@ export default function useSettings() {
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
-    // Fetch current settings
-    fetch('/api/settings')
-      .then(res => res.json())
+    apiClient
+      .get('/api/settings')
+      .then(res => res.data)
       .then(data => {
+        console.log('Settings:', data);
         setSettings({
           HF_TOKEN: data.HF_TOKEN || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',

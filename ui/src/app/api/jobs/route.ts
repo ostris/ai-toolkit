@@ -6,7 +6,6 @@ const prisma = new PrismaClient();
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
-  console.log('ID:', id);
 
   try {
     if (id) {
@@ -19,7 +18,6 @@ export async function GET(request: Request) {
     const jobs = await prisma.job.findMany({
       orderBy: { created_at: 'desc' },
     });
-    console.log('Jobs:', jobs);
     return NextResponse.json({ jobs: jobs });
   } catch (error) {
     console.error(error);
@@ -54,7 +52,13 @@ export async function POST(request: Request) {
       });
       return NextResponse.json(training);
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      // Handle unique constraint violation, 409=Conflict
+      return NextResponse.json({ error: 'Job name already exists' }, { status: 409 });
+    }
+    console.error(error);
+    // Handle other errors
     return NextResponse.json({ error: 'Failed to save training data' }, { status: 500 });
   }
 }

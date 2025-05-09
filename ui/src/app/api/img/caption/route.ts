@@ -17,7 +17,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Image does not exist' }, { status: 404 });
     }
 
-
     // check for caption
     const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.txt';
     // save caption to file

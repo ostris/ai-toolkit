@@ -7,9 +7,6 @@ import weakref
 from typing import Union, TYPE_CHECKING
 
 from diffusers import Transformer2DModel
-from transformers import T5EncoderModel, CLIPTextModel, CLIPTokenizer, T5Tokenizer, CLIPVisionModelWithProjection
-from toolkit.paths import REPOS_ROOT
-sys.path.append(REPOS_ROOT)
 
 
 if TYPE_CHECKING:

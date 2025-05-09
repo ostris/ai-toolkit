@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import { apiClient } from '@/utils/api';
 
 interface FileObject {
   path: string;
@@ -18,8 +19,9 @@ export default function useFilesList(jobID: string, reloadInterval: null | numbe
       loadStatus = 'refreshing';
     }
     setStatus(loadStatus);
-    fetch(`/api/jobs/${jobID}/files`)
-      .then(res => res.json())
+    apiClient
+      .get(`/api/jobs/${jobID}/files`)
+      .then(res => res.data)
       .then(data => {
         console.log('Fetched files:', data);
         if (data.files) {

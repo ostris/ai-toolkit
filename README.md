@@ -1,25 +1,99 @@
 # AI Toolkit by Ostris
 
+AI Toolkit is an all in one training suite for diffusion models. I try to support all the latest models on consumer grade hardware. Image and video models. It can be run as a GUI or CLI. It is designed to be easy to use but still have every feature imaginable.
+
 ## Support My Work
 
-If you enjoy my work, or use it for commercial purposes, please consider sponsoring me so I can continue to maintain it. Every bit helps! 
+If you enjoy my projects or use them commercially, please consider sponsoring me. Every bit helps! 💖
 
-[Become a sponsor on GitHub](https://github.com/orgs/ostris) or [support me on Patreon](https://www.patreon.com/ostris).
+[Sponsor on GitHub](https://github.com/orgs/ostris) | [Support on Patreon](https://www.patreon.com/ostris) | [Donate on PayPal](https://www.paypal.com/donate/?hosted_button_id=9GEFUKC8T9R9W)
 
-Thank you to all my current supporters!
+### Current Sponsors
 
-_Last updated: 2025-03-13_
+All of these people / organizations are the ones who selflessly make this project possible. Thank you!!
 
-### GitHub Sponsors
+_Last updated: 2025-04-22 16:45 UTC_
 
-<a href="https://github.com/replicate" title="Replicate"><img src="https://avatars.githubusercontent.com/u/60410876?v=4" width="50" height="50" alt="Replicate" style="border-radius:50%"></a> <a href="https://github.com/weights-ai" title="Weights"><img src="https://avatars.githubusercontent.com/u/185568492?v=4" width="50" height="50" alt="Weights" style="border-radius:50%"></a> 
-
-### Patreon Supporters
-
-<a href="None" title="Abraham Irawan"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/60995694/92e0e8f336eb4a5bb8d99b940247d1d1/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=pj6Tm8XRdpGJcAEdnCakqYSNiSjoAYjvZescX7d0ic0%3D" width="50" height="50" alt="Abraham Irawan" style="border-radius:50%"></a> <a href="None" title="Al H"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/570742/4ceb33453a5a4745b430a216aba9280f/eyJ3IjoyMDB9/1.jpg?token-time=2145916800&token-hash=wUzsI5cO5Evp2ukIGdSgBbvKeYgv5LSOQMa6Br33Rrs%3D" width="50" height="50" alt="Al H" style="border-radius:50%"></a> <a href="None" title="Armin Behjati"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/93348210/5c650f32a0bc481d80900d2674528777/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=PpXK9B_iy288annlNdLOexhiQHbTftPEDeCh-sTQ2KA%3D" width="50" height="50" alt="Armin Behjati" style="border-radius:50%"></a> <a href="None" title="Bharat Prabhakar"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/134129880/680c7e14cd1a4d1a9face921fb010f88/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=vNKojv67krNqx7gdpKBX1R_stX2TkMRYvRc0xZrbY6s%3D" width="50" height="50" alt="Bharat Prabhakar" style="border-radius:50%"></a> <a href="None" title="clement Delangue"><img src="https://c8.patreon.com/3/200/33158543" width="50" height="50" alt="clement Delangue" style="border-radius:50%"></a> <a href="None" title="Cosmosis"><img src="https://c8.patreon.com/3/200/70218846" width="50" height="50" alt="Cosmosis" style="border-radius:50%"></a> <a href="None" title="David Garrido"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/27288932/6c35d2d961ee4e14a7a368c990791315/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=dpFFssZXZM_KZMKQhl3uDwwusdFw1c_v9x_ChJU7_zc%3D" width="50" height="50" alt="David Garrido" style="border-radius:50%"></a> <a href="None" title="Doron Adler"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/82763/f99cc484361d4b9d94fe4f0814ada303/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=BpwC020pR3TRZ4r0RSCiSIOh-jmatkrpy1h2XU4sGa4%3D" width="50" height="50" alt="Doron Adler" style="border-radius:50%"></a> <a href="None" title="Eli Slugworth"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/54890369/45cea21d82974c78bf43956de7fb0e12/eyJ3IjoyMDB9/2.jpeg?token-time=2145916800&token-hash=IK6OT6UpusHgdaC4y8IhK5XxXiP5TuLy3vjvgL77Fho%3D" width="50" height="50" alt="Eli Slugworth" style="border-radius:50%"></a> <a href="None" title="EmmanuelMr18"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/98811435/3a3632d1795b4c2b9f8f0270f2f6a650/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=93w8RMxwXlcM4X74t03u6P5_SrKvlm1IpjnD2SzVpJk%3D" width="50" height="50" alt="EmmanuelMr18" style="border-radius:50%"></a> <a href="None" title="Gili Ben Shahar"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/83054970/13de6cb103ad41a5841edf549e66cd51/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=wU_Eke9VYcfI40FAQvdEV84Xspqlo5VSiafLqhg_FOE%3D" width="50" height="50" alt="Gili Ben Shahar" style="border-radius:50%"></a> <a href="None" title="HestoySeghuro ."><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/30931983/54ab4e4ceab946e79a6418d205f9ed51/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=LBmsSsMQZhO6yRZ_YyRwTgE6a7BVWrGNsAVveLXHXR0%3D" width="50" height="50" alt="HestoySeghuro ." style="border-radius:50%"></a> <a href="None" title="Jack Blakely"><img src="https://c8.patreon.com/3/200/4105384" width="50" height="50" alt="Jack Blakely" style="border-radius:50%"></a> <a href="None" title="Jack English"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/45562978/0de33cf52ec642ae8a2f612cddec4ca6/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=hSAvaD4phiLcF0pvX7FP0juI5NQWCon-_TZSNpJzQJg%3D" width="50" height="50" alt="Jack English" style="border-radius:50%"></a> <a href="None" title="Jason"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/150257013/0e9e333d30294eef9f4d6821166966d8/eyJ3IjoyMDB9/2.png?token-time=2145916800&token-hash=hPH_rp5L5OJ9ZMS1wZfpVXDB4lRv2GHpV6r8Jmbmqww%3D" width="50" height="50" alt="Jason" style="border-radius:50%"></a> <a href="None" title="Jean-Tristan Marin"><img src="https://c8.patreon.com/3/200/27791680" width="50" height="50" alt="Jean-Tristan Marin" style="border-radius:50%"></a> <a href="None" title="Jodh Singh"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/131773947/eda3405aa582437db4582fce908c8739/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=S4Bh0sMqTNmJlo3uRr7co5d_kxvBjITemDTfi_1KrCA%3D" width="50" height="50" alt="Jodh Singh" style="border-radius:50%"></a> <a href="None" title="John Dopamine"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/103077711/bb215761cc004e80bd9cec7d4bcd636d/eyJ3IjoyMDB9/2.jpeg?token-time=2145916800&token-hash=zvtBie29rRTKTXvAA2KhOI-l3mSMk9xxr-mg_CksLtc%3D" width="50" height="50" alt="John Dopamine" style="border-radius:50%"></a> <a href="None" title="Joseph Rocca"><img src="https://c8.patreon.com/3/200/93304" width="50" height="50" alt="Joseph Rocca" style="border-radius:50%"></a> <a href="None" title="Kasım Açıkbaş"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/31471379/0a887513ee314a1c86d0b6f8792e9795/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=DJMZs3rDlS0fCM_ahm95FAbjleM_L0gsO9qAPzqd0nA%3D" width="50" height="50" alt="Kasım Açıkbaş" style="border-radius:50%"></a> <a href="None" title="Kristjan Retter"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/152118848/3b15a43d71714552b5ed1c9f84e66adf/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=IEKE18CBHVZ3k-08UD7Dkb7HbiFHb84W0FATdLMI0Dg%3D" width="50" height="50" alt="Kristjan Retter" style="border-radius:50%"></a> <a href="None" title="Maciej Popławski"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/24458495/7d79412e3b994ae5afb3cb7804be85ee/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=WJFgCkwp3_vMdDeCxK9k6CSsBnELp7UcmEGDYgOV07w%3D" width="50" height="50" alt="Maciej Popławski" style="border-radius:50%"></a> <a href="None" title="Michael Levine"><img src="https://c8.patreon.com/3/200/22809690" width="50" height="50" alt="Michael Levine" style="border-radius:50%"></a> <a href="None" title="Miguel Lara"><img src="https://c8.patreon.com/3/200/83319230" width="50" height="50" alt="Miguel Lara" style="border-radius:50%"></a> <a href="None" title="Misch Strotz"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/8654302/b0f5ebedc62a47c4b56222693e1254e9/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=lpeicIh1_S-3Ji3W27gyiRB7iXurp8Bx8HAzDHftOuo%3D" width="50" height="50" alt="Misch Strotz" style="border-radius:50%"></a> <a href="None" title="Mohamed Oumoumad"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/2298192/1228b69bd7d7481baf3103315183250d/eyJ3IjoyMDB9/1.jpg?token-time=2145916800&token-hash=1B7dbXy_gAcPT9WXBesLhs7z_9APiz2k1Wx4Vml_-8Q%3D" width="50" height="50" alt="Mohamed Oumoumad" style="border-radius:50%"></a> <a href="None" title="Noctre"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/99036356/7ae9c4d80e604e739b68cca12ee2ed01/eyJ3IjoyMDB9/3.png?token-time=2145916800&token-hash=zK0dHe6A937WtNlrGdefoXFTPPzHUCfn__23HP8-Ui0%3D" width="50" height="50" alt="Noctre" style="border-radius:50%"></a> <a href="None" title="Patron"><img src="https://c8.patreon.com/3/200/8449560" width="50" height="50" alt="Patron" style="border-radius:50%"></a> <a href="None" title="Paul Fidika"><img src="https://c8.patreon.com/3/200/24440789" width="50" height="50" alt="Paul Fidika" style="border-radius:50%"></a> <a href="None" title="Plaidam"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/338551/e8f257d8d3dd46c38272b391a5785948/eyJ3IjoyMDB9/1.jpg?token-time=2145916800&token-hash=GLom1rGgOZjBeO7I1OnjiIgWmjl6PO9ZjBB8YTvc7AM%3D" width="50" height="50" alt="Plaidam" style="border-radius:50%"></a> <a href="None" title="Prasanth Veerina"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/162524101/81a72689c3754ac5b9e38612ce5ce914/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=3XLSlLFCWAQ-0wd2_vZMikyotdQNSzKOjoyeoJiZEw0%3D" width="50" height="50" alt="Prasanth Veerina" style="border-radius:50%"></a> <a href="None" title="Razvan Grigore"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/156382802/a547e1a8952144ba94f301b10ea37f7a/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=4DoecSYwQGqf6LgYUCHKcEiKg2p3Rj_3BmenPkH3EK8%3D" width="50" height="50" alt="Razvan Grigore" style="border-radius:50%"></a> <a href="None" title="Steve Hanff"><img src="https://c8.patreon.com/3/200/548524" width="50" height="50" alt="Steve Hanff" style="border-radius:50%"></a> <a href="None" title="Steven Simmons"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/163426977/fc3941c79e894fef985d9f5440255313/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=TjwllfKCd_Ftt1C2wFYdcOdJZxyuPaRpEbKjrfzk0Zw%3D" width="50" height="50" alt="Steven Simmons" style="border-radius:50%"></a> <a href="None" title="Sören "><img src="https://c8.patreon.com/3/200/4541423" width="50" height="50" alt="Sören " style="border-radius:50%"></a> <a href="None" title="The Local Lab"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/141098579/1a9f0a1249d447a7a0df718a57343912/eyJ3IjoyMDB9/2.png?token-time=2145916800&token-hash=Rd_AjZGhMATVkZDf8E95ILc0n93gvvFWe1Ig0_dxwf4%3D" width="50" height="50" alt="The Local Lab" style="border-radius:50%"></a> <a href="None" title="Trent Hunter"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/31950857/c567dc648f6144be9f6234946df05da2/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=3Vx4R1eOfD4X_ZPPd40MsZ-3lyknLM35XmaHRELnWjM%3D" width="50" height="50" alt="Trent Hunter" style="border-radius:50%"></a> <a href="None" title="Un Defined"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/155963250/6f8fd7075c3b4247bfeb054ba49172d6/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=twmKs4mADF_h7bKh5jBuigYVScMeaeHv2pEPin9K0Dg%3D" width="50" height="50" alt="Un Defined" style="border-radius:50%"></a> <a href="None" title="Vladimir Sotnikov"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/161471720/dd330b4036d44a5985ed5985c12a5def/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=qkRvrEc5gLPxaXxLvcvbYv1W1lcmOoTwhj4A9Cq5BxQ%3D" width="50" height="50" alt="Vladimir Sotnikov" style="border-radius:50%"></a> <a href="None" title="Wesley Reitzfeld"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/110407414/30f9e9d88ef945ddb0f47fd23a8cbac2/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=QQRWOkMyOfDBERHn4O8N2wMB32zeiIEsydVTbSNUw-I%3D" width="50" height="50" alt="Wesley Reitzfeld" style="border-radius:50%"></a> <a href="None" title="Zoltán-Csaba Nyiró"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/162398691/89d78d89eecb4d6b981ce8c3c6a3d4b8/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=SWhI-0jGpY6Nc_bUQeXz4pa9DRURi9VnnnJ3Mxjg1po%3D" width="50" height="50" alt="Zoltán-Csaba Nyiró" style="border-radius:50%"></a> <a href="None" title="Алексей Наумов"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/26019082/6ba968129e284c869069b261c875ae02/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=Jz-Kk9l8RIvGMNcaGXuN8_vaY3G435lFmtJtFZA3OCs%3D" width="50" height="50" alt="Алексей Наумов" style="border-radius:50%"></a> <a href="None" title="עומר מכלוף"><img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/97985240/3d1d0e6905d045aba713e8132cab4a30/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=pG3X2m-py2lRYI2aoJiXI47_4ArD78ZHdSm6jCAHA_w%3D" width="50" height="50" alt="עומר מכלוף" style="border-radius:50%"></a> 
-
+<p align="center">
+<a href="https://github.com/replicate" target="_blank" rel="noopener noreferrer"><img src="https://avatars.githubusercontent.com/u/60410876?v=4" alt="Replicate" width="200" height="200" style="border-radius:8px;margin:5px;"></a>
+<a href="https://github.com/josephrocca" target="_blank" rel="noopener noreferrer"><img src="https://avatars.githubusercontent.com/u/1167575?u=92d92921b4cb5c8c7e225663fed53c4b41897736&v=4" alt="josephrocca" width="200" height="200" style="border-radius:8px;margin:5px;"></a>
+</p>
+<hr style="width:100%;border:none;height:2px;background:#ddd;margin:30px 0;">
+<p align="center">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/162524101/81a72689c3754ac5b9e38612ce5ce914/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=3XLSlLFCWAQ-0wd2_vZMikyotdQNSzKOjoyeoJiZEw0%3D" alt="Prasanth Veerina" width="150" height="150" style="border-radius:8px;margin:5px;">
+<a href="https://github.com/weights-ai" target="_blank" rel="noopener noreferrer"><img src="https://avatars.githubusercontent.com/u/185568492?v=4" alt="Weights" width="150" height="150" style="border-radius:8px;margin:5px;"></a>
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/161471720/dd330b4036d44a5985ed5985c12a5def/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=qkRvrEc5gLPxaXxLvcvbYv1W1lcmOoTwhj4A9Cq5BxQ%3D" alt="Vladimir Sotnikov" width="150" height="150" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/33158543" alt="clement Delangue" width="150" height="150" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/54890369/45cea21d82974c78bf43956de7fb0e12/eyJ3IjoyMDB9/2.jpeg?token-time=2145916800&token-hash=IK6OT6UpusHgdaC4y8IhK5XxXiP5TuLy3vjvgL77Fho%3D" alt="Eli Slugworth" width="150" height="150" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/8654302/b0f5ebedc62a47c4b56222693e1254e9/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=lpeicIh1_S-3Ji3W27gyiRB7iXurp8Bx8HAzDHftOuo%3D" alt="Misch Strotz" width="150" height="150" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/93304" alt="Joseph Rocca" width="150" height="150" style="border-radius:8px;margin:5px;">
+</p>
+<hr style="width:100%;border:none;height:2px;background:#ddd;margin:30px 0;">
+<p align="center">
+<a href="https://x.com/NuxZoe" target="_blank" rel="noopener noreferrer"><img src="https://pbs.twimg.com/profile_images/1714760743273574400/tdvQjNTl_400x400.jpg" alt="tungsten" width="100" height="100" style="border-radius:8px;margin:5px;"></a>
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/2298192/1228b69bd7d7481baf3103315183250d/eyJ3IjoyMDB9/1.jpg?token-time=2145916800&token-hash=1B7dbXy_gAcPT9WXBesLhs7z_9APiz2k1Wx4Vml_-8Q%3D" alt="Mohamed Oumoumad" width="100" height="100" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/120239481/49b1ce70d3d24704b8ec34de24ec8f55/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=Dv1NPKwdv9QT8fhYYwbGnQIvfiyqTUlh52bjDW1vYxY%3D" alt="nitish PNR" width="100" height="100" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/548524" alt="Steve Hanff" width="100" height="100" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/152118848/3b15a43d71714552b5ed1c9f84e66adf/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=IEKE18CBHVZ3k-08UD7Dkb7HbiFHb84W0FATdLMI0Dg%3D" alt="Kristjan Retter" width="100" height="100" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/83319230" alt="Miguel Lara" width="100" height="100" style="border-radius:8px;margin:5px;">
+</p>
+<hr style="width:100%;border:none;height:2px;background:#ddd;margin:30px 0;">
+<p align="center">
+<img src="https://c8.patreon.com/3/200/8449560" alt="Patron" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/27288932/6c35d2d961ee4e14a7a368c990791315/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=dpFFssZXZM_KZMKQhl3uDwwusdFw1c_v9x_ChJU7_zc%3D" alt="David Garrido" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/2410522" alt="George Gostyshev" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/16287560/78130de30950410ca528d8a888997081/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=Ok-HSL2MthKXF09SmCOlPFCPfbMctFBZKCuTnPwxZ3A%3D" alt="Vitaly Golubenko" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/570742/4ceb33453a5a4745b430a216aba9280f/eyJ3IjoyMDB9/1.jpg?token-time=2145916800&token-hash=wUzsI5cO5Evp2ukIGdSgBbvKeYgv5LSOQMa6Br33Rrs%3D" alt="Al H" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/131773947/eda3405aa582437db4582fce908c8739/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=S4Bh0sMqTNmJlo3uRr7co5d_kxvBjITemDTfi_1KrCA%3D" alt="Jodh Singh" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/22809690" alt="Michael Levine" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/99036356/7ae9c4d80e604e739b68cca12ee2ed01/eyJ3IjoyMDB9/3.png?token-time=2145916800&token-hash=zK0dHe6A937WtNlrGdefoXFTPPzHUCfn__23HP8-Ui0%3D" alt="Noctre" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/141098579/1a9f0a1249d447a7a0df718a57343912/eyJ3IjoyMDB9/2.png?token-time=2145916800&token-hash=Rd_AjZGhMATVkZDf8E95ILc0n93gvvFWe1Ig0_dxwf4%3D" alt="The Local Lab" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/98811435/3a3632d1795b4c2b9f8f0270f2f6a650/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=93w8RMxwXlcM4X74t03u6P5_SrKvlm1IpjnD2SzVpJk%3D" alt="EmmanuelMr18" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/338551/e8f257d8d3dd46c38272b391a5785948/eyJ3IjoyMDB9/1.jpg?token-time=2145916800&token-hash=GLom1rGgOZjBeO7I1OnjiIgWmjl6PO9ZjBB8YTvc7AM%3D" alt="Plaidam" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/82763/f99cc484361d4b9d94fe4f0814ada303/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=BpwC020pR3TRZ4r0RSCiSIOh-jmatkrpy1h2XU4sGa4%3D" alt="Doron Adler" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/103077711/bb215761cc004e80bd9cec7d4bcd636d/eyJ3IjoyMDB9/2.jpeg?token-time=2145916800&token-hash=zvtBie29rRTKTXvAA2KhOI-l3mSMk9xxr-mg_CksLtc%3D" alt="John Dopamine" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/93348210/5c650f32a0bc481d80900d2674528777/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=PpXK9B_iy288annlNdLOexhiQHbTftPEDeCh-sTQ2KA%3D" alt="Armin Behjati" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/155963250/6f8fd7075c3b4247bfeb054ba49172d6/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=twmKs4mADF_h7bKh5jBuigYVScMeaeHv2pEPin9K0Dg%3D" alt="Un Defined" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/45562978/0de33cf52ec642ae8a2f612cddec4ca6/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=hSAvaD4phiLcF0pvX7FP0juI5NQWCon-_TZSNpJzQJg%3D" alt="Jack English" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/27791680" alt="Jean-Tristan Marin" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/60995694/92e0e8f336eb4a5bb8d99b940247d1d1/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=pj6Tm8XRdpGJcAEdnCakqYSNiSjoAYjvZescX7d0ic0%3D" alt="Abraham Irawan" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/164958178/4eb7a37baa0541bab7a091f2b14615b7/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=_aaum7fBJAGaJhMBhlR8vqYavDhExdVxmO9mwd3_XMw%3D" alt="Austin Robinson" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/134129880/680c7e14cd1a4d1a9face921fb010f88/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=vNKojv67krNqx7gdpKBX1R_stX2TkMRYvRc0xZrbY6s%3D" alt="Bharat Prabhakar" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/70218846" alt="Cosmosis" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/83054970/13de6cb103ad41a5841edf549e66cd51/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=wU_Eke9VYcfI40FAQvdEV84Xspqlo5VSiafLqhg_FOE%3D" alt="Gili Ben Shahar" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/30931983/54ab4e4ceab946e79a6418d205f9ed51/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=LBmsSsMQZhO6yRZ_YyRwTgE6a7BVWrGNsAVveLXHXR0%3D" alt="HestoySeghuro ." width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/4105384" alt="Jack Blakely" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/494309" alt="Julian Tsependa" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/24653779" alt="RayHell" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/4541423" alt="Sören " width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/31950857/c567dc648f6144be9f6234946df05da2/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=3Vx4R1eOfD4X_ZPPd40MsZ-3lyknLM35XmaHRELnWjM%3D" alt="Trent Hunter" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/110407414/30f9e9d88ef945ddb0f47fd23a8cbac2/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=QQRWOkMyOfDBERHn4O8N2wMB32zeiIEsydVTbSNUw-I%3D" alt="Wesley Reitzfeld" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/162398691/89d78d89eecb4d6b981ce8c3c6a3d4b8/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=SWhI-0jGpY6Nc_bUQeXz4pa9DRURi9VnnnJ3Mxjg1po%3D" alt="Zoltán-Csaba Nyiró" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/97985240/3d1d0e6905d045aba713e8132cab4a30/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=pG3X2m-py2lRYI2aoJiXI47_4ArD78ZHdSm6jCAHA_w%3D" alt="עומר מכלוף" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/140599287/cff037fb93804af28bc3a4f1e91154f8/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=vkscmpmFoM5wq7GnsLmOEgNhvyXe-774kNGNqD0wurE%3D" alt="Lukas" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/96561218/b0694642d13a49faa75aec9762ff2aeb/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=sLQXomYm1iMYpknvGwKQ49f30TKQ0B1R2W3EZfCJqr8%3D" alt="Ultimate Golf Archives" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/81275465/1e4148fe9c47452b838949d02dd9a70f/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=uzJzkUq9rte3wx8wDLjGAgvSoxdtZcAnH7HctDhdYEo%3D" alt="Aaron Amortegui" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/44568304/a9d83a0e786b41b4bdada150f7c9271c/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=SBphTD654nwr-OTrvIBIJBEQho7GE2PtRre8nyaG1Fk%3D" alt="Albert Bukoski" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/49304261/d0a730de1c3349e585c49288b9f419c6/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=C2BMZ3ci-Ty2nhnSwKZqsR-5hOGsUNDYcvXps0Geq9w%3D" alt="Arvin Flores" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/5048649" alt="Ben Ward" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/130338124/f904a3bb76cd4588ac8d8f595c6cb486/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=k-inISRUtYDu9q7fNAKc3S2S7qcaw26fr1pj7PqU28Q%3D" alt="Bnp" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/111904990/08b1cf65be6a4de091c9b73b693b3468/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=OAJc9W5Ak0uJfQ2COlo1Upo38K3aj1fMQFCMC7ft5tM%3D" alt="Brian Smith" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/113207022/d4a67cc113e84fb69032bef71d068720/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=mu-tIg88VwoQdgLEOmxuVkhVm9JT59DdnHXJstmkkLU%3D" alt="Fagem X" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/5602036" alt="Kelevra" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/358350" alt="L D" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/159203973/36c817f941ac4fa18103a4b8c0cb9cae/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=9toslDfsO14QyaOiu6vIf--d4marBsWCZWN3gdPqbIU%3D" alt="Marko jak" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/11198131/e696d9647feb4318bcf16243c2425805/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=o6Hrpzw9rf2Ucd4cZ-hdUkGejLNv44-pqF8smeOF3ts%3D" alt="Nicholas Agranoff" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/785333/bdb9ede5765d42e5a2021a86eebf0d8f/eyJ3IjoyMDB9/2.jpg?token-time=2145916800&token-hash=dr5eaMg3Ua0wyCy40Qv3F-ZFajWZmuz2fWG55FskREc%3D" alt="Sapjes " width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/44738426/b01ff676da864d4ab9c21f226275b63e/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=54nIkcxFaGszJ3q0jNhtrVSBbV3WNK9e5WX9VzXltYk%3D" alt="Shakeel Saleemi" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/76566911/6485eaf5ec6249a7b524ee0b979372f0/eyJ3IjoyMDB9/1.jpeg?token-time=2145916800&token-hash=S1QK78ief5byQU7tB_reqnw4V2zhW_cpwTqHThk-tGc%3D" alt="the biitz" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c8.patreon.com/3/200/83034" alt="william tatum" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/32633822/1ab5612efe80417cbebfe91e871fc052/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=RHYMcjr0UGIYw5FBrUfJdKMGuoYWhBQlLIykccEFJvo%3D" alt="Zack Abrams" width="60" height="60" style="border-radius:8px;margin:5px;">
+<img src="https://c10.patreonusercontent.com/4/patreon-media/p/user/138787189/2b5662dcb638466282ac758e3ac651b4/eyJ3IjoyMDB9/1.png?token-time=2145916800&token-hash=IlUAs9JAlVRphfx81V-Jt-nMiSBS8mPewRr9u6pQjaQ%3D" alt="Антон Антонио" width="60" height="60" style="border-radius:8px;margin:5px;">
+</p>
 
 ---
+
+
 
 
 
@@ -37,12 +111,10 @@ Linux:
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
-git submodule update --init --recursive
 python3 -m venv venv
 source venv/bin/activate
-# .\venv\Scripts\activate on windows
 # install torch first
-pip3 install torch
+pip3 install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
@@ -50,10 +122,9 @@ Windows:
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
-git submodule update --init --recursive
 python -m venv venv
 .\venv\Scripts\activate
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
 
@@ -62,36 +133,39 @@ pip install -r requirements.txt
 
 <img src="https://ostris.com/wp-content/uploads/2025/02/toolkit-ui.jpg" alt="AI Toolkit UI" width="100%">
 
-The AI Toolkit UI is a web interface for the AI Toolkit. It allows you to easily start, stop, and monitor jobs. It also allows you to easily train models with a few clicks. It is still in early beta and will likely have bugs and frequent breaking changes. It is currently only tested on linux for now.
+The AI Toolkit UI is a web interface for the AI Toolkit. It allows you to easily start, stop, and monitor jobs. It also allows you to easily train models with a few clicks. It also allows you to set a token for the UI to prevent unauthorized access so it is mostly safe to run on an exposed server.
 
-
-WARNING: The UI is not secure and should not be exposed to the internet. It is only meant to be run locally or on a server that does not have ports exposed. Adding additional security is on the roadmap.
-
-## Installing the UI
+## Running the UI
 
 Requirements:
 - Node.js > 18
 
-You will need to do this with every update as well.
+The UI does not need to be kept running for the jobs to run. It is only needed to start/stop/monitor jobs. The commands below
+will install / update the UI and it's dependencies and start the UI. 
 
 ```bash
 cd ui
-npm install
-npm run build
-npm run update_db
-```
-
-## Running the UI
-
-Make sure you built it as shown above. The UI does not need to be kept running for the jobs to run. It is only needed to start/stop/monitor jobs.
-
-```bash
-cd ui
-npm run start
+npm run build_and_start
 ```
 
 You can now access the UI at `http://localhost:8675` or `http://<your-ip>:8675` if you are running it on a server.
 
+## Securing the UI
+
+If you are hosting the UI on a cloud provider or any network that is not secure, I highly recommend securing it with an auth token. 
+You can do this by setting the environment variable `AI_TOOLKIT_AUTH` to super secure password. This token will be required to access
+the UI. You can set this when starting the UI like so:
+
+```bash
+# Linux
+AI_TOOLKIT_AUTH=super_secure_password npm run build_and_start
+
+# Windows
+set AI_TOOLKIT_AUTH=super_secure_password && npm run build_and_start
+
+# Windows Powershell
+$env:AI_TOOLKIT_AUTH="super_secure_password"; npm run build_and_start
+```
 
 
 ## FLUX.1 Training

@@ -6,6 +6,7 @@ import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
+import { apiClient } from '@/utils/api';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -15,15 +16,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
-    fetch('/api/datasets/listImages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ datasetName: dbName }),
-    })
-      .then(res => res.json())
-      .then(data => {
+    console.log('Fetching images for dataset:', dbName);
+    apiClient
+      .post('/api/datasets/listImages', { datasetName: dbName })
+      .then((res: any) => {
+        const data = res.data;
         console.log('Images:', data.images);
         // sort
         data.images.sort((a: { img_path: string }, b: { img_path: string }) => a.img_path.localeCompare(b.img_path));

@@ -4,13 +4,7 @@ import weakref
 import torch
 import torch.nn as nn
 from typing import TYPE_CHECKING, List, Dict, Any
-from toolkit.models.clip_fusion import ZipperBlock
-from toolkit.models.zipper_resampler import ZipperModule, ZipperResampler
-import sys
-from toolkit.paths import REPOS_ROOT
-sys.path.append(REPOS_ROOT)
-from ipadapter.ip_adapter.resampler import  Resampler
-from collections import OrderedDict
+from toolkit.resampler import Resampler
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRAModule

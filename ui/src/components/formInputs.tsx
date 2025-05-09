@@ -1,5 +1,9 @@
-import React from 'react';
+'use client';
+
+import React, { forwardRef } from 'react';
 import classNames from 'classnames';
+import dynamic from "next/dynamic";
+const Select = dynamic(() => import("react-select"), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
 const inputClasses =
@@ -19,26 +23,30 @@ export interface TextInputProps extends InputProps {
   disabled?: boolean;
 }
 
-export const TextInput = (props: TextInputProps) => {
-  const { label, value, onChange, placeholder, required, disabled } = props;
-  return (
-    <div className={classNames(props.className)}>
-      {label && <label className={labelClasses}>{label}</label>}
-      <input
-        type={props.type || 'text'}
-        value={value}
-        onChange={e => {
-          if (disabled) return;
-          onChange(e.target.value);
-        }}
-        className={`${inputClasses} ${disabled && 'opacity-30 cursor-not-allowed'}`}
-        placeholder={placeholder}
-        required={required}
-        disabled={disabled}
-      />
-    </div>
-  );
-};
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
+  ({ label, value, onChange, placeholder, required, disabled, type = 'text', className }, ref) => {
+    return (
+      <div className={classNames(className)}>
+        {label && <label className={labelClasses}>{label}</label>}
+        <input
+          ref={ref}
+          type={type}
+          value={value}
+          onChange={e => {
+            if (!disabled) onChange(e.target.value);
+          }}
+          className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
+          placeholder={placeholder}
+          required={required}
+          disabled={disabled}
+        />
+      </div>
+    );
+  }
+);
+
+// 👇 Helpful for debugging
+TextInput.displayName = 'TextInput';
 
 export interface NumberInputProps extends InputProps {
   value: number;
@@ -49,7 +57,7 @@ export interface NumberInputProps extends InputProps {
 
 export const NumberInput = (props: NumberInputProps) => {
   const { label, value, onChange, placeholder, required, min, max } = props;
-  
+
   // Add controlled internal state to properly handle partial inputs
   const [inputValue, setInputValue] = React.useState<string | number>(value ?? '');
 
@@ -66,7 +74,7 @@ export const NumberInput = (props: NumberInputProps) => {
         value={inputValue}
         onChange={e => {
           const rawValue = e.target.value;
-          
+
           // Update the input display with the raw value
           setInputValue(rawValue);
 
@@ -81,7 +89,7 @@ export const NumberInput = (props: NumberInputProps) => {
           // Only apply constraints and call onChange when we have a valid number
           if (!isNaN(numValue)) {
             let constrainedValue = numValue;
-            
+
             // Apply min/max constraints if they exist
             if (min !== undefined && constrainedValue < min) {
               constrainedValue = min;
@@ -89,7 +97,7 @@ export const NumberInput = (props: NumberInputProps) => {
             if (max !== undefined && constrainedValue > max) {
               constrainedValue = max;
             }
-            
+
             onChange(constrainedValue);
           }
         }}
@@ -112,16 +120,21 @@ export interface SelectInputProps extends InputProps {
 
 export const SelectInput = (props: SelectInputProps) => {
   const { label, value, onChange, options } = props;
+  const selectedOption = options.find(option => option.value === value);
   return (
     <div className={classNames(props.className)}>
       {label && <label className={labelClasses}>{label}</label>}
-      <select value={value} onChange={e => onChange(e.target.value)} className={inputClasses}>
-        {options.map(option => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      <Select 
+        value={selectedOption} 
+        options={options}
+        className="aitk-react-select-container"
+        classNamePrefix="aitk-react-select"
+        onChange={selected => {
+          if (selected) {
+            onChange((selected as { value: string }).value);
+          }
+        }}
+      />
     </div>
   );
 };
@@ -152,14 +165,14 @@ export const Checkbox = (props: CheckboxProps) => {
         className={classNames(
           'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2',
           checked ? 'bg-blue-600' : 'bg-gray-700',
-          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80'
+          disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80',
         )}
       >
         <span className="sr-only">Toggle {label}</span>
         <span
           className={classNames(
             'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
-            checked ? 'translate-x-5' : 'translate-x-0'
+            checked ? 'translate-x-5' : 'translate-x-0',
           )}
         />
       </button>
@@ -168,7 +181,7 @@ export const Checkbox = (props: CheckboxProps) => {
           htmlFor={id}
           className={classNames(
             'text-sm font-medium cursor-pointer select-none',
-            disabled ? 'text-gray-500' : 'text-gray-300'
+            disabled ? 'text-gray-500' : 'text-gray-300',
           )}
         >
           {label}

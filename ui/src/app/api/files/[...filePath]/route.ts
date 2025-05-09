@@ -16,7 +16,8 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
     const allowedDirs = [datasetRoot, trainingRoot];
 
     // Security check: Ensure path is in allowed directory
-    const isAllowed = allowedDirs.some(allowedDir => decodedFilePath.startsWith(allowedDir)) && !decodedFilePath.includes('..');
+    const isAllowed =
+      allowedDirs.some(allowedDir => decodedFilePath.startsWith(allowedDir)) && !decodedFilePath.includes('..');
 
     if (!isAllowed) {
       console.warn(`Access denied: ${decodedFilePath} not in ${allowedDirs.join(', ')}`);
@@ -49,6 +50,14 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       '.svg': 'image/svg+xml',
       '.bmp': 'image/bmp',
       '.safetensors': 'application/octet-stream',
+      // Videos
+      '.mp4': 'video/mp4',
+      '.avi': 'video/x-msvideo',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.wmv': 'video/x-ms-wmv',
+      '.m4v': 'video/x-m4v',
+      '.flv': 'video/x-flv'
     };
 
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
@@ -62,7 +71,7 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'public, max-age=86400',
       'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
-      'X-Content-Type-Options': 'nosniff'
+      'X-Content-Type-Options': 'nosniff',
     };
 
     if (range) {
@@ -70,12 +79,12 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 10 * 1024 * 1024, stat.size - 1); // 10MB chunks
-      const chunkSize = (end - start) + 1;
+      const chunkSize = end - start + 1;
 
-      const fileStream = fs.createReadStream(decodedFilePath, { 
-        start, 
+      const fileStream = fs.createReadStream(decodedFilePath, {
+        start,
         end,
-        highWaterMark: 64 * 1024 // 64KB buffer
+        highWaterMark: 64 * 1024, // 64KB buffer
       });
 
       return new NextResponse(fileStream as any, {
@@ -83,19 +92,19 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
         headers: {
           ...commonHeaders,
           'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-          'Content-Length': String(chunkSize)
+          'Content-Length': String(chunkSize),
         },
       });
     } else {
       // For full file download, read directly without streaming wrapper
       const fileStream = fs.createReadStream(decodedFilePath, {
-        highWaterMark: 64 * 1024 // 64KB buffer
+        highWaterMark: 64 * 1024, // 64KB buffer
       });
 
       return new NextResponse(fileStream as any, {
         headers: {
           ...commonHeaders,
-          'Content-Length': String(stat.size)
+          'Content-Length': String(stat.size),
         },
       });
     }

@@ -11,26 +11,30 @@ export const defaultDatasetConfig: DatasetConfig = {
   is_reg: false,
   network_weight: 1,
   resolution: [512, 768, 1024],
+  controls: []
 };
 
 export const defaultJobConfig: JobConfig = {
   job: 'extension',
   config: {
-    name: 'my_first_flex_lora_v1',
+    name: 'my_first_lora_v1',
     process: [
       {
         type: 'ui_trainer',
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
-        device: 'cuda:0',
+        device: 'cuda',
         trigger_word: null,
         performance_log_every: 10,
         network: {
           type: 'lora',
-          linear: 16,
-          linear_alpha: 16,
+          linear: 32,
+          linear_alpha: 32,
           lokr_full_rank: true,
-          lokr_factor: -1
+          lokr_factor: -1,
+          network_kwargs: {
+            ignore_if_contains: [],
+          },
         },
         save: {
           dtype: 'bf16',
@@ -39,13 +43,11 @@ export const defaultJobConfig: JobConfig = {
           save_format: 'diffusers',
           push_to_hub: false,
         },
-        datasets: [
-          defaultDatasetConfig
-        ],
+        datasets: [defaultDatasetConfig],
         train: {
           batch_size: 1,
           bypass_guidance_embedding: true,
-          steps: 2000,
+          steps: 3000,
           gradient_accumulation: 1,
           train_unet: true,
           train_text_encoder: false,
@@ -55,26 +57,26 @@ export const defaultJobConfig: JobConfig = {
           timestep_type: 'sigmoid',
           content_or_style: 'balanced',
           optimizer_params: {
-            weight_decay: 1e-4
+            weight_decay: 1e-4,
           },
           unload_text_encoder: false,
           lr: 0.0001,
           ema_config: {
-            use_ema: true,
+            use_ema: false,
             ema_decay: 0.99,
           },
           dtype: 'bf16',
           diff_output_preservation: false,
           diff_output_preservation_multiplier: 1.0,
-          diff_output_preservation_class: 'person'
-
+          diff_output_preservation_class: 'person',
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
           quantize: true,
           quantize_te: true,
-          arch: 'flux',
+          arch: 'flex1',
           low_vram: false,
+          model_kwargs: {},
         },
         sample: {
           sampler: 'flowmatch',

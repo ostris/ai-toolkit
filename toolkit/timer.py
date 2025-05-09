@@ -1,6 +1,10 @@
 import time
 from collections import OrderedDict, deque
+import sys
+import os
 
+# check if is ui process will have IS_AI_TOOLKIT_UI in env
+is_ui = os.environ.get("IS_AI_TOOLKIT_UI", "0") == "1"
 
 class Timer:
     def __init__(self, name='Timer', max_buffer=10):
@@ -39,18 +43,21 @@ class Timer:
         self._after_print_hooks.append(hook)
 
     def print(self):
-        print(f"\nTimer '{self.name}':")
+        if not is_ui:
+            print(f"\nTimer '{self.name}':")
         timing_dict = {}
         # sort by longest at top
         for timer_name, timings in sorted(self.timers.items(), key=lambda x: sum(x[1]), reverse=True):
             avg_time = sum(timings) / len(timings)
-            print(f" - {avg_time:.4f}s avg - {timer_name}, num = {len(timings)}")
+            
+            if not is_ui:
+                print(f" - {avg_time:.4f}s avg - {timer_name}, num = {len(timings)}")
             timing_dict[timer_name] = avg_time
 
         for hook in self._after_print_hooks:
             hook(timing_dict)
-
-        print('')
+        if not is_ui:
+            print('')
 
     def reset(self):
         self.timers.clear()

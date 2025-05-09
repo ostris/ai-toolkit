@@ -8,17 +8,10 @@ from torch.nn import Parameter
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 
 from toolkit.basic import adain
-from toolkit.paths import REPOS_ROOT
 from toolkit.saving import load_ip_adapter_model
 from toolkit.train_tools import get_torch_dtype
-
-sys.path.append(REPOS_ROOT)
 from typing import TYPE_CHECKING, Union, Iterator, Mapping, Any, Tuple, List, Optional, Dict
 from collections import OrderedDict
-from ipadapter.ip_adapter.attention_processor import AttnProcessor, IPAttnProcessor, IPAttnProcessor2_0, \
-    AttnProcessor2_0
-from ipadapter.ip_adapter.ip_adapter import ImageProjModel
-from ipadapter.ip_adapter.resampler import Resampler
 from toolkit.config_modules import AdapterConfig
 from toolkit.prompt_utils import PromptEmbeds
 import weakref

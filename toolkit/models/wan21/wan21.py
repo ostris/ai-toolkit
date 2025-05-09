@@ -8,7 +8,6 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.models.base_model import BaseModel
 from toolkit.prompt_utils import PromptEmbeds
-from toolkit.paths import REPOS_ROOT
 from transformers import AutoTokenizer, UMT5EncoderModel
 from diffusers import AutoencoderKLWan, WanPipeline, WanTransformer3DModel
 import os
@@ -29,14 +28,13 @@ import copy
 from toolkit.config_modules import ModelConfig, GenerateImageConfig, ModelArch
 import torch
 from optimum.quanto import freeze, qfloat8, QTensor, qint4
-from toolkit.util.quantize import quantize
+from toolkit.util.quantize import quantize, get_qtype
 from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
 from typing import TYPE_CHECKING, List
 from toolkit.accelerator import unwrap_model
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
-from torchvision.transforms import Resize, ToPILImage
 from tqdm import tqdm
-
+import torch.nn.functional as F
 from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 from diffusers.pipelines.wan.pipeline_wan import XLA_AVAILABLE
 # from ...callbacks import MultiPipelineCallbacks, PipelineCallback
@@ -83,6 +81,27 @@ scheduler_config = {
 
 
 class AggressiveWanUnloadPipeline(WanPipeline):
+    def __init__(
+        self,
+        tokenizer: AutoTokenizer,
+        text_encoder: UMT5EncoderModel,
+        transformer: WanTransformer3DModel,
+        vae: AutoencoderKLWan,
+        scheduler: FlowMatchEulerDiscreteScheduler,
+        device: torch.device = torch.device("cuda"),
+    ):
+        super().__init__(
+            tokenizer=tokenizer,
+            text_encoder=text_encoder,
+            transformer=transformer,
+            vae=vae,
+            scheduler=scheduler,
+        )
+        self._exec_device = device
+    @property
+    def _execution_device(self):
+        return self._exec_device
+    
     def __call__(
         self: WanPipeline,
         prompt: Union[str, List[str]] = None,
@@ -279,6 +298,7 @@ class AggressiveWanUnloadPipeline(WanPipeline):
 
 
 class Wan21(BaseModel):
+    arch = 'wan21'
     def __init__(
             self,
             device,
@@ -296,6 +316,9 @@ class Wan21(BaseModel):
 
         # cache for holding noise
         self.effective_noise = None
+        
+    def get_bucket_divisibility(self):
+        return 16
 
     # static method to get the scheduler
     @staticmethod
@@ -305,23 +328,22 @@ class Wan21(BaseModel):
 
     def load_model(self):
         dtype = self.torch_dtype
-        # todo , will this work with other wan models?
-        base_model_path = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
         model_path = self.model_config.name_or_path
 
         self.print_and_status_update("Loading Wan2.1 model")
-        # base_model_path = "black-forest-labs/FLUX.1-schnell"
-        base_model_path = self.model_config.name_or_path_original
         subfolder = 'transformer'
         transformer_path = model_path
         if os.path.exists(transformer_path):
             subfolder = None
             transformer_path = os.path.join(transformer_path, 'transformer')
-            # check if the path is a full checkpoint.
-            te_folder_path = os.path.join(model_path, 'text_encoder')
-            # if we have the te, this folder is a full checkpoint, use it as the base
-            if os.path.exists(te_folder_path):
-                base_model_path = model_path
+        
+        te_path = self.model_config.extras_name_or_path    
+        if os.path.exists(os.path.join(model_path, 'text_encoder')):
+            te_path = model_path
+        
+        vae_path = self.model_config.extras_name_or_path
+        if os.path.exists(os.path.join(model_path, 'vae')):
+            vae_path = model_path
 
         self.print_and_status_update("Loading transformer")
         transformer = WanTransformer3DModel.from_pretrained(
@@ -356,7 +378,7 @@ class Wan21(BaseModel):
                 quantization_args['exclude'] = []
             # patch the state dict method
             patch_dequantization_on_save(transformer)
-            quantization_type = qfloat8
+            quantization_type = get_qtype(self.model_config.qtype)
             self.print_and_status_update("Quantizing transformer")
             if self.model_config.low_vram:
                 print("Quantizing blocks")
@@ -395,16 +417,16 @@ class Wan21(BaseModel):
 
         self.print_and_status_update("Loading UMT5EncoderModel")
         tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+            te_path, subfolder="tokenizer", torch_dtype=dtype)
         text_encoder = UMT5EncoderModel.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
+            te_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing UMT5EncoderModel")
-            quantize(text_encoder, weights=qfloat8)
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
             freeze(text_encoder)
             flush()
 
@@ -417,7 +439,7 @@ class Wan21(BaseModel):
         self.print_and_status_update("Loading VAE")
         # todo, example does float 32? check if quality suffers
         vae = AutoencoderKLWan.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
+            vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
         flush()
 
         self.print_and_status_update("Making pipe")
@@ -459,6 +481,7 @@ class Wan21(BaseModel):
                 text_encoder=self.text_encoder,
                 tokenizer=self.tokenizer,
                 scheduler=scheduler,
+                device=self.device_torch
             )
         else:
             pipeline = WanPipeline(
@@ -540,6 +563,8 @@ class Wan21(BaseModel):
         return noise_pred
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
+        if self.pipeline.text_encoder.device != self.device_torch:
+            self.pipeline.text_encoder.to(self.device_torch)
         prompt_embeds, _ = self.pipeline.encode_prompt(
             prompt,
             do_classifier_free_guidance=False,
@@ -561,26 +586,37 @@ class Wan21(BaseModel):
         if dtype is None:
             dtype = self.vae_torch_dtype
 
-        latent_list = []
-        # Move to vae to device if on cpu
         if self.vae.device == 'cpu':
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
-        # move to device and dtype
+
         image_list = [image.to(device, dtype=dtype) for image in image_list]
 
-        VAE_SCALE_FACTOR = 8
+        # Normalize shapes
+        norm_images = []
+        for image in image_list:
+            if image.ndim == 3:
+                # (C, H, W) -> (C, 1, H, W)
+                norm_images.append(image.unsqueeze(1))
+            elif image.ndim == 4:
+                # (T, C, H, W) -> (C, T, H, W)
+                norm_images.append(image.permute(1, 0, 2, 3))
+            else:
+                raise ValueError(f"Invalid image shape: {image.shape}")
 
-        # resize images if not divisible by 8
-        for i in range(len(image_list)):
-            image = image_list[i]
-            if image.shape[1] % VAE_SCALE_FACTOR != 0 or image.shape[2] % VAE_SCALE_FACTOR != 0:
-                image_list[i] = Resize((image.shape[1] // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR,
-                                        image.shape[2] // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR))(image)
+        # Stack to (B, C, T, H, W)
+        images = torch.stack(norm_images)
+        B, C, T, H, W = images.shape
 
-        images = torch.stack(image_list)
-        images = images.unsqueeze(2)
+        # Resize if needed (B * T, C, H, W)
+        if H % 8 != 0 or W % 8 != 0:
+            target_h = H // 8 * 8
+            target_w = W // 8 * 8
+            images = images.permute(0, 2, 1, 3, 4).reshape(B * T, C, H, W)
+            images = F.interpolate(images, size=(target_h, target_w), mode='bilinear', align_corners=False)
+            images = images.view(B, T, C, target_h, target_w).permute(0, 2, 1, 3, 4)
+
         latents = self.vae.encode(images).latent_dist.sample()
 
         latents_mean = (
@@ -593,9 +629,7 @@ class Wan21(BaseModel):
         )
         latents = (latents - latents_mean) * latents_std
 
-        latents = latents.to(device, dtype=dtype)
-
-        return latents
+        return latents.to(device, dtype=dtype)
 
     def get_model_has_grad(self):
         return self.model.proj_out.weight.requires_grad
@@ -629,3 +663,6 @@ class Wan21(BaseModel):
 
     def convert_lora_weights_before_load(self, state_dict):
         return convert_to_diffusers(state_dict)
+    
+    def get_base_model_version(self):
+        return "wan_2.1"

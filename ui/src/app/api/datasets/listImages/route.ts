@@ -8,31 +8,25 @@ export async function POST(request: Request) {
   const body = await request.json();
   const { datasetName } = body;
   const datasetFolder = path.join(datasetsPath, datasetName);
-  
+
   try {
     // Check if folder exists
     if (!fs.existsSync(datasetFolder)) {
-      return NextResponse.json(
-        { error: `Folder '${datasetName}' not found` },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: `Folder '${datasetName}' not found` }, { status: 404 });
     }
 
     // Find all images recursively
     const imageFiles = findImagesRecursively(datasetFolder);
-    
+
     // Format response
     const result = imageFiles.map(imgPath => ({
-      img_path: imgPath
+      img_path: imgPath,
     }));
-    
+
     return NextResponse.json({ images: result });
   } catch (error) {
     console.error('Error finding images:', error);
-    return NextResponse.json(
-      { error: 'Failed to process request' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
   }
 }
 
@@ -42,15 +36,15 @@ export async function POST(request: Request) {
  * @returns Array of absolute paths to image files
  */
 function findImagesRecursively(dir: string): string[] {
-  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp'];
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
   let results: string[] = [];
-  
+
   const items = fs.readdirSync(dir);
-  
+
   for (const item of items) {
     const itemPath = path.join(dir, item);
     const stat = fs.statSync(itemPath);
-    
+
     if (stat.isDirectory()) {
       // If it's a directory, recursively search it
       results = results.concat(findImagesRecursively(itemPath));
@@ -62,6 +56,6 @@ function findImagesRecursively(dir: string): string[] {
       }
     }
   }
-  
+
   return results;
 }

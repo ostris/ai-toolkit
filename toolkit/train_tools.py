@@ -6,11 +6,6 @@ import time
 from typing import TYPE_CHECKING, Union, List
 import sys
 
-from torch.cuda.amp import GradScaler
-
-from toolkit.paths import SD_SCRIPTS_ROOT
-
-sys.path.append(SD_SCRIPTS_ROOT)
 
 from diffusers import (
     DDPMScheduler,
@@ -150,7 +145,7 @@ if TYPE_CHECKING:
 def concat_prompt_embeddings(
         unconditional: 'PromptEmbeds',
         conditional: 'PromptEmbeds',
-        n_imgs: int,
+        n_imgs: int=0,
 ):
     from toolkit.stable_diffusion_model import PromptEmbeds
     text_embeds = torch.cat(

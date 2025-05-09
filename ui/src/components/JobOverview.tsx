@@ -4,7 +4,8 @@ import GPUWidget from '@/components/GPUWidget';
 import FilesWidget from '@/components/FilesWidget';
 import { getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import useJobLog from '@/hooks/useJobLog';
 
 interface JobOverviewProps {
   job: Job;
@@ -12,11 +13,49 @@ interface JobOverviewProps {
 
 export default function JobOverview({ job }: JobOverviewProps) {
   const gpuIds = useMemo(() => job.gpu_ids.split(',').map(id => parseInt(id)), [job.gpu_ids]);
+  const { log, setLog, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
+  const logRef = useRef<HTMLDivElement>(null);
+  // Track whether we should auto-scroll to bottom
+  const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
 
   const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
   const totalSteps = getTotalSteps(job);
   const progress = (job.step / totalSteps) * 100;
   const isStopping = job.stop && job.status === 'running';
+
+  const logLines: string[] = useMemo(() => {
+    // split at line breaks on \n or \r\n but not \r
+    let splits: string[] = log.split(/\n|\r\n/);
+
+    splits = splits.map(line => {
+      return line.split(/\r/).pop();
+    }) as string[];
+
+    // only return last 100 lines max
+    const maxLines = 1000;
+    if (splits.length > maxLines) {
+      splits = splits.slice(splits.length - maxLines);
+    }
+
+    return splits;
+  }, [log]);
+
+  // Handle scroll events to determine if user has scrolled away from bottom
+  const handleScroll = () => {
+    if (logRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = logRef.current;
+      // Consider "at bottom" if within 10 pixels of the bottom
+      const isAtBottom = scrollHeight - scrollTop - clientHeight < 10;
+      setIsScrolledToBottom(isAtBottom);
+    }
+  };
+
+  // Auto-scroll to bottom only if we were already at the bottom
+  useEffect(() => {
+    if (logRef.current && isScrolledToBottom) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [log, isScrolledToBottom]);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -43,13 +82,15 @@ export default function JobOverview({ job }: JobOverviewProps) {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       {/* Job Information Panel */}
-      <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
+      <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
-          <h2 className="text-gray-100"><Info className="w-5 h-5 mr-2 -mt-1 text-amber-400 inline-block" /> {job.info}</h2>
+          <h2 className="text-gray-100">
+            <Info className="w-5 h-5 mr-2 -mt-1 text-amber-400 inline-block" /> {job.info}
+          </h2>
           <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>{job.status}</span>
         </div>
 
-        <div className="p-4 space-y-6">
+        <div className="p-4 space-y-6 flex flex-col flex-grow">
           {/* Progress Bar */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
@@ -85,8 +126,27 @@ export default function JobOverview({ job }: JobOverviewProps) {
               <Gauge className="w-5 h-5 text-green-400" />
               <div>
                 <p className="text-xs text-gray-400">Speed</p>
-                <p className="text-sm font-medium text-gray-200">{job.speed_string == "" ? "?" : job.speed_string}</p>
+                <p className="text-sm font-medium text-gray-200">{job.speed_string == '' ? '?' : job.speed_string}</p>
               </div>
+            </div>
+          </div>
+
+          {/* Log - Now using flex-grow to fill remaining space */}
+          <div className="bg-gray-950 rounded-lg p-4 relative flex-grow min-h-60">
+            <div
+              ref={logRef}
+              className="text-xs text-gray-300 absolute inset-0 p-4 overflow-y-auto"
+              onScroll={handleScroll}
+            >
+              {statusLog === 'loading' && 'Loading log...'}
+              {statusLog === 'error' && 'Error loading log'}
+              {['success', 'refreshing'].includes(statusLog) && (
+                <div>
+                  {logLines.map((line, index) => {
+                    return <pre key={index}>{line}</pre>;
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>

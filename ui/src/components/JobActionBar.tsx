@@ -62,26 +62,34 @@ export default function JobActionBar({ job, onRefresh, afterDelete, className, h
           <Pen />
         </Link>
       )}
-      {canDelete && (
-        <Button
-          onClick={() => {
-            if (!canDelete) return;
-            openConfirm({
-              title: 'Delete Job',
-              message: `Are you sure you want to delete the job "${job.name}"? This will also permanently remove it from your disk.`,
-              type: 'warning',
-              confirmText: 'Delete',
-              onConfirm: async () => {
-                await deleteJob(job.id);
-                if (afterDelete) afterDelete();
-              },
-            });
-          }}
-          className={`ml-2 opacity-100`}
-        >
-          <Trash2 />
-        </Button>
-      )}
+      <Button
+        onClick={() => {
+          let message = `Are you sure you want to delete the job "${job.name}"? This will also permanently remove it from your disk.`;
+          if (job.status === 'running') {
+            message += ' WARNING: The job is currently running. You should stop it first if you can.';
+          }
+          openConfirm({
+            title: 'Delete Job',
+            message: message,
+            type: 'warning',
+            confirmText: 'Delete',
+            onConfirm: async () => {
+              if (job.status === 'running') {
+                try {
+                  await stopJob(job.id);
+                } catch (e) {
+                  console.error('Error stopping job before deleting:', e);
+                }
+              }
+              await deleteJob(job.id);
+              if (afterDelete) afterDelete();
+            },
+          });
+        }}
+        className={`ml-2 opacity-100`}
+      >
+        <Trash2 />
+      </Button>
     </div>
   );
 }

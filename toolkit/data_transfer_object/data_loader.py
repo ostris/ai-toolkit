@@ -2,6 +2,7 @@ import os
 import weakref
 from _weakref import ReferenceType
 from typing import TYPE_CHECKING, List, Union
+import cv2
 import torch
 import random
 
@@ -9,9 +10,10 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 
 from toolkit import image_utils
+from toolkit.basic import get_quick_signature_string
 from toolkit.dataloader_mixins import CaptionProcessingDTOMixin, ImageProcessingDTOMixin, LatentCachingFileItemDTOMixin, \
     ControlFileItemDTOMixin, ArgBreakMixin, PoiFileItemDTOMixin, MaskFileItemDTOMixin, AugmentationFileItemDTOMixin, \
-    UnconditionalFileItemDTOMixin, ClipImageFileItemDTOMixin
+    UnconditionalFileItemDTOMixin, ClipImageFileItemDTOMixin, InpaintControlFileItemDTOMixin
 
 
 if TYPE_CHECKING:
@@ -33,6 +35,7 @@ class FileItemDTO(
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
     ControlFileItemDTOMixin,
+    InpaintControlFileItemDTOMixin,
     ClipImageFileItemDTOMixin,
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
@@ -43,6 +46,7 @@ class FileItemDTO(
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get('path', '')
         self.dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
+        self.is_video = self.dataset_config.num_frames > 1
         size_database = kwargs.get('size_database', {})
         dataset_root =  kwargs.get('dataset_root', None)
         if dataset_root is not None:
@@ -50,8 +54,35 @@ class FileItemDTO(
             file_key = self.path.replace(dataset_root, '')
         else:
             file_key = os.path.basename(self.path)
+        
+        file_signature = get_quick_signature_string(self.path)
+        if file_signature is None:
+            raise Exception("Error: Could not get file signature for {self.path}")
+        
+        use_db_entry = False
         if file_key in size_database:
-            w, h = size_database[file_key]
+            db_entry = size_database[file_key]
+            if db_entry is not None and len(db_entry) >= 3 and db_entry[2] == file_signature:
+                use_db_entry = True
+        
+        if use_db_entry:
+            w, h, _ = size_database[file_key]
+        elif self.is_video:
+            # Open the video file
+            video = cv2.VideoCapture(self.path)
+            
+            # Check if video opened successfully
+            if not video.isOpened():
+                raise Exception(f"Error: Could not open video file {self.path}")
+            
+            # Get width and height
+            width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            w, h = width, height
+            
+            # Release the video capture object immediately
+            video.release()
+            size_database[file_key] = (width, height, file_signature)
         else:
             # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method for now.
             # process width and height
@@ -62,7 +93,7 @@ class FileItemDTO(
             #                f'This process is faster for png, jpeg')
             img = exif_transpose(Image.open(self.path))
             w, h = img.size
-            size_database[file_key] = (w, h)
+            size_database[file_key] = (w, h, file_signature)
         self.width: int = w
         self.height: int = h
         self.dataloader_transforms = kwargs.get('dataloader_transforms', None)
@@ -91,6 +122,7 @@ class FileItemDTO(
         self.tensor = None
         self.cleanup_latent()
         self.cleanup_control()
+        self.cleanup_inpaint()
         self.cleanup_clip_image()
         self.cleanup_mask()
         self.cleanup_unconditional()
@@ -137,6 +169,22 @@ class DataLoaderBatchDTO:
                     else:
                         control_tensors.append(x.control_tensor)
                 self.control_tensor = torch.cat([x.unsqueeze(0) for x in control_tensors])
+                
+            self.inpaint_tensor: Union[torch.Tensor, None] = None
+            if any([x.inpaint_tensor is not None for x in self.file_items]):
+                # find one to use as a base
+                base_inpaint_tensor = None
+                for x in self.file_items:
+                    if x.inpaint_tensor is not None:
+                        base_inpaint_tensor = x.inpaint_tensor
+                        break
+                inpaint_tensors = []
+                for x in self.file_items:
+                    if x.inpaint_tensor is None:
+                        inpaint_tensors.append(torch.zeros_like(base_inpaint_tensor))
+                    else:
+                        inpaint_tensors.append(x.inpaint_tensor)
+                self.inpaint_tensor = torch.cat([x.unsqueeze(0) for x in inpaint_tensors])
 
             self.loss_multiplier_list: List[float] = [x.loss_multiplier for x in self.file_items]
 

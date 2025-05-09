@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Job } from '@prisma/client';
+import { apiClient } from '@/utils/api';
 
 export default function useJob(jobID: string, reloadInterval: null | number = null) {
   const [job, setJob] = useState<Job | null>(null);
@@ -9,8 +10,9 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
 
   const refreshJob = () => {
     setStatus('loading');
-    fetch(`/api/jobs?id=${jobID}`)
-      .then(res => res.json())
+    apiClient
+      .get(`/api/jobs?id=${jobID}`)
+      .then(res => res.data)
       .then(data => {
         console.log('Job:', data);
         setJob(data);
@@ -32,7 +34,7 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
 
       return () => {
         clearInterval(interval);
-      }
+      };
     }
   }, [jobID]);
 

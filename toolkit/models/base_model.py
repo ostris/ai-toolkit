@@ -1,10 +1,11 @@
 import copy
 import gc
+import inspect
 import json
 import random
 import shutil
 import typing
-from typing import Union, List, Literal
+from typing import Optional, Union, List, Literal
 import os
 from collections import OrderedDict
 import copy
@@ -23,30 +24,26 @@ from toolkit.models.decorator import Decorator
 from toolkit.paths import KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
-from toolkit.saving import save_ldm_model_from_diffusers
 from toolkit.sd_device_states_presets import empty_preset
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 import torch
 from toolkit.pipelines import CustomStableDiffusionXLPipeline
 from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAdapter, DDPMScheduler, \
-    LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel, \
-    FluxTransformer2DModel
-from toolkit.models.lumina2 import Lumina2Transformer2DModel
+    LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel
 import diffusers
 from diffusers import \
     AutoencoderKL, \
     UNet2DConditionModel
 from diffusers import PixArtAlphaPipeline
-from transformers import T5EncoderModel, UMT5EncoderModel
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjection
 
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
-from transformers import Gemma2Model, Qwen2Model, LlamaModel
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
+    from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
 # tell it to shut up
 diffusers.logging.set_verbosity(diffusers.logging.ERROR)
@@ -102,6 +99,8 @@ UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも
 
 
 class BaseModel:
+    # override these in child classes
+    arch = None
 
     def __init__(
             self,
@@ -114,15 +113,15 @@ class BaseModel:
     ):
         self.accelerator = get_accelerator()
         self.custom_pipeline = custom_pipeline
-        self.device = str(self.accelerator.device)
+        self.device = device
         self.dtype = dtype
         self.torch_dtype = get_torch_dtype(dtype)
-        self.device_torch = self.accelerator.device
+        self.device_torch = torch.device(device)
 
-        self.vae_device_torch = self.accelerator.device
+        self.vae_device_torch = torch.device(device)
         self.vae_torch_dtype = get_torch_dtype(model_config.vae_dtype)
 
-        self.te_device_torch = self.accelerator.device
+        self.te_device_torch = torch.device(device)
         self.te_torch_dtype = get_torch_dtype(model_config.te_dtype)
 
         self.model_config = model_config
@@ -179,6 +178,14 @@ class BaseModel:
     @unet.setter
     def unet(self, value):
         self.model = value
+        
+    @property
+    def transformer(self):
+        return self.model
+    
+    @transformer.setter
+    def transformer(self, value):
+        self.model = value
 
     @property
     def unet_unwrapped(self):
@@ -221,12 +228,22 @@ class BaseModel:
         return self.arch == 'flux'
 
     @property
-    def is_flex2(self):
-        return self.arch == 'flex2'
-
-    @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+
+    def get_bucket_divisibility(self):
+        if self.vae is None:
+            return 8
+        try:
+            divisibility = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        except:
+            # if we have a custom vae, it might not have this
+            divisibility = 8
+        
+        # flux packs this again,
+        if self.is_flux:
+            divisibility = divisibility * 2
+        return divisibility
 
     # these must be implemented in child classes
     def load_model(self):
@@ -390,8 +407,13 @@ class BaseModel:
                     extra = {}
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
-                        validation_image = Image.open(
-                            gen_config.adapter_image_path).convert("RGB")
+                        validation_image = Image.open(gen_config.adapter_image_path)
+                        if ".inpaint." not in gen_config.adapter_image_path:
+                            validation_image = validation_image.convert("RGB")
+                        else:
+                            # make sure it has an alpha
+                            if validation_image.mode != "RGBA":
+                                raise ValueError("Inpainting images must have an alpha channel")
                         if isinstance(self.adapter, T2IAdapter):
                             # not sure why this is double??
                             validation_image = validation_image.resize(
@@ -403,6 +425,10 @@ class BaseModel:
                                 (gen_config.width, gen_config.height))
                             extra['image'] = validation_image
                             extra['controlnet_conditioning_scale'] = gen_config.adapter_conditioning_scale
+                        if isinstance(self.adapter, CustomAdapter) and self.adapter.control_lora is not None:
+                            validation_image = validation_image.resize((gen_config.width, gen_config.height))
+                            extra['control_image'] = validation_image
+                            extra['control_image_idx'] = gen_config.ctrl_idx
                         if isinstance(self.adapter, IPAdapter) or isinstance(self.adapter, ClipVisionAdapter):
                             transform = transforms.Compose([
                                 transforms.ToTensor(),
@@ -677,6 +703,7 @@ class BaseModel:
             return_conditional_pred=False,
             guidance_embedding_scale=1.0,
             bypass_guidance_embedding=False,
+            batch: Union[None, 'DataLoaderBatchDTO'] = None,
             **kwargs,
     ):
         conditional_pred = None
@@ -698,9 +725,13 @@ class BaseModel:
         do_classifier_free_guidance = True
 
         # check if batch size of embeddings matches batch size of latents
-        if latents.shape[0] == text_embeddings.text_embeds.shape[0]:
+        if isinstance(text_embeddings.text_embeds, list):
+            te_batch_size = text_embeddings.text_embeds[0].shape[0]
+        else:
+            te_batch_size = text_embeddings.text_embeds.shape[0]
+        if latents.shape[0] == te_batch_size:
             do_classifier_free_guidance = False
-        elif latents.shape[0] * 2 != text_embeddings.text_embeds.shape[0]:
+        elif latents.shape[0] * 2 != te_batch_size:
             raise ValueError(
                 "Batch size of latents must be the same or half the batch size of text embeddings")
         latents = latents.to(self.device_torch)
@@ -786,6 +817,17 @@ class BaseModel:
             self.unet.to(self.device_torch)
         if self.unet.dtype != self.torch_dtype:
             self.unet = self.unet.to(dtype=self.torch_dtype)
+            
+        # check if get_noise prediction has guidance_embedding_scale
+        # if it does not, we dont pass it
+        signatures =  inspect.signature(self.get_noise_prediction).parameters
+        
+        if 'guidance_embedding_scale' in signatures:
+            kwargs['guidance_embedding_scale'] = guidance_embedding_scale
+        if 'bypass_guidance_embedding' in signatures:
+            kwargs['bypass_guidance_embedding'] = bypass_guidance_embedding
+        if 'batch' in signatures:
+            kwargs['batch'] = batch
 
         noise_pred = self.get_noise_prediction(
             latent_model_input=latent_model_input,
@@ -1118,12 +1160,12 @@ class BaseModel:
             if self.model_config.ignore_if_contains is not None:
                 # remove params that contain the ignore_if_contains from named params
                 for key in list(named_params.keys()):
-                    if any([s in key for s in self.model_config.ignore_if_contains]):
+                    if any([s in f"transformer.{key}" for s in self.model_config.ignore_if_contains]):
                         del named_params[key]
             if self.model_config.only_if_contains is not None:
                 # remove params that do not contain the only_if_contains from named params
                 for key in list(named_params.keys()):
-                    if not any([s in key for s in self.model_config.only_if_contains]):
+                    if not any([s in f"transformer.{key}" for s in self.model_config.only_if_contains]):
                         del named_params[key]
 
         if refiner:
@@ -1181,15 +1223,10 @@ class BaseModel:
                 vae=False, unet=unet, text_encoder=False, state_dict_keys=True)
             unet_lr = unet_lr if unet_lr is not None else default_lr
             params = []
-            if self.is_pixart or self.is_auraflow or self.is_flux or self.is_v3 or self.is_lumina2:
-                for param in named_params.values():
-                    if param.requires_grad:
-                        params.append(param)
-            else:
-                for key, diffusers_key in ldm_diffusers_keymap.items():
-                    if diffusers_key in named_params and diffusers_key not in DO_NOT_TRAIN_WEIGHTS:
-                        if named_params[diffusers_key].requires_grad:
-                            params.append(named_params[diffusers_key])
+            for param in named_params.values():
+                if param.requires_grad:
+                    params.append(param)
+           
             param_data = {"params": params, "lr": unet_lr}
             trainable_parameters.append(param_data)
             print_acc(f"Found {len(params)} trainable parameter in unet")
@@ -1441,3 +1478,15 @@ class BaseModel:
     def convert_lora_weights_before_load(self, state_dict):
         # can be overridden in child classes to convert weights before loading
         return state_dict
+    
+    def condition_noisy_latents(self, latents: torch.Tensor, batch:'DataLoaderBatchDTO'):
+        # can be overridden in child classes to condition latents before noise prediction
+        return latents
+    
+    def get_transformer_block_names(self) -> Optional[List[str]]:
+        # override in child classes to get transformer block names for lora targeting
+        return None
+    
+    def get_base_model_version(self) -> str:
+        # override in child classes to get the base model version
+        return "unknown"
