@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
 
 LABEL authors="jaret"
 
@@ -46,13 +46,15 @@ WORKDIR /app
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # install pytorch before cache bust to avoid redownloading pytorch
-RUN pip install --no-cache-dir torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu126
+RUN pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
 
 # Fix cache busting by moving CACHEBUST to right before git clone
 ARG CACHEBUST=1234
+ARG GIT_COMMIT=main
 RUN echo "Cache bust: ${CACHEBUST}" && \
     git clone https://github.com/ostris/ai-toolkit.git && \
-    cd ai-toolkit
+    cd ai-toolkit && \
+    git checkout ${GIT_COMMIT}
 
 WORKDIR /app/ai-toolkit
 
