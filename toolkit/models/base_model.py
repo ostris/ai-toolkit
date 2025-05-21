@@ -343,7 +343,7 @@ class BaseModel:
             pipeline: Union[None, StableDiffusionPipeline,
                             StableDiffusionXLPipeline] = None,
     ):
-        network = unwrap_model(self.network)
+        network = self.network
         merge_multiplier = 1.0
         flush()
         # if using assistant, unfuse it
@@ -364,6 +364,7 @@ class BaseModel:
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
 
         if network is not None:
+            network = unwrap_model(self.network)
             network.eval()
             # check if we have the same network weight for all samples. If we do, we can merge in th
             # the network to drastically speed up inference
