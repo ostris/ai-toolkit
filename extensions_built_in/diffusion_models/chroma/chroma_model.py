@@ -141,19 +141,38 @@ class ChromaModel(BaseModel):
         extras_path = 'ostris/Flex.1-alpha'
 
         self.print_and_status_update("Loading transformer")
+        
+        chroma_state_dict = load_file(model_path, 'cpu')
+        
+        # determine number of double and single blocks
+        double_blocks = 0
+        single_blocks = 0
+        for key in chroma_state_dict.keys():
+            if "double_blocks" in key:
+                block_num = int(key.split(".")[1]) + 1
+                if block_num > double_blocks:
+                    double_blocks = block_num
+            elif "single_blocks" in key:
+                block_num = int(key.split(".")[1]) + 1
+                if block_num > single_blocks:
+                    single_blocks = block_num
+        print(f"Double Blocks: {double_blocks}")
+        print(f"Single Blocks: {single_blocks}")
 
+        chroma_params.depth = double_blocks
+        chroma_params.depth_single_blocks = single_blocks
         transformer = Chroma(chroma_params)
         
         # add dtype, not sure why it doesnt have it
         transformer.dtype = dtype
-        
-        chroma_state_dict = load_file(model_path, 'cpu')
         # load the state dict into the model
         transformer.load_state_dict(chroma_state_dict)
         
         transformer.to(self.quantize_device, dtype=dtype)
         
         transformer.config = FakeConfig()
+        transformer.config.num_layers = double_blocks
+        transformer.config.num_single_layers = single_blocks
 
         if self.model_config.quantize:
             # patch the state dict method

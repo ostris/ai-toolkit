@@ -253,13 +253,13 @@ class StableDiffusion:
     
     def get_bucket_divisibility(self):
         if self.vae is None:
-            return 8
+            return 16
         divisibility = 2 ** (len(self.vae.config['block_out_channels']) - 1)
         
         # flux packs this again,
         if self.is_flux or self.is_v3:
             divisibility = divisibility * 2
-        return divisibility
+        return divisibility * 2 # todo remove this
         
 
     def load_model(self):
