@@ -411,6 +411,8 @@ class ChromaModel(BaseModel):
         return self.text_encoder[1].encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
     
     def save_model(self, output_path, meta, save_dtype):
+        if not output_path.endswith(".safetensors"):
+            output_path =  output_path + ".safetensors"
         # only save the unet
         transformer: Chroma = unwrap_model(self.model)
         state_dict = transformer.state_dict()
