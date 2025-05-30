@@ -220,10 +220,15 @@ class Critic:
 
         return float(np.mean(critic_losses))
 
-    def get_lr(self):
-        if self.optimizer_type.startswith('dadaptation'):
-            return (
-                self.optimizer.param_groups[0]["d"]
-                * self.optimizer.param_groups[0]["lr"]
+    def get_lr(self):    
+        if hasattr(self.optimizer, 'get_avg_learning_rate'):
+            learning_rate = self.optimizer.get_avg_learning_rate()
+        elif self.optimizer_type.startswith('dadaptation') or \
+                self.optimizer_type.lower().startswith('prodigy'):
+            learning_rate = (
+                self.optimizer.param_groups[0]["d"] *
+                self.optimizer.param_groups[0]["lr"]
             )
-        return self.optimizer.param_groups[0]["lr"]
+        else:
+            learning_rate = self.optimizer.param_groups[0]['lr']
+        return learning_rate
