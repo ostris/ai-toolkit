@@ -5,7 +5,7 @@ from io import BytesIO
 import safetensors
 from safetensors import safe_open
 
-from info import software_meta
+from toolkit.info import software_meta
 from toolkit.train_tools import addnet_hash_legacy
 from toolkit.train_tools import addnet_hash_safetensors
 
