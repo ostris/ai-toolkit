@@ -2,14 +2,32 @@ import torch
 from einops import rearrange
 from torch import Tensor
 
+# Flash-Attention 2 (optional)
+try:
+    from flash_attn.flash_attn_interface import flash_attn_func  # type: ignore
+    _HAS_FLASH = True
+except (ImportError, ModuleNotFoundError):
+    _HAS_FLASH = False
+
 
 def attention(q: Tensor, k: Tensor, v: Tensor, pe: Tensor, mask: Tensor) -> Tensor:
     q, k = apply_rope(q, k, pe)
 
     # mask should have shape [B, H, L, D]
-    x = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask)
-    x = rearrange(x, "B H L D -> B L (H D)")
+    if _HAS_FLASH and mask is None and q.is_cuda:
+        x = flash_attn_func(
+            rearrange(q, "B H L D -> B L H D").contiguous(),
+            rearrange(k, "B H L D -> B L H D").contiguous(),
+            rearrange(v, "B H L D -> B L H D").contiguous(),
+            dropout_p=0.0,
+            softmax_scale=None,
+            causal=False,
+        )
+        x = rearrange(x, "B L H D -> B H L D")
+    else:
+        x = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 
+    x = rearrange(x, "B H L D -> B L (H D)")
     return x
 
 

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+VERSION=dev
+GIT_COMMIT=dev
+
+echo "Docker builds from the repo, not this dir. Make sure changes are pushed to the repo."
+echo "Building version: $VERSION and latest"
+# wait 2 seconds
+sleep 2
+
+# Build the image with cache busting
+docker build --build-arg CACHEBUST=$(date +%s) -t aitoolkit:$VERSION -f docker/Dockerfile .
+
+# Tag with version and latest
+docker tag aitoolkit:$VERSION ostris/aitoolkit:$VERSION
+
+# Push both tags
+echo "Pushing images to Docker Hub..."
+docker push ostris/aitoolkit:$VERSION
+
+echo "Successfully built and pushed ostris/aitoolkit:$VERSION"

@@ -61,6 +61,8 @@ class ChromaPipeline(FluxPipeline):
             batch_size = prompt_embeds.shape[0]
 
         device = self._execution_device
+        if isinstance(device, str):
+            device = torch.device(device)
 
         text_ids = torch.zeros(batch_size, prompt_embeds.shape[1], 3).to(device=device, dtype=torch.bfloat16)
         if guidance_scale > 1.00001:

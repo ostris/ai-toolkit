@@ -142,7 +142,9 @@ class StableDiffusion:
     ):
         self.accelerator = get_accelerator()
         self.custom_pipeline = custom_pipeline
-        self.device = device
+        self.device = str(device)
+        if "cuda" in self.device and ":" not in self.device:
+            self.device = f"{self.device}:0"
         self.device_torch = torch.device(device)
         self.dtype = dtype
         self.torch_dtype = get_torch_dtype(dtype)
@@ -251,13 +253,13 @@ class StableDiffusion:
     
     def get_bucket_divisibility(self):
         if self.vae is None:
-            return 8
+            return 16
         divisibility = 2 ** (len(self.vae.config['block_out_channels']) - 1)
         
         # flux packs this again,
         if self.is_flux or self.is_v3:
             divisibility = divisibility * 2
-        return divisibility
+        return divisibility * 2 # todo remove this
         
 
     def load_model(self):
@@ -2086,7 +2088,10 @@ class StableDiffusion:
                     noise_pred = noise_pred
             else:
                 if self.unet.device != self.device_torch:
-                    self.unet.to(self.device_torch)
+                    try:
+                        self.unet.to(self.device_torch)
+                    except Exception as e:
+                        pass
                 if self.unet.dtype != self.torch_dtype:
                     self.unet = self.unet.to(dtype=self.torch_dtype)
                 if self.is_flux:
