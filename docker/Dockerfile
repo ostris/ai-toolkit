@@ -5,6 +5,9 @@ LABEL authors="jaret"
 # Set noninteractive to avoid timezone prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
+# ref https://en.wikipedia.org/wiki/CUDA
+ENV TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0 10.0 12.0"
+
 # Install dependencies
 RUN apt-get update && apt-get install --no-install-recommends -y \
     git \
