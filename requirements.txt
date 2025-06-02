@@ -1,5 +1,3 @@
-torch==2.7.0
-torchvision==0.22.0
 torchao==0.10.0
 safetensors
 git+https://github.com/jaretburkett/easy_dwpose.git
