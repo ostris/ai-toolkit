@@ -4,6 +4,7 @@ from torch.distributions import LogNormal
 from diffusers import FlowMatchEulerDiscreteScheduler
 import torch
 import numpy as np
+from toolkit.timestep_weighing.default_weighing_scheme import default_weighing_scheme
 
 
 def calculate_shift(
@@ -47,20 +48,26 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             hbsmntw_weighing[num_timesteps //
                              2:] = hbsmntw_weighing[num_timesteps // 2:].max()
 
-            # Create linear timesteps from 1000 to 0
-            timesteps = torch.linspace(1000, 0, num_timesteps, device='cpu')
+            # Create linear timesteps from 1000 to 1
+            timesteps = torch.linspace(1000, 1, num_timesteps, device='cpu')
 
             self.linear_timesteps = timesteps
             self.linear_timesteps_weights = bsmntw_weighing
             self.linear_timesteps_weights2 = hbsmntw_weighing
             pass
 
-    def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False) -> torch.Tensor:
+    def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False, timestep_type="linear") -> torch.Tensor:
         # Get the indices of the timesteps
         step_indices = [(self.timesteps == t).nonzero().item()
                         for t in timesteps]
 
         # Get the weights for the timesteps
+        if timestep_type == "weighted":
+            weights = torch.tensor(
+                [default_weighing_scheme[i] for i in step_indices],
+                device=timesteps.device,
+                dtype=timesteps.dtype
+            )
         if v2:
             weights = self.linear_timesteps_weights2[step_indices].flatten()
         else:
@@ -106,8 +113,8 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         patch_size=1
     ):
         self.timestep_type = timestep_type
-        if timestep_type == 'linear':
-            timesteps = torch.linspace(1000, 0, num_timesteps, device=device)
+        if timestep_type == 'linear' or timestep_type == 'weighted':
+            timesteps = torch.linspace(1000, 1, num_timesteps, device=device)
             self.timesteps = timesteps
             return timesteps
         elif timestep_type == 'sigmoid':
@@ -198,7 +205,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             t1 = ((1 - t1/t1.max()) * 1000)
 
             # add half of linear
-            t2 = torch.linspace(1000, 0, int(
+            t2 = torch.linspace(1000, 1, int(
                 num_timesteps * (1 - alpha)), device=device)
             timesteps = torch.cat((t1, t2))
 
