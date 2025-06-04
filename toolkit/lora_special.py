@@ -7,7 +7,7 @@ import re
 import sys
 from typing import List, Optional, Dict, Type, Union
 import torch
-from diffusers import UNet2DConditionModel, PixArtTransformer2DModel, AuraFlowTransformer2DModel
+from diffusers import UNet2DConditionModel, PixArtTransformer2DModel, AuraFlowTransformer2DModel, WanTransformer3DModel
 from transformers import CLIPTextModel
 from toolkit.models.lokr import LokrModule
 
@@ -522,6 +522,14 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
                 transformer.pos_embed = self.transformer_pos_embed
                 transformer.proj_out = self.transformer_proj_out
+            
+            elif base_model is not None and base_model.arch == "wan21":
+                transformer: WanTransformer3DModel = unet
+                self.transformer_pos_embed = copy.deepcopy(transformer.patch_embedding)
+                self.transformer_proj_out = copy.deepcopy(transformer.proj_out)
+
+                transformer.patch_embedding = self.transformer_pos_embed
+                transformer.proj_out = self.transformer_proj_out
 
             else:
                 unet: UNet2DConditionModel = unet
@@ -539,7 +547,8 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         all_params = super().prepare_optimizer_params(text_encoder_lr, unet_lr, default_lr)
 
         if self.full_train_in_out:
-            if self.is_pixart or self.is_auraflow or self.is_flux:
+            base_model = self.base_model_ref() if self.base_model_ref is not None else None
+            if self.is_pixart or self.is_auraflow or self.is_flux or (base_model is not None and base_model.arch == "wan21"):
                 all_params.append({"lr": unet_lr, "params": list(self.transformer_pos_embed.parameters())})
                 all_params.append({"lr": unet_lr, "params": list(self.transformer_proj_out.parameters())})
             else:
