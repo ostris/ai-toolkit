@@ -1116,6 +1116,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.linear_timesteps,
                         self.train_config.linear_timesteps2,
                         self.train_config.timestep_type == 'linear',
+                        self.train_config.timestep_type == 'one_step',
                     ])
                     
                     timestep_type = 'linear' if linear_timesteps else None
@@ -1159,6 +1160,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             device=self.device_torch
                         )
                     timestep_indices = timestep_indices.long()
+                elif self.train_config.timestep_type == 'one_step':
+                    timestep_indices = torch.zeros((batch_size,), device=self.device_torch, dtype=torch.long)
                 elif content_or_style in ['style', 'content']:
                     # this is from diffusers training code
                     # Cubic sampling for favoring later or earlier timesteps
