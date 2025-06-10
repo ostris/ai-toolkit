@@ -345,7 +345,7 @@ export default function SimpleJob({
                   />
                 </FormGroup>
                 <NumberInput
-                  label="DFE Loss Multiplier"
+                  label="DOP Loss Multiplier"
                   className="pt-2"
                   value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
                   onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
@@ -353,7 +353,7 @@ export default function SimpleJob({
                   min={0}
                 />
                 <TextInput
-                  label="DFE Preservation Class"
+                  label="DOP Preservation Class"
                   className="pt-2"
                   value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
                   onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
