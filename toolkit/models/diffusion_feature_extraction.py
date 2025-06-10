@@ -469,8 +469,9 @@ class DiffusionFeatureExtractor4(nn.Module):
         )
 
         # embeds = id_embeds['hidden_states'][-2]  # penultimate layer
-        embeds = id_embeds['pooler_output']
-        return embeds
+        image_embeds = id_embeds['pooler_output']
+        image_embeds = image_embeds / image_embeds.norm(p=2, dim=-1, keepdim=True)
+        return image_embeds
 
     def forward(
         self,

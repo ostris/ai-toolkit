@@ -137,7 +137,8 @@ class ExponentialMovingAverage:
                 
                 update_param = False
                 if self.use_feedback:
-                    param_float.add_(tmp)
+                    # make feedback 10x decay
+                    param_float.add_(tmp * 10)
                     update_param = True
                 
                 if self.param_multiplier != 1.0:
