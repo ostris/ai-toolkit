@@ -33,7 +33,6 @@ export default function SimpleJob({
   gpuList,
   datasetOptions,
 }: Props) {
-
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
   }, [jobConfig.config.process[0].model.arch]);
@@ -104,8 +103,7 @@ export default function SimpleJob({
                   const newDataset = objectCopy(dataset);
                   newDataset.controls = controls;
                   return newDataset;
-                }
-                );
+                });
                 setJobConfig(datasets, 'config.process[0].datasets');
               }}
               options={
@@ -131,20 +129,22 @@ export default function SimpleJob({
               placeholder=""
               required
             />
-            <FormGroup label="Quantize">
-              <div className="grid grid-cols-2 gap-2">
-                <Checkbox
-                  label="Transformer"
-                  checked={jobConfig.config.process[0].model.quantize}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.quantize')}
-                />
-                <Checkbox
-                  label="Text Encoder"
-                  checked={jobConfig.config.process[0].model.quantize_te}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
-                />
-              </div>
-            </FormGroup>
+            {modelArch?.disableSections?.includes('model.quantize') ? null : (
+              <FormGroup label="Quantize">
+                <div className="grid grid-cols-2 gap-2">
+                  <Checkbox
+                    label="Transformer"
+                    checked={jobConfig.config.process[0].model.quantize}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize')}
+                  />
+                  <Checkbox
+                    label="Text Encoder"
+                    checked={jobConfig.config.process[0].model.quantize_te}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
+                  />
+                </div>
+              </FormGroup>
+            )}
           </Card>
           <Card title="Target Configuration">
             <SelectInput
@@ -171,19 +171,37 @@ export default function SimpleJob({
               />
             )}
             {jobConfig.config.process[0].network?.type == 'lora' && (
-              <NumberInput
-                label="Linear Rank"
-                value={jobConfig.config.process[0].network.linear}
-                onChange={value => {
-                  console.log('onChange', value);
-                  setJobConfig(value, 'config.process[0].network.linear');
-                  setJobConfig(value, 'config.process[0].network.linear_alpha');
-                }}
-                placeholder="eg. 16"
-                min={0}
-                max={1024}
-                required
-              />
+              <>
+                <NumberInput
+                  label="Linear Rank"
+                  value={jobConfig.config.process[0].network.linear}
+                  onChange={value => {
+                    console.log('onChange', value);
+                    setJobConfig(value, 'config.process[0].network.linear');
+                    setJobConfig(value, 'config.process[0].network.linear_alpha');
+                  }}
+                  placeholder="eg. 16"
+                  min={0}
+                  max={1024}
+                  required
+                />
+                {
+                  modelArch?.disableSections?.includes('network.conv') ? null : (
+                    <NumberInput
+                      label="Conv Rank"
+                      value={jobConfig.config.process[0].network.conv}
+                      onChange={value => {
+                        console.log('onChange', value);
+                        setJobConfig(value, 'config.process[0].network.conv');
+                        setJobConfig(value, 'config.process[0].network.conv_alpha');
+                      }}
+                      placeholder="eg. 16"
+                      min={0}
+                      max={1024}
+                    />
+                  )
+                }
+              </>
             )}
           </Card>
           <Card title="Save Configuration">
@@ -276,16 +294,19 @@ export default function SimpleJob({
                 />
               </div>
               <div>
-                <SelectInput
-                  label="Timestep Type"
-                  value={jobConfig.config.process[0].train.timestep_type}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.timestep_type')}
-                  options={[
-                    { value: 'sigmoid', label: 'Sigmoid' },
-                    { value: 'linear', label: 'Linear' },
-                    { value: 'shift', label: 'Shift' },
-                  ]}
-                />
+                {modelArch?.disableSections?.includes('train.timestep_type') ? null : (
+                  <SelectInput
+                    label="Timestep Type"
+                    value={jobConfig.config.process[0].train.timestep_type}
+                    disabled={modelArch?.disableSections?.includes('train.timestep_type') || false}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.timestep_type')}
+                    options={[
+                      { value: 'sigmoid', label: 'Sigmoid' },
+                      { value: 'linear', label: 'Linear' },
+                      { value: 'shift', label: 'Shift' },
+                    ]}
+                  />
+                )}
                 <SelectInput
                   label="Timestep Bias"
                   className="pt-2"
@@ -345,7 +366,7 @@ export default function SimpleJob({
                   />
                 </FormGroup>
                 <NumberInput
-                  label="DFE Loss Multiplier"
+                  label="DOP Loss Multiplier"
                   className="pt-2"
                   value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
                   onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
@@ -353,7 +374,7 @@ export default function SimpleJob({
                   min={0}
                 />
                 <TextInput
-                  label="DFE Preservation Class"
+                  label="DOP Preservation Class"
                   className="pt-2"
                   value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
                   onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
@@ -466,10 +487,7 @@ export default function SimpleJob({
                   // automaticallt add the controls for a new dataset
                   const controls = modelArch?.controls ?? [];
                   newDataset.controls = controls;
-                  setJobConfig(
-                    [...jobConfig.config.process[0].datasets, newDataset],
-                    'config.process[0].datasets',
-                  )
+                  setJobConfig([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
               >

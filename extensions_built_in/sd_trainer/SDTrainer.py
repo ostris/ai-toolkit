@@ -438,7 +438,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version == 3:
+            elif self.dfe.version == 3 or self.dfe.version == 4:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
@@ -501,15 +501,27 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = wavelet_loss(pred, batch.latents, noise)
             else:
                 loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
+                
+            do_weighted_timesteps = False
+            if self.sd.is_flow_matching:
+                if self.train_config.linear_timesteps or self.train_config.linear_timesteps2:
+                    do_weighted_timesteps = True
+                if self.train_config.timestep_type == "weighted":
+                    # use the noise scheduler to get the weights for the timesteps
+                    do_weighted_timesteps = True
 
             # handle linear timesteps and only adjust the weight of the timesteps
-            if self.sd.is_flow_matching and (self.train_config.linear_timesteps or self.train_config.linear_timesteps2):
+            if do_weighted_timesteps:
                 # calculate the weights for the timesteps
                 timestep_weight = self.sd.noise_scheduler.get_weights_for_timesteps(
                     timesteps,
-                    v2=self.train_config.linear_timesteps2
+                    v2=self.train_config.linear_timesteps2,
+                    timestep_type=self.train_config.timestep_type
                 ).to(loss.device, dtype=loss.dtype)
-                timestep_weight = timestep_weight.view(-1, 1, 1, 1).detach()
+                if len(loss.shape) == 4:
+                    timestep_weight = timestep_weight.view(-1, 1, 1, 1).detach()
+                elif len(loss.shape) == 5:
+                    timestep_weight = timestep_weight.view(-1, 1, 1, 1, 1).detach()
                 loss = loss * timestep_weight
 
         if self.train_config.do_prior_divergence and prior_pred is not None:
@@ -764,6 +776,7 @@ class SDTrainer(BaseSDTrainProcess):
         conditional_embeds: Union[PromptEmbeds, None] = None,
         unconditional_embeds: Union[PromptEmbeds, None] = None,
         batch: Optional['DataLoaderBatchDTO'] = None,
+        is_primary_pred: bool = False,
         **kwargs,
     ):
         dtype = get_torch_dtype(self.train_config.dtype)
@@ -1553,6 +1566,7 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
                             unconditional_embeds=unconditional_embeds,
                             batch=batch,
+                            is_primary_pred=True,
                             **pred_kwargs
                         )
                     self.after_unet_predict()

@@ -1,4 +1,3 @@
-
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
 export interface ModelArch {
@@ -6,10 +5,13 @@ export interface ModelArch {
   label: string;
   controls?: Control[];
   isVideoModel?: boolean;
-  defaults?: { [key: string]: [any, any] };
+  defaults?: { [key: string]: any };
+  disableSections?: DisableableSections[];
 }
 
 const defaultNameOrPath = '';
+
+type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
 
 export const modelArchs: ModelArch[] = [
   {
@@ -23,6 +25,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'flex1',
@@ -36,6 +39,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'flex2',
@@ -62,6 +66,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'chroma',
@@ -74,6 +79,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'wan21:1b',
@@ -89,6 +95,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.num_frames': [40, 1],
       'config.process[0].sample.fps': [15, 1],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'wan21:14b',
@@ -96,7 +103,7 @@ export const modelArchs: ModelArch[] = [
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.1-T2V-14B-Diffuserss', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.1-T2V-14B-Diffusers', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
@@ -104,6 +111,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.num_frames': [40, 1],
       'config.process[0].sample.fps': [15, 1],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'lumina2',
@@ -116,6 +124,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
+    disableSections: ['network.conv'],
   },
   {
     name: 'hidream',
@@ -131,5 +140,37 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.timestep_type': ['shift', 'sigmoid'],
       'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
     },
+    disableSections: ['network.conv'],
   },
-];
+  {
+    name: 'sdxl',
+    label: 'SDXL',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['stabilityai/stable-diffusion-xl-base-1.0', defaultNameOrPath],
+      'config.process[0].model.quantize': [false, false],
+      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].sample.sampler': ['ddpm', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['ddpm', 'flowmatch'],
+      'config.process[0].sample.guidance_scale': [6, 4],
+    },
+    disableSections: ['model.quantize', 'train.timestep_type'],
+  },
+  {
+    name: 'sd15',
+    label: 'SD 1.5',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['stable-diffusion-v1-5/stable-diffusion-v1-5', defaultNameOrPath],
+      'config.process[0].sample.sampler': ['ddpm', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['ddpm', 'flowmatch'],
+      'config.process[0].sample.width': [512, 1024],
+      'config.process[0].sample.height': [512, 1024],
+      'config.process[0].sample.guidance_scale': [6, 4],
+    },
+    disableSections: ['model.quantize', 'train.timestep_type'],
+  },
+].sort((a, b) => {
+  // Sort by label, case-insensitive
+  return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+}) as any;

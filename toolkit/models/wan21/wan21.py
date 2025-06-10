@@ -9,7 +9,8 @@ from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.models.base_model import BaseModel
 from toolkit.prompt_utils import PromptEmbeds
 from transformers import AutoTokenizer, UMT5EncoderModel
-from diffusers import AutoencoderKLWan, WanPipeline, WanTransformer3DModel
+from diffusers import  WanPipeline, WanTransformer3DModel, AutoencoderKL
+from .autoencoder_kl_wan import AutoencoderKLWan
 import os
 import sys
 

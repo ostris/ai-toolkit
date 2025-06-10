@@ -1773,6 +1773,97 @@ class LatentCachingMixin:
             self.sd.restore_device_state()
 
 
+
+class TextEmbeddingCachingMixin:
+    def __init__(self: 'AiToolkitDataset', **kwargs):
+        # if we have super, call it
+        if hasattr(super(), '__init__'):
+            super().__init__(**kwargs)
+        self.is_caching_text_embeddings = self.dataset_config.cache_text_embeddings
+
+    def cache_text_embeddings(self: 'AiToolkitDataset'):
+        
+        with accelerator.main_process_first():
+            print_acc(f"Caching text_embeddings for {self.dataset_path}")
+            # cache all latents to disk
+            to_disk = self.is_caching_latents_to_disk
+            to_memory = self.is_caching_latents_to_memory
+            print_acc(" - Saving text embeddings to disk")
+            # move sd items to cpu except for vae
+            self.sd.set_device_state_preset('cache_latents')
+
+            # use tqdm to show progress
+            i = 0
+            for file_item in tqdm(self.file_list, desc=f'Caching latents{" to disk" if to_disk else ""}'):
+                # set latent space version
+                if self.sd.model_config.latent_space_version is not None:
+                    file_item.latent_space_version = self.sd.model_config.latent_space_version
+                elif self.sd.is_xl:
+                    file_item.latent_space_version = 'sdxl'
+                elif self.sd.is_v3:
+                    file_item.latent_space_version = 'sd3'
+                elif self.sd.is_auraflow:
+                    file_item.latent_space_version = 'sdxl'
+                elif self.sd.is_flux:
+                    file_item.latent_space_version = 'flux1'
+                elif self.sd.model_config.is_pixart_sigma:
+                    file_item.latent_space_version = 'sdxl'
+                else:
+                    file_item.latent_space_version = self.sd.model_config.arch
+                file_item.is_caching_to_disk = to_disk
+                file_item.is_caching_to_memory = to_memory
+                file_item.latent_load_device = self.sd.device
+
+                latent_path = file_item.get_latent_path(recalculate=True)
+                # check if it is saved to disk already
+                if os.path.exists(latent_path):
+                    if to_memory:
+                        # load it into memory
+                        state_dict = load_file(latent_path, device='cpu')
+                        file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
+                else:
+                    # not saved to disk, calculate
+                    # load the image first
+                    file_item.load_and_process_image(self.transform, only_load_latents=True)
+                    dtype = self.sd.torch_dtype
+                    device = self.sd.device_torch
+                    # add batch dimension
+                    try:
+                        imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
+                        latent = self.sd.encode_images(imgs).squeeze(0)
+                    except Exception as e:
+                        print_acc(f"Error processing image: {file_item.path}")
+                        print_acc(f"Error: {str(e)}")
+                        raise e
+                    # save_latent
+                    if to_disk:
+                        state_dict = OrderedDict([
+                            ('latent', latent.clone().detach().cpu()),
+                        ])
+                        # metadata
+                        meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
+                        os.makedirs(os.path.dirname(latent_path), exist_ok=True)
+                        save_file(state_dict, latent_path, metadata=meta)
+
+                    if to_memory:
+                        # keep it in memory
+                        file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
+
+                    del imgs
+                    del latent
+                    del file_item.tensor
+
+                    # flush(garbage_collect=False)
+                file_item.is_latent_cached = True
+                i += 1
+                # flush every 100
+                # if i % 100 == 0:
+                #     flush()
+
+            # restore device state
+            self.sd.restore_device_state()
+
+
 class CLIPCachingMixin:
     def __init__(self: 'AiToolkitDataset', **kwargs):
         # if we have super, call it

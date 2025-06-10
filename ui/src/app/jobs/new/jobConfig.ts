@@ -30,6 +30,8 @@ export const defaultJobConfig: JobConfig = {
           type: 'lora',
           linear: 32,
           linear_alpha: 32,
+          conv: 16,
+          conv_alpha: 16,
           lokr_full_rank: true,
           lokr_factor: -1,
           network_kwargs: {

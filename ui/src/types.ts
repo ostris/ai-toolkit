@@ -53,6 +53,8 @@ export interface NetworkConfig {
   type: string;
   linear: number;
   linear_alpha: number;
+  conv: number;
+  conv_alpha: number;
   lokr_full_rank: boolean;
   lokr_factor: number;
   network_kwargs: {
