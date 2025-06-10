@@ -2,8 +2,8 @@
 
 import React, { forwardRef } from 'react';
 import classNames from 'classnames';
-import dynamic from "next/dynamic";
-const Select = dynamic(() => import("react-select"), { ssr: false });
+import dynamic from 'next/dynamic';
+const Select = dynamic(() => import('react-select'), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
 const inputClasses =
@@ -42,7 +42,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
         />
       </div>
     );
-  }
+  },
 );
 
 // 👇 Helpful for debugging
@@ -114,6 +114,7 @@ export const NumberInput = (props: NumberInputProps) => {
 
 export interface SelectInputProps extends InputProps {
   value: string;
+  disabled?: boolean;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
 }
@@ -122,11 +123,16 @@ export const SelectInput = (props: SelectInputProps) => {
   const { label, value, onChange, options } = props;
   const selectedOption = options.find(option => option.value === value);
   return (
-    <div className={classNames(props.className)}>
+    <div
+      className={classNames(props.className, {
+        'opacity-30 cursor-not-allowed': props.disabled,
+      })}
+    >
       {label && <label className={labelClasses}>{label}</label>}
-      <Select 
-        value={selectedOption} 
+      <Select
+        value={selectedOption}
         options={options}
+        isDisabled={props.disabled}
         className="aitk-react-select-container"
         classNamePrefix="aitk-react-select"
         onChange={selected => {
