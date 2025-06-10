@@ -96,7 +96,7 @@ export const modelArchs: ModelArch[] = [
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.1-T2V-14B-Diffuserss', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.1-T2V-14B-Diffusers', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
