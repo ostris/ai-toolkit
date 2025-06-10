@@ -11,11 +11,12 @@ const Sidebar = () => {
   ];
 
   return (
-    <div className="flex flex-col w-64 bg-gray-900 text-gray-100">
-      <div className="p-4">
-        <h1 className="text-xl">
-          <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-8 mr-3 inline" />
-          Ostris - AI Toolkit
+    <div className="flex flex-col w-59 bg-gray-900 text-gray-100">
+      <div className="px-4 py-3">
+        <h1 className="text-l">
+          <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-7 mr-3 inline" />
+          <span className="font-bold uppercase">Ostris</span>
+          <span className='ml-2 uppercase text-gray-300'>AI-Toolkit</span>
         </h1>
       </div>
       <nav className="flex-1">
@@ -33,7 +34,7 @@ const Sidebar = () => {
           ))}
         </ul>
       </nav>
-      <a href="https://ostris.com/support" target="_blank" rel="noreferrer" className="flex items-center space-x-2 p-4">
+      <a href="https://ostris.com/support" target="_blank" rel="noreferrer" className="flex items-center space-x-2 px-4 py-3">
         <div className="min-w-[26px] min-h-[26px]">
           <svg height="24" version="1.1" width="24" xmlns="http://www.w3.org/2000/svg">
             <g transform="translate(0 -1028.4)">
@@ -44,7 +45,7 @@ const Sidebar = () => {
             </g>
           </svg>
         </div>
-        <div className="text-gray-500 text-sm mb-2 flex-1 pt-2 pl-0">SUPPORT THIS PROJECT</div>
+        <div className="uppercase text-gray-500 text-sm mb-2 flex-1 pt-2 pl-0">Support AI-Toolkit</div>
       </a>
     </div>
   );
