@@ -315,7 +315,7 @@ class CaptionProcessingDTOMixin:
             # see if prompt file exists
             path_no_ext = os.path.splitext(self.path)[0]
             prompt_ext = self.dataset_config.caption_ext
-            prompt_path = f"{path_no_ext}.{prompt_ext}"
+            prompt_path = path_no_ext + prompt_ext
             short_caption = None
 
             if os.path.exists(prompt_path):
