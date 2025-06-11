@@ -223,7 +223,7 @@ def start_training(
     os.makedirs("tmp", exist_ok=True)
     config_path = f"tmp/{random_config_name}-{slugged_lora_name}.yaml"
     with open(config_path, "w", encoding='utf-8') as f:
-        yaml.dump(config, f)
+        yaml.dump(config, f, allow_unicode=True)
     
     # run the job locally
     job = get_job(config_path)

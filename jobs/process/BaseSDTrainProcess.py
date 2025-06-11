@@ -568,7 +568,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     )
                     meta_path = os.path.join(name_or_path, 'aitk_meta.yaml')
                     with open(meta_path, 'w', encoding='utf-8') as f:
-                        yaml.dump(self.meta, f)
+                        yaml.dump(self.meta, f, allow_unicode=True)
                     # move it back
                     self.adapter = self.adapter.to(orig_device, dtype=orig_dtype)
                 else:
@@ -2341,9 +2341,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # Construct the README content
         readme_content = f"""---
 tags:
-{yaml.dump(tags, indent=4).strip()}
+{yaml.dump(tags, indent=4, allow_unicode=True).strip()}
 {"widget:" if os.path.isdir(samples_dir) else ""}
-{yaml.dump(widgets, indent=4).strip() if widgets else ""}
+{yaml.dump(widgets, indent=4, allow_unicode=True).strip() if widgets else ""}
 base_model: {base_model}
 {"instance_prompt: " + instance_prompt if instance_prompt else ""}
 license: {license}

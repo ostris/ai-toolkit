@@ -299,7 +299,7 @@ class BaseModel:
         # save out meta config
         meta_path = os.path.join(output_path, 'aitk_meta.yaml')
         with open(meta_path, 'w', encoding='utf-8') as f:
-            yaml.dump(meta, f)
+            yaml.dump(meta, f, allow_unicode=True)
     # end must be implemented in child classes
 
     def te_train(self):

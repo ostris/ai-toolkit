@@ -368,7 +368,7 @@ class Flex2(BaseModel):
 
         meta_path = os.path.join(output_path, 'aitk_meta.yaml')
         with open(meta_path, 'w', encoding='utf-8') as f:
-            yaml.dump(meta, f)
+            yaml.dump(meta, f, allow_unicode=True)
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get('noise')

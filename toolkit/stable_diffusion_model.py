@@ -2761,7 +2761,7 @@ class StableDiffusion:
             # save out meta config
             meta_path = os.path.join(output_file, 'aitk_meta.yaml')
             with open(meta_path, 'w', encoding='utf-8') as f:
-                yaml.dump(meta, f)
+                yaml.dump(meta, f, allow_unicode=True)
 
         else:
             save_ldm_model_from_diffusers(
