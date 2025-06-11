@@ -27,7 +27,7 @@ config:
 #       hf_private: true #whether the repo is private or public        
       datasets:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
-        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, png, webp and avif are supported currently
         # images will automatically be resized and bucketed into the resolution specified
         # on windows, escape back slashes with another backslash so
         # "C:\\path\\to\\images\\folder"

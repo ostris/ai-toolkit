@@ -186,7 +186,7 @@ class AutoencoderPixelMixer(nn.Module):
 # test it
 if __name__ == '__main__':
     import os
-    from PIL import Image
+    from extensions_built_in.dataset_tools.tools.image_tools import load_image
     import torchvision.transforms as transforms
     user_path = os.path.expanduser('~')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -194,7 +194,7 @@ if __name__ == '__main__':
 
     input_path = os.path.join(user_path, "Pictures/test/test.jpg")
     output_path = os.path.join(user_path, "Pictures/test/test.jpg")
-    img = Image.open(input_path)
+    img = load_image(input_path)
     img_tensor = transforms.ToTensor()(img)
     img_tensor = img_tensor.unsqueeze(0).to(device=device, dtype=dtype)
     print("input_shape: ", list(img_tensor.shape))

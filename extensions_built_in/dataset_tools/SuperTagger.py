@@ -16,7 +16,7 @@ from .tools.caption import default_long_prompt, default_short_prompt, default_re
 from jobs.process import BaseExtensionProcess
 from .tools.sync_tools import get_img_paths
 
-img_ext = ['.jpg', '.jpeg', '.png', '.webp']
+img_ext = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 
 def flush():
@@ -100,17 +100,17 @@ class SuperTagger(BaseExtensionProcess):
         # set the image as updated if it does not exist on disk
         if not os.path.exists(train_img_path):
             did_update_image = True
-            image = load_image(img_path)
+            image = load_image(img_path, force_rgb=True)
         if img_info.force_image_process:
             did_update_image = True
-            image = load_image(img_path)
+            image = load_image(img_path, force_rgb=True)
 
         # go through the needed steps
         for step in copy.deepcopy(img_info.state.steps_to_complete):
             if step == 'caption':
                 # load image
                 if image is None:
-                    image = load_image(img_path)
+                    image = load_image(img_path, force_rgb=True)
                 if caption_image is None:
                     caption_image = resize_to_max(image, 1024, 1024)
 
@@ -127,7 +127,7 @@ class SuperTagger(BaseExtensionProcess):
             elif step == 'caption_short':
                 # load image
                 if image is None:
-                    image = load_image(img_path)
+                    image = load_image(img_path, force_rgb=True)
 
                 if caption_image is None:
                     caption_image = resize_to_max(image, 1024, 1024)
@@ -144,7 +144,7 @@ class SuperTagger(BaseExtensionProcess):
             elif step == 'contrast_stretch':
                 # load image
                 if image is None:
-                    image = load_image(img_path)
+                    image = load_image(img_path, force_rgb=True)
                 image = ImageOps.autocontrast(image, cutoff=(0.1, 0), preserve_tone=True)
                 did_update_image = True
                 img_info.mark_step_complete(step)

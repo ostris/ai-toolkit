@@ -6,8 +6,7 @@ import cv2
 import torch
 import random
 
-from PIL import Image
-from PIL.ImageOps import exif_transpose
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 
 from toolkit import image_utils
 from toolkit.basic import get_quick_signature_string
@@ -91,7 +90,7 @@ class FileItemDTO(
             # except image_utils.UnknownImageFormat:
             #     print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
             #                f'This process is faster for png, jpeg')
-            img = exif_transpose(Image.open(self.path))
+            img = load_image(self.path)
             w, h = img.size
             size_database[file_key] = (w, h, file_signature)
         self.width: int = w

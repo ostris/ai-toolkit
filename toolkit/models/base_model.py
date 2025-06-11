@@ -10,7 +10,7 @@ import os
 from collections import OrderedDict
 import copy
 import yaml
-from PIL import Image
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 from torch.nn import Parameter
 from tqdm import tqdm
@@ -408,7 +408,7 @@ class BaseModel:
                     extra = {}
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
-                        validation_image = Image.open(gen_config.adapter_image_path)
+                        validation_image = load_image(gen_config.adapter_image_path)
                         if ".inpaint." not in gen_config.adapter_image_path:
                             validation_image = validation_image.convert("RGB")
                         else:

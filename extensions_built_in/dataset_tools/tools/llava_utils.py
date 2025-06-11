@@ -6,7 +6,7 @@ from PIL import Image, ImageOps
 
 from transformers import AutoTokenizer, BitsAndBytesConfig, CLIPImageProcessor
 
-img_ext = ['.jpg', '.jpeg', '.png', '.webp']
+img_ext = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 
 class LLaVAImageProcessor:

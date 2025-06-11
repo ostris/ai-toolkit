@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.getcwd())
 
 import gradio as gr
-from PIL import Image
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 import torch
 import uuid
 import os
@@ -109,7 +109,7 @@ def run_captioning(images, concept_sentence, *captions):
     for i, image_path in enumerate(images):
         print(captions[i])
         if isinstance(image_path, str):  # If image is a file path
-            image = Image.open(image_path).convert("RGB")
+            image = load_image(image_path, force_rgb=True)
 
         prompt = "<DETAILED_CAPTION>"
         inputs = processor(text=prompt, images=image, return_tensors="pt").to(device, torch_dtype)

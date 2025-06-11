@@ -4,7 +4,7 @@ export const objectCopy = <T>(obj: T): T => {
 
 export const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const imgExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
+export const imgExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp', '.avif'];
 export const videoExtensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
 
 export const isVideo = (filePath: string) => videoExtensions.includes(filePath.toLowerCase().slice(-4));

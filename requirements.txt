@@ -1,6 +1,6 @@
-torch==2.6.0
-torchvision==0.21.0
-torchao==0.9.0
+torch>=2.6.0
+torchvision>=0.21.0
+torchao>=0.9.0
 safetensors
 git+https://github.com/jaretburkett/easy_dwpose.git
 git+https://github.com/huggingface/diffusers@363d1ab7e24c5ed6c190abb00df66d9edb74383b
@@ -38,3 +38,5 @@ python-slugify
 opencv-python
 pytorch-wavelets==1.3.0
 matplotlib==3.10.1
+imageio[pyav]
+pillow-avif-plugin

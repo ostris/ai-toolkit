@@ -1,9 +1,8 @@
 ---
-# NOTE!! THIS IS CURRENTLY EXPERIMENTAL AND UNDER DEVELOPMENT. SOME THINGS WILL CHANGE
 job: extension
 config:
   # this name will be the folder and filename name
-  name: "my_first_sd3l_lora_v1"
+  name: "my_first_chroma_lora_16gb_v1"
   process:
     - type: 'sd_trainer'
       # root folder to save training sessions/samples/weights
@@ -16,11 +15,11 @@ config:
 #      trigger_word: "p3r5on"
       network:
         type: "lora"
-        linear: 16
-        linear_alpha: 16
+        linear: 8
+        linear_alpha: 8
       save:
-        dtype: float16 # precision to save
-        save_every: 250 # save every this many steps
+        dtype: float8 # precision to save
+        save_every: 100 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
         push_to_hub: false #change this to True to push your trained model to Hugging Face.
         # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
@@ -37,17 +36,16 @@ config:
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
-          resolution: [ 1024 ] 
+          resolution: [ 512, 768, 1024 ]  # chroma enjoys multiple resolutions
       train:
         batch_size: 1
         steps: 2000  # total number of steps to train 500 - 4000 is a good range
-        gradient_accumulation_steps: 1
+        gradient_accumulation: 1
         train_unet: true
-        train_text_encoder: false  # May not fully work with SD3 yet
+        train_text_encoder: false  # probably won't work with chroma
         gradient_checkpointing: true  # need the on unless you have a ton of vram
-        noise_scheduler: "flowmatch"
-        timestep_type: "linear" # linear or sigmoid
-        optimizer: "adamw8bit"
+        noise_scheduler: "flowmatch" # for training only
+        optimizer: "adafactor"
         lr: 1e-4
         # uncomment this to skip the pre training sample
 #        skip_first_sample: true
@@ -61,16 +59,25 @@ config:
           use_ema: true
           ema_decay: 0.99
 
-        # will probably need this if gpu supports it for sd3, other dtypes may not work correctly
+        # will probably need this if gpu supports it for chroma, other dtypes may not work correctly
         dtype: bf16
       model:
-        # huggingface model name or path
-        name_or_path: "stabilityai/stable-diffusion-3.5-large"
-        is_v3: true
+        # Download the whichever model you prefer from the Chroma repo
+        # https://huggingface.co/lodestones/Chroma/tree/main
+        # point to it here.
+        # name_or_path: "/path/to/chroma/chroma-unlocked-vVERSION.safetensors"
+
+        # using lodestones/Chroma will automatically use the latest version
+        name_or_path: "lodestones/Chroma"
+
+        # # You can also select a version of Chroma like so
+        # name_or_path: "lodestones/Chroma/v28"
+        
+        arch: "chroma"
         quantize: true  # run 8bit mixed precision
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
-        sample_every: 250 # sample every this many steps
+        sample_every: 100 # sample every this many steps
         width: 1024
         height: 1024
         prompts:
@@ -86,7 +93,7 @@ config:
           - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
           - "a man holding a sign that says, 'this is a sign'"
           - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
-        neg: ""  
+        neg: ""  # negative prompt, optional
         seed: 42
         walk_seed: true
         guidance_scale: 4

@@ -25,11 +25,11 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ samples: [] });
   }
 
-  // find all img (png, jpg, jpeg) files in the samples folder
+  // find all img (png, jpg, jpeg, webp, avif) files in the samples folder
   const samples = fs
     .readdirSync(samplesFolder)
     .filter(file => {
-      return file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg') || file.endsWith('.webp');
+      return file.endsWith('.png') || file.endsWith('.jpg') || file.endsWith('.jpeg') || file.endsWith('.webp') || file.endsWith('.avif');
     })
     .map(file => {
       return path.join(samplesFolder, file);
