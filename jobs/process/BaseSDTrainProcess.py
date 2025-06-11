@@ -620,7 +620,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             }
             path_to_save = file_path = os.path.join(self.save_root, 'learnable_snr.json')
             with open(path_to_save, 'w', encoding='utf-8') as f:
-                json.dump(json_data, f, indent=4)
+                json.dump(json_data, f, indent=4, ensure_ascii=False)
         
         print_acc(f"Saved checkpoint to {file_path}")
 

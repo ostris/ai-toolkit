@@ -505,7 +505,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
 
         # save the size database
         with open(dataset_size_file, 'w', encoding='utf-8') as f:
-            json.dump(self.size_database, f)
+            json.dump(self.size_database, f, ensure_ascii=False)
         
         if self.is_video:
             print_acc(f"  -  Found {len(self.file_list)} videos")

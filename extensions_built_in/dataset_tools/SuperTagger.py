@@ -157,7 +157,7 @@ class SuperTagger(BaseExtensionProcess):
 
         if img_info.is_dirty:
             with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(img_info.to_dict(), f, indent=4)
+                json.dump(img_info.to_dict(), f, indent=4, ensure_ascii=False)
 
         if self.dataset_master_config_file:
             # add to master dict
@@ -190,7 +190,7 @@ class SuperTagger(BaseExtensionProcess):
         if self.dataset_master_config_file is not None:
             # save it as json
             with open(self.dataset_master_config_file, 'w', encoding='utf-8') as f:
-                json.dump(self.master_dataset_dict, f, indent=4)
+                json.dump(self.master_dataset_dict, f, indent=4, ensure_ascii=False)
 
         del self.image_processor
         flush()

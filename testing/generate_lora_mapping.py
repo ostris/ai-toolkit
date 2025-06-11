@@ -124,7 +124,7 @@ to_save = OrderedDict()
 to_save['ldm_diffusers_keymap'] = lora_keymap
 
 with open(os.path.join(PROJECT_ROOT, 'toolkit', 'keymaps', f'{name}.json'), 'w', encoding='utf-8') as f:
-    json.dump(to_save, f, indent=4)
+    json.dump(to_save, f, indent=4, ensure_ascii=False)
 
 
 

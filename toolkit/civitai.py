@@ -67,7 +67,7 @@ class ModelCache:
         all_cache['models'] = self.raw_cache
 
         with open(self.cache_path, 'w', encoding='utf-8') as f:
-            json.dump(all_cache, f, indent=2)
+            json.dump(all_cache, f, indent=2, ensure_ascii=False)
 
 
 def get_model_download_info(model_id: int, model_version_id: int = None):

@@ -169,7 +169,7 @@ if is_pixart:
 
 # save it
 with open(os.path.join(unet_folder, "config.json"), 'w', encoding='utf-8') as f:
-    json.dump(config, f, indent=2)
+    json.dump(config, f, indent=2, ensure_ascii=False)
 
 print("Done")
 
