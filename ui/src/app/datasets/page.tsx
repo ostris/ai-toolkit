@@ -77,7 +77,7 @@ export default function Datasets() {
       console.log('New dataset created:', data);
       refreshDatasets();
       setNewDatasetName('');
-      setIsNewDatasetModalOpen(false);
+      setIsNewDatasetModalOpen(false, encoding='utf-8');
     } catch (error) {
       console.error('Error creating new dataset:', error);
     }
@@ -138,7 +138,7 @@ export default function Datasets() {
 
       <Modal
         isOpen={isNewDatasetModalOpen}
-        onClose={() => setIsNewDatasetModalOpen(false)}
+        onClose={() => setIsNewDatasetModalOpen(false, encoding='utf-8')}
         title="New Dataset"
         size="md"
       >
@@ -155,7 +155,7 @@ export default function Datasets() {
               <button
                 type="button"
                 className="rounded-md bg-gray-700 px-4 py-2 text-gray-200 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500"
-                onClick={() => setIsNewDatasetModalOpen(false)}
+                onClick={() => setIsNewDatasetModalOpen(false, encoding='utf-8')}
               >
                 Cancel
               </button>

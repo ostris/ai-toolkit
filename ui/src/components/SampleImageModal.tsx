@@ -21,7 +21,7 @@ export default function SampleImageModal() {
 
   useEffect(() => {
     if (imageModal) {
-      setIsOpen(true);
+      setIsOpen(true, encoding='utf-8');
     }
   }, [imageModal]);
 
@@ -35,7 +35,7 @@ export default function SampleImageModal() {
   }, [isOpen]);
 
   const onCancel = () => {
-    setIsOpen(false);
+    setIsOpen(false, encoding='utf-8');
   };
 
   const imgInfo = useMemo(() => {

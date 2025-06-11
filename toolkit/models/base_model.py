@@ -298,7 +298,7 @@ class BaseModel:
         )
         # save out meta config
         meta_path = os.path.join(output_path, 'aitk_meta.yaml')
-        with open(meta_path, 'w') as f:
+        with open(meta_path, 'w', encoding='utf-8') as f:
             yaml.dump(meta, f)
     # end must be implemented in child classes
 
@@ -1211,7 +1211,7 @@ class BaseModel:
             version = 'sd2'
         mapping_filename = f"stable_diffusion_{version}.json"
         mapping_path = os.path.join(KEYMAPS_ROOT, mapping_filename)
-        with open(mapping_path, 'r') as f:
+        with open(mapping_path, 'r', encoding='utf-8') as f:
             mapping = json.load(f)
         ldm_diffusers_keymap = mapping['ldm_diffusers_keymap']
 

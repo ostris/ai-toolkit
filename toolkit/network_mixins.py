@@ -466,7 +466,7 @@ class ToolkitNetworkMixin:
         keymap = None
         # check if file exists
         if os.path.exists(keymap_path):
-            with open(keymap_path, 'r') as f:
+            with open(keymap_path, 'r', encoding='utf-8') as f:
                 keymap = json.load(f)['ldm_diffusers_keymap']
 
         if use_weight_mapping and keymap is not None:

@@ -41,7 +41,7 @@ export default function ConfirmModal() {
 
   useEffect(() => {
     if (confirm) {
-      setIsOpen(true);
+      setIsOpen(true, encoding='utf-8');
       setInputValue('');
     }
   }, [confirm]);
@@ -59,14 +59,14 @@ export default function ConfirmModal() {
     if (confirm?.onCancel) {
       confirm.onCancel();
     }
-    setIsOpen(false);
+    setIsOpen(false, encoding='utf-8');
   };
 
   const onConfirm = () => {
     if (confirm?.onConfirm) {
       confirm.onConfirm(inputValue);
     }
-    setIsOpen(false);
+    setIsOpen(false, encoding='utf-8');
   };
 
   let Icon = FaExclamationTriangle;

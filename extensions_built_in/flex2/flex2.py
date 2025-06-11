@@ -367,7 +367,7 @@ class Flex2(BaseModel):
         )
 
         meta_path = os.path.join(output_path, 'aitk_meta.yaml')
-        with open(meta_path, 'w') as f:
+        with open(meta_path, 'w', encoding='utf-8') as f:
             yaml.dump(meta, f)
 
     def get_loss_target(self, *args, **kwargs):

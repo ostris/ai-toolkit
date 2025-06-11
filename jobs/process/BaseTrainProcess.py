@@ -75,5 +75,5 @@ class BaseTrainProcess(BaseProcess):
     def save_training_config(self):
         os.makedirs(self.save_root, exist_ok=True)
         save_dif = os.path.join(self.save_root, f'config.yaml')
-        with open(save_dif, 'w') as f:
+        with open(save_dif, 'w', encoding='utf-8') as f:
             yaml.dump(self.job.raw_config, f)

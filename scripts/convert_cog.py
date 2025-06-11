@@ -18,7 +18,7 @@ KEYMAP_ROOT = os.path.join(PROJECT_ROOT, 'toolkit', 'keymaps')
 sdxl_keymap_path = os.path.join(KEYMAP_ROOT, 'stable_diffusion_locon_sdxl.json')
 
 # load keymap
-with open(sdxl_keymap_path, 'r') as f:
+with open(sdxl_keymap_path, 'r', encoding='utf-8') as f:
     ldm_diffusers_keymap = json.load(f)['ldm_diffusers_keymap']
 
 # invert the item / key pairs
@@ -45,18 +45,18 @@ def convert_cog(lora_path, embedding_path):
     # # normal dict
     # normal_dict = OrderedDict()
     # example_path = "/mnt/Models/stable-diffusion/models/LoRA/sdxl/LogoRedmond_LogoRedAF.safetensors"
-    # with safe_open(example_path, framework="pt", device='cpu') as f:
+    # with safe_open(example_path, framework="pt", device='cpu', encoding='utf-8') as f:
     #     keys = list(f.keys())
     #     for key in keys:
     #         normal_dict[key] = f.get_tensor(key)
 
-    with safe_open(embedding_path, framework="pt", device='cpu') as f:
+    with safe_open(embedding_path, framework="pt", device='cpu', encoding='utf-8') as f:
         keys = list(f.keys())
         for key in keys:
             new_key = embedding_mapping[key]
             embedding_state_dict[new_key] = f.get_tensor(key)
 
-    with safe_open(lora_path, framework="pt", device='cpu') as f:
+    with safe_open(lora_path, framework="pt", device='cpu', encoding='utf-8') as f:
         keys = list(f.keys())
         lora_rank = None
 

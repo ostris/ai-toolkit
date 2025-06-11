@@ -12,7 +12,7 @@ from toolkit.train_tools import addnet_hash_safetensors
 
 def get_meta_for_safetensors(meta: OrderedDict, name=None, add_software_info=True) -> OrderedDict:
     # stringify the meta and reparse OrderedDict to replace [name] with name
-    meta_string = json.dumps(meta)
+    meta_string = json.dumps(meta, ensure_ascii=False)
     if name is not None:
         meta_string = meta_string.replace("[name]", name)
     save_meta = json.loads(meta_string, object_pairs_hook=OrderedDict)
@@ -22,7 +22,7 @@ def get_meta_for_safetensors(meta: OrderedDict, name=None, add_software_info=Tru
     for key, value in save_meta.items():
         # if not float, int, bool, or str, convert to json string
         if not isinstance(value, str):
-            save_meta[key] = json.dumps(value)
+            save_meta[key] = json.dumps(value, ensure_ascii=False)
     # add the pt format
     save_meta["format"] = "pt"
     return save_meta
@@ -80,7 +80,7 @@ def parse_metadata_from_safetensors(meta: OrderedDict) -> OrderedDict:
 
 def load_metadata_from_safetensors(file_path: str) -> OrderedDict:
     try:
-        with safe_open(file_path, framework="pt") as f:
+        with safe_open(file_path, framework="pt", encoding='utf-8') as f:
             metadata = f.metadata()
         return parse_metadata_from_safetensors(metadata)
     except Exception as e:

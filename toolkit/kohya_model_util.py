@@ -388,7 +388,7 @@ def convert_ldm_unet_checkpoint(v2, checkpoint, config):
     if v2 and not config.get('use_linear_projection', False):
         linear_transformer_to_conv(new_checkpoint)
 
-    # print("mapping: ", json.dumps(mapping, indent=4))
+    # print("mapping: ", json.dumps(mapping, indent=4, ensure_ascii=False))
     return new_checkpoint
 
 

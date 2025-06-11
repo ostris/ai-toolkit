@@ -10,7 +10,7 @@ class ModelCache:
         self.raw_cache = {}
         self.cache_path = os.path.join(MODELS_PATH, '.ai_toolkit_cache.json')
         if os.path.exists(self.cache_path):
-            with open(self.cache_path, 'r') as f:
+            with open(self.cache_path, 'r', encoding='utf-8') as f:
                 all_cache = json.load(f)
                 if 'models' in all_cache:
                     self.raw_cache = all_cache['models']
@@ -61,12 +61,12 @@ class ModelCache:
         all_cache = {'models': {}}
         if os.path.exists(self.cache_path):
             # load it first
-            with open(self.cache_path, 'r') as f:
+            with open(self.cache_path, 'r', encoding='utf-8') as f:
                 all_cache = json.load(f)
 
         all_cache['models'] = self.raw_cache
 
-        with open(self.cache_path, 'w') as f:
+        with open(self.cache_path, 'w', encoding='utf-8') as f:
             json.dump(all_cache, f, indent=2)
 
 
@@ -195,7 +195,7 @@ def get_model_path_from_url(url: str):
 
         try:
 
-            with open(tmp_path, 'wb') as f:
+            with open(tmp_path, 'wb', encoding='utf-8') as f:
                 for data in response.iter_content(block_size):
                     progress_bar.update(len(data))
                     f.write(data)

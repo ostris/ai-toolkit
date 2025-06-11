@@ -78,7 +78,7 @@ class SuperTagger(BaseExtensionProcess):
 
         # check if json exists, if it does load it as image info
         if os.path.exists(json_path):
-            with open(json_path, 'r') as f:
+            with open(json_path, 'r', encoding='utf-8') as f:
                 img_info = ImgInfo(**json.load(f))
         else:
             img_info = ImgInfo()
@@ -156,7 +156,7 @@ class SuperTagger(BaseExtensionProcess):
             image.save(train_img_path)
 
         if img_info.is_dirty:
-            with open(json_path, 'w') as f:
+            with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(img_info.to_dict(), f, indent=4)
 
         if self.dataset_master_config_file:
@@ -189,7 +189,7 @@ class SuperTagger(BaseExtensionProcess):
 
         if self.dataset_master_config_file is not None:
             # save it as json
-            with open(self.dataset_master_config_file, 'w') as f:
+            with open(self.dataset_master_config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.master_dataset_dict, f, indent=4)
 
         del self.image_processor

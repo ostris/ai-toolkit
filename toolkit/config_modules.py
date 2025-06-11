@@ -720,7 +720,7 @@ class DatasetConfig:
         random_triggers = kwargs.get('random_triggers', [])
         # if they are a string, load them from a file
         if isinstance(random_triggers, str) and os.path.exists(random_triggers):
-            with open(random_triggers, 'r') as f:
+            with open(random_triggers, 'r', encoding='utf-8') as f:
                 random_triggers = f.read().splitlines()
                 # remove empty lines
                 random_triggers = [line for line in random_triggers if line.strip() != '']
@@ -1020,7 +1020,7 @@ class GenerateImageConfig:
 
     def save_prompt_file(self, count: int = 0, max_count=0):
         # save prompt file
-        with open(self.get_prompt_path(count, max_count), 'w') as f:
+        with open(self.get_prompt_path(count, max_count), 'w', encoding='utf-8') as f:
             prompt = self.prompt
             if self.prompt_2 is not None:
                 prompt += ' --p2 ' + self.prompt_2

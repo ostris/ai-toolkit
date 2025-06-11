@@ -423,7 +423,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
         else:
             # assume json
-            with open(self.dataset_path, 'r') as f:
+            with open(self.dataset_path, 'r', encoding='utf-8') as f:
                 self.caption_dict = json.load(f)
                 # keys are file paths
                 file_list = list(self.caption_dict.keys())
@@ -466,7 +466,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         dataloader_version = "0.1.2"
         if os.path.exists(dataset_size_file):
             try:
-                with open(dataset_size_file, 'r') as f:
+                with open(dataset_size_file, 'r', encoding='utf-8') as f:
                     self.size_database = json.load(f)
                 
                 if "__version__" not in self.size_database or self.size_database["__version__"] != dataloader_version:
@@ -504,7 +504,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 bad_count += 1
 
         # save the size database
-        with open(dataset_size_file, 'w') as f:
+        with open(dataset_size_file, 'w', encoding='utf-8') as f:
             json.dump(self.size_database, f)
         
         if self.is_video:

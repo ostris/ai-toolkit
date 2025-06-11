@@ -172,7 +172,7 @@ def download_image(photo: Photo, dir_path: str, min_width: int = 1024, min_heigh
     os.makedirs(dir_path, exist_ok=True)
 
     filename = os.path.join(dir_path, photo.filename)
-    with open(filename, 'wb') as file:
+    with open(filename, 'wb', encoding='utf-8') as file:
         file.write(img_response.content)
 
 
@@ -187,10 +187,10 @@ def update_caption(img_path: str):
     # see if txt file exists
     if os.path.exists(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.txt")):
         # read it
-        with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.txt"), 'r') as file:
+        with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.txt"), 'r', encoding='utf-8') as file:
             caption = file.read()
     # write json file
-    with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.json"), 'w') as file:
+    with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.json"), 'w', encoding='utf-8') as file:
         file.write(f'{{"caption": "{caption}"}}')
 
     # delete txt file

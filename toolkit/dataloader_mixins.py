@@ -1050,7 +1050,7 @@ class ClipImageFileItemDTOMixin:
             hash_dict = self.get_clip_vision_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.clip_image_path))[0]
             # get base64 hash of md5 checksum of hash_dict
-            hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+            hash_input = json.dumps(hash_dict, ensure_ascii=False, sort_keys=True).encode('utf-8')
             hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
             hash_str = hash_str.replace('=', '')
             self._clip_vision_embeddings_path = os.path.join(latent_dir, f'{filename_no_ext}_{hash_str}.safetensors')
@@ -1639,7 +1639,7 @@ class LatentCachingFileItemDTOMixin:
             hash_dict = self.get_latent_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
             # get base64 hash of md5 checksum of hash_dict
-            hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+            hash_input = json.dumps(hash_dict, ensure_ascii=False, sort_keys=True).encode('utf-8')
             hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
             hash_str = hash_str.replace('=', '')
             self._latent_path = os.path.join(latent_dir, f'{filename_no_ext}_{hash_str}.safetensors')
@@ -1924,7 +1924,7 @@ class CLIPCachingMixin:
                     ("is_noise_zero", is_noise_zero),
                 ])
                 # get base64 hash of md5 checksum of hash_dict
-                hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+                hash_input = json.dumps(hash_dict, ensure_ascii=False, sort_keys=True).encode('utf-8')
                 hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
                 hash_str = hash_str.replace('=', '')
 

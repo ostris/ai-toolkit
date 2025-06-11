@@ -92,7 +92,7 @@ class PhotoMakerStableDiffusionXLPipeline(StableDiffusionXLPipeline):
             )
             if weight_name.endswith(".safetensors"):
                 state_dict = {"id_encoder": {}, "lora_weights": {}}
-                with safe_open(model_file, framework="pt", device="cpu") as f:
+                with safe_open(model_file, framework="pt", device="cpu", encoding='utf-8') as f:
                     for key in f.keys():
                         if key.startswith("id_encoder."):
                             state_dict["id_encoder"][key.replace("id_encoder.", "")] = f.get_tensor(key)

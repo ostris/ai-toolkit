@@ -55,7 +55,7 @@ def load_captioning(uploaded_files, concept_sentence):
             print(image_value)
             if base_name in txt_files_dict:
                 print("entrou")
-                with open(txt_files_dict[base_name], 'r') as file:
+                with open(txt_files_dict[base_name], 'r', encoding='utf-8') as file:
                     corresponding_caption = file.read()
                     
         # Update value of captioning area
@@ -82,7 +82,7 @@ def create_dataset(*inputs):
         os.makedirs(destination_folder)
 
     jsonl_file_path = os.path.join(destination_folder, "metadata.jsonl")
-    with open(jsonl_file_path, "a") as jsonl_file:
+    with open(jsonl_file_path, "a", encoding='utf-8') as jsonl_file:
         for index, image in enumerate(images):
             new_image_path = shutil.copy(image, destination_folder)
 
@@ -91,7 +91,7 @@ def create_dataset(*inputs):
 
             data = {"file_name": file_name, "prompt": original_caption}
 
-            jsonl_file.write(json.dumps(data) + "\n")
+            jsonl_file.write(json.dumps(data, ensure_ascii=False) + "\n")
 
     return destination_folder
 
@@ -172,7 +172,7 @@ def start_training(
     slugged_lora_name = slugify(lora_name)
 
     # Load the default config
-    with open("config/examples/train_lora_flux_24gb.yaml", "r") as f:
+    with open("config/examples/train_lora_flux_24gb.yaml", "r", encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
     # Update the config with user inputs
@@ -222,7 +222,7 @@ def start_training(
     random_config_name = str(uuid.uuid4())
     os.makedirs("tmp", exist_ok=True)
     config_path = f"tmp/{random_config_name}-{slugged_lora_name}.yaml"
-    with open(config_path, "w") as f:
+    with open(config_path, "w", encoding='utf-8') as f:
         yaml.dump(config, f)
     
     # run the job locally
