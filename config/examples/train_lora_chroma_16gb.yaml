@@ -19,7 +19,7 @@ config:
         linear_alpha: 8
       save:
         dtype: float8 # precision to save
-        save_every: 100 # save every this many steps
+        save_every: 400 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
         push_to_hub: false #change this to True to push your trained model to Hugging Face.
         # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
@@ -33,7 +33,7 @@ config:
         # "C:\\path\\to\\images\\folder"
         - folder_path: "/path/to/images/folder"
           caption_ext: "txt"
-          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          caption_dropout_rate: 0.0  # no drop out the caption
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
           resolution: [ 512, 768, 1024 ]  # chroma enjoys multiple resolutions
@@ -75,9 +75,10 @@ config:
         
         arch: "chroma"
         quantize: true  # run 8bit mixed precision
+        low_vram: true  # On it if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
-        sample_every: 100 # sample every this many steps
+        sample_every: 400 # sample every this many steps
         width: 1024
         height: 1024
         prompts:
