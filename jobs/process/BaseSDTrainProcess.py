@@ -2252,7 +2252,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             return
         readme_content = self._generate_readme(repo_id)
         readme_path = os.path.join(self.save_root, "README.md")
-        with open(readme_path, "w", encoding="utf-8", encoding='utf-8') as f:
+        with open(readme_path, "w", encoding="utf-8") as f:
             f.write(readme_content)
         
         api = HfApi()

@@ -223,7 +223,7 @@ def generate_readme(supporters):
     github_entity_type = "orgs" if GITHUB_ORG else "sponsors"
     github_sponsor_url = f"https://github.com/{github_entity_type}/{github_entity}"
     
-    with open(README_PATH, "w", encoding="utf-8", encoding='utf-8') as f:
+    with open(README_PATH, "w", encoding="utf-8") as f:
         f.write("## Support My Work\n\n")
         f.write("If you enjoy my work, or use it for commercial purposes, please consider sponsoring me so I can continue to maintain it. Every bit helps! \n\n")
         # Create appropriate call-to-action based on what's configured

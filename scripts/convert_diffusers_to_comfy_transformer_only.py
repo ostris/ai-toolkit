@@ -70,7 +70,7 @@ if not original_json_path.exists():
     print(f"Error: Missing transformer index json: {original_json_path}")
     exit()
 
-with open(original_json_path, "r", encoding="utf-8", encoding='utf-8') as f:
+with open(original_json_path, "r", encoding="utf-8") as f:
     original_json = json.load(f)
 
 diffusers_map = {

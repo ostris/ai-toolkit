@@ -64,7 +64,7 @@ if not os.path.exists(quantized_state_dict_path):
         f"Error: Missing quantized state dict file: {args.quantized_state_dict_path}")
     exit()
 
-with open(original_json_path, "r", encoding="utf-8", encoding='utf-8') as f:
+with open(original_json_path, "r", encoding="utf-8") as f:
     original_json = json.load(f)
 
 diffusers_map = {
