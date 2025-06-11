@@ -195,7 +195,7 @@ def get_model_path_from_url(url: str):
 
         try:
 
-            with open(tmp_path, 'wb', encoding='utf-8') as f:
+            with open(tmp_path, 'wb') as f:
                 for data in response.iter_content(block_size):
                     progress_bar.update(len(data))
                     f.write(data)

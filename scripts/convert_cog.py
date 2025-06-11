@@ -45,18 +45,18 @@ def convert_cog(lora_path, embedding_path):
     # # normal dict
     # normal_dict = OrderedDict()
     # example_path = "/mnt/Models/stable-diffusion/models/LoRA/sdxl/LogoRedmond_LogoRedAF.safetensors"
-    # with safe_open(example_path, framework="pt", device='cpu', encoding='utf-8') as f:
+    # with safe_open(example_path, framework="pt", device='cpu') as f:
     #     keys = list(f.keys())
     #     for key in keys:
     #         normal_dict[key] = f.get_tensor(key)
 
-    with safe_open(embedding_path, framework="pt", device='cpu', encoding='utf-8') as f:
+    with safe_open(embedding_path, framework="pt", device='cpu') as f:
         keys = list(f.keys())
         for key in keys:
             new_key = embedding_mapping[key]
             embedding_state_dict[new_key] = f.get_tensor(key)
 
-    with safe_open(lora_path, framework="pt", device='cpu', encoding='utf-8') as f:
+    with safe_open(lora_path, framework="pt", device='cpu') as f:
         keys = list(f.keys())
         lora_rank = None
 

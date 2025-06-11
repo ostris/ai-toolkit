@@ -232,7 +232,7 @@ class Embedding:
             data = torch.load(path, map_location="cpu")
         elif ext in ['.SAFETENSORS']:
             # rebuild the embedding from the safetensors file if it has it
-            with safetensors.torch.safe_open(path, framework="pt", device="cpu", encoding='utf-8') as f:
+            with safetensors.torch.safe_open(path, framework="pt", device="cpu") as f:
                 metadata = f.metadata()
                 for k in f.keys():
                     tensors[k] = f.get_tensor(k)

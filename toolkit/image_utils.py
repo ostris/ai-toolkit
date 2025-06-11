@@ -92,7 +92,7 @@ def get_image_metadata(file_path):
     size = os.path.getsize(file_path)
 
     # be explicit with open arguments - we need binary mode
-    with io.open(file_path, "rb", encoding='utf-8') as input:
+    with io.open(file_path, "rb") as input:
         return get_image_metadata_from_bytesio(input, size, file_path)
 
 
@@ -283,7 +283,7 @@ class Test_get_image_size(unittest.TestCase):
     def test_get_image_size_from_bytesio(self):
         img = self.data[0]
         p = img['path']
-        with io.open(p, 'rb', encoding='utf-8') as fp:
+        with io.open(p, 'rb') as fp:
             b = fp.read()
         fp = io.BytesIO(b)
         sz = len(b)
@@ -296,7 +296,7 @@ class Test_get_image_size(unittest.TestCase):
     def test_get_image_metadata_from_bytesio(self):
         img = self.data[0]
         p = img['path']
-        with io.open(p, 'rb', encoding='utf-8') as fp:
+        with io.open(p, 'rb') as fp:
             b = fp.read()
         fp = io.BytesIO(b)
         sz = len(b)

@@ -172,7 +172,7 @@ def download_image(photo: Photo, dir_path: str, min_width: int = 1024, min_heigh
     os.makedirs(dir_path, exist_ok=True)
 
     filename = os.path.join(dir_path, photo.filename)
-    with open(filename, 'wb', encoding='utf-8') as file:
+    with open(filename, 'wb') as file:
         file.write(img_response.content)
 
 
