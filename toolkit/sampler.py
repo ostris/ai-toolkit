@@ -16,6 +16,7 @@ from diffusers import (
     LCMScheduler,
     FlowMatchEulerDiscreteScheduler,
 )
+from toolkit.samplers.mean_flow_scheduler import MeanFlowScheduler
 
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 
@@ -159,6 +160,8 @@ def get_sampler(
         scheduler_cls = LCMScheduler
     elif sampler == "custom_lcm":
         scheduler_cls = CustomLCMScheduler
+    elif sampler == "mean_flow":
+        scheduler_cls = MeanFlowScheduler
     elif sampler == "flowmatch":
         scheduler_cls = CustomFlowMatchEulerDiscreteScheduler
         config_to_use = copy.deepcopy(flux_config)
