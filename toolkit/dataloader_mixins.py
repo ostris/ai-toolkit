@@ -111,12 +111,12 @@ class CaptionMixin:
         if not hasattr(self, 'file_list'):
             raise Exception('file_list not found on class instance')
         img_path_or_tuple = self.file_list[index]
+        ext = self.dataset_config.caption_ext
         if isinstance(img_path_or_tuple, tuple):
             img_path = img_path_or_tuple[0] if isinstance(img_path_or_tuple[0], str) else img_path_or_tuple[0].path
             # check if either has a prompt file
             path_no_ext = os.path.splitext(img_path)[0]
             prompt_path = None
-            ext = self.dataset_config.caption_ext
             prompt_path = path_no_ext + ext
         else:
             img_path = img_path_or_tuple if isinstance(img_path_or_tuple, str) else img_path_or_tuple.path
@@ -315,7 +315,7 @@ class CaptionProcessingDTOMixin:
             # see if prompt file exists
             path_no_ext = os.path.splitext(self.path)[0]
             prompt_ext = self.dataset_config.caption_ext
-            prompt_path = f"{path_no_ext}.{prompt_ext}"
+            prompt_path = path_no_ext + prompt_ext
             short_caption = None
 
             if os.path.exists(prompt_path):
