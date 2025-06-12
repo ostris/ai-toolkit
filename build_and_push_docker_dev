@@ -4,7 +4,7 @@ VERSION=dev
 GIT_COMMIT=dev
 
 echo "Docker builds from the repo, not this dir. Make sure changes are pushed to the repo."
-echo "Building version: $VERSION and latest"
+echo "Building version: $VERSION"
 # wait 2 seconds
 sleep 2
 
