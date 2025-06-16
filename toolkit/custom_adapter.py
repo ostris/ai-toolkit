@@ -11,6 +11,7 @@ from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.models.clip_fusion import CLIPFusionModule
 from toolkit.models.clip_pre_processor import CLIPImagePreProcessor
 from toolkit.models.control_lora_adapter import ControlLoraAdapter
+from toolkit.models.mean_flow_adapter import MeanFlowAdapter
 from toolkit.models.i2v_adapter import I2VAdapter
 from toolkit.models.subpixel_adapter import SubpixelAdapter
 from toolkit.models.ilora import InstantLoRAModule
@@ -98,6 +99,7 @@ class CustomAdapter(torch.nn.Module):
         self.single_value_adapter: SingleValueAdapter = None
         self.redux_adapter: ReduxImageEncoder = None
         self.control_lora: ControlLoraAdapter = None
+        self.mean_flow_adapter: MeanFlowAdapter = None
         self.subpixel_adapter: SubpixelAdapter = None
         self.i2v_adapter: I2VAdapter = None
         
@@ -125,6 +127,16 @@ class CustomAdapter(torch.nn.Module):
                 dtype=self.sd_ref().dtype,
             )
             self.load_state_dict(loaded_state_dict, strict=False)
+    
+    @property
+    def do_direct_save(self):
+        # some adapters save their weights directly, others like ip adapters split the state dict
+        if self.config.train_only_image_encoder:
+            return True
+        if self.config.type in ['control_lora', 'subpixel', 'i2v', 'redux', 'mean_flow']:
+            return True
+        return False
+            
 
     def setup_adapter(self):
         torch_dtype = get_torch_dtype(self.sd_ref().dtype)
@@ -245,6 +257,13 @@ class CustomAdapter(torch.nn.Module):
         elif self.adapter_type == 'redux':
             vision_hidden_size = self.vision_encoder.config.hidden_size
             self.redux_adapter = ReduxImageEncoder(vision_hidden_size, 4096, self.device, torch_dtype)
+        elif self.adapter_type == 'mean_flow':
+            self.mean_flow_adapter = MeanFlowAdapter(
+                self,
+                sd=self.sd_ref(),
+                config=self.config,
+                train_config=self.train_config
+            )
         elif self.adapter_type == 'control_lora':
             self.control_lora = ControlLoraAdapter(
                 self,
@@ -309,7 +328,7 @@ class CustomAdapter(torch.nn.Module):
     def setup_clip(self):
         adapter_config = self.config
         sd = self.sd_ref()
-        if self.config.type in ["text_encoder", "llm_adapter", "single_value", "control_lora", "subpixel"]:
+        if self.config.type in ["text_encoder", "llm_adapter", "single_value", "control_lora", "subpixel", "mean_flow"]:
             return
         if self.config.type == 'photo_maker':
             try:
@@ -528,6 +547,14 @@ class CustomAdapter(torch.nn.Module):
                     new_dict[k + '.' + k2] = v2
             self.control_lora.load_weights(new_dict, strict=strict)
         
+        if self.adapter_type == 'mean_flow':
+            # state dict is seperated. so recombine it
+            new_dict = {}
+            for k, v in state_dict.items():
+                for k2, v2 in v.items():
+                    new_dict[k + '.' + k2] = v2
+            self.mean_flow_adapter.load_weights(new_dict, strict=strict)
+        
         if self.adapter_type == 'i2v':
             # state dict is seperated. so recombine it
             new_dict = {}
@@ -596,6 +623,11 @@ class CustomAdapter(torch.nn.Module):
             return state_dict
         elif self.adapter_type == 'control_lora':
             d = self.control_lora.get_state_dict()
+            for k, v in d.items():
+                state_dict[k] = v
+            return state_dict
+        elif self.adapter_type == 'mean_flow':
+            d = self.mean_flow_adapter.get_state_dict()
             for k, v in d.items():
                 state_dict[k] = v
             return state_dict
@@ -757,7 +789,7 @@ class CustomAdapter(torch.nn.Module):
             prompt: Union[List[str], str],
             is_unconditional: bool = False,
     ):
-        if self.adapter_type in ['clip_fusion', 'ilora', 'vision_direct', 'redux', 'control_lora', 'subpixel', 'i2v']:
+        if self.adapter_type in ['clip_fusion', 'ilora', 'vision_direct', 'redux', 'control_lora', 'subpixel', 'i2v', 'mean_flow']:
             return prompt
         elif self.adapter_type == 'text_encoder':
             # todo allow for training
@@ -1317,6 +1349,10 @@ class CustomAdapter(torch.nn.Module):
             yield from self.redux_adapter.parameters(recurse)
         elif self.config.type == 'control_lora':
             param_list = self.control_lora.get_params()
+            for param in param_list:
+                yield param
+        elif self.config.type == 'mean_flow':
+            param_list = self.mean_flow_adapter.get_params()
             for param in param_list:
                 yield param
         elif self.config.type == 'i2v':

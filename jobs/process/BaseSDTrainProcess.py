@@ -575,10 +575,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     direct_save = False
                     if self.adapter_config.train_only_image_encoder:
                         direct_save = True
-                    if self.adapter_config.type == 'redux':
-                        direct_save = True
-                    if self.adapter_config.type in ['control_lora', 'subpixel', 'i2v']:
-                        direct_save = True
+                    elif isinstance(self.adapter, CustomAdapter):
+                        direct_save = self.adapter.do_direct_save
                     save_ip_adapter_from_diffusers(
                         state_dict,
                         output_file=file_path,
