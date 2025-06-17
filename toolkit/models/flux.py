@@ -4,6 +4,7 @@ from functools import partial
 from typing import Optional
 import torch
 from diffusers import FluxTransformer2DModel
+from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings, CombinedTimestepGuidanceTextProjEmbeddings
 
 
 def guidance_embed_bypass_forward(self, timestep, guidance, pooled_projection):
@@ -174,3 +175,4 @@ def add_model_gpu_splitter_to_flux(
     
     transformer._pre_gpu_split_to = transformer.to
     transformer.to = partial(new_device_to, transformer)
+
