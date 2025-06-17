@@ -3,6 +3,10 @@
 import React, { forwardRef } from 'react';
 import classNames from 'classnames';
 import dynamic from 'next/dynamic';
+import { CircleHelp } from 'lucide-react';
+import { getDoc } from '@/docs';
+import { openDoc } from '@/components/DocModal';
+
 const Select = dynamic(() => import('react-select'), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
@@ -11,6 +15,7 @@ const inputClasses =
 
 export interface InputProps {
   label?: string;
+  docKey?: string;
   className?: string;
   placeholder?: string;
   required?: boolean;
@@ -24,10 +29,20 @@ export interface TextInputProps extends InputProps {
 }
 
 export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
-  ({ label, value, onChange, placeholder, required, disabled, type = 'text', className }, ref) => {
+  ({ label, value, onChange, placeholder, required, disabled, type = 'text', className, docKey = null }, ref) => {
+    const doc = getDoc(docKey);
     return (
       <div className={classNames(className)}>
-        {label && <label className={labelClasses}>{label}</label>}
+        {label && (
+          <label className={labelClasses}>
+            {label}{' '}
+            {doc && (
+              <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+                <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+              </div>
+            )}
+          </label>
+        )}
         <input
           ref={ref}
           type={type}
@@ -56,7 +71,8 @@ export interface NumberInputProps extends InputProps {
 }
 
 export const NumberInput = (props: NumberInputProps) => {
-  const { label, value, onChange, placeholder, required, min, max } = props;
+  const { label, value, onChange, placeholder, required, min, max, docKey = null } = props;
+  const doc = getDoc(docKey);
 
   // Add controlled internal state to properly handle partial inputs
   const [inputValue, setInputValue] = React.useState<string | number>(value ?? '');
@@ -68,7 +84,16 @@ export const NumberInput = (props: NumberInputProps) => {
 
   return (
     <div className={classNames(props.className)}>
-      {label && <label className={labelClasses}>{label}</label>}
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
       <input
         type="number"
         value={inputValue}
@@ -120,7 +145,8 @@ export interface SelectInputProps extends InputProps {
 }
 
 export const SelectInput = (props: SelectInputProps) => {
-  const { label, value, onChange, options } = props;
+  const { label, value, onChange, options, docKey = null } = props;
+  const doc = getDoc(docKey);
   const selectedOption = options.find(option => option.value === value);
   return (
     <div
@@ -128,7 +154,16 @@ export const SelectInput = (props: SelectInputProps) => {
         'opacity-30 cursor-not-allowed': props.disabled,
       })}
     >
-      {label && <label className={labelClasses}>{label}</label>}
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
       <Select
         value={selectedOption}
         options={options}
@@ -200,13 +235,24 @@ export const Checkbox = (props: CheckboxProps) => {
 interface FormGroupProps {
   label?: string;
   className?: string;
+  docKey?: string;
   children: React.ReactNode;
 }
 
-export const FormGroup: React.FC<FormGroupProps> = ({ label, className, children }) => {
+export const FormGroup: React.FC<FormGroupProps> = ({ label, className, children, docKey = null }) => {
+  const doc = getDoc(docKey);
   return (
     <div className={classNames(className)}>
-      {label && <label className={labelClasses}>{label}</label>}
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
       <div className="px-4 space-y-2">{children}</div>
     </div>
   );

@@ -419,6 +419,7 @@ Everything else should work the same including layer targeting.
 
 ### June 17, 2024
 - Performance optimizations for batch preparation
+- Added some docs via a popup for items in the simple ui explaining what settings do. Still a WIP
 
 ### June 16, 2024
 - Hide control images in the UI when viewing datasets

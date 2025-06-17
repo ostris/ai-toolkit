@@ -47,6 +47,7 @@ export default function SimpleJob({
             <TextInput
               label="Training Name"
               value={jobConfig.config.name}
+              docKey="config.name"
               onChange={value => setJobConfig(value, 'config.name')}
               placeholder="Enter training name"
               disabled={runId !== null}
@@ -55,12 +56,14 @@ export default function SimpleJob({
             <SelectInput
               label="GPU ID"
               value={`${gpuIDs}`}
+              docKey="gpuids"
               onChange={value => setGpuIDs(value)}
               options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
             />
             <TextInput
               label="Trigger Word"
               value={jobConfig.config.process[0].trigger_word || ''}
+              docKey="config.process[0].trigger_word"
               onChange={(value: string | null) => {
                 if (value?.trim() === '') {
                   value = null;
@@ -120,6 +123,7 @@ export default function SimpleJob({
             <TextInput
               label="Name or Path"
               value={jobConfig.config.process[0].model.name_or_path}
+              docKey="config.process[0].model.name_or_path"
               onChange={(value: string | null) => {
                 if (value?.trim() === '') {
                   value = null;
@@ -185,22 +189,20 @@ export default function SimpleJob({
                   max={1024}
                   required
                 />
-                {
-                  modelArch?.disableSections?.includes('network.conv') ? null : (
-                    <NumberInput
-                      label="Conv Rank"
-                      value={jobConfig.config.process[0].network.conv}
-                      onChange={value => {
-                        console.log('onChange', value);
-                        setJobConfig(value, 'config.process[0].network.conv');
-                        setJobConfig(value, 'config.process[0].network.conv_alpha');
-                      }}
-                      placeholder="eg. 16"
-                      min={0}
-                      max={1024}
-                    />
-                  )
-                }
+                {modelArch?.disableSections?.includes('network.conv') ? null : (
+                  <NumberInput
+                    label="Conv Rank"
+                    value={jobConfig.config.process[0].network.conv}
+                    onChange={value => {
+                      console.log('onChange', value);
+                      setJobConfig(value, 'config.process[0].network.conv');
+                      setJobConfig(value, 'config.process[0].network.conv_alpha');
+                    }}
+                    placeholder="eg. 16"
+                    min={0}
+                    max={1024}
+                  />
+                )}
               </>
             )}
           </Card>
