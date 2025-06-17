@@ -1763,6 +1763,15 @@ class StableDiffusion:
         )
         noise = apply_noise_offset(noise, noise_offset)
         return noise
+    
+    def get_latent_noise_from_latents(
+        self,
+        latents: torch.Tensor,
+        noise_offset=0.0
+    ):
+        noise = torch.randn_like(latents)
+        noise = apply_noise_offset(noise, noise_offset)
+        return noise
 
     def get_time_ids_from_latents(self, latents: torch.Tensor, requires_aesthetic_score=False):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
