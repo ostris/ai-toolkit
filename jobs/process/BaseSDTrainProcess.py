@@ -236,6 +236,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.ema: ExponentialMovingAverage = None
         
         validate_configs(self.train_config, self.model_config, self.save_config)
+        
+        do_profiler = self.get_conf('torch_profiler', False)
+        self.torch_profiler = None if not do_profiler else torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+        )
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -921,7 +929,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             noise = self.get_consistent_noise(latents, batch, dtype=dtype)
         else:
             if hasattr(self.sd, 'get_latent_noise_from_latents'):
-                noise = self.sd.get_latent_noise_from_latents(latents).to(self.device_torch, dtype=dtype)
+                noise = self.sd.get_latent_noise_from_latents(
+                    latents,
+                    noise_offset=self.train_config.noise_offset
+                ).to(self.device_torch, dtype=dtype)
             else:
                 # get noise
                 noise = self.sd.get_latent_noise(
@@ -931,17 +942,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     batch_size=batch_size,
                     noise_offset=self.train_config.noise_offset,
                 ).to(self.device_torch, dtype=dtype)
-
-        # if self.train_config.random_noise_shift > 0.0:
-        #     # get random noise -1 to 1
-        #     noise_shift = torch.rand((noise.shape[0], noise.shape[1], 1, 1), device=noise.device,
-        #                              dtype=noise.dtype) * 2 - 1
-
-        #     # multiply by shift amount
-        #     noise_shift *= self.train_config.random_noise_shift
-
-        #     # add to noise
-        #     noise += noise_shift
         
         if self.train_config.blended_blur_noise:
             noise = get_blended_blur_noise(
@@ -1085,19 +1085,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # we determine noise from the differential of the latents
                     unaugmented_latents = self.sd.encode_images(batch.unaugmented_tensor)
 
-            batch_size = len(batch.file_items)
-            min_noise_steps = self.train_config.min_denoising_steps
-            max_noise_steps = self.train_config.max_denoising_steps
-            if self.model_config.refiner_name_or_path is not None:
-                # if we are not training the unet, then we are only doing refiner and do not need to double up
-                if self.train_config.train_unet:
-                    max_noise_steps = round(self.train_config.max_denoising_steps * self.model_config.refiner_start_at)
-                    do_double = True
-                else:
-                    min_noise_steps = round(self.train_config.max_denoising_steps * self.model_config.refiner_start_at)
-                    do_double = False
+            with self.timer('prepare_scheduler'):
+                
+                batch_size = len(batch.file_items)
+                min_noise_steps = self.train_config.min_denoising_steps
+                max_noise_steps = self.train_config.max_denoising_steps
+                if self.model_config.refiner_name_or_path is not None:
+                    # if we are not training the unet, then we are only doing refiner and do not need to double up
+                    if self.train_config.train_unet:
+                        max_noise_steps = round(self.train_config.max_denoising_steps * self.model_config.refiner_start_at)
+                        do_double = True
+                    else:
+                        min_noise_steps = round(self.train_config.max_denoising_steps * self.model_config.refiner_start_at)
+                        do_double = False
 
-            with self.timer('prepare_noise'):
                 num_train_timesteps = self.train_config.num_train_timesteps
 
                 if self.train_config.noise_scheduler in ['custom_lcm']:
@@ -1144,6 +1145,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.sd.noise_scheduler.set_timesteps(
                         num_train_timesteps, device=self.device_torch
                     )
+            with self.timer('prepare_timesteps_indices'):
 
                 content_or_style = self.train_config.content_or_style
                 if is_reg:
@@ -1193,20 +1195,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         timestep_indices = torch.ones((batch_size,), device=self.device_torch) * min_noise_steps
                     else:
                         # todo, some schedulers use indices, otheres use timesteps. Not sure what to do here
+                        min_idx = min_noise_steps + 1
+                        max_idx = max_noise_steps - 1
+                        if self.train_config.noise_scheduler == 'flowmatch':
+                            # flowmatch uses indices, so we need to use indices
+                            min_idx = 0
+                            max_idx = max_noise_steps - 1
                         timestep_indices = torch.randint(
-                            min_noise_steps + 1,
-                            max_noise_steps - 1,
+                            min_idx,
+                            max_idx,
                             (batch_size,),
                             device=self.device_torch
                         )
                     timestep_indices = timestep_indices.long()
                 else:
                     raise ValueError(f"Unknown content_or_style {content_or_style}")
-
+            with self.timer('convert_timestep_indices_to_timesteps'):
                 # convert the timestep_indices to a timestep
-                timesteps = [self.sd.noise_scheduler.timesteps[x.item()] for x in timestep_indices]
-                timesteps = torch.stack(timesteps, dim=0)
-
+                timesteps = self.sd.noise_scheduler.timesteps[timestep_indices.long()]
+                
+            with self.timer('prepare_noise'):
                 # get noise
                 noise = self.get_noise(latents, batch_size, dtype=dtype, batch=batch, timestep=timesteps)
 
@@ -1240,6 +1248,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         device=noise.device,
                         dtype=noise.dtype
                     ) * self.train_config.random_noise_multiplier
+                
+            with self.timer('make_noisy_latents'):
 
                 noise = noise * noise_multiplier
                 
@@ -2056,6 +2066,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # flush()
             ### HOOK ###
+            if self.torch_profiler is not None:
+                self.torch_profiler.start()
             with self.accelerator.accumulate(self.modules_being_trained):
                 try:
                     loss_dict = self.hook_train_loop(batch_list)
@@ -2067,7 +2079,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         for item in batch.file_items:
                             print(f" - {item.path}")
                     raise e
-                    
+            if self.torch_profiler is not None:
+                torch.cuda.synchronize()  # Make sure all CUDA ops are done
+                self.torch_profiler.stop()
+                
+                print("\n==== Profile Results ====")
+                print(self.torch_profiler.key_averages().table(sort_by="cpu_time_total", row_limit=1000))
             self.timer.stop('train_loop')
             if not did_first_flush:
                 flush()
