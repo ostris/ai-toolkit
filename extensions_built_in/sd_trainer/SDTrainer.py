@@ -167,7 +167,7 @@ class SDTrainer(BaseSDTrainProcess):
 
         if self.train_config.negative_prompt is not None:
             if os.path.exists(self.train_config.negative_prompt):
-                with open(self.train_config.negative_prompt, 'r') as f:
+                with open(self.train_config.negative_prompt, 'r', encoding='utf-8') as f:
                     self.negative_prompt_pool = f.readlines()
                     # remove empty
                     self.negative_prompt_pool = [x.strip() for x in self.negative_prompt_pool if x.strip() != ""]

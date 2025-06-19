@@ -198,7 +198,7 @@ class ReferenceGenerator(BaseExtensionProcess):
             gen_images.save(output_path)
 
             # save caption
-            with open(output_caption_path, 'w') as f:
+            with open(output_caption_path, 'w', encoding='utf-8') as f:
                 f.write(caption)
 
             pbar.update(1)

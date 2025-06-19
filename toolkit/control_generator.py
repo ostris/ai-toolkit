@@ -4,7 +4,8 @@ import os
 import torch
 from typing import Literal
 from PIL import Image, ImageFilter, ImageOps
-from PIL.ImageOps import exif_transpose
+import pillow_avif
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from tqdm import tqdm
 
 from torchvision import transforms
@@ -24,7 +25,7 @@ def flush(garbage_collect=True):
 
 ControlTypes = Literal['depth', 'pose', 'line', 'inpaint', 'mask']
 
-img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+img_ext_list = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 
 class ControlGenerator:
@@ -73,8 +74,7 @@ class ControlGenerator:
 
         if image is None:
             # make sure image is loaded if we havent loaded it with another control
-            image = Image.open(img_path).convert('RGB')
-            image = exif_transpose(image)
+            image = load_image(img_path, force_rgb=True)
 
             # resize to a max of 1mp
             max_size = 1024 * 1024

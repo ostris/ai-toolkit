@@ -10,7 +10,7 @@ import os
 from collections import OrderedDict
 import copy
 import yaml
-from PIL import Image
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 from torch.nn import Parameter
 from tqdm import tqdm
@@ -298,8 +298,8 @@ class BaseModel:
         )
         # save out meta config
         meta_path = os.path.join(output_path, 'aitk_meta.yaml')
-        with open(meta_path, 'w') as f:
-            yaml.dump(meta, f)
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            yaml.dump(meta, f, allow_unicode=True)
     # end must be implemented in child classes
 
     def te_train(self):
@@ -408,7 +408,7 @@ class BaseModel:
                     extra = {}
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
-                        validation_image = Image.open(gen_config.adapter_image_path)
+                        validation_image = load_image(gen_config.adapter_image_path)
                         if ".inpaint." not in gen_config.adapter_image_path:
                             validation_image = validation_image.convert("RGB")
                         else:
@@ -1211,7 +1211,7 @@ class BaseModel:
             version = 'sd2'
         mapping_filename = f"stable_diffusion_{version}.json"
         mapping_path = os.path.join(KEYMAPS_ROOT, mapping_filename)
-        with open(mapping_path, 'r') as f:
+        with open(mapping_path, 'r', encoding='utf-8') as f:
             mapping = json.load(f)
         ldm_diffusers_keymap = mapping['ldm_diffusers_keymap']
 

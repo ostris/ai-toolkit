@@ -84,7 +84,7 @@ json_data = {
     "ldm": keys_not_in_diffusers,
     "diffusers": keys_not_in_ldm
 }
-json_data = json.dumps(json_data, indent=4)
+json_data = json.dumps(json_data, indent=4, ensure_ascii=False)
 
 remaining_diffusers_values = OrderedDict()
 for key in keys_not_in_ldm:
@@ -103,10 +103,10 @@ json_save_path = os.path.join(project_root, 'config', 'keys.json')
 json_matched_save_path = os.path.join(project_root, 'config', 'matched.json')
 json_duped_save_path = os.path.join(project_root, 'config', 'duped.json')
 
-with open(json_save_path, 'w') as f:
+with open(json_save_path, 'w', encoding='utf-8') as f:
     f.write(json_data)
 if find_matches:
-    with open(json_matched_save_path, 'w') as f:
-        f.write(json.dumps(matched_keys, indent=4))
-    with open(json_duped_save_path, 'w') as f:
-        f.write(json.dumps(duplicated_keys, indent=4))
+    with open(json_matched_save_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(matched_keys, indent=4, ensure_ascii=False))
+    with open(json_duped_save_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(duplicated_keys, indent=4, ensure_ascii=False))

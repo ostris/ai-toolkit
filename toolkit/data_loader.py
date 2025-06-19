@@ -10,7 +10,8 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from PIL.ImageOps import exif_transpose
+import pillow_avif
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from tqdm import tqdm
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
     
 
-image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+image_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
 
 
@@ -93,14 +94,14 @@ class ImageDataset(Dataset, CaptionMixin):
 
         self.resolution = self.get_config('resolution', 256)
         self.file_list = [os.path.join(self.path, file) for file in os.listdir(self.path) if
-                          file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+                          file.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.avif'))]
 
         # this might take a while
         print_acc(f"  -  Preprocessing image dimensions")
         new_file_list = []
         bad_count = 0
         for file in tqdm(self.file_list):
-            img = Image.open(file)
+            img = load_image(file)
             if int(min(img.size) * self.scale) >= self.resolution:
                 new_file_list.append(file)
             else:
@@ -132,7 +133,7 @@ class ImageDataset(Dataset, CaptionMixin):
     def __getitem__(self, index):
         img_path = self.file_list[index]
         try:
-            img = exif_transpose(Image.open(img_path)).convert('RGB')
+            img = load_image(img_path, force_rgb=True)
         except Exception as e:
             print_acc(f"Error opening image: {img_path}")
             print_acc(e)
@@ -227,7 +228,7 @@ class PairedImageDataset(Dataset):
         self.pos_weight = self.get_config('pos_weight', self.network_weight)
         self.neg_weight = self.get_config('neg_weight', self.network_weight)
 
-        supported_exts = ('.jpg', '.jpeg', '.png', '.webp', '.JPEG', '.JPG', '.PNG', '.WEBP')
+        supported_exts = ('.jpg', '.jpeg', '.png', '.webp', '.avif', '.JPEG', '.JPG', '.PNG', '.WEBP', '.AVIF')
 
         if self.pos_folder is not None and self.neg_folder is not None:
             # find matching files
@@ -317,9 +318,9 @@ class PairedImageDataset(Dataset):
         if isinstance(img_path_or_tuple, tuple):
             # load both images
             img_path = img_path_or_tuple[0]
-            img1 = exif_transpose(Image.open(img_path)).convert('RGB')
+            img1 = load_image(img_path, force_rgb=True)
             img_path = img_path_or_tuple[1]
-            img2 = exif_transpose(Image.open(img_path)).convert('RGB')
+            img2 = load_image(img_path, force_rgb=True)
 
             # always use # 2 (pos)
             bucket_resolution = get_bucket_for_image_size(
@@ -358,7 +359,7 @@ class PairedImageDataset(Dataset):
             img.paste(img2, (img1.width, 0))
         else:
             img_path = img_path_or_tuple
-            img = exif_transpose(Image.open(img_path)).convert('RGB')
+            img = load_image(img_path,force_rgb=True)
             height = self.size
             # determine width to keep aspect ratio
             width = int(img.size[0] * height / img.size[1])
@@ -422,7 +423,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
         else:
             # assume json
-            with open(self.dataset_path, 'r') as f:
+            with open(self.dataset_path, 'r', encoding='utf-8') as f:
                 self.caption_dict = json.load(f)
                 # keys are file paths
                 file_list = list(self.caption_dict.keys())
@@ -465,7 +466,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         dataloader_version = "0.1.2"
         if os.path.exists(dataset_size_file):
             try:
-                with open(dataset_size_file, 'r') as f:
+                with open(dataset_size_file, 'r', encoding='utf-8') as f:
                     self.size_database = json.load(f)
                 
                 if "__version__" not in self.size_database or self.size_database["__version__"] != dataloader_version:
@@ -503,8 +504,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 bad_count += 1
 
         # save the size database
-        with open(dataset_size_file, 'w') as f:
-            json.dump(self.size_database, f)
+        with open(dataset_size_file, 'w', encoding='utf-8') as f:
+            json.dump(self.size_database, f, ensure_ascii=False)
         
         if self.is_video:
             print_acc(f"  -  Found {len(self.file_list)} videos")

@@ -6,7 +6,8 @@ from collections import OrderedDict
 from typing import List, Optional
 
 from PIL import Image
-from PIL.ImageOps import exif_transpose
+import pillow_avif
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 
 from toolkit.basic import flush
 from toolkit.models.RRDB import RRDBNet as ESRGAN, esrgan_safetensors_keys
@@ -332,8 +333,7 @@ class TrainESRGANProcess(BaseTrainProcess):
 
         with torch.no_grad():
             for i, img_url in enumerate(self.sample_sources):
-                img = exif_transpose(Image.open(img_url))
-                img = img.convert('RGB')
+                img = load_image(img_url, force_rgb=True)
                 # crop if not square
                 if img.width != img.height:
                     min_dim = min(img.width, img.height)

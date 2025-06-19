@@ -129,8 +129,8 @@ if len(keys_not_in_state_dict_2) == 0 and len(keys_not_in_state_dict_1) == 0:
         print("Some valued font match!")
         print(mismatch_keys)
         mismatched_path = os.path.join(project_root, 'config', 'mismatch.json')
-        with open(mismatched_path, 'w') as f:
-            f.write(json.dumps(mismatch_keys, indent=4))
+        with open(mismatched_path, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(mismatch_keys, indent=4, ensure_ascii=False))
         exit(0)
 
 else:
@@ -141,7 +141,7 @@ json_data = {
     "not_in_state_dict_2": keys_not_in_state_dict_2,
     "not_in_state_dict_1": keys_not_in_state_dict_1
 }
-json_data = json.dumps(json_data, indent=4)
+json_data = json.dumps(json_data, indent=4, ensure_ascii=False)
 
 remaining_diffusers_values = OrderedDict()
 for key in keys_not_in_state_dict_1:
@@ -162,11 +162,11 @@ json_duped_save_path = os.path.join(project_root, 'config', 'duped.json')
 state_dict_1_filename = os.path.basename(args.file_1[0])
 # state_dict_2_filename = os.path.basename(args.file_2[0])
 # save key names for each in own file
-with open(os.path.join(project_root, 'config', f'{state_dict_1_filename}.json'), 'w') as f:
-    f.write(json.dumps(state_dict_1_keys, indent=4))
+with open(os.path.join(project_root, 'config', f'{state_dict_1_filename}.json'), 'w', encoding='utf-8') as f:
+    f.write(json.dumps(state_dict_1_keys, indent=4, ensure_ascii=False))
 
-with open(os.path.join(project_root, 'config', f'{state_dict_1_filename}_loop.json'), 'w') as f:
-    f.write(json.dumps(state_dict_2_keys, indent=4))
+with open(os.path.join(project_root, 'config', f'{state_dict_1_filename}_loop.json'), 'w', encoding='utf-8') as f:
+    f.write(json.dumps(state_dict_2_keys, indent=4, ensure_ascii=False))
 
-with open(json_save_path, 'w') as f:
+with open(json_save_path, 'w', encoding='utf-8') as f:
     f.write(json_data)

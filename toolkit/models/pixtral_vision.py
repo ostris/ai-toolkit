@@ -279,7 +279,7 @@ class PixtralVisionEncoder(nn.Module):
             raise ValueError(f"Could not find config.json in {model_folder}")
 
         # load config
-        with open(os.path.join(model_folder, "config.json"), "r") as f:
+        with open(os.path.join(model_folder, "config.json"), "r", encoding='utf-8') as f:
             config = json.load(f)
 
         model = cls(**config)
