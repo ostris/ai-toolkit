@@ -454,8 +454,12 @@ class TrainConfig:
         self.bypass_guidance_embedding = kwargs.get('bypass_guidance_embedding', False)
         
         # diffusion feature extractor
-        self.diffusion_feature_extractor_path = kwargs.get('diffusion_feature_extractor_path', None)
-        self.diffusion_feature_extractor_weight = kwargs.get('diffusion_feature_extractor_weight', 1.0)
+        self.latent_feature_extractor_path = kwargs.get('latent_feature_extractor_path', None)
+        self.latent_feature_loss_weight = kwargs.get('latent_feature_loss_weight', 1.0)
+        
+        # we use this in the code, but it really needs to be called latent_feature_extractor as that makes more sense with new architecture
+        self.diffusion_feature_extractor_path = kwargs.get('diffusion_feature_extractor_path', self.latent_feature_extractor_path)
+        self.diffusion_feature_extractor_weight = kwargs.get('diffusion_feature_extractor_weight', self.latent_feature_loss_weight)
         
         # optimal noise pairing
         self.optimal_noise_pairing_samples = kwargs.get('optimal_noise_pairing_samples', 1)

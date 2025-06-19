@@ -127,18 +127,20 @@ class DFEBlock(nn.Module):
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
         self.act = nn.GELU()
+        self.proj = nn.Conv2d(channels, channels, 1)
 
     def forward(self, x):
         x_in = x
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.act(x)
+        x = self.proj(x)
         x = x + x_in
         return x
 
 
 class DiffusionFeatureExtractor(nn.Module):
-    def __init__(self, in_channels=32):
+    def __init__(self, in_channels=16):
         super().__init__()
         self.version = 1
         num_blocks = 6
