@@ -32,7 +32,7 @@ pytorch_fid
 optimum-quanto==0.2.4
 sentencepiece
 huggingface_hub
-peft
+peft==0.15.0
 gradio
 python-slugify
 opencv-python
