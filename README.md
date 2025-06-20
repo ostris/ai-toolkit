@@ -249,41 +249,52 @@ You will instantiate a UI that will let you upload your images, caption them, tr
 
 
 ## Training in RunPod
+Before you make a pod, make sure to add your SSH key in RunPod settings so you can easily SSH into it or SCP files to/from.
+
 Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
 > You need a minimum of 24GB VRAM, pick a GPU by your preference.
+> More GPUs will not speed up the process.
 
-#### Example config ($0.5/hr):
+### Example config ($0.40/hr):
 - 1x A40 (48 GB VRAM)
-- 19 vCPU 100 GB RAM
+- 9 vCPU 50 GB RAM
 
 #### Custom overrides (you need some storage to clone FLUX.1, store datasets, store trained models and samples):
-- ~120 GB Disk
-- ~120 GB Pod Volume
+- 40 GB Container Disk
+- 15 GB Volume Disk
 - Start Jupyter Notebook
+
+The container disk is where the models will be downloaded, for example downloading just 1 Flux model takes up 35 GB. The volume disk is persistent and is where the repo, datsets, and outputs are stored.
 
 ### 1. Setup
 ```
+cd /workspace/
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 git submodule update --init --recursive
 python -m venv venv
 source venv/bin/activate
+pip install wheel
 pip install torch
 pip install -r requirements.txt
 pip install --upgrade accelerate transformers diffusers huggingface_hub #Optional, run it if you run into issues
 ```
-### 2. Upload your dataset
-- Create a new folder in the root, name it `dataset` or whatever you like.
-- Drag and drop your .jpg, .jpeg, or .png images and .txt files inside the newly created dataset folder.
 
-### 3. Login into Hugging Face with an Access Token
+### 2. Login into Hugging Face with an Access Token
 - Get a READ token from [here](https://huggingface.co/settings/tokens) and request access to Flux.1-dev model from [here](https://huggingface.co/black-forest-labs/FLUX.1-dev).
-- Run ```huggingface-cli login``` and paste your token.
+- Run ```echo HF_TOKEN=YOURTOKENGOESHERE > .env```
+
+### You can still use the Gradio UI
+If your dataset is not already prepared, or you don't want to spend any more time in the terminal, you can use the Gradio UI to prepare the images and start training by running `python flux_train_ui.py`.
+
+### 3. Upload your dataset
+- Create a new folder in /workspace/ai-toolkit, name it `my-dataset` or whatever you like.
+- Drag and drop your .jpg, .jpeg, or .png images and .txt files inside the newly created dataset folder.
 
 ### 4. Training
 - Copy an example config file located at ```config/examples``` to the config folder and rename it to ```whatever_you_want.yml```.
 - Edit the config following the comments in the file.
-- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "/workspace/ai-toolkit/your-dataset"```.
+- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "/workspace/ai-toolkit/my-dataset"```.
 - Run the file: ```python run.py config/whatever_you_want.yml```.
 
 ### Screenshot from RunPod
