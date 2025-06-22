@@ -2538,8 +2538,8 @@ class StableDiffusion:
 
         # Move to vae to device if on cpu
         if self.vae.device == 'cpu':
-            self.vae.to(self.device)
-        latents = latents.to(device, dtype=dtype)
+            self.vae.to(self.device_torch)
+        latents = latents.to(self.device_torch, dtype=self.torch_dtype)
         latents = (latents / self.vae.config['scaling_factor']) + self.vae.config['shift_factor']
         images = self.vae.decode(latents).sample
         images = images.to(device, dtype=dtype)

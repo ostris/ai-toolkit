@@ -414,15 +414,41 @@ class SDTrainer(BaseSDTrainProcess):
             
         if self.dfe is not None:
             if self.dfe.version == 1:
-                # do diffusion feature extraction on target
+                model = self.sd
+                if model is not None and hasattr(model, 'get_stepped_pred'):
+                    stepped_latents = model.get_stepped_pred(noise_pred, noise)
+                else:
+                    # stepped_latents = noise - noise_pred
+                    # first we step the scheduler from current timestep to the very end for a full denoise
+                    bs = noise_pred.shape[0]
+                    noise_pred_chunks = torch.chunk(noise_pred, bs)
+                    timestep_chunks = torch.chunk(timesteps, bs)
+                    noisy_latent_chunks = torch.chunk(noisy_latents, bs)
+                    stepped_chunks = []
+                    for idx in range(bs):
+                        model_output = noise_pred_chunks[idx]
+                        timestep = timestep_chunks[idx]
+                        self.sd.noise_scheduler._step_index = None
+                        self.sd.noise_scheduler._init_step_index(timestep)
+                        sample = noisy_latent_chunks[idx].to(torch.float32)
+                        
+                        sigma = self.sd.noise_scheduler.sigmas[self.sd.noise_scheduler.step_index]
+                        sigma_next = self.sd.noise_scheduler.sigmas[-1] # use last sigma for final step
+                        prev_sample = sample + (sigma_next - sigma) * model_output
+                        stepped_chunks.append(prev_sample)
+                    
+                    stepped_latents = torch.cat(stepped_chunks, dim=0)
+                    
+                stepped_latents = stepped_latents.to(self.sd.vae.device, dtype=self.sd.vae.dtype)
+                pred_features = self.dfe(stepped_latents.float())
                 with torch.no_grad():
-                    rectified_flow_target = noise.float() - batch.latents.float()
-                    target_features = self.dfe(torch.cat([rectified_flow_target, noise.float()], dim=1))
+                    target_features = self.dfe(batch.latents.to(self.device_torch, dtype=torch.float32))
+                    # scale dfe so it is weaker at higher noise levels
+                    dfe_scaler = 1 - (timesteps.float() / 1000.0).view(-1, 1, 1, 1).to(self.device_torch)
                 
-                # do diffusion feature extraction on prediction
-                pred_features = self.dfe(torch.cat([noise_pred.float(), noise.float()], dim=1))
-                additional_loss += torch.nn.functional.mse_loss(pred_features, target_features, reduction="mean") * \
-                    self.train_config.diffusion_feature_extractor_weight
+                dfe_loss = torch.nn.functional.mse_loss(pred_features, target_features, reduction="none") * \
+                    self.train_config.diffusion_feature_extractor_weight * dfe_scaler
+                additional_loss += dfe_loss.mean()
             elif self.dfe.version == 2:
                 # version 2
                 # do diffusion feature extraction on target
