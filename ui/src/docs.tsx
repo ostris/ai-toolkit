@@ -1,4 +1,3 @@
-import React from 'react';
 import { ConfigDoc } from '@/types';
 
 const docs: { [key: string]: ConfigDoc } = {
@@ -18,6 +17,46 @@ const docs: { [key: string]: ConfigDoc } = {
       <>
         This is the GPU that will be used for training. Only one GPU can be used per job at a time via the UI currently. 
 				However, you can start multiple jobs in parallel, each using a different GPU.
+      </>
+    ),
+  },
+  'multigpu': {
+    title: 'Multi-GPU Training',
+    description: (
+      <>
+        Enable distributed training across multiple GPUs using Hugging Face Accelerate. This allows you to train larger models
+        or use larger batch sizes by distributing the workload across multiple GPUs.
+        <br /><br />
+        <strong>Requirements:</strong>
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li>Multiple GPUs with sufficient VRAM</li>
+          <li>Proper Accelerate configuration</li>
+          <li>Compatible model architecture</li>
+        </ul>
+        <br />
+        <strong>Benefits:</strong>
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li>Faster training with larger batch sizes</li>
+          <li>Ability to train larger models</li>
+          <li>Better memory utilization</li>
+        </ul>
+      </>
+    ),
+  },
+  'accelerate_config': {
+    title: 'Accelerate Configuration',
+    description: (
+      <>
+        Configuration for Hugging Face Accelerate distributed training. This includes settings for:
+        <br /><br />
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li><strong>Distributed Type:</strong> Multi-GPU, Multi-CPU, or No Distribution</li>
+          <li><strong>Mixed Precision:</strong> FP16, BF16, or No Mixed Precision</li>
+          <li><strong>GPU IDs:</strong> Comma-separated list of GPU indices to use</li>
+          <li><strong>Number of Processes:</strong> Number of parallel processes</li>
+        </ul>
+        <br />
+        The configuration is automatically generated based on your GPU setup and can be customized for advanced use cases.
       </>
     ),
   },

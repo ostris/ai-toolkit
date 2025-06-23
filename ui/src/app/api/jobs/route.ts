@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { NextRequest, NextResponse } from 'next/server';
 
 const prisma = new PrismaClient();
 
@@ -25,40 +25,46 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, name, job_config, gpu_ids } = body;
+    const { id, name, job_config, gpu_ids, use_multi_gpu, accelerate_config, num_gpus } = body;
 
-    if (id) {
-      // Update existing training
-      const training = await prisma.job.update({
-        where: { id },
-        data: {
-          name,
-          gpu_ids,
-          job_config: JSON.stringify(job_config),
-        },
-      });
-      return NextResponse.json(training);
+    // Validate required fields
+    if (!name || !job_config) {
+      return NextResponse.json({ error: 'Name and job_config are required' }, { status: 400 });
+    }
+
+    // Validate GPU configuration
+    if (use_multi_gpu) {
+      if (!accelerate_config || num_gpus < 2) {
+        return NextResponse.json({ error: 'Multi-GPU requires accelerate_config and num_gpus >= 2' }, { status: 400 });
+      }
     } else {
-      // Create new training
-      const training = await prisma.job.create({
-        data: {
-          name,
-          gpu_ids,
-          job_config: JSON.stringify(job_config),
-        },
-      });
-      return NextResponse.json(training);
+      if (!gpu_ids) {
+        return NextResponse.json({ error: 'Single GPU requires gpu_ids' }, { status: 400 });
+      }
     }
+
+    const jobData = {
+      id,
+      name,
+      gpu_ids: gpu_ids || '',
+      job_config: JSON.stringify(job_config),
+      use_multi_gpu: use_multi_gpu || false,
+      accelerate_config: accelerate_config ? JSON.stringify(accelerate_config) : null,
+      num_gpus: num_gpus || 1,
+    };
+
+    const job = await prisma.job.upsert({
+      where: { id: id || 'new' },
+      update: jobData,
+      create: jobData,
+    });
+
+    return NextResponse.json(job);
   } catch (error: any) {
-    if (error.code === 'P2002') {
-      // Handle unique constraint violation, 409=Conflict
-      return NextResponse.json({ error: 'Job name already exists' }, { status: 409 });
-    }
-    console.error(error);
-    // Handle other errors
-    return NextResponse.json({ error: 'Failed to save training data' }, { status: 500 });
+    console.error('Error creating job:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

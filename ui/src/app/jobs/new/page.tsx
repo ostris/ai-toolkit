@@ -1,23 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { defaultJobConfig, defaultDatasetConfig } from './jobConfig';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import { SelectInput } from '@/components/formInputs';
+import { MainContent, TopBar } from '@/components/layout';
+import useDatasetList from '@/hooks/useDatasetList';
+import useGPUInfo from '@/hooks/useGPUInfo';
+import useSettings from '@/hooks/useSettings';
 import { JobConfig } from '@/types';
+import { apiClient } from '@/utils/api';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
-import { SelectInput} from '@/components/formInputs';
-import useSettings from '@/hooks/useSettings';
-import useGPUInfo from '@/hooks/useGPUInfo';
-import useDatasetList from '@/hooks/useDatasetList';
-import path from 'path';
-import { TopBar, MainContent } from '@/components/layout';
 import { Button } from '@headlessui/react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import path from 'path';
+import { useEffect, useState } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
-import SimpleJob from './SimpleJob';
 import AdvancedJob from './AdvancedJob';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import { apiClient } from '@/utils/api';
+import { defaultDatasetConfig, defaultJobConfig } from './jobConfig';
+import SimpleJob from './SimpleJob';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -31,6 +31,11 @@ export default function TrainingForm() {
   const { datasets, status: datasetFetchStatus } = useDatasetList();
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
   const [showAdvancedView, setShowAdvancedView] = useState(false);
+
+  // Multi-GPU state
+  const [useMultiGPU, setUseMultiGPU] = useState(false);
+  const [numGPUs, setNumGPUs] = useState(2);
+  const [accelerateConfig, setAccelerateConfig] = useState<any>(null);
 
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
@@ -91,6 +96,9 @@ export default function TrainingForm() {
         name: jobConfig.config.name,
         gpu_ids: gpuIDs,
         job_config: jobConfig,
+        use_multi_gpu: useMultiGPU,
+        accelerate_config: accelerateConfig,
+        num_gpus: numGPUs,
       })
       .then(res => {
         setStatus('success');
@@ -177,6 +185,12 @@ export default function TrainingForm() {
             gpuList={gpuList}
             datasetOptions={datasetOptions}
             settings={settings}
+            useMultiGPU={useMultiGPU}
+            setUseMultiGPU={setUseMultiGPU}
+            numGPUs={numGPUs}
+            setNumGPUs={setNumGPUs}
+            accelerateConfig={accelerateConfig}
+            setAccelerateConfig={setAccelerateConfig}
           />
         </div>
       ) : (
@@ -196,6 +210,12 @@ export default function TrainingForm() {
               setGpuIDs={setGpuIDs}
               gpuList={gpuList}
               datasetOptions={datasetOptions}
+              useMultiGPU={useMultiGPU}
+              setUseMultiGPU={setUseMultiGPU}
+              numGPUs={numGPUs}
+              setNumGPUs={setNumGPUs}
+              accelerateConfig={accelerateConfig}
+              setAccelerateConfig={setAccelerateConfig}
             />
           </ErrorBoundary>
 

@@ -1,11 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
 import { TOOLKIT_ROOT } from '@/paths';
+import { getHFToken, getTrainingFolder } from '@/server/settings';
+import { PrismaClient } from '@prisma/client';
 import { spawn } from 'child_process';
-import path from 'path';
 import fs from 'fs';
-import os from 'os';
-import { getTrainingFolder, getHFToken } from '@/server/settings';
+import { NextRequest, NextResponse } from 'next/server';
+import path from 'path';
 const isWindows = process.platform === 'win32';
 
 const prisma = new PrismaClient();
@@ -95,9 +94,17 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
 
   const additionalEnv: any = {
     AITK_JOB_ID: jobID,
-    CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
     IS_AI_TOOLKIT_UI: '1'
   };
+
+  // Handle GPU configuration
+  if (job.use_multi_gpu) {
+    // Multi-GPU: Use accelerate launch
+    additionalEnv.CUDA_VISIBLE_DEVICES = '0,1,2,3,4,5,6,7'; // Allow all GPUs for accelerate to manage
+  } else {
+    // Single GPU: Restrict to specific GPU
+    additionalEnv.CUDA_VISIBLE_DEVICES = `${job.gpu_ids}`;
+  }
 
   // HF_TOKEN
   const hfToken = await getHFToken();
@@ -105,15 +112,26 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     additionalEnv.HF_TOKEN = hfToken;
   }
 
-  // Add the --log argument to the command
-  const args = [runFilePath, configPath, '--log', logPath];
+  // Determine the command to run
+  let command: string;
+  let args: string[];
+
+  if (job.use_multi_gpu) {
+    // Use accelerate launch for multi-GPU
+    command = 'accelerate';
+    args = ['launch', '--config_file', path.join(TOOLKIT_ROOT, 'accelerate_config.yaml'), runFilePath, configPath, '--log', logPath];
+  } else {
+    // Use regular python for single GPU
+    command = pythonPath;
+    args = [runFilePath, configPath, '--log', logPath];
+  }
 
   try {
     let subprocess;
 
     if (isWindows) {
       // For Windows, use 'cmd.exe' to open a new command window
-      subprocess = spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', pythonPath, ...args], {
+      subprocess = spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', command, ...args], {
         env: {
           ...process.env,
           ...additionalEnv,
@@ -123,7 +141,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
       });
     } else {
       // For non-Windows platforms
-      subprocess = spawn(pythonPath, args, {
+      subprocess = spawn(command, args, {
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'], // Changed from 'ignore' to capture output
         env: {

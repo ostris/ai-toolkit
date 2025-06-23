@@ -25,6 +25,11 @@ model Job {
   step       Int      @default(0)
   info       String   @default("")
   speed_string String @default("")
+  
+  // Multi-GPU support fields
+  use_multi_gpu Boolean @default(false)
+  accelerate_config String? // JSON string for accelerate config
+  num_gpus Int @default(1)
 }
 
 model Queue {

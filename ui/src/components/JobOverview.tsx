@@ -1,11 +1,11 @@
-import { Job } from '@prisma/client';
-import useGPUInfo from '@/hooks/useGPUInfo';
-import GPUWidget from '@/components/GPUWidget';
 import FilesWidget from '@/components/FilesWidget';
-import { getTotalSteps } from '@/utils/jobs';
-import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import GPUWidget from '@/components/GPUWidget';
+import useGPUInfo from '@/hooks/useGPUInfo';
 import useJobLog from '@/hooks/useJobLog';
+import { getTotalSteps } from '@/utils/jobs';
+import { Job } from '@prisma/client';
+import { Info } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 interface JobOverviewProps {
   job: Job;
@@ -105,29 +105,30 @@ export default function JobOverview({ job }: JobOverviewProps) {
           </div>
 
           {/* Job Info Grid */}
-          <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
-            <div className="flex items-center space-x-4">
-              <HardDrive className="w-5 h-5 text-blue-400" />
-              <div>
-                <p className="text-xs text-gray-400">Job Name</p>
-                <p className="text-sm font-medium text-gray-200">{job.name}</p>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Status</h3>
+              <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{job.status}</p>
             </div>
-
-            <div className="flex items-center space-x-4">
-              <Cpu className="w-5 h-5 text-purple-400" />
-              <div>
-                <p className="text-xs text-gray-400">Assigned GPUs</p>
-                <p className="text-sm font-medium text-gray-200">GPUs: {job.gpu_ids}</p>
-              </div>
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Step</h3>
+              <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{job.step}</p>
             </div>
-
-            <div className="flex items-center space-x-4">
-              <Gauge className="w-5 h-5 text-green-400" />
-              <div>
-                <p className="text-xs text-gray-400">Speed</p>
-                <p className="text-sm font-medium text-gray-200">{job.speed_string == '' ? '?' : job.speed_string}</p>
-              </div>
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">GPUs</h3>
+              <p className="text-sm font-medium text-gray-200">
+                {job.use_multi_gpu ? (
+                  <span className="text-blue-600 dark:text-blue-400">
+                    Multi-GPU ({job.num_gpus} GPUs)
+                  </span>
+                ) : (
+                  `GPU ${job.gpu_ids}`
+                )}
+              </p>
+            </div>
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+              <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Speed</h3>
+              <p className="text-sm font-medium text-gray-200">{job.speed_string || 'N/A'}</p>
             </div>
           </div>
 

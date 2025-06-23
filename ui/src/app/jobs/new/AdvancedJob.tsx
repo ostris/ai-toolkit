@@ -1,14 +1,13 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
 import { JobConfig } from '@/types';
-import YAML from 'yaml';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
-import { Settings } from '@/hooks/useSettings';
+import { useEffect, useRef, useState } from 'react';
+import YAML from 'yaml';
 
-type Props = {
+interface Props {
   jobConfig: JobConfig;
-  setJobConfig: (value: any, key?: string) => void;
+  setJobConfig: (value: any, key: string) => void;
   status: 'idle' | 'saving' | 'success' | 'error';
   handleSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
   runId: string | null;
@@ -16,8 +15,15 @@ type Props = {
   setGpuIDs: (value: string | null) => void;
   gpuList: any;
   datasetOptions: any;
-  settings: Settings;
-};
+  settings: any;
+  // Multi-GPU props
+  useMultiGPU: boolean;
+  setUseMultiGPU: (value: boolean) => void;
+  numGPUs: number;
+  setNumGPUs: (value: number) => void;
+  accelerateConfig: any;
+  setAccelerateConfig: (value: any) => void;
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -115,7 +121,7 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
         } catch (e) {
           console.warn(e);
         }
-        setJobConfig(parsed);
+        setJobConfig(parsed, 'config');
       }
     } catch (e) {
       // Don't update on parsing errors

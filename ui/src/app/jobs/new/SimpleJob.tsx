@@ -1,12 +1,13 @@
 'use client';
-import { useMemo } from 'react';
-import { modelArchs, ModelArch } from './options';
-import { defaultDatasetConfig } from './jobConfig';
+import Card from '@/components/Card';
+import { Checkbox, FormGroup, NumberInput, SelectInput, TextInput } from '@/components/formInputs';
+import MultiGPUConfig from '@/components/MultiGPUConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
-import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
-import Card from '@/components/Card';
 import { X } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { defaultDatasetConfig } from './jobConfig';
+import { ModelArch, modelArchs } from './options';
 
 type Props = {
   jobConfig: JobConfig;
@@ -18,6 +19,13 @@ type Props = {
   setGpuIDs: (value: string | null) => void;
   gpuList: any;
   datasetOptions: any;
+  // Multi-GPU props
+  useMultiGPU: boolean;
+  setUseMultiGPU: (value: boolean) => void;
+  numGPUs: number;
+  setNumGPUs: (value: number) => void;
+  accelerateConfig: any;
+  setAccelerateConfig: (value: any) => void;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -32,6 +40,12 @@ export default function SimpleJob({
   setGpuIDs,
   gpuList,
   datasetOptions,
+  useMultiGPU,
+  setUseMultiGPU,
+  numGPUs,
+  setNumGPUs,
+  accelerateConfig,
+  setAccelerateConfig,
 }: Props) {
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
@@ -54,12 +68,34 @@ export default function SimpleJob({
               required
             />
             <SelectInput
-              label="GPU ID"
-              value={`${gpuIDs}`}
-              docKey="gpuids"
-              onChange={value => setGpuIDs(value)}
-              options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              label="GPU Configuration"
+              value={useMultiGPU ? 'multi' : 'single'}
+              onChange={(value) => setUseMultiGPU(value === 'multi')}
+              options={[
+                { value: 'single', label: 'Single GPU' },
+                { value: 'multi', label: 'Multi-GPU (Distributed)' },
+              ]}
             />
+            
+            {!useMultiGPU ? (
+              <SelectInput
+                label="GPU ID"
+                value={`${gpuIDs}`}
+                docKey="gpuids"
+                onChange={value => setGpuIDs(value)}
+                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              />
+            ) : (
+              <MultiGPUConfig
+                useMultiGPU={useMultiGPU}
+                setUseMultiGPU={setUseMultiGPU}
+                numGPUs={numGPUs}
+                setNumGPUs={setNumGPUs}
+                accelerateConfig={accelerateConfig}
+                setAccelerateConfig={setAccelerateConfig}
+                gpuList={gpuList}
+              />
+            )}
             <TextInput
               label="Trigger Word"
               value={jobConfig.config.process[0].trigger_word || ''}
