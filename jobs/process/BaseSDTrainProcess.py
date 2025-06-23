@@ -1012,7 +1012,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 dtype = get_torch_dtype(self.train_config.dtype)
                 imgs = None
                 is_reg = any(batch.get_is_reg_list())
-                cfm_batch = None
                 if batch.tensor is not None:
                     imgs = batch.tensor
                     imgs = imgs.to(self.device_torch, dtype=dtype)

@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
+from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
@@ -413,7 +413,7 @@ class TrainConfig:
         self.correct_pred_norm = kwargs.get('correct_pred_norm', False)
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
-        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, cfm, mean_flow
+        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow
 
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
@@ -467,6 +467,12 @@ class TrainConfig:
         # forces same noise for the same image at a given size.
         self.force_consistent_noise = kwargs.get('force_consistent_noise', False)
         self.blended_blur_noise = kwargs.get('blended_blur_noise', False)
+        
+        # contrastive loss
+        self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
+        self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
+        if isinstance(self.guidance_loss_target, tuple):
+            self.guidance_loss_target = list(self.guidance_loss_target)
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
@@ -1145,3 +1151,6 @@ def validate_configs(
         if model_config.use_flux_cfg:
             # bypass the embedding
             train_config.bypass_guidance_embedding = True
+    if train_config.bypass_guidance_embedding and train_config.do_guidance_loss:
+        raise ValueError("Cannot bypass guidance embedding and do guidance loss at the same time. "
+                         "Please set bypass_guidance_embedding to False or do_guidance_loss to False.")

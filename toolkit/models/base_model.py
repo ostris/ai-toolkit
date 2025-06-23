@@ -815,7 +815,10 @@ class BaseModel:
 
         # predict the noise residual
         if self.unet.device != self.device_torch:
-            self.unet.to(self.device_torch)
+            try:
+                self.unet.to(self.device_torch)
+            except Exception as e:
+                pass
         if self.unet.dtype != self.torch_dtype:
             self.unet = self.unet.to(dtype=self.torch_dtype)
             
