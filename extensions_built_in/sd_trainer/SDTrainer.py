@@ -147,7 +147,7 @@ class SDTrainer(BaseSDTrainProcess):
         # cache unconditional embeds (blank prompt)
         with torch.no_grad():
             self.unconditional_embeds = self.sd.encode_prompt(
-                [''],
+                [self.train_config.unconditional_prompt],
                 long_prompts=self.do_long_prompts
             ).to(
                 self.device_torch,

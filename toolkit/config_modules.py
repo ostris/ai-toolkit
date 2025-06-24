@@ -471,6 +471,7 @@ class TrainConfig:
         # contrastive loss
         self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
         self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
+        self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
 
@@ -837,6 +838,9 @@ class DatasetConfig:
             self.controls = [self.controls]
         # remove empty strings
         self.controls = [control for control in self.controls if control.strip() != '']
+        
+        # if true, will use a fask method to get image sizes. This can result in errors. Do not use unless you know what you are doing
+        self.fast_image_size: bool = kwargs.get('fast_image_size', False)
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
