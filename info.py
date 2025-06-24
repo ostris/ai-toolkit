@@ -1,8 +1,9 @@
 from collections import OrderedDict
+from version import VERSION
 
 v = OrderedDict()
 v["name"] = "ai-toolkit"
 v["repo"] = "https://github.com/ostris/ai-toolkit"
-v["version"] = "0.1.0"
+v["version"] = VERSION
 
 software_meta = v

@@ -135,7 +135,7 @@ class ControlLoraAdapter(torch.nn.Module):
         
             network_kwargs = {} if self.network_config.network_kwargs is None else self.network_config.network_kwargs
             if hasattr(sd, 'target_lora_modules'):
-                network_kwargs['target_lin_modules'] = self.sd.target_lora_modules
+                network_kwargs['target_lin_modules'] = sd.target_lora_modules
                 
             if 'ignore_if_contains' not in network_kwargs:
                 network_kwargs['ignore_if_contains'] = []

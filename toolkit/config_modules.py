@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
+from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
@@ -413,7 +413,7 @@ class TrainConfig:
         self.correct_pred_norm = kwargs.get('correct_pred_norm', False)
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
-        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, cfm, mean_flow
+        self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow
 
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
@@ -454,8 +454,12 @@ class TrainConfig:
         self.bypass_guidance_embedding = kwargs.get('bypass_guidance_embedding', False)
         
         # diffusion feature extractor
-        self.diffusion_feature_extractor_path = kwargs.get('diffusion_feature_extractor_path', None)
-        self.diffusion_feature_extractor_weight = kwargs.get('diffusion_feature_extractor_weight', 1.0)
+        self.latent_feature_extractor_path = kwargs.get('latent_feature_extractor_path', None)
+        self.latent_feature_loss_weight = kwargs.get('latent_feature_loss_weight', 1.0)
+        
+        # we use this in the code, but it really needs to be called latent_feature_extractor as that makes more sense with new architecture
+        self.diffusion_feature_extractor_path = kwargs.get('diffusion_feature_extractor_path', self.latent_feature_extractor_path)
+        self.diffusion_feature_extractor_weight = kwargs.get('diffusion_feature_extractor_weight', self.latent_feature_loss_weight)
         
         # optimal noise pairing
         self.optimal_noise_pairing_samples = kwargs.get('optimal_noise_pairing_samples', 1)
@@ -463,6 +467,13 @@ class TrainConfig:
         # forces same noise for the same image at a given size.
         self.force_consistent_noise = kwargs.get('force_consistent_noise', False)
         self.blended_blur_noise = kwargs.get('blended_blur_noise', False)
+        
+        # contrastive loss
+        self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
+        self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
+        self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
+        if isinstance(self.guidance_loss_target, tuple):
+            self.guidance_loss_target = list(self.guidance_loss_target)
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
@@ -827,6 +838,9 @@ class DatasetConfig:
             self.controls = [self.controls]
         # remove empty strings
         self.controls = [control for control in self.controls if control.strip() != '']
+        
+        # if true, will use a fask method to get image sizes. This can result in errors. Do not use unless you know what you are doing
+        self.fast_image_size: bool = kwargs.get('fast_image_size', False)
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
@@ -1141,3 +1155,6 @@ def validate_configs(
         if model_config.use_flux_cfg:
             # bypass the embedding
             train_config.bypass_guidance_embedding = True
+    if train_config.bypass_guidance_embedding and train_config.do_guidance_loss:
+        raise ValueError("Cannot bypass guidance embedding and do guidance loss at the same time. "
+                         "Please set bypass_guidance_embedding to False or do_guidance_loss to False.")

@@ -50,8 +50,7 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusionXLControlNetPipeline, StableDiffusionControlNetPipeline, StableDiffusion3Pipeline, \
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
     FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Text2ImgPipeline, \
-    FluxControlPipeline
-from toolkit.models.lumina2 import Lumina2Transformer2DModel
+    FluxControlPipeline, Lumina2Transformer2DModel
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -1763,6 +1762,15 @@ class StableDiffusion:
         )
         noise = apply_noise_offset(noise, noise_offset)
         return noise
+    
+    def get_latent_noise_from_latents(
+        self,
+        latents: torch.Tensor,
+        noise_offset=0.0
+    ):
+        noise = torch.randn_like(latents)
+        noise = apply_noise_offset(noise, noise_offset)
+        return noise
 
     def get_time_ids_from_latents(self, latents: torch.Tensor, requires_aesthetic_score=False):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
@@ -2170,7 +2178,7 @@ class StableDiffusion:
                         noise_pred = self.unet(
                             hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
                             timestep=t,
-                            attention_mask=text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64),
+                            encoder_attention_mask=text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64),
                             encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype),
                             **kwargs,
                         ).sample
@@ -2529,8 +2537,8 @@ class StableDiffusion:
 
         # Move to vae to device if on cpu
         if self.vae.device == 'cpu':
-            self.vae.to(self.device)
-        latents = latents.to(device, dtype=dtype)
+            self.vae.to(self.device_torch)
+        latents = latents.to(self.device_torch, dtype=self.torch_dtype)
         latents = (latents / self.vae.config['scaling_factor']) + self.vae.config['shift_factor']
         images = self.vae.decode(latents).sample
         images = images.to(device, dtype=dtype)

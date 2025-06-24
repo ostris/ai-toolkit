@@ -113,6 +113,8 @@ class GenerateProcess(BaseProcess):
             prompt_image_configs = []
             for _ in range(self.generate_config.num_repeats):
                 for prompt in self.generate_config.prompts:
+                    # remove --
+                    prompt = prompt.replace('--', '').strip()
                     width = self.generate_config.width
                     height = self.generate_config.height
                     # prompt = self.clean_prompt(prompt)

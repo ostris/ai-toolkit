@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start --port 8675",
+    "dev": "concurrently -k -n WORKER,UI \"ts-node-dev --respawn --watch cron --transpile-only cron/worker.ts\" \"next dev --turbopack\"",
+    "build": "tsc -p tsconfig.worker.json && next build",
+    "start": "concurrently --restart-tries -1 --restart-after 1000 -n WORKER,UI \"node dist/worker.js\" \"next start --port 8675\"",
     "build_and_start": "npm install && npm run update_db && npm run build && npm run start",
     "lint": "next lint",
     "update_db": "npx prisma generate && npx prisma db push",
@@ -34,10 +34,12 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.1.2",
     "postcss": "^8",
     "prettier": "^3.5.1",
     "prettier-basic": "^1.0.0",
     "tailwindcss": "^3.4.1",
+    "ts-node-dev": "^2.0.0",
     "typescript": "^5"
   },
   "prettier": "prettier-basic"

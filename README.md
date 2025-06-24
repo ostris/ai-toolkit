@@ -417,6 +417,17 @@ Everything else should work the same including layer targeting.
 
 ## Updates
 
+### June 17, 2024
+- Performance optimizations for batch preparation
+- Added some docs via a popup for items in the simple ui explaining what settings do. Still a WIP
+
+### June 16, 2024
+- Hide control images in the UI when viewing datasets
+- WIP on mean flow loss
+
+### June 12, 2024
+- Fixed issue that resulted in blank captions in the dataloader
+
 ### June 10, 2024
 - Decided to keep track up updates in the readme
 - Added support for SDXL in the UI

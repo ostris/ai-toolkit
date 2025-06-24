@@ -26,3 +26,13 @@ model Job {
   info       String   @default("")
   speed_string String @default("")
 }
+
+model Queue {
+  id         String   @id @default(uuid())
+  channel    String
+  job_id     String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  status     String   @default("waiting")
+  @@index([job_id, channel])
+}

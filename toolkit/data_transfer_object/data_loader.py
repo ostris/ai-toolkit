@@ -84,15 +84,16 @@ class FileItemDTO(
             video.release()
             size_database[file_key] = (width, height, file_signature)
         else:
-            # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method for now.
-            # process width and height
-            # try:
-            #     w, h = image_utils.get_image_size(self.path)
-            # except image_utils.UnknownImageFormat:
-            #     print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
-            #                f'This process is faster for png, jpeg')
-            img = exif_transpose(Image.open(self.path))
-            w, h = img.size
+            if self.dataset_config.fast_image_size:
+            # original method is significantly faster, but some images are read sideways. Not sure why. Do slow method by default.
+                try:
+                    w, h = image_utils.get_image_size(self.path)
+                except image_utils.UnknownImageFormat:
+                    print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
+                            f'This process is faster for png, jpeg')
+            else:
+                img = exif_transpose(Image.open(self.path))
+                w, h = img.size
             size_database[file_key] = (w, h, file_signature)
         self.width: int = w
         self.height: int = h
