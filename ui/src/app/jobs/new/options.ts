@@ -170,6 +170,19 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['model.quantize', 'train.timestep_type'],
   },
+  {
+    name: 'omnigen2',
+    label: 'OmniGen2',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['OmniGen2/OmniGen2', defaultNameOrPath],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].model.quantize': [false, false],
+      'config.process[0].model.quantize_te': [true, false],
+    },
+    disableSections: ['network.conv'],
+  },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
