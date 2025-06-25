@@ -91,6 +91,8 @@ class FileItemDTO(
                 except image_utils.UnknownImageFormat:
                     print_once(f'Warning: Some images in the dataset cannot be fast read. ' + \
                             f'This process is faster for png, jpeg')
+                    img = exif_transpose(Image.open(self.path))
+                    w, h = img.size
             else:
                 img = exif_transpose(Image.open(self.path))
                 w, h = img.size
