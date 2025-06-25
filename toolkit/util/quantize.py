@@ -1,11 +1,12 @@
 from fnmatch import fnmatch
 from typing import Any, Dict, List, Optional, Union
 import torch
+import torchao
 from dataclasses import dataclass
 
 from optimum.quanto.quantize import _quantize_submodule
 from optimum.quanto.tensor import Optimizer, qtype, qtypes
-from torchao.quantization.quant_api import (
+from torchao.quantization import (
     quantize_ as torchao_quantize_,
     Float8WeightOnlyConfig,
     UIntXWeightOnlyConfig
