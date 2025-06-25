@@ -34,7 +34,7 @@ def get_all_extensions() -> List[Extension]:
     for sub_dir in extension_folders:
         extensions_dir = os.path.join(TOOLKIT_ROOT, sub_dir)
         for (_, name, _) in pkgutil.iter_modules([extensions_dir]):
-            try:
+            # try:
                 # Import the module
                 module = importlib.import_module(f"{sub_dir}.{name}")
                 # Get the value of the AI_TOOLKIT_EXTENSIONS variable
@@ -43,8 +43,8 @@ def get_all_extensions() -> List[Extension]:
                 if isinstance(extensions, list):
                     # Iterate over the list and add the classes to the main list
                     all_extension_classes.extend(extensions)
-            except ImportError as e:
-                print(f"Failed to import the {name} module. Error: {str(e)}")
+            # except ImportError as e:
+            #     print(f"Failed to import the {name} module. Error: {str(e)}")
 
     return all_extension_classes
 
