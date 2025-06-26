@@ -239,7 +239,10 @@ class OmniGen2Model(BaseModel):
         **kwargs
     ):
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-        timestep = timestep.expand(latent_model_input.shape[0]).to(latent_model_input.dtype)
+        try:
+            timestep = timestep.expand(latent_model_input.shape[0]).to(latent_model_input.dtype)
+        except Exception as e:
+            pass
         
         # optional_kwargs = {}
         # if 'ref_image_hidden_states' in set(inspect.signature(self.model.forward).parameters.keys()):
