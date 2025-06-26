@@ -95,8 +95,7 @@ class FluxKontextModel(BaseModel):
         transformer = FluxTransformer2DModel.from_pretrained(
             transformer_path,
             subfolder=transformer_subfolder,
-            torch_dtype=dtype,
-            revision="7610c9af"
+            torch_dtype=dtype
         )
         transformer.to(self.quantize_device, dtype=dtype)
 
