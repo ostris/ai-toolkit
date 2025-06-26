@@ -83,6 +83,7 @@ export interface DatasetConfig {
   cache_latents_to_disk?: boolean;
   resolution: number[];
   controls: string[];
+  control_path: string | null;
 }
 
 export interface EMAConfig {

@@ -1,5 +1,8 @@
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
+type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
+type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img'
+
 export interface ModelArch {
   name: string;
   label: string;
@@ -7,11 +10,11 @@ export interface ModelArch {
   isVideoModel?: boolean;
   defaults?: { [key: string]: any };
   disableSections?: DisableableSections[];
+  additionalSections?: AdditionalSections[];
 }
 
 const defaultNameOrPath = '';
 
-type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
 
 export const modelArchs: ModelArch[] = [
   {
@@ -26,6 +29,21 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
     disableSections: ['network.conv'],
+  },
+  {
+    name: 'flux_kontext',
+    label: 'FLUX.1-Kontext-dev',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-Kontext-dev', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
   },
   {
     name: 'flex1',

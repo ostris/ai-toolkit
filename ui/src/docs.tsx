@@ -48,6 +48,15 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.control_path': {
+    title: 'Control Dataset',
+    description: (
+      <>
+        The control dataset needs to have files that match the filenames of your training dataset. They should be matching file pairs. 
+        These images are fed as control/input images during training. 
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {
