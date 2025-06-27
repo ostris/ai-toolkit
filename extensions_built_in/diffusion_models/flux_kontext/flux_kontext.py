@@ -403,6 +403,5 @@ class FluxKontextModel(BaseModel):
                     
                 control_latent = self.encode_images(control_tensor).to(latents.device, latents.dtype)
                 latents = torch.cat((latents, control_latent), dim=1)
-                self.vae.to('cpu')
 
         return latents.detach() 
