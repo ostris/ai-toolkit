@@ -423,6 +423,15 @@ Everything else should work the same including layer targeting.
 
 ## Updates
 
+Only larger updates are listed here. There are usually smaller daily updated that are omitted.
+
+### June 26, 2024
+- Added support for FLUX.1 Kontext training
+- added support for instruction dataset training
+
+### June 25, 2024
+- Added support for OmniGen2 training
+- 
 ### June 17, 2024
 - Performance optimizations for batch preparation
 - Added some docs via a popup for items in the simple ui explaining what settings do. Still a WIP
