@@ -405,3 +405,6 @@ class FluxKontextModel(BaseModel):
                 latents = torch.cat((latents, control_latent), dim=1)
 
         return latents.detach() 
+
+    def get_base_model_version(self):
+        return "flux.1_kontext"
