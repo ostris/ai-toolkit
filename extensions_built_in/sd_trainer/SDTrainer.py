@@ -61,7 +61,6 @@ class SDTrainer(BaseSDTrainProcess):
         self._clip_image_embeds_unconditional: Union[List[str], None] = None
         self.negative_prompt_pool: Union[List[str], None] = None
         self.batch_negative_prompt: Union[List[str], None] = None
-        self.cfm_cache = None
 
         self.is_bfloat = self.train_config.dtype == "bfloat16" or self.train_config.dtype == "bf16"
 
@@ -84,6 +83,7 @@ class SDTrainer(BaseSDTrainProcess):
         self.diff_output_preservation_embeds: Optional[PromptEmbeds] = None
         
         self.dfe: Optional[DiffusionFeatureExtractor] = None
+        self.unconditional_embeds = None
         
         if self.train_config.diff_output_preservation:
             if self.trigger_word is None:
@@ -95,6 +95,15 @@ class SDTrainer(BaseSDTrainProcess):
             
             # always do a prior prediction when doing diff output preservation
             self.do_prior_prediction = True
+        
+        # store the loss target for a batch so we can use it in a loss
+        self._guidance_loss_target_batch: float = 0.0
+        if isinstance(self.train_config.guidance_loss_target, (int, float)):
+            self._guidance_loss_target_batch = float(self.train_config.guidance_loss_target)
+        elif isinstance(self.train_config.guidance_loss_target, list):
+            self._guidance_loss_target_batch = float(self.train_config.guidance_loss_target[0])
+        else:
+            raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
 
 
     def before_model_load(self):
@@ -134,6 +143,16 @@ class SDTrainer(BaseSDTrainProcess):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
+        
+        # cache unconditional embeds (blank prompt)
+        with torch.no_grad():
+            self.unconditional_embeds = self.sd.encode_prompt(
+                [self.train_config.unconditional_prompt],
+                long_prompts=self.do_long_prompts
+            ).to(
+                self.device_torch,
+                dtype=self.sd.torch_dtype
+            ).detach()
         
         if self.train_config.do_prior_divergence:
             self.do_prior_prediction = True
@@ -440,15 +459,33 @@ class SDTrainer(BaseSDTrainProcess):
                     stepped_latents = torch.cat(stepped_chunks, dim=0)
                     
                 stepped_latents = stepped_latents.to(self.sd.vae.device, dtype=self.sd.vae.dtype)
+                # resize to half the size of the latents
+                stepped_latents_half = torch.nn.functional.interpolate(
+                    stepped_latents, 
+                    size=(stepped_latents.shape[2] // 2, stepped_latents.shape[3] // 2), 
+                    mode='bilinear', 
+                    align_corners=False
+                )
                 pred_features = self.dfe(stepped_latents.float())
+                pred_features_half = self.dfe(stepped_latents_half.float())
                 with torch.no_grad():
                     target_features = self.dfe(batch.latents.to(self.device_torch, dtype=torch.float32))
+                    batch_latents_half = torch.nn.functional.interpolate(
+                        batch.latents.to(self.device_torch, dtype=torch.float32),
+                        size=(batch.latents.shape[2] // 2, batch.latents.shape[3] // 2),
+                        mode='bilinear',
+                        align_corners=False
+                    )
+                    target_features_half = self.dfe(batch_latents_half)
                     # scale dfe so it is weaker at higher noise levels
                     dfe_scaler = 1 - (timesteps.float() / 1000.0).view(-1, 1, 1, 1).to(self.device_torch)
                 
                 dfe_loss = torch.nn.functional.mse_loss(pred_features, target_features, reduction="none") * \
                     self.train_config.diffusion_feature_extractor_weight * dfe_scaler
-                additional_loss += dfe_loss.mean()
+                
+                dfe_loss_half = torch.nn.functional.mse_loss(pred_features_half, target_features_half, reduction="none") * \
+                    self.train_config.diffusion_feature_extractor_weight * dfe_scaler
+                additional_loss += dfe_loss.mean() + dfe_loss_half.mean()
             elif self.dfe.version == 2:
                 # version 2
                 # do diffusion feature extraction on target
@@ -476,6 +513,47 @@ class SDTrainer(BaseSDTrainProcess):
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight 
             else:
                 raise ValueError(f"Unknown diffusion feature extractor version {self.dfe.version}")
+        
+        if self.train_config.do_guidance_loss:
+            with torch.no_grad():
+                # we make cached blank prompt embeds that match the batch size
+                unconditional_embeds = concat_prompt_embeds(
+                    [self.unconditional_embeds] * noisy_latents.shape[0],
+                )
+                cfm_pred = self.predict_noise(
+                    noisy_latents=noisy_latents,
+                    timesteps=timesteps,
+                    conditional_embeds=unconditional_embeds,
+                    unconditional_embeds=None,
+                    batch=batch,
+                )
+                
+                # zero cfg
+                
+                # ref https://github.com/WeichenFan/CFG-Zero-star/blob/cdac25559e3f16cb95f0016c04c709ea1ab9452b/wan_pipeline.py#L557
+                batch_size = target.shape[0]
+                positive_flat = target.view(batch_size, -1)
+                negative_flat = cfm_pred.view(batch_size, -1)
+                # Calculate dot production
+                dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
+                # Squared norm of uncondition
+                squared_norm = torch.sum(negative_flat ** 2, dim=1, keepdim=True) + 1e-8
+                # st_star = v_cond^T * v_uncond / ||v_uncond||^2
+                st_star = dot_product / squared_norm
+
+                alpha = st_star
+                
+                is_video = len(target.shape) == 5
+                
+                alpha = alpha.view(batch_size, 1, 1, 1) if not is_video else alpha.view(batch_size, 1, 1, 1, 1)
+
+                guidance_scale = self._guidance_loss_target_batch
+                if isinstance(guidance_scale, list):
+                    guidance_scale = torch.tensor(guidance_scale).to(target.device, dtype=target.dtype)
+                    guidance_scale = guidance_scale.view(-1, 1, 1, 1) if not is_video else guidance_scale.view(-1, 1, 1, 1, 1)
+                
+                unconditional_target = cfm_pred * alpha
+                target = unconditional_target + guidance_scale * (target - unconditional_target)
                 
             
         if target is None:
@@ -675,135 +753,106 @@ class SDTrainer(BaseSDTrainProcess):
             unconditional_embeds: Optional[PromptEmbeds] = None,
             **kwargs
     ):
-         # ------------------------------------------------------------------
-        #  “Slow” Mean-Flow loss – finite-difference version
-        #  (avoids JVP / double-backprop issues with Flash-Attention)
-        # ------------------------------------------------------------------
-        dtype        = get_torch_dtype(self.train_config.dtype)
-        total_steps  = float(self.sd.noise_scheduler.config.num_train_timesteps)  # 1000
-        base_eps = 1e-3 # this is one step when multiplied by 1000
+        dtype = get_torch_dtype(self.train_config.dtype)
+        total_steps = float(self.sd.noise_scheduler.config.num_train_timesteps)  # e.g. 1000
+        base_eps = 1e-3
+        min_time_gap = 1e-2
         
         with torch.no_grad():
             num_train_timesteps = self.sd.noise_scheduler.config.num_train_timesteps
             batch_size = batch.latents.shape[0]
             timestep_t_list = []
             timestep_r_list = []
+
             for i in range(batch_size):
                 t1 = random.randint(0, num_train_timesteps - 1)
                 t2 = random.randint(0, num_train_timesteps - 1)
                 t_t = self.sd.noise_scheduler.timesteps[min(t1, t2)]
                 t_r = self.sd.noise_scheduler.timesteps[max(t1, t2)]
-                if (t_t - t_r).item() < base_eps * 1000:
-                    # we need to ensure the time gap is wider than the epsilon(one step)
-                    scaled_eps = base_eps * 1000
-                    if t_t.item() + scaled_eps > 1000:
-                        t_r = t_r - scaled_eps
+                if (t_t - t_r).item() < min_time_gap * 1000:
+                    scaled_time_gap = min_time_gap * 1000
+                    if t_t.item() + scaled_time_gap > 1000:
+                        t_r = t_r - scaled_time_gap
                     else:
-                        t_t = t_t + scaled_eps
+                        t_t = t_t + scaled_time_gap
                 timestep_t_list.append(t_t)
                 timestep_r_list.append(t_r)
-                eps = min((t_t - t_r).item(), 1e-3) / num_train_timesteps
+
             timesteps_t = torch.stack(timestep_t_list, dim=0).float()
             timesteps_r = torch.stack(timestep_r_list, dim=0).float()
 
-            # fractions in [0,1] 
-            t_frac = timesteps_t / total_steps
-            r_frac = timesteps_r / total_steps
+            t_frac = timesteps_t / total_steps  # [0,1]
+            r_frac = timesteps_r / total_steps  # [0,1]
 
-            # 2) construct data points
-            latents_clean  = batch.latents.to(dtype)
-            noise_sample   = noise.to(dtype)
+            latents_clean = batch.latents.to(dtype)
+            noise_sample = noise.to(dtype)
 
-            lerp_vector = noise_sample * t_frac[:, None, None, None] \
-                        + latents_clean * (1.0 - t_frac[:, None, None, None])
+            lerp_vector = latents_clean * (1.0 - t_frac[:, None, None, None]) + noise_sample * t_frac[:, None, None, None]
 
-            if hasattr(self.sd, 'get_loss_target'):
-                instantaneous_vector = self.sd.get_loss_target(
-                    noise=noise_sample,
-                    batch=batch,
-                    timesteps=timesteps,
-                ).detach()
-            else:
-                instantaneous_vector = noise_sample - latents_clean          # v_t   (B,C,H,W)
+            eps = base_eps
 
-            # 3) finite-difference JVP approximation (bump z **and** t)
-            # eps_base, eps_jitter = 1e-3, 1e-4
-            # eps = (eps_base + torch.randn(1, device=lerp_vector.device) * eps_jitter).clamp_(min=1e-4)
-            jitter = 1e-4
-            eps = value_map(
-                torch.rand_like(t_frac),
-                0.0,
-                1.0,
-                base_eps,
-                base_eps + jitter
-            )
+            # concatenate timesteps as input for u(z, r, t)
+            timesteps_cat = torch.cat([t_frac, r_frac], dim=0) * total_steps
 
-        # eps = 1e-3
-        # primary prediction (needs grad)
-        mean_vec_pred = self.predict_noise(
-            noisy_latents=lerp_vector,
-            timesteps=torch.cat([t_frac, r_frac], dim=0) * total_steps,
+        # model predicts u(z, r, t)
+        u_pred = self.predict_noise(
+            noisy_latents=lerp_vector.to(dtype),
+            timesteps=timesteps_cat.to(dtype),
             conditional_embeds=conditional_embeds,
             unconditional_embeds=unconditional_embeds,
             batch=batch,
             **pred_kwargs
         )
 
-        # secondary prediction: bump both latent and timestep by ε
         with torch.no_grad():
-            # lerp_perturbed   = lerp_vector + eps * instantaneous_vector
-            t_frac_plus_eps  = t_frac + eps                      # bump time fraction
-            lerp_perturbed = noise_sample * t_frac_plus_eps[:, None, None, None] \
-                    + latents_clean * (1.0 - t_frac_plus_eps[:, None, None, None])
+            t_frac_plus_eps = (t_frac + eps).clamp(0.0, 1.0)
+            lerp_perturbed = latents_clean * (1.0 - t_frac_plus_eps[:, None, None, None]) + noise_sample * t_frac_plus_eps[:, None, None, None]
+            timesteps_cat_perturbed = torch.cat([t_frac_plus_eps, r_frac], dim=0) * total_steps
 
-            f_x_plus_eps_v = self.predict_noise(
-                noisy_latents=lerp_perturbed,
-                timesteps=torch.cat([t_frac_plus_eps, r_frac], dim=0) * total_steps,
+            u_perturbed = self.predict_noise(
+                noisy_latents=lerp_perturbed.to(dtype),
+                timesteps=timesteps_cat_perturbed.to(dtype),
                 conditional_embeds=conditional_embeds,
                 unconditional_embeds=unconditional_embeds,
                 batch=batch,
                 **pred_kwargs
             )
 
-            # finite-difference JVP:  (f(x+εv) – f(x)) / ε
-            mean_vec_grad = (f_x_plus_eps_v - mean_vec_pred) / eps
-            # time_gap = (t_frac - r_frac)[:, None, None, None]
-            # mean_vec_scaler = time_gap / eps
-            # mean_vec_grad = (f_x_plus_eps_v - mean_vec_pred) * mean_vec_scaler
-            # mean_vec_grad = mean_vec_grad.detach()          # stop-grad as in Eq. 11
+        # compute du/dt via finite difference (detached)
+        du_dt = (u_perturbed - u_pred).detach() / eps
+        # du_dt = (u_perturbed - u_pred).detach()
+        du_dt = du_dt.to(dtype)
+        
+        
+        time_gap = (t_frac - r_frac)[:, None, None, None].to(dtype)
+        time_gap.clamp(min=1e-4)
+        u_shifted = u_pred + time_gap * du_dt
+        # u_shifted = u_pred + du_dt / time_gap
+        # u_shifted = u_pred
 
-            # 4) regression target for the mean vector
-            time_gap = (t_frac - r_frac)[:, None, None, None]
-            mean_vec_target = instantaneous_vector - time_gap * mean_vec_grad
-            # mean_vec_target = instantaneous_vector - mean_vec_grad
+        # a step is done like this:
+        # stepped_latent = model_input + (timestep_next - timestep) * model_output
+        
+        # flow target velocity
+        # v_target = (noise_sample - latents_clean) / time_gap
+        # flux predicts opposite of velocity, so we need to invert it
+        v_target = (latents_clean - noise_sample) / time_gap
 
-        # # 5) MSE loss
-        # loss = torch.nn.functional.mse_loss(
-        #     mean_vec_pred.float(),
-        #     mean_vec_target.float()
-        # )
-        # return loss
-        # 5) MSE loss
+        # compute loss
         loss = torch.nn.functional.mse_loss(
-            mean_vec_pred.float(),
-            mean_vec_target.float(),
+            u_shifted.float(),
+            v_target.float(),
             reduction='none'
         )
+
         with torch.no_grad():
             pure_loss = loss.mean().detach()
-            # add grad to pure_loss so it can be backwards without issues
             pure_loss.requires_grad_(True)
-        # normalize the loss per batch element to 1.0
-        # this method has large loss swings that can hurt the model. This method will prevent that
-        # with torch.no_grad():
-        #     loss_mean = loss.mean([1, 2, 3], keepdim=True)
-        # loss = loss / loss_mean
+
         loss = loss.mean()
-        
-        # backward the pure loss for logging
+        if loss.item() > 1e3:
+            pass
         self.accelerator.backward(loss)
-        
-        # return the real loss for logging
         return pure_loss
 
 
@@ -895,6 +944,10 @@ class SDTrainer(BaseSDTrainProcess):
 
             if unconditional_embeds is not None:
                 unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=dtype).detach()
+            
+            guidance_embedding_scale = self.train_config.cfg_scale
+            if self.train_config.do_guidance_loss:
+                guidance_embedding_scale = self._guidance_loss_target_batch
 
             prior_pred = self.sd.predict_noise(
                 latents=noisy_latents.to(self.device_torch, dtype=dtype).detach(),
@@ -902,6 +955,7 @@ class SDTrainer(BaseSDTrainProcess):
                 unconditional_embeddings=unconditional_embeds,
                 timestep=timesteps,
                 guidance_scale=self.train_config.cfg_scale,
+                guidance_embedding_scale=guidance_embedding_scale,
                 rescale_cfg=self.train_config.cfg_rescale,
                 batch=batch,
                 **pred_kwargs  # adapter residuals in here
@@ -945,13 +999,16 @@ class SDTrainer(BaseSDTrainProcess):
         **kwargs,
     ):
         dtype = get_torch_dtype(self.train_config.dtype)
+        guidance_embedding_scale = self.train_config.cfg_scale
+        if self.train_config.do_guidance_loss:
+            guidance_embedding_scale = self._guidance_loss_target_batch
         return self.sd.predict_noise(
             latents=noisy_latents.to(self.device_torch, dtype=dtype),
             conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
             unconditional_embeddings=unconditional_embeds,
             timestep=timesteps,
             guidance_scale=self.train_config.cfg_scale,
-            guidance_embedding_scale=self.train_config.cfg_scale,
+            guidance_embedding_scale=guidance_embedding_scale,
             detach_unconditional=False,
             rescale_cfg=self.train_config.cfg_rescale,
             bypass_guidance_embedding=self.train_config.bypass_guidance_embedding,
@@ -959,80 +1016,6 @@ class SDTrainer(BaseSDTrainProcess):
             **kwargs
         )
     
-    def cfm_augment_tensors(
-        self,
-        images: torch.Tensor
-    ) -> torch.Tensor:
-        if self.cfm_cache is None:
-            # flip the current one. Only need this for first time
-            self.cfm_cache = torch.flip(images, [3]).clone()
-        augmented_tensor_list = []
-        for i in range(images.shape[0]):
-            # get a random one
-            idx = random.randint(0, self.cfm_cache.shape[0] - 1)
-            augmented_tensor_list.append(self.cfm_cache[idx:idx + 1])
-        augmented = torch.cat(augmented_tensor_list, dim=0)
-        # resize to match the input
-        augmented = torch.nn.functional.interpolate(augmented, size=(images.shape[2], images.shape[3]), mode='bilinear')
-        self.cfm_cache = images.clone()
-        return augmented
-    
-    def get_cfm_loss(
-        self,
-        noisy_latents: torch.Tensor,
-        noise: torch.Tensor,
-        noise_pred: torch.Tensor,
-        conditional_embeds: PromptEmbeds,
-        timesteps: torch.Tensor,
-        batch: 'DataLoaderBatchDTO',
-        alpha: float = 0.1,
-    ):
-        dtype = get_torch_dtype(self.train_config.dtype)
-        if hasattr(self.sd, 'get_loss_target'):
-            target = self.sd.get_loss_target(
-                noise=noise, 
-                batch=batch, 
-                timesteps=timesteps,
-            ).detach()
-            
-        elif self.sd.is_flow_matching:
-            # forward ODE
-            target = (noise - batch.latents).detach()
-        else:
-            raise ValueError("CFM loss only works with flow matching")
-        fm_loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float(), reduction="none")
-        with torch.no_grad():
-            # we need to compute the contrast
-            cfm_batch_tensors = self.cfm_augment_tensors(batch.tensor).to(self.device_torch, dtype=dtype)
-            cfm_latents = self.sd.encode_images(cfm_batch_tensors).to(self.device_torch, dtype=dtype)
-            cfm_noisy_latents = self.sd.add_noise(
-                original_samples=cfm_latents,
-                noise=noise,
-                timesteps=timesteps,
-            )
-            cfm_pred = self.predict_noise(
-                noisy_latents=cfm_noisy_latents,
-                timesteps=timesteps,
-                conditional_embeds=conditional_embeds,
-                unconditional_embeds=None,
-                batch=batch,
-            )
-            
-        # v_neg = torch.nn.functional.normalize(cfm_pred.float(), dim=1)
-        # v_pos = torch.nn.functional.normalize(noise_pred.float(), dim=1)  # shape: (B, C, H, W)
-
-        # # Compute cosine similarity at each pixel
-        # sim = (v_pos * v_neg).sum(dim=1)  # shape: (B, H, W)
-        
-        cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
-        # Compute cosine similarity at each pixel
-        sim = cos(cfm_pred.float(), noise_pred.float())  # shape: (B, H, W)
-
-        # Average over spatial dimensions, then batch
-        contrastive_loss = -sim.mean()
-        
-        loss = fm_loss.mean() + alpha * contrastive_loss
-        return loss
 
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         with torch.no_grad():
@@ -1658,6 +1641,16 @@ class SDTrainer(BaseSDTrainProcess):
                                 )
                                 pred_kwargs['down_block_additional_residuals'] = down_block_res_samples
                                 pred_kwargs['mid_block_additional_residual'] = mid_block_res_sample
+                
+                if self.train_config.do_guidance_loss and isinstance(self.train_config.guidance_loss_target, list):
+                    batch_size = noisy_latents.shape[0]
+                    # update the guidance value, random float between guidance_loss_target[0] and guidance_loss_target[1]
+                    self._guidance_loss_target_batch = [
+                        random.uniform(
+                            self.train_config.guidance_loss_target[0],
+                            self.train_config.guidance_loss_target[1]
+                        ) for _ in range(batch_size)
+                    ]
 
                 self.before_unet_predict()
                 
@@ -1757,25 +1750,15 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.train_config.diff_output_preservation and not do_inverted_masked_prior:
                             prior_to_calculate_loss = None
                         
-                        if self.train_config.loss_type == 'cfm':
-                            loss = self.get_cfm_loss(
-                                noisy_latents=noisy_latents,
-                                noise=noise,
-                                noise_pred=noise_pred,
-                                conditional_embeds=conditional_embeds,
-                                timesteps=timesteps,
-                                batch=batch,
-                            )
-                        else:
-                            loss = self.calculate_loss(
-                                noise_pred=noise_pred,
-                                noise=noise,
-                                noisy_latents=noisy_latents,
-                                timesteps=timesteps,
-                                batch=batch,
-                                mask_multiplier=mask_multiplier,
-                                prior_pred=prior_to_calculate_loss,
-                            )
+                        loss = self.calculate_loss(
+                            noise_pred=noise_pred,
+                            noise=noise,
+                            noisy_latents=noisy_latents,
+                            timesteps=timesteps,
+                            batch=batch,
+                            mask_multiplier=mask_multiplier,
+                            prior_pred=prior_to_calculate_loss,
+                        )
                     
                     if self.train_config.diff_output_preservation:
                         # send the loss backwards otherwise checkpointing will fail

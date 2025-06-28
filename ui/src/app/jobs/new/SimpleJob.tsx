@@ -101,10 +101,14 @@ export default function SimpleJob({
                 setJobConfig(value, 'config.process[0].model.arch');
 
                 // update controls for datasets
+                const hasControlPath = newArch?.additionalSections?.includes('datasets.control_path') || false;
                 const controls = newArch?.controls ?? [];
                 const datasets = jobConfig.config.process[0].datasets.map(dataset => {
                   const newDataset = objectCopy(dataset);
                   newDataset.controls = controls;
+                  if (!hasControlPath) {
+                    newDataset.control_path = null; // reset control path if not applicable
+                  }
                   return newDataset;
                 });
                 setJobConfig(datasets, 'config.process[0].datasets');
@@ -412,6 +416,17 @@ export default function SimpleJob({
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
                         options={datasetOptions}
                       />
+                      {modelArch?.additionalSections?.includes('datasets.control_path') && (
+                        <SelectInput
+                          label="Control Dataset"
+                          docKey="datasets.control_path"
+                          value={dataset.control_path ?? ''}
+                          onChange={value =>
+                            setJobConfig(value == '' ? null : value, `config.process[0].datasets[${i}].control_path`)
+                          }
+                          options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
+                        />
+                      )}
                       <NumberInput
                         label="LoRA Weight"
                         value={dataset.network_weight}
@@ -604,6 +619,18 @@ export default function SimpleJob({
               )}
             </div>
             <FormGroup label={`Sample Prompts (${jobConfig.config.process[0].sample.prompts.length})`} className="pt-2">
+              {
+                modelArch?.additionalSections?.includes('sample.ctrl_img') && (
+                  <div className='text-sm text-gray-100 mb-2 py-2 px-4 bg-yellow-700 rounded-lg'>
+                    <p className='font-semibold mb-1'>
+                      Control Images
+                    </p>
+                    To use control images on samples, add --ctrl_img to the prompts below.
+                    <br />
+                    Example: <code className='bg-yellow-900 p-1'>make this a cartoon --ctrl_img /path/to/image.png</code>
+                  </div>
+                )
+              }
               {jobConfig.config.process[0].sample.prompts.map((prompt, i) => (
                 <div key={i} className="flex items-center space-x-2">
                   <div className="flex-1">

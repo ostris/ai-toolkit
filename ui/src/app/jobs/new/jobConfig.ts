@@ -2,6 +2,7 @@ import { JobConfig, DatasetConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
+  control_path: null,
   mask_path: null,
   mask_min_value: 0.1,
   default_caption: '',
