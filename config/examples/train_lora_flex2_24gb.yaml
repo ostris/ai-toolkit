@@ -31,7 +31,7 @@ config:
 #       hf_private: true #whether the repo is private or public
       datasets:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
-        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, png, webp and avif are supported currently
         # images will automatically be resized and bucketed into the resolution specified
         # on windows, escape back slashes with another backslash so
         # "C:\\path\\to\\images\\folder"
@@ -47,8 +47,8 @@ config:
             - "pose"
             - "inpaint"
           
-          # you can make custom inpainting images as well. These images must be webp or png format with an alpha.
-          # just erase the part of the image you want to inpaint and save it as a webp or png. Again, erase your
+          # you can make custom inpainting images as well. These images must be png/webp/avif format with an alpha.
+          # just erase the part of the image you want to inpaint and save it as a png/webp/avif. Again, erase your
           # train target. So the person if training a person. The automatic controls above with inpaint will
           # just run a background remover mask and erase the foreground, which works well for subjects.
 
@@ -140,7 +140,7 @@ config:
           # use either a pose/line/depth image or whatever you are training with. An example is
           # - "photo of [trigger] --ctrl_idx 1 --ctrl_img /path/to/control/image.jpg"
 
-          # for an inpainting image, it must be png/webp. Erase the part of the image you want to inpaint
+          # for an inpainting image, it must be png/webp/avif. Erase the part of the image you want to inpaint
           # IMPORTANT! the inpaint images must be ctrl_idx 0 and have .inpaint.{ext} in the name for this to work right.
           # - "photo of [trigger] --ctrl_idx 0 --ctrl_img /path/to/inpaint/image.inpaint.png"
 

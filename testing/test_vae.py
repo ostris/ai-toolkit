@@ -1,6 +1,6 @@
 import argparse
 import os
-from PIL import Image
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 import torch
 from torchvision.transforms import Resize, ToTensor
 from diffusers import AutoencoderKL
@@ -53,7 +53,7 @@ def calculate_metrics(vae, images, max_imgs=-1, save_output=False):
 
     for img_path in tqdm(images):
         try:
-            img = Image.open(img_path).convert('RGB')
+            img = load_image(img_path, force_rgb=True)
             # img_tensor = to_tensor(transform(img)).unsqueeze(0).to(device)
             img_tensor = to_tensor(img).unsqueeze(0).to(device)
             img_tensor = 2 * img_tensor - 1

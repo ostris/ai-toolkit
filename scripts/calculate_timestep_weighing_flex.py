@@ -207,8 +207,8 @@ with torch.no_grad():
     
     print("Saving timestep weights...")
     
-    with open(output_path, 'w') as f:
-        json.dump(timestep_weights, f)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(timestep_weights, f, ensure_ascii=False)
         
 
 print(f"Timestep weights saved to {output_path}")

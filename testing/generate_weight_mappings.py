@@ -431,8 +431,8 @@ if has_unmatched_keys:
         flush()
 
     unmatched_path = os.path.join(KEYMAPS_FOLDER, f'{name}_unmatched.json')
-    with open(unmatched_path, 'w') as f:
-        f.write(json.dumps(unmatched_obj, indent=4))
+    with open(unmatched_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(unmatched_obj, indent=4, ensure_ascii=False))
 
     print(f'Saved unmatched keys to {unmatched_path}')
 
@@ -459,8 +459,8 @@ to_remove = []
 for ldm_key, shape_list in ldm_diffusers_shape_map.items():
     # remove identical shape mappings. Not sure why they exist but they do
     # convert to json string to make it easier to compare
-    ldm_shape = json.dumps(shape_list[0])
-    diffusers_shape = json.dumps(shape_list[1])
+    ldm_shape = json.dumps(shape_list[0], ensure_ascii=False)
+    diffusers_shape = json.dumps(shape_list[1], ensure_ascii=False)
     if ldm_shape == diffusers_shape:
         to_remove.append(ldm_key)
 
@@ -473,7 +473,7 @@ save_obj["ldm_diffusers_keymap"] = ldm_diffusers_keymap
 save_obj["ldm_diffusers_shape_map"] = ldm_diffusers_shape_map
 save_obj["ldm_diffusers_operator_map"] = ldm_operator_map
 save_obj["diffusers_ldm_operator_map"] = diffusers_operator_map
-with open(dest_path, 'w') as f:
-    f.write(json.dumps(save_obj, indent=4))
+with open(dest_path, 'w', encoding='utf-8') as f:
+    f.write(json.dumps(save_obj, indent=4, ensure_ascii=False))
 
 print(f'Saved keymap to {dest_path}')

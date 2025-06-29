@@ -16,7 +16,7 @@ from .tools.caption import default_long_prompt, default_short_prompt, default_re
 from jobs.process import BaseExtensionProcess
 from .tools.sync_tools import get_img_paths
 
-img_ext = ['.jpg', '.jpeg', '.png', '.webp']
+img_ext = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 
 def flush():
@@ -78,7 +78,7 @@ class SuperTagger(BaseExtensionProcess):
 
         # check if json exists, if it does load it as image info
         if os.path.exists(json_path):
-            with open(json_path, 'r') as f:
+            with open(json_path, 'r', encoding='utf-8') as f:
                 img_info = ImgInfo(**json.load(f))
         else:
             img_info = ImgInfo()
@@ -100,17 +100,17 @@ class SuperTagger(BaseExtensionProcess):
         # set the image as updated if it does not exist on disk
         if not os.path.exists(train_img_path):
             did_update_image = True
-            image = load_image(img_path)
+            image = load_image(img_path, force_rgb=True)
         if img_info.force_image_process:
             did_update_image = True
-            image = load_image(img_path)
+            image = load_image(img_path, force_rgb=True)
 
         # go through the needed steps
         for step in copy.deepcopy(img_info.state.steps_to_complete):
             if step == 'caption':
                 # load image
                 if image is None:
-                    image = load_image(img_path)
+                    image = load_image(img_path, force_rgb=True)
                 if caption_image is None:
                     caption_image = resize_to_max(image, 1024, 1024)
 
@@ -127,7 +127,7 @@ class SuperTagger(BaseExtensionProcess):
             elif step == 'caption_short':
                 # load image
                 if image is None:
-                    image = load_image(img_path)
+                    image = load_image(img_path, force_rgb=True)
 
                 if caption_image is None:
                     caption_image = resize_to_max(image, 1024, 1024)
@@ -144,7 +144,7 @@ class SuperTagger(BaseExtensionProcess):
             elif step == 'contrast_stretch':
                 # load image
                 if image is None:
-                    image = load_image(img_path)
+                    image = load_image(img_path, force_rgb=True)
                 image = ImageOps.autocontrast(image, cutoff=(0.1, 0), preserve_tone=True)
                 did_update_image = True
                 img_info.mark_step_complete(step)
@@ -156,8 +156,8 @@ class SuperTagger(BaseExtensionProcess):
             image.save(train_img_path)
 
         if img_info.is_dirty:
-            with open(json_path, 'w') as f:
-                json.dump(img_info.to_dict(), f, indent=4)
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(img_info.to_dict(), f, indent=4, ensure_ascii=False)
 
         if self.dataset_master_config_file:
             # add to master dict
@@ -189,8 +189,8 @@ class SuperTagger(BaseExtensionProcess):
 
         if self.dataset_master_config_file is not None:
             # save it as json
-            with open(self.dataset_master_config_file, 'w') as f:
-                json.dump(self.master_dataset_dict, f, indent=4)
+            with open(self.dataset_master_config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.master_dataset_dict, f, indent=4, ensure_ascii=False)
 
         del self.image_processor
         flush()

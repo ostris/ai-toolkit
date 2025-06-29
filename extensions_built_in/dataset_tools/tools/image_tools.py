@@ -3,12 +3,14 @@ from typing import Literal, Type, TYPE_CHECKING, Union
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
+import pillow_avif
+import imageio.v3 as iio
 
 Step: Type = Literal['caption', 'caption_short', 'create_mask', 'contrast_stretch']
 
 img_manipulation_steps = ['contrast_stretch']
 
-img_ext = ['.jpg', '.jpeg', '.png', '.webp']
+img_ext = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 if TYPE_CHECKING:
     from .llava_utils import LLaVAImageProcessor
@@ -27,13 +29,32 @@ def cv2_to_pil(image):
     return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
 
-def load_image(img_path: str):
-    image = Image.open(img_path).convert('RGB')
+def load_image(img_path: str, force_rgb: bool = False):
+    img_array = iio.imread(img_path)
+    if img_array.ndim == 2:
+        image = Image.fromarray(img_array, mode='L')
+    elif img_array.ndim == 3 or img_array.ndim == 4:
+        if img_array.ndim == 4:
+            # When the image has a frame dimension, only the first frame is taken.
+            img_array = img_array[0]
+        height, width, channels = img_array.shape
+        if channels == 3:  # RGB
+            image = Image.fromarray(img_array, mode='RGB')
+        elif channels == 4:  # RGBA
+            image = Image.fromarray(img_array, mode='RGBA')
+        else:
+            raise ValueError(f"Unsupported number of channels: {channels}")
+    else:
+        raise ValueError(f"Unsupported image shape: {img_array.shape}")
+
+    if force_rgb and image.mode != 'RGB':
+        image = image.convert('RGB')
+    
     try:
         # transpose with exif data
         image = ImageOps.exif_transpose(image)
     except Exception as e:
-        pass
+        print(f"Error rotating {img_path}: {e}")
     return image
 
 
