@@ -210,13 +210,11 @@ class FluxKontextModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        if gen_config.ctrl_img is None:
-            raise ValueError(
-                "Control image is required for Flux Kontext model generation."
-            )
-        else:
+        control_img = None
+        if gen_config.ctrl_img is not None:
             control_img = Image.open(gen_config.ctrl_img)
             control_img = control_img.convert("RGB")
+            
         img = pipeline(
             image=control_img,
             prompt_embeds=conditional_embeds.text_embeds,
