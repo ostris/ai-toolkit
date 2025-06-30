@@ -217,6 +217,13 @@ class FluxKontextModel(BaseModel):
         else:
             control_img = Image.open(gen_config.ctrl_img)
             control_img = control_img.convert("RGB")
+            # resize to width and height
+            if control_img.size != (gen_config.width, gen_config.height):
+                control_img = control_img.resize(
+                    (gen_config.width, gen_config.height), Image.BILINEAR
+                )
+        gen_config.width = int(gen_config.width  // 16 * 16)
+        gen_config.height = int(gen_config.height // 16 * 16)
         img = pipeline(
             image=control_img,
             prompt_embeds=conditional_embeds.text_embeds,
@@ -227,6 +234,8 @@ class FluxKontextModel(BaseModel):
             guidance_scale=gen_config.guidance_scale,
             latents=gen_config.latents,
             generator=generator,
+            max_area=gen_config.height * gen_config.width,
+            _auto_resize=False,
             **extra
         ).images[0]
         return img
@@ -405,3 +414,6 @@ class FluxKontextModel(BaseModel):
                 latents = torch.cat((latents, control_latent), dim=1)
 
         return latents.detach() 
+
+    def get_base_model_version(self):
+        return "flux.1_kontext"
