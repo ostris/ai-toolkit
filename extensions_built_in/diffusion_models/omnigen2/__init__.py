@@ -84,7 +84,7 @@ class OmniGen2Model(BaseModel):
             subfolder="mllm",
             torch_dtype=torch.bfloat16
         )
-        
+        mllm.to(self.device_torch, dtype=dtype)
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Qwen2.5 VL model")
             quantization_type = get_qtype(self.model_config.qtype_te)
