@@ -113,6 +113,7 @@ export interface TrainConfig {
   diff_output_preservation: boolean;
   diff_output_preservation_multiplier: number;
   diff_output_preservation_class: string;
+  latent_fixed_size: number;
 }
 
 export interface QuantizeKwargsConfig {

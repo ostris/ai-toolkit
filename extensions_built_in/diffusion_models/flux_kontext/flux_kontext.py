@@ -97,9 +97,9 @@ class FluxKontextModel(BaseModel):
             subfolder=transformer_subfolder,
             torch_dtype=dtype
         )
-        transformer.to(self.quantize_device, dtype=dtype)
+        transformer.to(self.quantize_device)
 
-        if self.model_config.quantize:
+        if self.model_config.quantize and "quantization_config" not in transformer.config:
             # patch the state dict method
             patch_dequantization_on_save(transformer)
             quantization_type = get_qtype(self.model_config.qtype)
@@ -109,7 +109,7 @@ class FluxKontextModel(BaseModel):
             freeze(transformer)
             transformer.to(self.device_torch)
         else:
-            transformer.to(self.device_torch, dtype=dtype)
+            transformer.to(self.device_torch)
 
         flush()
 
@@ -123,7 +123,7 @@ class FluxKontextModel(BaseModel):
         text_encoder_2.to(self.device_torch, dtype=dtype)
         flush()
 
-        if self.model_config.quantize_te:
+        if self.model_config.quantize_te and "quantization_config" not in text_encoder_2.config:
             self.print_and_status_update("Quantizing T5")
             quantize(text_encoder_2, weights=get_qtype(
                 self.model_config.qtype))
@@ -250,7 +250,7 @@ class FluxKontextModel(BaseModel):
         **kwargs
     ):
         with torch.no_grad():
-            bs, c, h, w = latent_model_input.shape
+            bs, c, h, w = kwargs.pop("latent_original_shape", latent_model_input.shape)
             # if we have a control on the channel dimension, put it on the batch for packing
             has_control = False
             if latent_model_input.shape[1] == 32:
@@ -272,6 +272,9 @@ class FluxKontextModel(BaseModel):
             img_ids[..., 2] = img_ids[..., 2] + torch.arange(w // 2)[None, :]
             img_ids = repeat(img_ids, "h w c -> b (h w) c",
                              b=bs).to(self.device_torch)
+            
+            if (latent_sample_indices := kwargs.pop("latent_sample_indices", None)) is not None:
+                img_ids = img_ids[:,latent_sample_indices]
             
             # handle control image ids
             if has_control:

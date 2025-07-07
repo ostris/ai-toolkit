@@ -475,6 +475,9 @@ class TrainConfig:
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
 
+        # sample fixed size latents from different resolution latents
+        self.latent_fixed_size = kwargs.get('latent_fixed_size', 0) # 0 means do not apply this
+
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
 
