@@ -676,7 +676,8 @@ class OmniGen2Pipeline(DiffusionPipeline):
                         prompt_embeds=negative_prompt_embeds,
                         freqs_cis=freqs_cis,
                         prompt_attention_mask=negative_prompt_attention_mask,
-                        ref_image_hidden_states=None,
+                        ref_image_hidden_states=ref_latents,
+                        # ref_image_hidden_states=None,
                     )
                     model_pred = model_pred_uncond + text_guidance_scale * (model_pred - model_pred_uncond)
 

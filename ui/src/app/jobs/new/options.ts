@@ -200,6 +200,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.quantize_te': [true, false],
     },
     disableSections: ['network.conv'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive

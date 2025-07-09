@@ -110,6 +110,8 @@ export interface TrainConfig {
   optimizer_params: {
     weight_decay: number;
   };
+  skip_first_sample: boolean;
+  disable_sampling: boolean;
   diff_output_preservation: boolean;
   diff_output_preservation_multiplier: number;
   diff_output_preservation_class: string;
