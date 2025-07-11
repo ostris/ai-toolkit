@@ -1,11 +1,15 @@
+import { GroupedSelectOption } from "@/types";
+
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
 type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
-type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img'
+type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img' | 'datasets.num_frames';
+type ModelGroup = 'image' | 'video';
 
 export interface ModelArch {
   name: string;
   label: string;
+  group: ModelGroup;
   controls?: Control[];
   isVideoModel?: boolean;
   defaults?: { [key: string]: any };
@@ -16,10 +20,13 @@ export interface ModelArch {
 const defaultNameOrPath = '';
 
 
+
+
 export const modelArchs: ModelArch[] = [
   {
     name: 'flux',
     label: 'FLUX.1',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-dev', defaultNameOrPath],
@@ -33,6 +40,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flux_kontext',
     label: 'FLUX.1-Kontext-dev',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-Kontext-dev', defaultNameOrPath],
@@ -48,6 +56,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flex1',
     label: 'Flex.1',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['ostris/Flex.1-alpha', defaultNameOrPath],
@@ -62,6 +71,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flex2',
     label: 'Flex.2',
+    group: 'image',
     controls: ['depth', 'line', 'pose', 'inpaint'],
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -89,6 +99,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'chroma',
     label: 'Chroma',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['lodestones/Chroma', defaultNameOrPath],
@@ -102,6 +113,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'wan21:1b',
     label: 'Wan 2.1 (1.3B)',
+    group: 'video',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -110,14 +122,52 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
-      'config.process[0].sample.num_frames': [40, 1],
+      'config.process[0].sample.num_frames': [41, 1],
       'config.process[0].sample.fps': [15, 1],
     },
     disableSections: ['network.conv'],
+    additionalSections: ['datasets.num_frames'],
+  },
+  {
+    name: 'wan21_i2v:14b480p',
+    label: 'Wan 2.1 I2V (14B-480P)',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.1-I2V-14B-480P-Diffusers', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [41, 1],
+      'config.process[0].sample.fps': [15, 1],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames'],
+  },
+  {
+    name: 'wan21_i2v:14b',
+    label: 'Wan 2.1 I2V (14B-720P)',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.1-I2V-14B-720P-Diffusers', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [41, 1],
+      'config.process[0].sample.fps': [15, 1],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames'],
   },
   {
     name: 'wan21:14b',
     label: 'Wan 2.1 (14B)',
+    group: 'video',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
@@ -126,14 +176,16 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
-      'config.process[0].sample.num_frames': [40, 1],
+      'config.process[0].sample.num_frames': [41, 1],
       'config.process[0].sample.fps': [15, 1],
     },
     disableSections: ['network.conv'],
+    additionalSections: ['datasets.num_frames'],
   },
   {
     name: 'lumina2',
     label: 'Lumina2',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Alpha-VLLM/Lumina-Image-2.0', defaultNameOrPath],
@@ -147,6 +199,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'hidream',
     label: 'HiDream',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-I1-Full', defaultNameOrPath],
@@ -163,6 +216,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'sdxl',
     label: 'SDXL',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['stabilityai/stable-diffusion-xl-base-1.0', defaultNameOrPath],
@@ -177,6 +231,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'sd15',
     label: 'SD 1.5',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['stable-diffusion-v1-5/stable-diffusion-v1-5', defaultNameOrPath],
@@ -191,6 +246,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'omnigen2',
     label: 'OmniGen2',
+    group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['OmniGen2/OmniGen2', defaultNameOrPath],
@@ -206,3 +262,17 @@ export const modelArchs: ModelArch[] = [
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
 }) as any;
+
+
+export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc, arch) => {
+  const group = acc.find(g => g.label === arch.group);
+  if (group) {
+    group.options.push({ value: arch.name, label: arch.label });
+  } else {
+    acc.push({
+      label: arch.group,
+      options: [{ value: arch.name, label: arch.label }],
+    });
+  }
+  return acc;
+}, [] as GroupedSelectOption[]);

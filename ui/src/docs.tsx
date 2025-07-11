@@ -57,6 +57,23 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.num_frames': {
+    title: 'Number of Frames',
+    description: (
+      <>
+        This sets the number of frames to shrink videos to for a video dataset. If this dataset is images, set this to 1 for one frame.
+        If your dataset is only videos, frames will be extracted evenly spaced from the videos in the dataset. 
+        <br/>
+        <br/>
+        It is best to trim your videos to the proper length before training. Wan is 16 frames a second. Doing 81 frames will result in a 5 second video.
+        So you would want all of your videos trimmed to around 5 seconds for best results.
+        <br/>
+        <br/>
+        Example: Setting this to 81 and having 2 videos in your dataset, one is 2 seconds and one is 90 seconds long, will result in 81 
+        evenly spaced frames for each video making the 2 second video appear slow and the 90second video appear very fast.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

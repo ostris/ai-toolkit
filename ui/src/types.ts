@@ -84,6 +84,8 @@ export interface DatasetConfig {
   resolution: number[];
   controls: string[];
   control_path: string | null;
+  num_frames: number;
+  shrink_video_to_frames: boolean;
 }
 
 export interface EMAConfig {
@@ -180,4 +182,13 @@ export interface JobConfig {
 export interface ConfigDoc {
   title: string;
   description: React.ReactNode;
+}
+
+export interface SelectOption {
+  readonly value: string;
+  readonly label: string;
+}
+export interface GroupedSelectOption {
+  readonly label: string;
+  readonly options: SelectOption[];
 }

@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic';
 import { CircleHelp } from 'lucide-react';
 import { getDoc } from '@/docs';
 import { openDoc } from '@/components/DocModal';
+import { GroupedSelectOption, SelectOption } from '@/types';
 
 const Select = dynamic(() => import('react-select'), { ssr: false });
 
@@ -141,13 +142,21 @@ export interface SelectInputProps extends InputProps {
   value: string;
   disabled?: boolean;
   onChange: (value: string) => void;
-  options: { value: string; label: string }[];
+  options: GroupedSelectOption[] | SelectOption[];
 }
 
 export const SelectInput = (props: SelectInputProps) => {
   const { label, value, onChange, options, docKey = null } = props;
   const doc = getDoc(docKey);
-  const selectedOption = options.find(option => option.value === value);
+  let selectedOption: SelectOption | undefined;
+  if (options && options.length > 0) {
+    // see if grouped options
+    if ('options' in options[0]) {
+      selectedOption = (options as GroupedSelectOption[]).flatMap(group => group.options).find(opt => opt.value === value);
+    } else {
+      selectedOption = (options as SelectOption[]).find(opt => opt.value === value);
+    }
+  }
   return (
     <div
       className={classNames(props.className, {

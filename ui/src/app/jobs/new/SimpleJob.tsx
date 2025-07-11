@@ -1,6 +1,6 @@
 'use client';
 import { useMemo } from 'react';
-import { modelArchs, ModelArch } from './options';
+import { modelArchs, ModelArch, groupedModelOptions } from './options';
 import { defaultDatasetConfig } from './jobConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
@@ -37,7 +37,7 @@ export default function SimpleJob({
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
   }, [jobConfig.config.process[0].model.arch]);
 
-  const isVideoModel = !!modelArch?.isVideoModel;
+  const isVideoModel = !!(modelArch?.group === 'video');
 
   return (
     <>
@@ -100,8 +100,9 @@ export default function SimpleJob({
                 // set new model
                 setJobConfig(value, 'config.process[0].model.arch');
 
-                // update controls for datasets
+                // update datasets
                 const hasControlPath = newArch?.additionalSections?.includes('datasets.control_path') || false;
+                const hasNumFrames = newArch?.additionalSections?.includes('datasets.num_frames') || false;
                 const controls = newArch?.controls ?? [];
                 const datasets = jobConfig.config.process[0].datasets.map(dataset => {
                   const newDataset = objectCopy(dataset);
@@ -109,20 +110,14 @@ export default function SimpleJob({
                   if (!hasControlPath) {
                     newDataset.control_path = null; // reset control path if not applicable
                   }
+                  if (!hasNumFrames) {
+                    newDataset.num_frames = 1; // reset num_frames if not applicable
+                  }
                   return newDataset;
                 });
                 setJobConfig(datasets, 'config.process[0].datasets');
               }}
-              options={
-                modelArchs
-                  .map(model => {
-                    return {
-                      value: model.name,
-                      label: model.label,
-                    };
-                  })
-                  .filter(x => x) as { value: string; label: string }[]
-              }
+              options={groupedModelOptions}
             />
             <TextInput
               label="Name or Path"
@@ -422,6 +417,7 @@ export default function SimpleJob({
                           label="Control Dataset"
                           docKey="datasets.control_path"
                           value={dataset.control_path ?? ''}
+                          className="pt-2"
                           onChange={value =>
                             setJobConfig(value == '' ? null : value, `config.process[0].datasets[${i}].control_path`)
                           }
@@ -452,6 +448,18 @@ export default function SimpleJob({
                         min={0}
                         required
                       />
+                      {modelArch?.additionalSections?.includes('datasets.num_frames') && (
+                        <NumberInput
+                          label="Num Frames"
+                          className="pt-2"
+                          docKey="datasets.num_frames"
+                          value={dataset.num_frames}
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].num_frames`)}
+                          placeholder="eg. 41"
+                          min={1}
+                          required
+                        />
+                      )}
                     </div>
                     <div>
                       <FormGroup label="Settings" className="">
@@ -586,6 +594,7 @@ export default function SimpleJob({
                       value={jobConfig.config.process[0].sample.num_frames}
                       onChange={value => setJobConfig(value, 'config.process[0].sample.num_frames')}
                       placeholder="eg. 0"
+                      className="pt-2"
                       min={0}
                       required
                     />
@@ -594,6 +603,7 @@ export default function SimpleJob({
                       value={jobConfig.config.process[0].sample.fps}
                       onChange={value => setJobConfig(value, 'config.process[0].sample.fps')}
                       placeholder="eg. 0"
+                      className="pt-2"
                       min={0}
                       required
                     />

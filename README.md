@@ -120,7 +120,7 @@ cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
 # install torch first
-pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu126
+pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
@@ -130,7 +130,7 @@ git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python -m venv venv
 .\venv\Scripts\activate
-pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu126
+pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
 
@@ -425,28 +425,32 @@ Everything else should work the same including layer targeting.
 
 Only larger updates are listed here. There are usually smaller daily updated that are omitted.
 
-### June 29, 2024
+### Jul 11, 2025
+- Added better video config settings to the UI for video models.
+- Added Wan I2V training to the UI
+
+### June 29, 2025
 - Fixed issue where Kontext forced sizes on sampling
 
-### June 26, 2024
+### June 26, 2025
 - Added support for FLUX.1 Kontext training
 - added support for instruction dataset training
 
-### June 25, 2024
+### June 25, 2025
 - Added support for OmniGen2 training
 - 
-### June 17, 2024
+### June 17, 2025
 - Performance optimizations for batch preparation
 - Added some docs via a popup for items in the simple ui explaining what settings do. Still a WIP
 
-### June 16, 2024
+### June 16, 2025
 - Hide control images in the UI when viewing datasets
 - WIP on mean flow loss
 
-### June 12, 2024
+### June 12, 2025
 - Fixed issue that resulted in blank captions in the dataloader
 
-### June 10, 2024
+### June 10, 2025
 - Decided to keep track up updates in the readme
 - Added support for SDXL in the UI
 - Added support for SD 1.5 in the UI

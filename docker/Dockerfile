@@ -49,7 +49,7 @@ WORKDIR /app
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # install pytorch before cache bust to avoid redownloading pytorch
-RUN pip install --pre --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128
+RUN pip install --pre --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 
 # Fix cache busting by moving CACHEBUST to right before git clone
 ARG CACHEBUST=1234
@@ -63,7 +63,7 @@ WORKDIR /app/ai-toolkit
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --pre --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128 --force && \
+    pip install --pre --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 --force && \
     pip install setuptools==69.5.1 --no-cache-dir
 
 # Build UI
