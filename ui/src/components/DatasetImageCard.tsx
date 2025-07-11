@@ -33,7 +33,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     if (isGettingCaption.current || isCaptionLoaded) return;
     isGettingCaption.current = true;
     apiClient
-      .get(`/api/caption/${encodeURIComponent(imageUrl)}`)
+      .post(`/api/caption/get`, { imgPath: imageUrl })
       .then(res => res.data)
       .then(data => {
         console.log('Caption fetched:', data);
@@ -187,7 +187,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           </div>
         </div>
         {inViewport && isVisible && (
-          <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300">
+          <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300 w-full">
             {imageUrl}
           </div>
         )}

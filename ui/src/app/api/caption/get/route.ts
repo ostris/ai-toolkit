@@ -4,11 +4,15 @@ import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot } from '@/server/settings';
 
-export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
-  const { imagePath } = await params;
+export async function POST(request: NextRequest) {
+  
+  const body = await request.json();
+  const { imgPath } = body;
+  console.log('Received POST request for caption:', imgPath);
   try {
     // Decode the path
-    const filepath = decodeURIComponent(imagePath);
+    const filepath = imgPath;
+    console.log('Decoded image path:', filepath);
 
     // caption name is the filepath without extension but with .txt
     const captionPath = filepath.replace(/\.[^/.]+$/, '') + '.txt';
