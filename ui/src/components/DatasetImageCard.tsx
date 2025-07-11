@@ -160,7 +160,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
           <div className="absolute top-1 right-1 flex space-x-2">
-            
             <button
               className="bg-gray-800 rounded-full p-2"
               onClick={() => {
@@ -187,9 +186,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </button>
           </div>
         </div>
+        {inViewport && isVisible && (
+          <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300">
+            {imageUrl}
+          </div>
+        )}
       </div>
-
-      {/* Text area below the image */}
       <div
         className={classNames('w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px]', {
           'border-blue-500 border-2': !isCaptionCurrent,
@@ -215,13 +217,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         )}
         {(!inViewport || !isVisible) && isCaptionLoaded && (
           <div className="w-full h-full flex items-center justify-center text-gray-400">
-            {isVisible ? "Scroll into view to edit caption" : "Show content to edit caption"}
+            {isVisible ? 'Scroll into view to edit caption' : 'Show content to edit caption'}
           </div>
         )}
         {!isCaptionLoaded && (
-          <div className="w-full h-full flex items-center justify-center text-gray-400">
-            Loading caption...
-          </div>
+          <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>
         )}
       </div>
     </div>
