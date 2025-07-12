@@ -65,6 +65,17 @@ def add_first_frame_conditioning(
         video_condition.to(device, dtype)
     ).latent_dist.sample()
     latent_condition = latent_condition.to(device, dtype)
+    
+    latents_mean = (
+        torch.tensor(vae.config.latents_mean)
+        .view(1, vae.config.z_dim, 1, 1, 1)
+        .to(device, dtype)
+    )
+    latents_std = 1.0 / torch.tensor(vae.config.latents_std).view(1, vae.config.z_dim, 1, 1, 1).to(
+        device, dtype
+    )
+    latent_condition = (latent_condition - latents_mean) * latents_std
+    
 
     # Create mask: 1 for conditioning frames, 0 for frames to generate
     batch_size = first_frame.shape[0]
