@@ -152,7 +152,7 @@ class Critic:
             self.optimizer,
             total_iters=self.process.max_steps * self.num_critic_per_gen,
             factor=1,
-            verbose=False,
+            # verbose=False,
         )
 
     def load_weights(self):
