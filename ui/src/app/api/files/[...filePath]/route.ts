@@ -47,6 +47,7 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       '.png': 'image/png',
       '.gif': 'image/gif',
       '.webp': 'image/webp',
+      '.avif': 'image/avif',
       '.svg': 'image/svg+xml',
       '.bmp': 'image/bmp',
       '.safetensors': 'application/octet-stream',

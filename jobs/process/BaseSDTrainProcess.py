@@ -575,8 +575,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         safe_serialization=True
                     )
                     meta_path = os.path.join(name_or_path, 'aitk_meta.yaml')
-                    with open(meta_path, 'w') as f:
-                        yaml.dump(self.meta, f)
+                    with open(meta_path, 'w', encoding='utf-8') as f:
+                        yaml.dump(self.meta, f, allow_unicode=True)
                     # move it back
                     self.adapter = self.adapter.to(orig_device, dtype=orig_dtype)
                 else:
@@ -625,8 +625,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 'gamma': self.snr_gos.gamma.item(),
             }
             path_to_save = file_path = os.path.join(self.save_root, 'learnable_snr.json')
-            with open(path_to_save, 'w') as f:
-                json.dump(json_data, f, indent=4)
+            with open(path_to_save, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=4, ensure_ascii=False)
         
         print_acc(f"Saved checkpoint to {file_path}")
 
@@ -793,7 +793,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             meta_path = os.path.join(path, 'aitk_meta.yaml')
             # load it
             if os.path.exists(meta_path):
-                with open(meta_path, 'r') as f:
+                with open(meta_path, 'r', encoding='utf-8') as f:
                     meta = yaml.load(f, Loader=yaml.FullLoader)
         else:
             meta = load_metadata_from_safetensors(path)
@@ -1602,7 +1602,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # check to see if previous settings exist
             path_to_load = os.path.join(self.save_root, 'learnable_snr.json')
             if os.path.exists(path_to_load):
-                with open(path_to_load, 'r') as f:
+                with open(path_to_load, 'r', encoding='utf-8') as f:
                     json_data = json.load(f)
                     if 'offset' in json_data:
                         # legacy
@@ -2355,9 +2355,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # Construct the README content
         readme_content = f"""---
 tags:
-{yaml.dump(tags, indent=4).strip()}
+{yaml.dump(tags, indent=4, allow_unicode=True).strip()}
 {"widget:" if os.path.isdir(samples_dir) else ""}
-{yaml.dump(widgets, indent=4).strip() if widgets else ""}
+{yaml.dump(widgets, indent=4, allow_unicode=True).strip() if widgets else ""}
 base_model: {base_model}
 {"instance_prompt: " + instance_prompt if instance_prompt else ""}
 license: {license}

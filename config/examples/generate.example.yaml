@@ -17,7 +17,7 @@ config:
         seed: -1 # -1 is random
         guidance_scale: 7
         sample_steps: 20
-        ext: ".png" # .png, .jpg, .jpeg, .webp
+        ext: ".png" # .png, .jpg, .jpeg, .webp, .avif
 
         # here ate the flags you can use for prompts. Always start with
         # your prompt first then add these flags after. You can use as many

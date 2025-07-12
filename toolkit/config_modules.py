@@ -7,7 +7,7 @@ import torch
 
 from toolkit.prompt_utils import PromptEmbeds
 
-ImgExt = Literal['jpg', 'png', 'webp']
+ImgExt = Literal['jpg', 'png', 'webp', 'avif']
 
 SaveFormat = Literal['safetensors', 'diffusers']
 
@@ -59,7 +59,7 @@ class SampleConfig:
         self.extra_values = kwargs.get('extra_values', [])
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
-        if self.num_frames > 1 and self.ext not in ['webp']:
+        if self.num_frames > 1 and self.ext not in ['webp', 'avif']:
             print("Changing sample extention to animated webp")
             self.ext = 'webp'
 
@@ -731,7 +731,7 @@ class DatasetConfig:
         random_triggers = kwargs.get('random_triggers', [])
         # if they are a string, load them from a file
         if isinstance(random_triggers, str) and os.path.exists(random_triggers):
-            with open(random_triggers, 'r') as f:
+            with open(random_triggers, 'r', encoding='utf-8') as f:
                 random_triggers = f.read().splitlines()
                 # remove empty lines
                 random_triggers = [line for line in random_triggers if line.strip() != '']
@@ -759,7 +759,7 @@ class DatasetConfig:
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
         if self.control_path == '':
             self.control_path = None
-        # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
+        # inpaint images should be png/webp/avif images with alpha channel. The alpha 0 (invisible) section will
         # be the part conditioned to be inpainted. The alpha 1 (visible) section will be the part that is ignored
         self.inpaint_path: Union[str,List[str]] = kwargs.get('inpaint_path', None)
         # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
@@ -999,7 +999,7 @@ class GenerateImageConfig:
             # video
             if self.num_frames == 1:
                 raise ValueError(f"Expected 1 img but got a list {len(image)}")
-            if self.num_frames > 1 and self.output_ext not in ['webp']:
+            if self.num_frames > 1 and self.output_ext not in ['webp', 'avif']:
                 self.output_ext = 'webp'
             if self.output_ext == 'webp':
                 # save as animated webp
@@ -1007,6 +1007,18 @@ class GenerateImageConfig:
                 image[0].save(
                     self.get_image_path(count, max_count),
                     format='WEBP',
+                    append_images=image[1:],
+                    save_all=True,
+                    duration=duration,  # Duration per frame in milliseconds
+                    loop=0,  # 0 means loop forever
+                    quality=80  # Quality setting (0-100)
+                )
+            elif self.output_ext == 'avif':
+                # save as animated avif
+                duration = 1000 // self.fps  # Convert fps to milliseconds per frame
+                image[0].save(
+                    self.get_image_path(count, max_count),
+                    format='AVIF',
                     append_images=image[1:],
                     save_all=True,
                     duration=duration,  # Duration per frame in milliseconds
@@ -1024,7 +1036,7 @@ class GenerateImageConfig:
 
     def save_prompt_file(self, count: int = 0, max_count=0):
         # save prompt file
-        with open(self.get_prompt_path(count, max_count), 'w') as f:
+        with open(self.get_prompt_path(count, max_count), 'w', encoding='utf-8') as f:
             prompt = self.prompt
             if self.prompt_2 is not None:
                 prompt += ' --p2 ' + self.prompt_2

@@ -6,7 +6,8 @@ import time
 from collections import OrderedDict
 
 from PIL import Image
-from PIL.ImageOps import exif_transpose
+import pillow_avif
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from einops import rearrange
 from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader, ConcatDataset
@@ -382,8 +383,7 @@ class TrainVAEProcess(BaseTrainProcess):
 
         with torch.no_grad():
             for i, img_url in enumerate(self.sample_sources):
-                img = exif_transpose(Image.open(img_url))
-                img = img.convert('RGB')
+                img = load_image(img_url, force_rgb=True)
                 # crop if not square
                 if img.width != img.height:
                     min_dim = min(img.width, img.height)

@@ -208,7 +208,7 @@ class Embedding:
             # save the embedding as a safetensors file
             state_dict = self.state_dict()
             # add all embedding data (except string_to_param), to metadata
-            metadata = OrderedDict({k: json.dumps(v) for k, v in embedding_data.items() if k != "string_to_param"})
+            metadata = OrderedDict({k: json.dumps(v, ensure_ascii=False) for k, v in embedding_data.items() if k != "string_to_param"})
             metadata["string_to_param"] = {"*": "emb_params"}
             save_meta = get_meta_for_safetensors(metadata, name=self.name)
             save_file(state_dict, filename, metadata=save_meta)

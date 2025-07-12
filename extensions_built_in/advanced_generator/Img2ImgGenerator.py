@@ -236,13 +236,13 @@ class Img2ImgGenerator(BaseExtensionProcess):
                 gen_images.save(output_path)
 
                 # save caption
-                with open(output_caption_path, 'w') as f:
+                with open(output_caption_path, 'w', encoding='utf-8') as f:
                     f.write(caption)
 
                 if output_inputs_path is not None:
                     os.makedirs(os.path.dirname(output_inputs_path), exist_ok=True)
                     image.save(output_inputs_path)
-                    with open(output_inputs_caption_path, 'w') as f:
+                    with open(output_inputs_caption_path, 'w', encoding='utf-8') as f:
                         f.write(caption)
 
                 pbar.update(1)

@@ -25,7 +25,7 @@ from toolkit.models.pixtral_vision import PixtralVisionImagePreprocessorCompatib
 from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
 from PIL import Image, ImageFilter, ImageOps
-from PIL.ImageOps import exif_transpose
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 import albumentations as A
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
@@ -63,7 +63,7 @@ transforms_dict = {
     'RandomEqualize': transforms.RandomEqualize(p=0.2),
 }
 
-img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+img_ext_list = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 
 def standardize_images(images):
@@ -650,8 +650,7 @@ class ImageProcessingDTOMixin:
                 self.load_unconditional_image()
             return
         try:
-            img = Image.open(self.path)
-            img = exif_transpose(img)
+            img = load_image(self.path)
         except Exception as e:
             print_acc(f"Error: {e}")
             print_acc(f"Error loading image: {self.path}")
@@ -760,7 +759,7 @@ class InpaintControlFileItemDTOMixin:
             inpaint_path = dataset_config.inpaint_path
             # we are using control images
             img_path = kwargs.get('path', None)
-            img_inpaint_ext_list = ['.png', '.webp']
+            img_inpaint_ext_list = ['.png', '.webp', '.avif']
             file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
 
             for ext in img_inpaint_ext_list:
@@ -773,11 +772,10 @@ class InpaintControlFileItemDTOMixin:
     def load_inpaint_image(self: 'FileItemDTO'):
         try:
             # image must have alpha channel for inpaint
-            img = Image.open(self.inpaint_path)
+            img = load_image(self.inpaint_path)
             # make sure has aplha
             if img.mode != 'RGBA':
                 return
-            img = exif_transpose(img)
         
             w, h = img.size
             if w > h and self.scale_to_width < self.scale_to_height:
@@ -871,8 +869,7 @@ class ControlFileItemDTOMixin:
         
         for control_path in control_path_list:
             try:
-                img = Image.open(control_path).convert('RGB')
-                img = exif_transpose(img)
+                img = load_image(control_path, force_rgb=True)
             except Exception as e:
                 print_acc(f"Error: {e}")
                 print_acc(f"Error loading image: {control_path}")
@@ -1053,7 +1050,7 @@ class ClipImageFileItemDTOMixin:
             hash_dict = self.get_clip_vision_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.clip_image_path))[0]
             # get base64 hash of md5 checksum of hash_dict
-            hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+            hash_input = json.dumps(hash_dict, ensure_ascii=False, sort_keys=True).encode('utf-8')
             hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
             hash_str = hash_str.replace('=', '')
             self._clip_vision_embeddings_path = os.path.join(latent_dir, f'{filename_no_ext}_{hash_str}.safetensors')
@@ -1092,15 +1089,12 @@ class ClipImageFileItemDTOMixin:
             return
         clip_image_path = self.get_new_clip_image_path()
         try:
-            img = Image.open(clip_image_path).convert('RGB')
-            img = exif_transpose(img)
+            img = load_image(clip_image_path, force_rgb=True)
         except Exception as e:
             # make a random noise image
             img = Image.new('RGB', (self.dataset_config.resolution, self.dataset_config.resolution))
             print_acc(f"Error: {e}")
             print_acc(f"Error loading image: {clip_image_path}")
-
-        img = img.convert('RGB')
 
         if self.flip_x:
             # do a flip
@@ -1292,8 +1286,7 @@ class MaskFileItemDTOMixin:
 
     def load_mask_image(self: 'FileItemDTO'):
         try:
-            img = Image.open(self.mask_path)
-            img = exif_transpose(img)
+            img = load_image(self.mask_path)
         except Exception as e:
             print_acc(f"Error: {e}")
             print_acc(f"Error loading image: {self.mask_path}")
@@ -1395,13 +1388,11 @@ class UnconditionalFileItemDTOMixin:
 
     def load_unconditional_image(self: 'FileItemDTO'):
         try:
-            img = Image.open(self.unconditional_path)
-            img = exif_transpose(img)
+            img = load_image(self.unconditional_path, force_rgb=True)
         except Exception as e:
             print_acc(f"Error: {e}")
             print_acc(f"Error loading image: {self.mask_path}")
 
-        img = img.convert('RGB')
         w, h = img.size
         if w > h and self.scale_to_width < self.scale_to_height:
             # throw error, they should match
@@ -1648,7 +1639,7 @@ class LatentCachingFileItemDTOMixin:
             hash_dict = self.get_latent_info_dict()
             filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
             # get base64 hash of md5 checksum of hash_dict
-            hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+            hash_input = json.dumps(hash_dict, ensure_ascii=False, sort_keys=True).encode('utf-8')
             hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
             hash_str = hash_str.replace('=', '')
             self._latent_path = os.path.join(latent_dir, f'{filename_no_ext}_{hash_str}.safetensors')
@@ -1933,7 +1924,7 @@ class CLIPCachingMixin:
                     ("is_noise_zero", is_noise_zero),
                 ])
                 # get base64 hash of md5 checksum of hash_dict
-                hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+                hash_input = json.dumps(hash_dict, ensure_ascii=False, sort_keys=True).encode('utf-8')
                 hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
                 hash_str = hash_str.replace('=', '')
 

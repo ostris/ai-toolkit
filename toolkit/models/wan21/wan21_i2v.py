@@ -34,6 +34,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from diffusers.video_processor import VideoProcessor
 from diffusers.image_processor import PipelineImageInput
 from PIL import Image
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 
 from .wan21 import \
     scheduler_configUniPC, \
@@ -408,7 +409,7 @@ class Wan21I2V(Wan21):
         if gen_config.ctrl_img is None:
             raise ValueError("I2V samples must have a control image")
         
-        control_img = Image.open(gen_config.ctrl_img).convert("RGB")
+        control_img = load_image(gen_config.ctrl_img, force_rgb=True)
         
         height = gen_config.height
         width = gen_config.width

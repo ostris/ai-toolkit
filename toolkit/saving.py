@@ -29,7 +29,7 @@ def convert_state_dict_to_ldm_with_mapping(
     converted_state_dict = OrderedDict()
 
     # load mapping
-    with open(mapping_path, 'r') as f:
+    with open(mapping_path, 'r', encoding='utf-8') as f:
         mapping = json.load(f, object_pairs_hook=OrderedDict)
 
     # keep track of keys not matched
