@@ -53,7 +53,7 @@ class Image(collections.namedtuple('Image', image_fields)):
             self))
 
     def to_str_json(self, indent=None):
-        return json.dumps(self._asdict(), indent=indent)
+        return json.dumps(self._asdict(), indent=indent, ensure_ascii=False)
 
 
 def get_image_size(file_path):

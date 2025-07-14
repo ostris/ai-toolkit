@@ -159,7 +159,7 @@ print("Patching")
 save_file(unet_sd, os.path.join(unet_folder, "diffusion_pytorch_model.safetensors"), meta)
 
 # load the json file
-with open(os.path.join(unet_folder, "config.json"), 'r') as f:
+with open(os.path.join(unet_folder, "config.json"), 'r', encoding='utf-8') as f:
     config = json.load(f)
 
 config['cross_attention_dim'] = new_cross_attn_dim
@@ -168,8 +168,8 @@ if is_pixart:
     config['caption_channels'] = None
 
 # save it
-with open(os.path.join(unet_folder, "config.json"), 'w') as f:
-    json.dump(config, f, indent=2)
+with open(os.path.join(unet_folder, "config.json"), 'w', encoding='utf-8') as f:
+    json.dump(config, f, indent=2, ensure_ascii=False)
 
 print("Done")
 

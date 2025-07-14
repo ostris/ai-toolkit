@@ -18,7 +18,7 @@ KEYMAP_ROOT = os.path.join(PROJECT_ROOT, 'toolkit', 'keymaps')
 sdxl_keymap_path = os.path.join(KEYMAP_ROOT, 'stable_diffusion_locon_sdxl.json')
 
 # load keymap
-with open(sdxl_keymap_path, 'r') as f:
+with open(sdxl_keymap_path, 'r', encoding='utf-8') as f:
     ldm_diffusers_keymap = json.load(f)['ldm_diffusers_keymap']
 
 # invert the item / key pairs

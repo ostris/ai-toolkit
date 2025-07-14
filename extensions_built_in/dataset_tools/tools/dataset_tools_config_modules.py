@@ -179,7 +179,7 @@ class ImgInfo:
                 self.state.steps_to_complete.append(step)
 
     def to_json(self):
-        return json.dumps(self.to_dict())
+        return json.dumps(self.to_dict(), ensure_ascii=False)
 
     def set_version(self, version: int):
         if self.version != version:

@@ -6,7 +6,7 @@ import torchvision
 import yaml
 from toolkit import train_tools
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
-from PIL import Image
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from toolkit.models.base_model import BaseModel
 from diffusers import FluxTransformer2DModel, AutoencoderKL
 from toolkit.basic import flush
@@ -231,7 +231,7 @@ class Flex2(BaseModel):
         if gen_config.ctrl_img is None:
             control_img = None
         else:
-            control_img = Image.open(gen_config.ctrl_img)
+            control_img = load_image(gen_config.ctrl_img)
             if ".inpaint." not in gen_config.ctrl_img:
                 control_img = control_img.convert("RGB")
             else:
@@ -367,8 +367,8 @@ class Flex2(BaseModel):
         )
 
         meta_path = os.path.join(output_path, 'aitk_meta.yaml')
-        with open(meta_path, 'w') as f:
-            yaml.dump(meta, f)
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            yaml.dump(meta, f, allow_unicode=True)
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get('noise')

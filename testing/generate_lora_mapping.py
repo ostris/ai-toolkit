@@ -11,7 +11,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 keymap_path = os.path.join(PROJECT_ROOT, 'toolkit', 'keymaps', 'stable_diffusion_sdxl.json')
 
 # load keymap
-with open(keymap_path, 'r') as f:
+with open(keymap_path, 'r', encoding='utf-8') as f:
     keymap = json.load(f)
 
 lora_keymap = OrderedDict()
@@ -123,8 +123,8 @@ print(f"cycle has {len(cycle_extra_keys)} extra keys")
 to_save = OrderedDict()
 to_save['ldm_diffusers_keymap'] = lora_keymap
 
-with open(os.path.join(PROJECT_ROOT, 'toolkit', 'keymaps', f'{name}.json'), 'w') as f:
-    json.dump(to_save, f, indent=4)
+with open(os.path.join(PROJECT_ROOT, 'toolkit', 'keymaps', f'{name}.json'), 'w', encoding='utf-8') as f:
+    json.dump(to_save, f, indent=4, ensure_ascii=False)
 
 
 

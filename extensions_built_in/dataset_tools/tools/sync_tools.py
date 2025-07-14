@@ -11,7 +11,7 @@ def img_root_path(img_id: str):
 if TYPE_CHECKING:
     from .dataset_tools_config_modules import DatasetSyncCollectionConfig
 
-img_exts = ['.jpg', '.jpeg', '.webp', '.png']
+img_exts = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
 
 class Photo:
     def __init__(
@@ -187,10 +187,10 @@ def update_caption(img_path: str):
     # see if txt file exists
     if os.path.exists(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.txt")):
         # read it
-        with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.txt"), 'r') as file:
+        with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.txt"), 'r', encoding='utf-8') as file:
             caption = file.read()
     # write json file
-    with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.json"), 'w') as file:
+    with open(os.path.join(os.path.dirname(img_path), f"{filename_no_ext}.json"), 'w', encoding='utf-8') as file:
         file.write(f'{{"caption": "{caption}"}}')
 
     # delete txt file

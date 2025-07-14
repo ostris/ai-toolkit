@@ -5,6 +5,8 @@ from collections import OrderedDict
 from typing import Union
 
 from PIL import Image
+import pillow_avif
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from diffusers import T2IAdapter
 from torchvision.transforms import transforms
 from tqdm import tqdm
@@ -252,7 +254,7 @@ class TrainSliderProcess(BaseSDTrainProcess):
         for idx, adapter_image in enumerate(adapter_images):
             # we need to centrally crop the largest dimension of the image to match the batch shape after scaling
             # to the smallest dimension
-            img: Image.Image = Image.open(adapter_image)
+            img: Image.Image = load_image(adapter_image)
             if img.width > img.height:
                 # scale down so height is the same as batch
                 new_height = height

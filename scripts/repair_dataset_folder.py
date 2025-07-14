@@ -1,6 +1,5 @@
 import argparse
-from PIL import Image
-from PIL.ImageOps import exif_transpose
+from extensions_built_in.dataset_tools.tools.image_tools import load_image
 from tqdm import tqdm
 import os
 
@@ -35,7 +34,7 @@ for img_path in images:
         continue
 
     try:
-        img = Image.open(img_path)
+        img = load_image(img_path)
     except Exception as e:
         print(f"Error opening {img_path}: {e}")
         # delete it
@@ -44,12 +43,6 @@ for img_path in images:
         pbar.update(1)
         pbar.set_description(f"Repaired {num_repaired} images, Skipped {num_skipped}, Deleted {num_deleted}")
         continue
-
-
-    try:
-        img = exif_transpose(img)
-    except Exception as e:
-        print(f"Error rotating {img_path}: {e}")
 
     new_path = os.path.join(os.path.dirname(img_path), filename_no_ext + '.jpg')
 

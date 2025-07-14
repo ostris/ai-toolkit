@@ -23,7 +23,7 @@ class BaseProcess(object):
         self.timer: Timer = Timer(f'{self.name} Timer')
         self.performance_log_every = self.get_conf('performance_log_every', 0)
 
-        print(json.dumps(self.config, indent=4))
+        print(json.dumps(self.config, indent=4, ensure_ascii=False))
         
     def on_error(self, e: Exception):
         pass
