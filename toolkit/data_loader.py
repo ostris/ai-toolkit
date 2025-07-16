@@ -16,6 +16,7 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from tqdm import tqdm
 import albumentations as A
 
+from toolkit import image_utils
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
 from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin
@@ -100,8 +101,13 @@ class ImageDataset(Dataset, CaptionMixin):
         new_file_list = []
         bad_count = 0
         for file in tqdm(self.file_list):
-            img = Image.open(file)
-            if int(min(img.size) * self.scale) >= self.resolution:
+            try:
+                w, h = image_utils.get_image_size(file)
+            except image_utils.UnknownImageFormat:
+                img = exif_transpose(Image.open(file))
+                w, h = img.size
+            # img = Image.open(file)
+            if int(min([w, h]) * self.scale) >= self.resolution:
                 new_file_list.append(file)
             else:
                 bad_count += 1
