@@ -425,6 +425,9 @@ Everything else should work the same including layer targeting.
 
 Only larger updates are listed here. There are usually smaller daily updated that are omitted.
 
+### Jul 17, 2025
+- Make it easy to add control images to the samples in the ui
+
 ### Jul 11, 2025
 - Added better video config settings to the UI for video models.
 - Added Wan I2V training to the UI

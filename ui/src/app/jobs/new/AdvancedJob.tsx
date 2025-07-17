@@ -5,6 +5,7 @@ import YAML from 'yaml';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { Settings } from '@/hooks/useSettings';
+import { migrateJobConfig } from './jobConfig';
 
 type Props = {
   jobConfig: JobConfig;
@@ -115,6 +116,7 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
         } catch (e) {
           console.warn(e);
         }
+        migrateJobConfig(parsed);
         setJobConfig(parsed);
       }
     } catch (e) {

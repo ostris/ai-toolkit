@@ -90,17 +90,37 @@ export const defaultJobConfig: JobConfig = {
           sample_every: 250,
           width: 1024,
           height: 1024,
-          prompts: [
-            'woman with red hair, playing chess at the park, bomb going off in the background',
-            'a woman holding a coffee cup, in a beanie, sitting at a cafe',
-            'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
-            'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
-            'a bear building a log cabin in the snow covered mountains',
-            'woman playing the guitar, on stage, singing a song, laser lights, punk rocker',
-            'hipster man with a beard, building a chair, in a wood shop',
-            'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
-            "a man holding a sign that says, 'this is a sign'",
-            'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
+          samples: [
+            {
+              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background'
+            },
+            {
+              prompt: 'a woman holding a coffee cup, in a beanie, sitting at a cafe',
+            },
+            {
+              prompt: 'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
+            },
+            {
+              prompt: 'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
+            },
+            {
+              prompt: 'a bear building a log cabin in the snow covered mountains',
+            },
+            {
+              prompt: 'woman playing the guitar, on stage, singing a song, laser lights, punk rocker',
+            },
+            {
+              prompt: 'hipster man with a beard, building a chair, in a wood shop',
+            },
+            {
+              prompt: 'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
+            },
+            {
+              prompt: "a man holding a sign that says, 'this is a sign'",
+            },
+            {
+              prompt: 'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
+            },
           ],
           neg: '',
           seed: 42,
@@ -117,4 +137,24 @@ export const defaultJobConfig: JobConfig = {
     name: '[name]',
     version: '1.0',
   },
+};
+
+export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
+  // upgrade prompt strings to samples
+  if (
+    jobConfig?.config?.process &&
+    jobConfig.config.process[0]?.sample &&
+    Array.isArray(jobConfig.config.process[0].sample.prompts) &&
+    jobConfig.config.process[0].sample.prompts.length > 0
+  ) {
+    let newSamples = [];
+    for (const prompt of jobConfig.config.process[0].sample.prompts) {
+      newSamples.push({
+        prompt: prompt,
+      });
+    }
+    jobConfig.config.process[0].sample.samples = newSamples;
+    delete jobConfig.config.process[0].sample.prompts;
+  }
+  return jobConfig;
 };

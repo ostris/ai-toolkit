@@ -7,6 +7,7 @@ import { objectCopy } from '@/utils/basic';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X } from 'lucide-react';
+import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 
 type Props = {
   jobConfig: JobConfig;
@@ -116,6 +117,17 @@ export default function SimpleJob({
                   return newDataset;
                 });
                 setJobConfig(datasets, 'config.process[0].datasets');
+
+                // update samples
+                const hasSampleCtrlImg = newArch?.additionalSections?.includes('sample.ctrl_img') || false;
+                const samples = jobConfig.config.process[0].sample.samples.map(sample => {
+                  const newSample = objectCopy(sample);
+                  if (!hasSampleCtrlImg) {
+                    delete newSample.ctrl_img; // remove ctrl_img if not applicable
+                  }
+                  return newSample;
+                });
+                setJobConfig(samples, 'config.process[0].sample.samples');
               }}
               options={groupedModelOptions}
             />
@@ -648,32 +660,58 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
             </div>
-            <FormGroup label={`Sample Prompts (${jobConfig.config.process[0].sample.prompts.length})`} className="pt-2">
-              {modelArch?.additionalSections?.includes('sample.ctrl_img') && (
-                <div className="text-sm text-gray-100 mb-2 py-2 px-4 bg-yellow-700 rounded-lg">
-                  <p className="font-semibold mb-1">Control Images</p>
-                  To use control images on samples, add --ctrl_img to the prompts below.
-                  <br />
-                  Example: <code className="bg-yellow-900 p-1">make this a cartoon --ctrl_img /path/to/image.png</code>
-                </div>
-              )}
-              {jobConfig.config.process[0].sample.prompts.map((prompt, i) => (
-                <div key={i} className="flex items-center space-x-2">
+            <FormGroup label={`Sample Prompts (${jobConfig.config.process[0].sample.samples.length})`} className="pt-2">
+              <div></div>
+            </FormGroup>
+            {jobConfig.config.process[0].sample.samples.map((sample, i) => (
+              <div key={i} className="rounded-lg pl-4 pr-1 mb-4 bg-gray-950">
+                <div className="flex items-center space-x-2">
                   <div className="flex-1">
-                    <TextInput
-                      value={prompt}
-                      onChange={value => setJobConfig(value, `config.process[0].sample.prompts[${i}]`)}
-                      placeholder="Enter prompt"
-                      required
-                    />
+                    <div className="flex">
+                      <div className="flex-1">
+                        <TextInput
+                          label={`Prompt`}
+                          value={sample.prompt}
+                          onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                          placeholder="Enter prompt"
+                          required
+                        />
+                      </div>
+
+                      {modelArch?.additionalSections?.includes('sample.ctrl_img') && (
+                        <div
+                          className="h-14 w-14 mt-2 ml-4 border border-gray-500 flex items-center justify-center rounded cursor-pointer hover:bg-gray-700 transition-colors"
+                          style={{
+                            backgroundImage: sample.ctrl_img
+                              ? `url(${`/api/img/${encodeURIComponent(sample.ctrl_img)}`})`
+                              : 'none',
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            marginBottom: '-1rem',
+                          }}
+                          onClick={() => {
+                            openAddImageModal(imagePath => {
+                              console.log('Selected image path:', imagePath);
+                              if (!imagePath) return;
+                              setJobConfig(imagePath, `config.process[0].sample.samples[${i}].ctrl_img`);
+                            });
+                          }}
+                        >
+                          {!sample.ctrl_img && (
+                            <div className="text-gray-400 text-xs text-center font-bold">Add Control Image</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="pb-4"></div>
                   </div>
                   <div>
                     <button
                       type="button"
                       onClick={() =>
                         setJobConfig(
-                          jobConfig.config.process[0].sample.prompts.filter((_, index) => index !== i),
-                          'config.process[0].sample.prompts',
+                          jobConfig.config.process[0].sample.samples.filter((_, index) => index !== i),
+                          'config.process[0].sample.samples',
                         )
                       }
                       className="rounded-full p-1 text-sm"
@@ -682,23 +720,27 @@ export default function SimpleJob({
                     </button>
                   </div>
                 </div>
-              ))}
-              <button
-                type="button"
-                onClick={() =>
-                  setJobConfig([...jobConfig.config.process[0].sample.prompts, ''], 'config.process[0].sample.prompts')
-                }
-                className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
-              >
-                Add Prompt
-              </button>
-            </FormGroup>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() =>
+                setJobConfig(
+                  [...jobConfig.config.process[0].sample.samples, { prompt: '' }],
+                  'config.process[0].sample.samples',
+                )
+              }
+              className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+            >
+              Add Prompt
+            </button>
           </Card>
         </div>
 
         {status === 'success' && <p className="text-green-500 text-center">Training saved successfully!</p>}
         {status === 'error' && <p className="text-red-500 text-center">Error saving training. Please try again.</p>}
       </form>
+      <AddSingleImageModal />
     </>
   );
 }

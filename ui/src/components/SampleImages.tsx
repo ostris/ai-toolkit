@@ -14,7 +14,11 @@ export default function SampleImages({ job }: SampleImagesProps) {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
-      return sampleConfig.prompts.length;
+      if (sampleConfig.prompts) {
+        return sampleConfig.prompts.length;
+      } else {
+        return sampleConfig.samples.length;
+      }
     }
     return 10;
   }, [job]);

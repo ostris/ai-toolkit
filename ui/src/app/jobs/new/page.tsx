@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { defaultJobConfig, defaultDatasetConfig } from './jobConfig';
+import { defaultJobConfig, defaultDatasetConfig, migrateJobConfig } from './jobConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
-import { SelectInput} from '@/components/formInputs';
+import { SelectInput } from '@/components/formInputs';
 import useSettings from '@/hooks/useSettings';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import useDatasetList from '@/hooks/useDatasetList';
@@ -61,7 +61,7 @@ export default function TrainingForm() {
         .then(data => {
           console.log('Training:', data);
           setGpuIDs(data.gpu_ids);
-          setJobConfig(JSON.parse(data.job_config));
+          setJobConfig(migrateJobConfig(JSON.parse(data.job_config)));
         })
         .catch(error => console.error('Error fetching training:', error));
     }
@@ -181,11 +181,13 @@ export default function TrainingForm() {
         </div>
       ) : (
         <MainContent>
-          <ErrorBoundary fallback={
-            <div className="flex items-center justify-center h-64 text-lg text-red-600 font-medium bg-red-100 dark:bg-red-900/20 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-lg">
-              Advanced job detected. Please switch to advanced view to continue.
-            </div>
-          }>
+          <ErrorBoundary
+            fallback={
+              <div className="flex items-center justify-center h-64 text-lg text-red-600 font-medium bg-red-100 dark:bg-red-900/20 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-lg">
+                Advanced job detected. Please switch to advanced view to continue.
+              </div>
+            }
+          >
             <SimpleJob
               jobConfig={jobConfig}
               setJobConfig={setJobConfig}

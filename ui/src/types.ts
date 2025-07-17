@@ -133,12 +133,27 @@ export interface ModelConfig {
   model_kwargs: { [key: string]: any };
 }
 
+export interface SampleItem {
+  prompt: string;
+  width?: number
+  height?: number;
+  neg?: string;
+  seed?: number;
+  guidance_scale?: number;
+  sample_steps?: number;
+  fps?: number;
+  num_frames?: number;
+  ctrl_img?: string | null;
+  ctrl_idx?: number;
+}
+
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
   width: number;
   height: number;
-  prompts: string[];
+  prompts?: string[];
+  samples: SampleItem[];
   neg: string;
   seed: number;
   walk_seed: boolean;

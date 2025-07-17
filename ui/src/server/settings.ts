@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { defaultDatasetsFolder } from '@/paths';
+import { defaultDatasetsFolder, defaultDataRoot } from '@/paths';
 import { defaultTrainFolder } from '@/paths';
 import NodeCache from 'node-cache';
 
@@ -65,4 +65,23 @@ export const getHFToken = async () => {
   }
   myCache.set(key, token);
   return token;
+};
+
+export const getDataRoot = async () => {
+  const key = 'DATA_ROOT';
+  let dataRoot = myCache.get(key) as string;
+  if (dataRoot) {
+    return dataRoot;
+  }
+  let row = await prisma.settings.findFirst({
+    where: {
+      key: key,
+    },
+  });
+  dataRoot = defaultDataRoot;
+  if (row?.value && row.value !== '') {
+    dataRoot = row.value;
+  }
+  myCache.set(key, dataRoot);
+  return dataRoot;
 };
