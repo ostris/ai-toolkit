@@ -301,25 +301,31 @@ class BaseSDTrainProcess(BaseTrainProcess):
             extra_args = {}
             if self.adapter_config is not None and self.adapter_config.test_img_path is not None:
                 extra_args['adapter_image_path'] = test_image_paths[i]
+            
+            sample_item = sample_config.samples[i]
+            if sample_item.seed is not None:
+                current_seed = sample_item.seed
 
             gen_img_config_list.append(GenerateImageConfig(
                 prompt=prompt,  # it will autoparse the prompt
-                width=sample_config.width,
-                height=sample_config.height,
-                negative_prompt=sample_config.neg,
+                width=sample_item.width,
+                height=sample_item.height,
+                negative_prompt=sample_item.neg,
                 seed=current_seed,
-                guidance_scale=sample_config.guidance_scale,
+                guidance_scale=sample_item.guidance_scale,
                 guidance_rescale=sample_config.guidance_rescale,
-                num_inference_steps=sample_config.sample_steps,
-                network_multiplier=sample_config.network_multiplier,
+                num_inference_steps=sample_item.sample_steps,
+                network_multiplier=sample_item.network_multiplier,
                 output_path=output_path,
                 output_ext=sample_config.ext,
                 adapter_conditioning_scale=sample_config.adapter_conditioning_scale,
                 refiner_start_at=sample_config.refiner_start_at,
                 extra_values=sample_config.extra_values,
                 logger=self.logger,
-                num_frames=sample_config.num_frames,
-                fps=sample_config.fps,
+                num_frames=sample_item.num_frames,
+                fps=sample_item.fps,
+                ctrl_img=sample_item.ctrl_img,
+                ctrl_idx=sample_item.ctrl_idx,
                 **extra_args
             ))
 
