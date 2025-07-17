@@ -595,7 +595,7 @@ class BaseModel:
             network.train()
             network.multiplier = start_multiplier
 
-        self.unet.to(self.device_torch, dtype=self.torch_dtype)
+        self.unet.to(self.device_torch)
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])
