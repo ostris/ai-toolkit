@@ -291,7 +291,8 @@ class FluxKontextModel(BaseModel):
                 else:
                     guidance = torch.tensor(
                         [guidance_embedding_scale], device=self.device_torch)
-                    guidance = guidance.expand(latent_model_input.shape[0])
+                    # Expand guidance to match original batch_size
+                    guidance = guidance.expand(bs)
             else:
                 guidance = None
 
