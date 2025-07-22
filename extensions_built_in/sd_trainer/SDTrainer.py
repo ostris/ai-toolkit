@@ -143,6 +143,10 @@ class SDTrainer(BaseSDTrainProcess):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
+
+
+        if self.train_config.optimizer == 'schedulefree':
+            self.optimizer.train()
         
         # cache unconditional embeds (blank prompt)
         with torch.no_grad():
