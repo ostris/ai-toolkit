@@ -3,7 +3,7 @@ import { GroupedSelectOption } from "@/types";
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
 type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
-type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img' | 'datasets.num_frames';
+type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img' | 'datasets.num_frames' | 'model.low_vram';
 type ModelGroup = 'image' | 'video';
 
 export interface ModelArch {
@@ -126,7 +126,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.fps': [15, 1],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'wan21_i2v:14b480p',
@@ -145,7 +145,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'wan21_i2v:14b',
@@ -164,7 +164,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'wan21:14b',
@@ -182,7 +182,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.fps': [15, 1],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'lumina2',

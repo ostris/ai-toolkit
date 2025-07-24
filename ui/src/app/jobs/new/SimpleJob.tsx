@@ -86,13 +86,19 @@ export default function SimpleJob({
                 if (!currentArch || currentArch.name === value) {
                   return;
                 }
+                // update the defaults when a model is selected
+                const newArch = modelArchs.find(model => model.name === value);
+
+                 // update vram setting
+                if (!(newArch?.additionalSections?.includes('model.low_vram'))) {
+                  setJobConfig(false, 'config.process[0].model.low_vram');
+                }
 
                 // revert defaults from previous model
                 for (const key in currentArch.defaults) {
                   setJobConfig(currentArch.defaults[key][1], key);
                 }
-                // update the defaults when a model is selected
-                const newArch = modelArchs.find(model => model.name === value);
+
                 if (newArch?.defaults) {
                   for (const key in newArch.defaults) {
                     setJobConfig(newArch.defaults[key][0], key);
@@ -158,6 +164,15 @@ export default function SimpleJob({
                     onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
                   />
                 </div>
+              </FormGroup>
+            )}
+            {modelArch?.additionalSections?.includes('model.low_vram') && (
+              <FormGroup label="Options">
+                  <Checkbox
+                    label="Low VRAM"
+                    checked={jobConfig.config.process[0].model.low_vram}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
+                  />
               </FormGroup>
             )}
           </Card>
