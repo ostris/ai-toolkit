@@ -49,7 +49,7 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel, \
     StableDiffusionXLControlNetPipeline, StableDiffusionControlNetPipeline, StableDiffusion3Pipeline, \
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
-    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Text2ImgPipeline, \
+    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Pipeline, \
     FluxControlPipeline, Lumina2Transformer2DModel
 import diffusers
 from diffusers import \
@@ -886,7 +886,7 @@ class StableDiffusion:
                 flush()
 
             self.print_and_status_update("Making pipe")
-            pipe: Lumina2Text2ImgPipeline = Lumina2Text2ImgPipeline(
+            pipe: Lumina2Pipeline = Lumina2Pipeline(
                 scheduler=scheduler,
                 text_encoder=None,
                 tokenizer=tokenizer,
@@ -1256,7 +1256,7 @@ class StableDiffusion:
                     
                 pipeline.watermark = None
             elif self.is_lumina2:
-                pipeline = Lumina2Text2ImgPipeline(
+                pipeline = Lumina2Pipeline(
                     vae=self.vae,
                     transformer=self.unet,
                     text_encoder=self.text_encoder,
@@ -1580,7 +1580,7 @@ class StableDiffusion:
                                 **extra
                             ).images[0]
                     elif self.is_lumina2:
-                        pipeline: Lumina2Text2ImgPipeline = pipeline
+                        pipeline: Lumina2Pipeline = pipeline
 
                         img = pipeline(
                             prompt_embeds=conditional_embeds.text_embeds,
