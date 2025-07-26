@@ -816,6 +816,7 @@ class DatasetConfig:
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
         self.cache_clip_vision_to_disk: bool = kwargs.get('cache_clip_vision_to_disk', False)
+        self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
 
         self.standardize_images: bool = kwargs.get('standardize_images', False)
 

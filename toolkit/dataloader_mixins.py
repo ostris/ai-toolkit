@@ -1780,6 +1780,8 @@ class TextEmbeddingCachingMixin:
         if hasattr(super(), '__init__'):
             super().__init__(**kwargs)
         self.is_caching_text_embeddings = self.dataset_config.cache_text_embeddings
+        if self.is_caching_text_embeddings:
+            raise Exception("Error: caching text embeddings is a WIP and is not supported yet. Please set cache_text_embeddings to False in the dataset config")
 
     def cache_text_embeddings(self: 'AiToolkitDataset'):
         
