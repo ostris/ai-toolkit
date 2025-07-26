@@ -31,6 +31,7 @@ import torch
 from jobs.process import BaseSDTrainProcess
 from torchvision import transforms
 from diffusers import EMAModel
+from einops import rearrange
 import math
 from toolkit.train_tools import precondition_model_outputs_flow_match
 from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
@@ -1699,6 +1700,54 @@ class SDTrainer(BaseSDTrainProcess):
                             next_sample_noise = (stepped_latents - (1.0 - t_01) * original_samples) / t_01
                             noise = next_sample_noise
                             timesteps = stepped_timesteps
+
+                if self.train_config.latent_fixed_size > 0:
+                    latent_original_shape = noisy_latents.shape
+                    actual_patch_size = int(math.sqrt(self.sd.unet.config.in_channels // noise.shape[1])) * self.sd.unet.config.get("patch_size", 1)
+                    noise = rearrange(
+                        noise,
+                        "b c (h ph) (w pw) -> b c (h w) (ph pw)",
+                        ph=actual_patch_size,
+                        pw=actual_patch_size
+                    )
+                    batch.latents = rearrange(
+                        batch.latents,
+                        "b c (h ph) (w pw) -> b c (h w) (ph pw)",
+                        ph=actual_patch_size,
+                        pw=actual_patch_size
+                    )
+                    noisy_latents = rearrange(
+                        noisy_latents,
+                        "b c (h ph) (w pw) -> b c (h w) (ph pw)",
+                        ph=actual_patch_size,
+                        pw=actual_patch_size
+                    )
+                    latent_fixed_length = (self.train_config.latent_fixed_size ** 2) // (actual_patch_size ** 2)
+                    latent_sample_indices = torch.randperm(noise.shape[2], device=self.device_torch)[:latent_fixed_length]
+                    noise = noise[:,:,latent_sample_indices]
+                    batch.latents = batch.latents[:,:,latent_sample_indices]
+                    noisy_latents = noisy_latents[:,:,latent_sample_indices]
+                    noise = rearrange(
+                        noise,
+                        "b c h (ph pw) -> b c (h ph) pw",
+                        ph=actual_patch_size,
+                        pw=actual_patch_size
+                    )
+                    batch.latents = rearrange(
+                        batch.latents,
+                        "b c h (ph pw) -> b c (h ph) pw",
+                        ph=actual_patch_size,
+                        pw=actual_patch_size
+                    )
+                    noisy_latents = rearrange(
+                        noisy_latents,
+                        "b c h (ph pw) -> b c (h ph) pw",
+                        ph=actual_patch_size,
+                        pw=actual_patch_size
+                    )
+                    pred_kwargs["latent_original_shape"] = latent_original_shape
+                    pred_kwargs["latent_sample_indices"] = latent_sample_indices
+
                 # do a prior pred if we have an unconditional image, we will swap out the giadance later
                 if batch.unconditional_latents is not None or self.do_guided_loss:
                     # do guided loss
