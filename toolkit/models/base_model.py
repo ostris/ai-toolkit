@@ -1019,7 +1019,7 @@ class BaseModel:
                 image_list[i] = Resize((image.shape[1] // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR,
                                         image.shape[2] // VAE_SCALE_FACTOR * VAE_SCALE_FACTOR))(image)
 
-        images = torch.stack(image_list)
+        images = torch.stack(image_list).to(device, dtype=dtype)
         if isinstance(self.vae, AutoencoderTiny):
             latents = self.vae.encode(images, return_dict=False)[0]
         else:
