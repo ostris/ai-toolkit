@@ -1,9 +1,9 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, AlertTriangle } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions } from '@/utils/jobs';
+import { startJob, stopJob, deleteJob, forceJobStatus, getAvaliableJobActions } from '@/utils/jobs';
 
 interface JobActionBarProps {
   job: Job;
@@ -14,7 +14,7 @@ interface JobActionBarProps {
 }
 
 export default function JobActionBar({ job, onRefresh, afterDelete, className, hideView }: JobActionBarProps) {
-  const { canStart, canStop, canDelete, canEdit } = getAvaliableJobActions(job);
+  const { canStart, canStop, canDelete, canEdit, canForce } = getAvaliableJobActions(job);
 
   if (!afterDelete) afterDelete = onRefresh;
 
@@ -50,6 +50,25 @@ export default function JobActionBar({ job, onRefresh, afterDelete, className, h
           className={`ml-2 opacity-100`}
         >
           <Pause />
+        </Button>
+      )}
+      {canForce && (
+        <Button
+          onClick={() => {
+            openConfirm({
+              title: 'Force Job Status',
+              message: `This job appears to be stuck. Do you want to force it to "stopped" status? This should only be used when a job is not responding to normal stop commands.`,
+              type: 'warning',
+              confirmText: 'Force Stop',
+              onConfirm: async () => {
+                await forceJobStatus(job.id, 'stopped');
+                if (onRefresh) onRefresh();
+              },
+            });
+          }}
+          className={`ml-2 opacity-100 text-orange-400 hover:text-orange-300`}
+        >
+          <AlertTriangle />
         </Button>
       )}
       {!hideView && (
