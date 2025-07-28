@@ -211,6 +211,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
     },
     disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram'],
   },
   {
     name: 'hidream_e1',
@@ -228,7 +229,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram'],
   },
   {
     name: 'sdxl',
