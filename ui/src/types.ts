@@ -127,6 +127,8 @@ export interface ModelConfig {
   name_or_path: string;
   quantize: boolean;
   quantize_te: boolean;
+  qtype: string;
+  qtype_te: string;
   quantize_kwargs?: QuantizeKwargsConfig;
   arch: string;
   low_vram: boolean;

@@ -80,7 +80,9 @@ export const defaultJobConfig: JobConfig = {
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
           quantize: true,
+          qtype: 'qfloat8',
           quantize_te: true,
+          qtype_te: 'qfloat8',
           arch: 'flex1',
           low_vram: false,
           model_kwargs: {},

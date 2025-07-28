@@ -1,4 +1,4 @@
-import { GroupedSelectOption } from "@/types";
+import { GroupedSelectOption, SelectOption } from '@/types';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
@@ -18,9 +18,6 @@ export interface ModelArch {
 }
 
 const defaultNameOrPath = '';
-
-
-
 
 export const modelArchs: ModelArch[] = [
   {
@@ -262,9 +259,8 @@ export const modelArchs: ModelArch[] = [
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
-  return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+  return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
 }) as any;
-
 
 export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc, arch) => {
   const group = acc.find(g => g.label === arch.group);
@@ -278,3 +274,17 @@ export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc
   }
   return acc;
 }, [] as GroupedSelectOption[]);
+
+export const quantizationOptions: SelectOption[] = [
+  { value: '', label: '- NONE -' },
+  { value: 'qfloat8', label: 'float8 (default)' },
+  { value: 'uint8', label: '8 bit' },
+  { value: 'uint7', label: '7 bit' },
+  { value: 'uint6', label: '6 bit' },
+  { value: 'uint5', label: '5 bit' },
+  { value: 'uint4', label: '4 bit' },
+  { value: 'uint3', label: '3 bit' },
+  { value: 'uint2', label: '2 bit' },
+];
+
+export const defaultQtype = 'qfloat8';

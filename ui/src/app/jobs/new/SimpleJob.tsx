@@ -1,6 +1,6 @@
 'use client';
 import { useMemo } from 'react';
-import { modelArchs, ModelArch, groupedModelOptions } from './options';
+import { modelArchs, ModelArch, groupedModelOptions, quantizationOptions, defaultQtype } from './options';
 import { defaultDatasetConfig } from './jobConfig';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
@@ -40,10 +40,16 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
 
+  let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6';
+
+  if (modelArch?.disableSections?.includes('model.quantize')) {
+    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
+  }
+
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className={topBarClass}>
           <Card title="Job Settings">
             <TextInput
               label="Training Name"
@@ -89,8 +95,8 @@ export default function SimpleJob({
                 // update the defaults when a model is selected
                 const newArch = modelArchs.find(model => model.name === value);
 
-                 // update vram setting
-                if (!(newArch?.additionalSections?.includes('model.low_vram'))) {
+                // update vram setting
+                if (!newArch?.additionalSections?.includes('model.low_vram')) {
                   setJobConfig(false, 'config.process[0].model.low_vram');
                 }
 
@@ -150,32 +156,48 @@ export default function SimpleJob({
               placeholder=""
               required
             />
-            {modelArch?.disableSections?.includes('model.quantize') ? null : (
-              <FormGroup label="Quantize">
-                <div className="grid grid-cols-2 gap-2">
-                  <Checkbox
-                    label="Transformer"
-                    checked={jobConfig.config.process[0].model.quantize}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize')}
-                  />
-                  <Checkbox
-                    label="Text Encoder"
-                    checked={jobConfig.config.process[0].model.quantize_te}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
-                  />
-                </div>
-              </FormGroup>
-            )}
             {modelArch?.additionalSections?.includes('model.low_vram') && (
               <FormGroup label="Options">
-                  <Checkbox
-                    label="Low VRAM"
-                    checked={jobConfig.config.process[0].model.low_vram}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
-                  />
+                <Checkbox
+                  label="Low VRAM"
+                  checked={jobConfig.config.process[0].model.low_vram}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
+                />
               </FormGroup>
             )}
           </Card>
+          {modelArch?.disableSections?.includes('model.quantize') ? null : (
+            <Card title="Quantization">
+              <SelectInput
+                label="Transformer"
+                value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
+                onChange={value => {
+                  if (value === '') {
+                    setJobConfig(false, 'config.process[0].model.quantize');
+                    value = defaultQtype;
+                  } else {
+                    setJobConfig(true, 'config.process[0].model.quantize');
+                  }
+                  setJobConfig(value, 'config.process[0].model.qtype');
+                }}
+                options={quantizationOptions}
+              />
+              <SelectInput
+                label="Text Encoder"
+                value={jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''}
+                onChange={value => {
+                  if (value === '') {
+                    setJobConfig(false, 'config.process[0].model.quantize_te');
+                    value = defaultQtype;
+                  } else {
+                    setJobConfig(true, 'config.process[0].model.quantize_te');
+                  }
+                  setJobConfig(value, 'config.process[0].model.qtype_te');
+                }}
+                options={quantizationOptions}
+              />
+            </Card>
+          )}
           <Card title="Target Configuration">
             <SelectInput
               label="Target Type"
