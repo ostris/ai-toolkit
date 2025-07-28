@@ -213,6 +213,24 @@ export const modelArchs: ModelArch[] = [
     disableSections: ['network.conv'],
   },
   {
+    name: 'hidream_e1',
+    label: 'HiDream E1',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-E1-1', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.lr': [0.0001, 0.0001],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
+  },
+  {
     name: 'sdxl',
     label: 'SDXL',
     group: 'image',
