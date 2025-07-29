@@ -89,12 +89,18 @@ class AggressiveWanUnloadPipeline(WanPipeline):
         transformer: WanTransformer3DModel,
         vae: AutoencoderKLWan,
         scheduler: FlowMatchEulerDiscreteScheduler,
+        transformer_2: Optional[WanTransformer3DModel] = None,
+        boundary_ratio: Optional[float] = None,
+        expand_timesteps: bool = False,  # Wan2.2 ti2v
         device: torch.device = torch.device("cuda"),
     ):
         super().__init__(
             tokenizer=tokenizer,
             text_encoder=text_encoder,
             transformer=transformer,
+            transformer_2=transformer_2,
+            boundary_ratio=boundary_ratio,
+            expand_timesteps=expand_timesteps,
             vae=vae,
             scheduler=scheduler,
         )
@@ -300,6 +306,8 @@ class AggressiveWanUnloadPipeline(WanPipeline):
 
 class Wan21(BaseModel):
     arch = 'wan21'
+    _wan_generation_scheduler_config = scheduler_configUniPC
+    _wan_expand_timesteps = False
     def __init__(
             self,
             device,
@@ -331,7 +339,7 @@ class Wan21(BaseModel):
         dtype = self.torch_dtype
         model_path = self.model_config.name_or_path
 
-        self.print_and_status_update("Loading Wan2.1 model")
+        self.print_and_status_update("Loading Wan model")
         subfolder = 'transformer'
         transformer_path = model_path
         if os.path.exists(transformer_path):
@@ -380,7 +388,6 @@ class Wan21(BaseModel):
             # patch the state dict method
             patch_dequantization_on_save(transformer)
             quantization_type = get_qtype(self.model_config.qtype)
-            self.print_and_status_update("Quantizing transformer")
             if self.model_config.low_vram:
                 print("Quantizing blocks")
                 orig_exclude = copy.deepcopy(quantization_args['exclude'])
@@ -474,22 +481,26 @@ class Wan21(BaseModel):
         self.tokenizer = tokenizer
 
     def get_generation_pipeline(self):
-        scheduler = UniPCMultistepScheduler(**scheduler_configUniPC)
+        scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
         if self.model_config.low_vram:
             pipeline = AggressiveWanUnloadPipeline(
                 vae=self.vae,
                 transformer=self.model,
+                transformer_2=self.model,
                 text_encoder=self.text_encoder,
                 tokenizer=self.tokenizer,
                 scheduler=scheduler,
+                expand_timesteps=self._wan_expand_timesteps,
                 device=self.device_torch
             )
         else:
             pipeline = WanPipeline(
                 vae=self.vae,
                 transformer=self.unet,
+                transformer_2=self.unet,
                 text_encoder=self.text_encoder,
                 tokenizer=self.tokenizer,
+                expand_timesteps=self._wan_expand_timesteps,
                 scheduler=scheduler,
             )
 

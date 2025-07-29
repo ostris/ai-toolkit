@@ -1,0 +1,1 @@
+from .wan22_model import Wan22Model
