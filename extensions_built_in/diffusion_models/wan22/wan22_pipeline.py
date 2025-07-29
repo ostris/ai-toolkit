@@ -256,6 +256,14 @@ class Wan22Pipeline(WanPipeline):
 
         # Offload all models
         self.maybe_free_model_hooks()
+        
+        # move transformer back to device
+        if self._aggressive_offload:
+            print("Moving transformer back to device")
+            self.transformer.to(self._execution_device)
+            if self.transformer_2 is not None:
+                self.transformer_2.to(self._execution_device)
+            flush()
 
         if not return_dict:
             return (video,)
