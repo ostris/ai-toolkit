@@ -198,6 +198,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.fps': [24, 1],
       'config.process[0].sample.width': [768, 1024],
       'config.process[0].sample.height': [768, 1024],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
     },
     disableSections: ['network.conv'],
     additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
