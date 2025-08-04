@@ -95,4 +95,4 @@ def quantize(
                                         activations=activations, optimizer=optimizer)
         except Exception as e:
             print(f"Failed to quantize {name}: {e}")
-            raise e
+            # raise e
