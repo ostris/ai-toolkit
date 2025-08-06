@@ -58,6 +58,8 @@ class SDTrainer(BaseSDTrainProcess):
         self.do_guided_loss = False
         self.taesd: Optional[AutoencoderTiny] = None
 
+        self.cached_blank_embeds: Optional[PromptEmbeds] = None
+
         self._clip_image_embeds_unconditional: Union[List[str], None] = None
         self.negative_prompt_pool: Union[List[str], None] = None
         self.batch_negative_prompt: Union[List[str], None] = None
@@ -104,7 +106,9 @@ class SDTrainer(BaseSDTrainProcess):
             self._guidance_loss_target_batch = float(self.train_config.guidance_loss_target[0])
         else:
             raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
-
+            
+        # Cache for all dataset prompts when unloading text encoder
+        self.cached_prompt_embeds = {}
 
     def before_model_load(self):
         pass
@@ -199,21 +203,31 @@ class SDTrainer(BaseSDTrainProcess):
             with torch.no_grad():
                 if self.train_config.train_text_encoder:
                     raise ValueError("Cannot unload text encoder if training text encoder")
-                # cache embeddings
 
                 print_acc("\n***** UNLOADING TEXT ENCODER *****")
-                print_acc("This will train only with a blank prompt or trigger word, if set")
-                print_acc("If this is not what you want, remove the unload_text_encoder flag")
+                print_acc("Will cache all dataset prompts before training")
                 print_acc("***********************************")
                 print_acc("")
+                
+                # Убеждаемся что text encoder на GPU
                 self.sd.text_encoder_to(self.device_torch)
+                
+                # Кэшируем только системные промпты
                 self.cached_blank_embeds = self.sd.encode_prompt("")
                 if self.trigger_word is not None:
                     self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word)
                 if self.train_config.diff_output_preservation:
                     self.diff_output_preservation_embeds = self.sd.encode_prompt(self.train_config.diff_output_preservation_class)
 
-                # move back to cpu
+                # НОВЫЙ БЛОК: Кэшируем все промпты из датасета
+                print_acc("\n***** CACHING ALL DATASET PROMPTS *****")
+                print_acc("Caching prompts to free VRAM...")
+                print_acc("***************************************")
+                
+                self._cache_all_dataset_prompts()
+                
+                print_acc("All prompts cached, unloading text encoder")
+                # Окончательно выгружаем text encoder
                 self.sd.text_encoder_to('cpu')
                 flush()
         
@@ -234,8 +248,106 @@ class SDTrainer(BaseSDTrainProcess):
             if vae is not None and self.train_config.gradient_checkpointing:
                 vae.enable_gradient_checkpointing()
                 vae.train()
-
-
+    
+    
+    
+    def _cache_all_dataset_prompts(self):
+        """caching all the dataset prompts before training"""
+        from tqdm import tqdm
+        from toolkit.data_loader import get_dataloader_datasets
+        
+       
+        self.sd.text_encoder_to(self.device_torch)
+        
+        
+        all_prompts = set()
+        
+        try:
+            
+            if hasattr(self, 'data_loader') and self.data_loader is not None:
+                print_acc("Extracting prompts from datasets...")
+                datasets = get_dataloader_datasets(self.data_loader)
+                
+                for dataset in datasets:
+                    print_acc(f"Processing dataset: {dataset.dataset_config.folder_path}")
+                    
+                    # Проходим по всем file_items в датасете
+                    for file_item in tqdm(dataset.file_list, desc=f"Scanning {os.path.basename(dataset.dataset_config.folder_path)}"):
+                        # Загружаем caption для этого элемента
+                        file_item.load_caption(dataset.caption_dict)
+                        
+                        # Получаем основной caption
+                        if hasattr(file_item, 'caption') and file_item.caption:
+                            caption = file_item.caption.strip()
+                            if caption:
+                                all_prompts.add(caption)
+                        
+                        # Получаем короткий caption если есть
+                        if hasattr(file_item, 'caption_short') and file_item.caption_short:
+                            caption_short = file_item.caption_short.strip()
+                            if caption_short:
+                                all_prompts.add(caption_short)
+                        
+                        # Получаем raw_caption если есть
+                        if hasattr(file_item, 'raw_caption') and file_item.raw_caption:
+                            raw_caption = file_item.raw_caption.strip()
+                            if raw_caption:
+                                all_prompts.add(raw_caption)
+                                
+            else:
+                print_acc("data_loader not found, cannot cache prompts")
+                return
+                
+        except Exception as e:
+            print_acc(f"Error accessing datasets: {e}")
+            print_acc("Will use fallback method during training")
+            import traceback
+            traceback.print_exc()
+            return
+        
+        # Добавляем негативные промпты если есть
+        if self.negative_prompt_pool is not None:
+            for prompt in self.negative_prompt_pool:
+                if prompt and prompt.strip():
+                    all_prompts.add(prompt.strip())
+        
+        # Добавляем системные промпты
+        all_prompts.add("")  # blank prompt
+        
+        if hasattr(self, 'trigger_word') and self.trigger_word:
+            all_prompts.add(self.trigger_word)
+        
+        if hasattr(self.train_config, 'diff_output_preservation_class') and self.train_config.diff_output_preservation_class:
+            all_prompts.add(self.train_config.diff_output_preservation_class)
+        
+        if len(all_prompts) == 0:
+            print_acc("No prompts found to cache, will use fallback method")
+            return
+            
+        all_prompts = list(all_prompts)
+        print_acc(f"Found {len(all_prompts)} unique prompts to cache")
+        
+        # Кэшируем с прогресс баром
+        self.cached_prompt_embeds = {}
+        
+        with torch.no_grad():
+            for prompt in tqdm(all_prompts, desc="Caching prompt embeddings"):
+                if prompt not in self.cached_prompt_embeds:
+                    try:
+                        embed = self.sd.encode_prompt(prompt, long_prompts=self.do_long_prompts)
+                        # ИЗМЕНЕНИЕ: Кэшируем в CPU RAM, а не в GPU VRAM
+                        self.cached_prompt_embeds[prompt] = embed.to(
+                            'cpu', dtype=self.sd.torch_dtype  # ← CPU вместо GPU!
+                        ).detach()
+                    except Exception as e:
+                        print_acc(f"Error encoding prompt '{prompt[:50]}...': {e}")
+                        continue
+        
+        print_acc(f"Successfully cached {len(self.cached_prompt_embeds)} prompt embeddings")
+        
+        
+   
+    
     def process_output_for_turbo(self, pred, noisy_latents, timesteps, noise, batch):
         # to process turbo learning, we make one big step from our current timestep to the end
         # we then denoise the prediction on that remaining step and target our loss to our target latents
@@ -1131,6 +1243,8 @@ class SDTrainer(BaseSDTrainProcess):
                     mask_multiplier = mask_multiplier.to(self.device_torch, dtype=dtype).detach()
                     # make avg 1.0
                     mask_multiplier = mask_multiplier / mask_multiplier.mean()
+                    
+            
 
         def get_adapter_multiplier():
             if self.adapter and isinstance(self.adapter, T2IAdapter):
@@ -1296,16 +1410,45 @@ class SDTrainer(BaseSDTrainProcess):
                     unconditional_embeds = None
                     if self.train_config.unload_text_encoder:
                         with torch.set_grad_enabled(False):
-                            embeds_to_use = self.cached_blank_embeds.clone().detach().to(
-                                self.device_torch, dtype=dtype
-                            )
-                            if self.cached_trigger_embeds is not None and not is_reg:
-                                embeds_to_use = self.cached_trigger_embeds.clone().detach().to(
-                                    self.device_torch, dtype=dtype
-                                )
-                            conditional_embeds = concat_prompt_embeds(
-                                [embeds_to_use] * noisy_latents.shape[0]
-                            )
+                            # Используем кэшированные эмбеддинги вместо обработки на лету
+                            if hasattr(self, 'cached_prompt_embeds') and len(self.cached_prompt_embeds) > 0:
+                                # Используем полностью кэшированные эмбеддинги
+                                batch_embeds = []
+                                for prompt in conditioned_prompts:
+                                    if prompt in self.cached_prompt_embeds:
+                                        # ИЗМЕНЕНИЕ: Загружаем с CPU на GPU при использовании
+                                        embed = self.cached_prompt_embeds[prompt].to(self.device_torch, dtype=dtype)
+                                        batch_embeds.append(embed)
+                                    else:
+                                        # Fallback: если промпт не найден в кэше (не должно происходить)
+                                        print_acc(f"WARNING: Prompt not found in cache: {prompt[:50]}...")
+                                        # Временно загружаем text encoder
+                                        self.sd.text_encoder_to(self.device_torch)
+                                        embed = self.sd.encode_prompt(prompt, long_prompts=self.do_long_prompts).detach()
+                                        batch_embeds.append(embed.to(self.device_torch, dtype=dtype))
+                                        self.sd.text_encoder_to('cpu')
+                                        flush()
+                                
+                                conditional_embeds = concat_prompt_embeds(batch_embeds)
+                            else:
+                                # Fallback к старому методу если кэш не создан
+                                batch_embeds = []
+                                for prompt in conditioned_prompts:
+                                    print_acc(f"Processing prompt: {prompt[:50]}...")
+                                    
+                                    # Временно загружаем text encoder
+                                    self.sd.text_encoder_to(self.device_torch)
+                                    
+                                    # Энкодим промпт
+                                    embed = self.sd.encode_prompt(prompt, long_prompts=self.do_long_prompts).detach()
+                                    batch_embeds.append(embed.to(self.device_torch, dtype=dtype))
+                                    
+                                    # Выгружаем обратно
+                                    self.sd.text_encoder_to('cpu')
+                                    flush()
+                                
+                                conditional_embeds = concat_prompt_embeds(batch_embeds)
+                            
                             if self.train_config.do_cfg:
                                 unconditional_embeds = self.cached_blank_embeds.clone().detach().to(
                                     self.device_torch, dtype=dtype
@@ -1800,7 +1943,10 @@ class SDTrainer(BaseSDTrainProcess):
                     # loss.backward()
                     # else:
                     self.accelerator.backward(loss)
-
+        
+        
+ 
+                    
         return loss.detach()
         # flush()
 
