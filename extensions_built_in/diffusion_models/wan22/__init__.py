@@ -1,1 +1,1 @@
-from .wan22_model import Wan22Model
+from .wan22_5b_model import Wan225bModel

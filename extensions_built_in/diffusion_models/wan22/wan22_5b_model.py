@@ -80,7 +80,7 @@ def time_text_monkeypatch(
 
     return temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image
 
-class Wan22Model(Wan21):
+class Wan225bModel(Wan21):
     arch = "wan22_5b"
     _wan_generation_scheduler_config = scheduler_configUniPC
     _wan_expand_timesteps = True

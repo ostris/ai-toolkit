@@ -136,7 +136,7 @@ class QwenImageModel(BaseModel):
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Text Encoder")
             quantize(text_encoder, weights=get_qtype(
-                self.model_config.qtype))
+                self.model_config.qtype_te))
             freeze(text_encoder)
             flush()
 
