@@ -86,6 +86,7 @@ export interface DatasetConfig {
   control_path: string | null;
   num_frames: number;
   shrink_video_to_frames: boolean;
+  do_i2v: boolean;
 }
 
 export interface EMAConfig {

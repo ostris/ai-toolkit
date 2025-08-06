@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { CircleHelp } from 'lucide-react';
 import { getDoc } from '@/docs';
 import { openDoc } from '@/components/DocModal';
-import { GroupedSelectOption, SelectOption } from '@/types';
+import { ConfigDoc, GroupedSelectOption, SelectOption } from '@/types';
 
 const Select = dynamic(() => import('react-select'), { ssr: false });
 
@@ -16,7 +16,8 @@ const inputClasses =
 
 export interface InputProps {
   label?: string;
-  docKey?: string;
+  docKey?: string | null;
+  doc?: ConfigDoc | null;
   className?: string;
   placeholder?: string;
   required?: boolean;
@@ -29,37 +30,39 @@ export interface TextInputProps extends InputProps {
   disabled?: boolean;
 }
 
-export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(
-  ({ label, value, onChange, placeholder, required, disabled, type = 'text', className, docKey = null }, ref) => {
-    const doc = getDoc(docKey);
-    return (
-      <div className={classNames(className)}>
-        {label && (
-          <label className={labelClasses}>
-            {label}{' '}
-            {doc && (
-              <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
-                <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
-              </div>
-            )}
-          </label>
-        )}
-        <input
-          ref={ref}
-          type={type}
-          value={value}
-          onChange={e => {
-            if (!disabled) onChange(e.target.value);
-          }}
-          className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
-          placeholder={placeholder}
-          required={required}
-          disabled={disabled}
-        />
-      </div>
-    );
-  },
-);
+export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: TextInputProps, ref) => {
+  const { label, value, onChange, placeholder, required, disabled, type = 'text', className, docKey = null } = props;
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
+  return (
+    <div className={classNames(className)}>
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
+      <input
+        ref={ref}
+        type={type}
+        value={value}
+        onChange={e => {
+          if (!disabled) onChange(e.target.value);
+        }}
+        className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
+        placeholder={placeholder}
+        required={required}
+        disabled={disabled}
+      />
+    </div>
+  );
+});
 
 // 👇 Helpful for debugging
 TextInput.displayName = 'TextInput';
@@ -73,7 +76,10 @@ export interface NumberInputProps extends InputProps {
 
 export const NumberInput = (props: NumberInputProps) => {
   const { label, value, onChange, placeholder, required, min, max, docKey = null } = props;
-  const doc = getDoc(docKey);
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
 
   // Add controlled internal state to properly handle partial inputs
   const [inputValue, setInputValue] = React.useState<string | number>(value ?? '');
@@ -147,12 +153,17 @@ export interface SelectInputProps extends InputProps {
 
 export const SelectInput = (props: SelectInputProps) => {
   const { label, value, onChange, options, docKey = null } = props;
-  const doc = getDoc(docKey);
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
   let selectedOption: SelectOption | undefined;
   if (options && options.length > 0) {
     // see if grouped options
     if ('options' in options[0]) {
-      selectedOption = (options as GroupedSelectOption[]).flatMap(group => group.options).find(opt => opt.value === value);
+      selectedOption = (options as GroupedSelectOption[])
+        .flatMap(group => group.options)
+        .find(opt => opt.value === value);
     } else {
       selectedOption = (options as SelectOption[]).find(opt => opt.value === value);
     }
@@ -196,10 +207,17 @@ export interface CheckboxProps {
   className?: string;
   required?: boolean;
   disabled?: boolean;
+  docKey?: string | null;
+  doc?: ConfigDoc | null;
 }
 
 export const Checkbox = (props: CheckboxProps) => {
   const { label, checked, onChange, required, disabled } = props;
+  let { doc } = props;
+  if (!doc && props.docKey) {
+    doc = getDoc(props.docKey);
+  }
+
   const id = React.useId();
 
   return (
@@ -227,15 +245,22 @@ export const Checkbox = (props: CheckboxProps) => {
         />
       </button>
       {label && (
-        <label
-          htmlFor={id}
-          className={classNames(
-            'text-sm font-medium cursor-pointer select-none',
-            disabled ? 'text-gray-500' : 'text-gray-300',
+        <>
+          <label
+            htmlFor={id}
+            className={classNames(
+              'text-sm font-medium cursor-pointer select-none',
+              disabled ? 'text-gray-500' : 'text-gray-300',
+            )}
+          >
+            {label}
+          </label>
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
           )}
-        >
-          {label}
-        </label>
+        </>
       )}
     </div>
   );
@@ -244,12 +269,17 @@ export const Checkbox = (props: CheckboxProps) => {
 interface FormGroupProps {
   label?: string;
   className?: string;
-  docKey?: string;
+  docKey?: string | null;
+  doc?: ConfigDoc | null;
   children: React.ReactNode;
 }
 
-export const FormGroup: React.FC<FormGroupProps> = ({ label, className, children, docKey = null }) => {
-  const doc = getDoc(docKey);
+export const FormGroup: React.FC<FormGroupProps> = props => {
+  const { label, className, children, docKey = null } = props;
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
   return (
     <div className={classNames(className)}>
       {label && (

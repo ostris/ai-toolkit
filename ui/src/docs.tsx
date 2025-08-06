@@ -74,6 +74,16 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.do_i2v': {
+    title: 'Do I2V',
+    description: (
+      <>
+        For video models that can handle both I2V (Image to Video) and T2V (Text to Video), this option sets this dataset
+        to be trained as an I2V dataset. This means that the first frame will be extracted from the video and used as the start image
+        for the video. If this option is not set, the dataset will be treated as a T2V dataset.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

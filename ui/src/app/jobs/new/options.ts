@@ -3,7 +3,7 @@ import { GroupedSelectOption, SelectOption } from '@/types';
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
 type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
-type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img' | 'datasets.num_frames' | 'model.low_vram';
+type AdditionalSections = 'datasets.control_path' | 'datasets.do_i2v' | 'sample.ctrl_img' | 'datasets.num_frames' | 'model.low_vram';
 type ModelGroup = 'image' | 'video';
 
 export interface ModelArch {
@@ -201,7 +201,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.do_i2v'],
   },
   {
     name: 'lumina2',

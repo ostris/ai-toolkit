@@ -301,3 +301,10 @@ class DataLoaderBatchDTO:
         del self.control_tensor
         for file_item in self.file_items:
             file_item.cleanup()
+    
+    @property
+    def dataset_config(self) -> 'DatasetConfig':
+        if len(self.file_items) > 0:
+            return self.file_items[0].dataset_config
+        else:
+            return None
