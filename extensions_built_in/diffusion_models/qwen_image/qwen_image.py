@@ -130,6 +130,10 @@ class QwenImageModel(BaseModel):
         text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             base_model_path, subfolder="text_encoder", torch_dtype=dtype
         )
+        
+        # remove the visual model as it is not needed for image generation
+        text_encoder.model.visual = None
+        
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
 
