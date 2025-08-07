@@ -168,7 +168,9 @@ class QwenImageModel(BaseModel):
         text_encoder = [pipe.text_encoder]
         tokenizer = [pipe.tokenizer]
 
-        pipe.transformer = pipe.transformer.to(self.device_torch)
+        # leave it on cpu for now
+        if not self.low_vram:
+            pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
         # just to make sure everything is on the right device and dtype
@@ -210,6 +212,7 @@ class QwenImageModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
+        self.model.to(self.device_torch, dtype=self.torch_dtype)
         control_img = None
         if gen_config.ctrl_img is not None:
             raise NotImplementedError(

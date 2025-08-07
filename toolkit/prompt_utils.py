@@ -92,6 +92,56 @@ class PromptEmbeds:
             pe.attention_mask = pe.attention_mask.expand(batch_size, -1)
         return pe
 
+    def save(self, path: str):
+        """
+        Save the prompt embeds to a file.
+        :param path: The path to save the prompt embeds.
+        """
+        pe = self.clone()
+        state_dict = {}
+        if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
+            for i, text_embed in enumerate(pe.text_embeds):
+                state_dict[f"text_embed_{i}"] = text_embed.cpu()
+        else:
+            state_dict["text_embed"] = pe.text_embeds.cpu()
+            
+        if pe.pooled_embeds is not None:
+            state_dict["pooled_embed"] = pe.pooled_embeds.cpu()
+        if pe.attention_mask is not None:
+            state_dict["attention_mask"] = pe.attention_mask.cpu()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        save_file(state_dict, path)
+    
+    @classmethod
+    def load(cls, path: str) -> 'PromptEmbeds':
+        """
+        Load the prompt embeds from a file.
+        :param path: The path to load the prompt embeds from.
+        :return: An instance of PromptEmbeds.
+        """
+        state_dict = load_file(path, device='cpu')
+        text_embeds = []
+        pooled_embeds = None
+        attention_mask = None
+        for key in sorted(state_dict.keys()):
+            if key.startswith("text_embed_"):
+                text_embeds.append(state_dict[key])
+            elif key == "text_embed":
+                text_embeds.append(state_dict[key])
+            elif key == "pooled_embed":
+                pooled_embeds = state_dict[key]
+            elif key == "attention_mask":
+                attention_mask = state_dict[key]
+        pe = cls(None)
+        pe.text_embeds = text_embeds
+        if len(text_embeds) == 1:
+            pe.text_embeds = text_embeds[0]
+        if pooled_embeds is not None:
+            pe.pooled_embeds = pooled_embeds
+        if attention_mask is not None:
+            pe.attention_mask = attention_mask
+        return pe
+
 
 class EncodedPromptPair:
     def __init__(

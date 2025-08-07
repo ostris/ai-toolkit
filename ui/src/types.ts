@@ -110,6 +110,7 @@ export interface TrainConfig {
   ema_config?: EMAConfig;
   dtype: string;
   unload_text_encoder: boolean;
+  cache_text_embeddings: boolean;
   optimizer_params: {
     weight_decay: number;
   };

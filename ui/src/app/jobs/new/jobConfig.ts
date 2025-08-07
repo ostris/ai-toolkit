@@ -66,6 +66,7 @@ export const defaultJobConfig: JobConfig = {
             weight_decay: 1e-4,
           },
           unload_text_encoder: false,
+          cache_text_embeddings: false,
           lr: 0.0001,
           ema_config: {
             use_ema: false,

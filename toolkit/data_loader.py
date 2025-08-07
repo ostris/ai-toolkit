@@ -558,6 +558,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 self.cache_latents_all_latents()
             if self.is_caching_clip_vision_to_disk:
                 self.cache_clip_vision_to_disk()
+            if self.is_caching_text_embeddings:
+                self.cache_text_embeddings()
             if self.is_generating_controls:
                 # always do this last
                 self.setup_controls()

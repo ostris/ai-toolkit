@@ -389,22 +389,40 @@ export default function SimpleJob({
                     onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
                   />
                 </FormGroup>
-                <NumberInput
-                  label="EMA Decay"
-                  className="pt-2"
-                  value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
-                  placeholder="eg. 0.99"
-                  min={0}
-                />
-                <FormGroup label="Unload Text Encoder" className="pt-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <Checkbox
-                      label="Unload TE"
-                      checked={jobConfig.config.process[0].train.unload_text_encoder || false}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.unload_text_encoder')}
-                    />
-                  </div>
+                {jobConfig.config.process[0].train.ema_config?.use_ema && (
+                  <NumberInput
+                    label="EMA Decay"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
+                    placeholder="eg. 0.99"
+                    min={0}
+                  />
+                )}
+
+                <FormGroup label="Text Encoder Optimizations" className="pt-2">
+                  <Checkbox
+                    label="Unload TE"
+                    checked={jobConfig.config.process[0].train.unload_text_encoder || false}
+                    docKey={'train.unload_text_encoder'}
+                    onChange={(value) => {
+                      setJobConfig(value, 'config.process[0].train.unload_text_encoder')
+                      if (value) {
+                        setJobConfig(false, 'config.process[0].train.cache_text_embeddings');
+                      }
+                    }}
+                  />
+                  <Checkbox
+                    label="Cache Text Embeddings"
+                    checked={jobConfig.config.process[0].train.cache_text_embeddings || false}
+                    docKey={'train.cache_text_embeddings'}
+                    onChange={(value) => {
+                      setJobConfig(value, 'config.process[0].train.cache_text_embeddings')
+                      if (value) {
+                        setJobConfig(false, 'config.process[0].train.unload_text_encoder')
+                      }
+                    }}
+                  />
                 </FormGroup>
               </div>
               <div>
@@ -416,21 +434,27 @@ export default function SimpleJob({
                     onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
                   />
                 </FormGroup>
-                <NumberInput
-                  label="DOP Loss Multiplier"
-                  className="pt-2"
-                  value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
-                  placeholder="eg. 1.0"
-                  min={0}
-                />
-                <TextInput
-                  label="DOP Preservation Class"
-                  className="pt-2"
-                  value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
-                  placeholder="eg. woman"
-                />
+                {jobConfig.config.process[0].train.diff_output_preservation && (
+                  <>
+                    <NumberInput
+                      label="DOP Loss Multiplier"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
+                      onChange={value =>
+                        setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')
+                      }
+                      placeholder="eg. 1.0"
+                      min={0}
+                    />
+                    <TextInput
+                      label="DOP Preservation Class"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
+                      placeholder="eg. woman"
+                    />
+                  </>
+                )}
               </div>
             </div>
           </Card>
@@ -524,16 +548,14 @@ export default function SimpleJob({
                           checked={dataset.is_reg || false}
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].is_reg`)}
                         />
-                        {
-                          modelArch?.additionalSections?.includes('datasets.do_i2v') && (
-                            <Checkbox
-                              label="Do I2V"
-                              checked={dataset.do_i2v || false}
-                              onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].do_i2v`)}
-                              docKey="datasets.do_i2v"
-                            />
-                          )
-                        }
+                        {modelArch?.additionalSections?.includes('datasets.do_i2v') && (
+                          <Checkbox
+                            label="Do I2V"
+                            checked={dataset.do_i2v || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].do_i2v`)}
+                            docKey="datasets.do_i2v"
+                          />
+                        )}
                       </FormGroup>
                     </div>
                     <div>

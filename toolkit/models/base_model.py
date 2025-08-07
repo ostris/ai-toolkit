@@ -168,6 +168,8 @@ class BaseModel:
         self._after_sample_img_hooks = []
         self._status_update_hooks = []
         self.is_transformer = False
+        
+        self.sample_prompts_cache = None
 
     # properties for old arch for backwards compatibility
     @property
@@ -484,19 +486,23 @@ class BaseModel:
                             quad_count=4
                         )
 
-                    # encode the prompt ourselves so we can do fun stuff with embeddings
-                    if isinstance(self.adapter, CustomAdapter):
-                        self.adapter.is_unconditional_run = False
-                    conditional_embeds = self.encode_prompt(
-                        gen_config.prompt, gen_config.prompt_2, force_all=True)
+                    if self.sample_prompts_cache is not None:
+                        conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
+                        unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
+                    else: 
+                        # encode the prompt ourselves so we can do fun stuff with embeddings
+                        if isinstance(self.adapter, CustomAdapter):
+                            self.adapter.is_unconditional_run = False
+                        conditional_embeds = self.encode_prompt(
+                            gen_config.prompt, gen_config.prompt_2, force_all=True)
 
-                    if isinstance(self.adapter, CustomAdapter):
-                        self.adapter.is_unconditional_run = True
-                    unconditional_embeds = self.encode_prompt(
-                        gen_config.negative_prompt, gen_config.negative_prompt_2, force_all=True
-                    )
-                    if isinstance(self.adapter, CustomAdapter):
-                        self.adapter.is_unconditional_run = False
+                        if isinstance(self.adapter, CustomAdapter):
+                            self.adapter.is_unconditional_run = True
+                        unconditional_embeds = self.encode_prompt(
+                            gen_config.negative_prompt, gen_config.negative_prompt_2, force_all=True
+                        )
+                        if isinstance(self.adapter, CustomAdapter):
+                            self.adapter.is_unconditional_run = False
 
                     # allow any manipulations to take place to embeddings
                     gen_config.post_process_embeddings(
