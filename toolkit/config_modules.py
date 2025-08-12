@@ -601,6 +601,16 @@ class ModelConfig:
         # 20 different model variants
         self.extras_name_or_path = kwargs.get("extras_name_or_path", self.name_or_path)
         
+        # path to an accuracy recovery adapter, either local or remote
+        self.accuracy_recovery_adapter = kwargs.get("accuracy_recovery_adapter", None)
+        
+        # parse ARA from qtype
+        if self.qtype is not None and "|" in self.qtype:
+            self.qtype, self.accuracy_recovery_adapter = self.qtype.split('|')
+
+        # compile the model with torch compile
+        self.compile = kwargs.get("compile", False)
+        
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         

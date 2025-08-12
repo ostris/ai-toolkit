@@ -15,6 +15,7 @@ export interface ModelArch {
   defaults?: { [key: string]: any };
   disableSections?: DisableableSections[];
   additionalSections?: AdditionalSections[];
+  accuracyRecoveryAdapters?: { [key: string]: string };
 }
 
 const defaultNameOrPath = '';
@@ -230,9 +231,13 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors',
+    },
   },
   {
     name: 'hidream',

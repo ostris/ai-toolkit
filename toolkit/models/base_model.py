@@ -168,8 +168,10 @@ class BaseModel:
         self._after_sample_img_hooks = []
         self._status_update_hooks = []
         self.is_transformer = False
-        
+
         self.sample_prompts_cache = None
+        
+        self.accuracy_recovery_adapter: Union[None, 'LoRASpecialNetwork'] = None
 
     # properties for old arch for backwards compatibility
     @property
