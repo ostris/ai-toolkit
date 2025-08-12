@@ -372,11 +372,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         })
         o_dict['ss_base_model_version'] = self.sd.get_base_model_version()
 
-        o_dict = add_base_model_info_to_meta(
-            o_dict,
-            is_v2=self.model_config.is_v2,
-            is_xl=self.model_config.is_xl,
-        )
+        # o_dict = add_base_model_info_to_meta(
+        #     o_dict,
+        #     is_v2=self.model_config.is_v2,
+        #     is_xl=self.model_config.is_xl,
+        # )
         o_dict['ss_output_name'] = self.job.name
 
         if self.trigger_word is not None:
