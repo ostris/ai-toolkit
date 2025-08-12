@@ -317,6 +317,7 @@ LossTarget = Literal['noise', 'source', 'unaugmented', 'differential_noise']
 
 class TrainConfig:
     def __init__(self, **kwargs):
+        self.enable_ti = kwargs.get('enable_ti', False)
         self.noise_scheduler = kwargs.get('noise_scheduler', 'ddpm')
         self.content_or_style: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
         self.content_or_style_reg: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
@@ -757,6 +758,9 @@ class DatasetConfig:
     """
 
     def __init__(self, **kwargs):
+        self.trigger_token: str = kwargs.get("trigger_token", None)
+        self.initializer_concept: str = kwargs.get("initializer_concept", None)
+
         self.type = kwargs.get('type', 'image')  # sd, slider, reference
         # will be legacy
         self.folder_path: str = kwargs.get('folder_path', None)

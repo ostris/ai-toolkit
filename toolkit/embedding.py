@@ -16,83 +16,92 @@ if TYPE_CHECKING:
 
 
 # this is a frankenstein mix of automatic1111 and my own code
+from typing import List, Union 
 
 class Embedding:
     def __init__(
             self,
             sd: 'StableDiffusion',
-            embed_config: 'EmbeddingConfig',
+            embed_config: Union[List['EmbeddingConfig'], 'EmbeddingConfig'],
             state_dict: OrderedDict = None,
     ):
-        self.name = embed_config.trigger
-        self.sd = sd
-        self.trigger = embed_config.trigger
-        self.embed_config = embed_config
-        self.step = 0
-        # setup our embedding
-        # Add the placeholder token in tokenizer
-        # placeholder_tokens = [self.embed_config.trigger]
-        placeholder_tokens = []
+        
+        if not isinstance(embed_config, List):
+            embed_config = [embed_config]
+        self.trigger = []
+        self.embedding_tokens = {}
 
-        # add dummy tokens for multi-vector
-        # additional_tokens = []
-        # for i in range(1, self.embed_config.tokens):
-        #     additional_tokens.append(f"{self.embed_config.trigger}_{i}")
-        # placeholder_tokens += additional_tokens
+        # import pdb; pdb.set_trace()
+        for config in embed_config:
+            self.name = config.trigger
+            self.sd = sd
+            self.trigger.append(config.trigger)
+            self.config = config
+            self.step = 0
+            # setup our embedding
+            # Add the placeholder token in tokenizer
+            # placeholder_tokens = [self.config.trigger]
+            placeholder_tokens = []
 
-        # handle dual tokenizer
-        self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
-        self.text_encoder_list = self.sd.text_encoder if isinstance(self.sd.text_encoder, list) else [
-            self.sd.text_encoder]
-
-        self.placeholder_token_ids = []
-        self.embedding_tokens = []
-
-        print(f"Adding {placeholder_tokens} tokens to tokenizer")
-        print(f"Adding {self.embed_config.tokens} tokens to tokenizer")
-
-        for text_encoder, tokenizer in zip(self.text_encoder_list, self.tokenizer_list):
-            # num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
-            # if num_added_tokens != self.embed_config.tokens:
-            #     raise ValueError(
-            #         f"The tokenizer already contains the token {self.embed_config.trigger}. Please pass a different"
-            #         f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
-            #     )
-
-            # Convert the initializer_token, placeholder_token to ids
-            init_token_ids = tokenizer.encode(self.embed_config.init_words, add_special_tokens=False)
-
-            num_tokens = len(init_token_ids)
             # add dummy tokens for multi-vector
-            additional_tokens = []
-            for i in range(0, num_tokens):
-                additional_tokens.append(f"{self.embed_config.trigger}_{i}")
-            placeholder_tokens += additional_tokens
+            # additional_tokens = []
+            # for i in range(1, self.config.tokens):
+            #     additional_tokens.append(f"{self.config.trigger}_{i}")
+            # placeholder_tokens += additional_tokens
 
-            num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
-            if num_added_tokens != num_tokens:
-                raise ValueError(
-                    f"The tokenizer already contains the token {self.embed_config.trigger}. Please pass a different"
-                    f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
-                )
-            
-            placeholder_token_ids = tokenizer.encode(''.join(placeholder_tokens), add_special_tokens=False) # space or no space? 🤔
-            self.placeholder_token_ids.append(placeholder_token_ids)
+            # handle dual tokenizer
+            self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
+            self.text_encoder_list = self.sd.text_encoder if isinstance(self.sd.text_encoder, list) else [
+                self.sd.text_encoder]
 
-            # Resize the token embeddings as we are adding new special tokens to the tokenizer
-            text_encoder.resize_token_embeddings(len(tokenizer))
+            self.placeholder_token_ids = []
+            self.embedding_tokens[self.config.trigger] = []
 
-            # Initialise the newly added placeholder token with the embeddings of the initializer token
-            token_embeds = text_encoder.get_input_embeddings().weight.data
-            with torch.no_grad():
-                for initializer_token_id, token_id in zip(init_token_ids, placeholder_token_ids):
-                    token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+            # print(f"Adding {placeholder_tokens} tokens to tokenizer")
+            # print(f"Adding {self.config.tokens} tokens to tokenizer")
 
-            # replace "[name] with this. on training. This is automatically generated in pipeline on inference
-            self.embedding_tokens.append(" ".join(tokenizer.convert_ids_to_tokens(placeholder_token_ids)))
+            for text_encoder, tokenizer in zip(self.text_encoder_list, self.tokenizer_list):
+                # num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
+                # if num_added_tokens != self.config.tokens:
+                #     raise ValueError(
+                #         f"The tokenizer already contains the token {self.config.trigger}. Please pass a different"
+                #         f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
+                #     )
 
-        # backup text encoder embeddings
-        self.orig_embeds_params = [x.get_input_embeddings().weight.data.clone() for x in self.text_encoder_list]
+                # Convert the initializer_token, placeholder_token to ids
+                init_token_ids = tokenizer.encode(self.config.init_words, add_special_tokens=False)
+
+                num_tokens = len(init_token_ids)
+                # add dummy tokens for multi-vector
+                additional_tokens = []
+                for i in range(0, num_tokens):
+                    additional_tokens.append(f"{self.config.trigger}_{i}")
+                placeholder_tokens += additional_tokens
+
+                num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
+                if num_added_tokens != num_tokens:
+                    raise ValueError(
+                        f"The tokenizer already contains the token {self.config.trigger}. Please pass a different"
+                        f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
+                    )
+                
+                placeholder_token_ids = tokenizer.encode(''.join(placeholder_tokens), add_special_tokens=False) # space or no space? 🤔
+                self.placeholder_token_ids.append(placeholder_token_ids)
+
+                # Resize the token embeddings as we are adding new special tokens to the tokenizer
+                text_encoder.resize_token_embeddings(len(tokenizer))
+
+                # Initialise the newly added placeholder token with the embeddings of the initializer token
+                token_embeds = text_encoder.get_input_embeddings().weight.data
+                with torch.no_grad():
+                    for initializer_token_id, token_id in zip(init_token_ids, placeholder_token_ids):
+                        token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+
+                # replace "[name] with this. on training. This is automatically generated in pipeline on inference
+                self.embedding_tokens[self.config.trigger].append(" ".join(tokenizer.convert_ids_to_tokens(placeholder_token_ids)))
+
+            # backup text encoder embeddings
+            self.orig_embeds_params = [x.get_input_embeddings().weight.data.clone() for x in self.text_encoder_list]
 
     def restore_embeddings(self):
         with torch.no_grad():
@@ -152,36 +161,40 @@ class Embedding:
 
     # diffusers automatically expands the token meaning test123 becomes test123 test123_1 test123_2 etc
     # however, on training we don't use that pipeline, so we have to do it ourselves
+
+    ### update this function!!!!
     def inject_embedding_to_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
-        embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
-        default_replacements = ["[name]", "[trigger]", self.trigger]
+        embedding_tokens = self.embedding_tokens  # shoudl be the same
+        # import pdb; pdb.set_trace()
+        for trigger in self.trigger:
+            to_replace_list = None
+            default_replacements = ["[name]", "[trigger]", trigger]
+            replace_with = embedding_tokens[trigger][0] if expand_token else trigger
+            if to_replace_list is None:
+                to_replace_list = default_replacements
+            else:
+                to_replace_list += default_replacements
 
-        replace_with = embedding_tokens if expand_token else self.trigger
-        if to_replace_list is None:
-            to_replace_list = default_replacements
-        else:
-            to_replace_list += default_replacements
+            # remove duplicates
+            to_replace_list = list(set(to_replace_list))
 
-        # remove duplicates
-        to_replace_list = list(set(to_replace_list))
+            # replace them all
+            for to_replace in to_replace_list:
+                # replace it
+                output_prompt = output_prompt.replace(to_replace, replace_with)
 
-        # replace them all
-        for to_replace in to_replace_list:
-            # replace it
-            output_prompt = output_prompt.replace(to_replace, replace_with)
+            # see how many times replace_with is in the prompt
+            num_instances = output_prompt.count(replace_with)
 
-        # see how many times replace_with is in the prompt
-        num_instances = output_prompt.count(replace_with)
-
-        if num_instances == 0 and add_if_not_present:
-            # add it to the beginning of the prompt
-            output_prompt = replace_with + " " + output_prompt
+            if num_instances == 0 and add_if_not_present:
+                # add it to the beginning of the prompt
+                output_prompt = replace_with + " " + output_prompt
 
 
-        if num_instances > 1:
-            print(
-                f"Warning: {replace_with} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
+            if num_instances > 1:
+                print(
+                    f"Warning: {replace_with} token appears {num_instances} times in prompt {output_prompt}. This may cause issues.")
 
         return output_prompt
 

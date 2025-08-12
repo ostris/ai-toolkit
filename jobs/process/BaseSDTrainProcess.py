@@ -140,6 +140,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # store is all are cached. Allows us to not load vae if we don't need to
         self.is_latents_cached = True
+        # import pdb; pdb.set_trace()
+        self.enable_ti = self.train_config.enable_ti
         raw_datasets = self.get_conf('datasets', None)
         if raw_datasets is not None and len(raw_datasets) > 0:
             raw_datasets = preprocess_dataset_raw_config(raw_datasets)
@@ -177,10 +179,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.is_caching_text_embeddings and self.trigger_word is not None:
             raise ValueError("Cannot train trigger word if caching text embeddings. Please remove the trigger word or disable text embedding caching.")
 
-        self.embed_config = None
-        embedding_raw = self.get_conf('embedding', None)
-        if embedding_raw is not None:
-            self.embed_config = EmbeddingConfig(**embedding_raw)
+        self.embed_config = []
+        # import pdb; pdb.set_trace()
+        # embedding_raw = self.get_conf('embedding', None)
+        if self.enable_ti:
+            all_datasets = self.get_conf("datasets", None)
+            for dataset in all_datasets:
+                embedding_raw = {"trigger": dataset["trigger_token"], "init_words": dataset["initializer_concept"]}
+                self.embed_config.append(EmbeddingConfig(**embedding_raw))
+        else:
+            self.embed_config = None
         
         self.decorator_config: DecoratorConfig = None
         decorator_raw = self.get_conf('decorator', None)
@@ -302,6 +310,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # note: diffusers will automatically expand the trigger to the number of added tokens
             # ie test123 will become test123 test123_1 test123_2 etc. Do not add this yourself here
             if self.embedding is not None:
+                # import pdb; pdb.set_trace()
                 prompt = self.embedding.inject_embedding_to_prompt(
                     prompt, expand_token=True, add_if_not_present=False
                 )
@@ -413,7 +422,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             embed_files = []
             # do embedding files
             if self.embed_config is not None:
-                embed_pattern = f"{self.embed_config.trigger}_*"
+                embed_pattern = "".join([self.embed_config[i].trigger for i in range(len(self.embed_config))])
+                embed_pattern = f"{embed_pattern}_*"
+                # embed_pattern = f"{self.embed_config.trigger}_*"
                 embed_items = glob.glob(os.path.join(self.save_root, embed_pattern))
                 # will end in safetensors or pt
                 embed_files = [f for f in embed_items if f.endswith('.safetensors') or f.endswith('.pt')]
@@ -534,13 +545,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             # even if added to lora, still save the trigger version
             if self.embedding is not None:
-                emb_filename = f'{self.embed_config.trigger}{step_num}.safetensors'
+                embed_pattern = "".join([self.embed_config[i].trigger for i in range(len(self.embed_config))])
+                # embed_pattern = f"{embed_pattern}_*"
+                emb_filename = f'{embed_pattern}{step_num}.safetensors'
                 emb_file_path = os.path.join(self.save_root, emb_filename)
                 # for combo, above will get it
                 # set current step
                 self.embedding.step = self.step_num
                 # change filename to pt if that is set
-                if self.embed_config.save_format == "pt":
+                if self.embed_config[0].save_format == "pt":
                     # replace extension
                     emb_file_path = os.path.splitext(emb_file_path)[0] + ".pt"
                 self.embedding.save(emb_file_path)
@@ -1767,7 +1780,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     sd=self.sd,
                     embed_config=self.embed_config
                 )
-                latest_save_path = self.get_latest_save_path(self.embed_config.trigger)
+                embed_pattern = "".join([self.embed_config[i].trigger for i in range(len(self.embed_config))])
+
+                latest_save_path = self.get_latest_save_path(embed_pattern)
                 # load last saved weights
                 if latest_save_path is not None:
                     self.embedding.load_embedding_from_file(latest_save_path, self.device_torch)
