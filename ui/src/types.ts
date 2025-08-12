@@ -74,6 +74,8 @@ export interface DatasetConfig {
   folder_path: string;
   mask_path: string | null;
   mask_min_value: number;
+  trigger_token: string;
+  initializer_concept: string;
   default_caption: string;
   caption_ext: string;
   caption_dropout_rate: number;
@@ -96,6 +98,7 @@ export interface EMAConfig {
 
 export interface TrainConfig {
   batch_size: number;
+  enable_ti: boolean;
   bypass_guidance_embedding?: boolean;
   steps: number;
   gradient_accumulation: number;

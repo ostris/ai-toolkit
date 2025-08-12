@@ -381,6 +381,14 @@ export default function SimpleJob({
                 />
               </div>
               <div>
+                <FormGroup label="Enable Textual Inversion for Trigger Tokens">
+                  <Checkbox
+                    label="Embedding Training"
+                    className="pt-1"
+                    checked={jobConfig.config.process[0].train.enable_ti || false}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.enable_ti')} // change this here
+                  />
+                </FormGroup>                
                 <FormGroup label="EMA (Exponential Moving Average)">
                   <Checkbox
                     label="Use EMA"
@@ -497,6 +505,13 @@ export default function SimpleJob({
                           options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
                         />
                       )}
+                      <TextInput
+                        label="Trigger/Special Token"
+                        value={dataset.trigger_token}
+                        className="pt-2"
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].trigger_token`)} // change this here
+                        placeholder="eg. [dheyo_char1]"
+                      />
                       <NumberInput
                         label="LoRA Weight"
                         value={dataset.network_weight}
@@ -511,6 +526,13 @@ export default function SimpleJob({
                         value={dataset.default_caption}
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].default_caption`)}
                         placeholder="eg. A photo of a cat"
+                      />
+                      <TextInput
+                        label="Initializer Concept"
+                        value={dataset.initializer_concept}
+                        className="pt-2"
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].initializer_concept`)} // change this here
+                        placeholder="eg. A 17 year old lean Indian boy with curly hair"
                       />
                       <NumberInput
                         label="Caption Dropout Rate"

@@ -1,10 +1,12 @@
 import { JobConfig, DatasetConfig } from '@/types';
 
-export const defaultDatasetConfig: DatasetConfig = {
+export const defaultDatasetConfig: DatasetConfig = { // needs addition here
   folder_path: '/path/to/images/folder',
   control_path: null,
   mask_path: null,
   mask_min_value: 0.1,
+  trigger_token: '',
+  initializer_concept: '',
   default_caption: '',
   caption_ext: 'txt',
   caption_dropout_rate: 0.05,
@@ -65,6 +67,7 @@ export const defaultJobConfig: JobConfig = {
           optimizer_params: {
             weight_decay: 1e-4,
           },
+          enable_ti: true,
           unload_text_encoder: false,
           cache_text_embeddings: false,
           lr: 0.0001,
