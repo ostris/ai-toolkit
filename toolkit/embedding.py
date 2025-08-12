@@ -31,13 +31,14 @@ class Embedding:
         self.step = 0
         # setup our embedding
         # Add the placeholder token in tokenizer
-        placeholder_tokens = [self.embed_config.trigger]
+        # placeholder_tokens = [self.embed_config.trigger]
+        placeholder_tokens = []
 
         # add dummy tokens for multi-vector
-        additional_tokens = []
-        for i in range(1, self.embed_config.tokens):
-            additional_tokens.append(f"{self.embed_config.trigger}_{i}")
-        placeholder_tokens += additional_tokens
+        # additional_tokens = []
+        # for i in range(1, self.embed_config.tokens):
+        #     additional_tokens.append(f"{self.embed_config.trigger}_{i}")
+        # placeholder_tokens += additional_tokens
 
         # handle dual tokenizer
         self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
@@ -51,23 +52,31 @@ class Embedding:
         print(f"Adding {self.embed_config.tokens} tokens to tokenizer")
 
         for text_encoder, tokenizer in zip(self.text_encoder_list, self.tokenizer_list):
+            # num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
+            # if num_added_tokens != self.embed_config.tokens:
+            #     raise ValueError(
+            #         f"The tokenizer already contains the token {self.embed_config.trigger}. Please pass a different"
+            #         f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
+            #     )
+
+            # Convert the initializer_token, placeholder_token to ids
+            init_token_ids = tokenizer.encode(self.embed_config.init_words, add_special_tokens=False)
+
+            num_tokens = len(init_token_ids)
+            # add dummy tokens for multi-vector
+            additional_tokens = []
+            for i in range(0, num_tokens):
+                additional_tokens.append(f"{self.embed_config.trigger}_{i}")
+            placeholder_tokens += additional_tokens
+
             num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
-            if num_added_tokens != self.embed_config.tokens:
+            if num_added_tokens != num_tokens:
                 raise ValueError(
                     f"The tokenizer already contains the token {self.embed_config.trigger}. Please pass a different"
                     f" `placeholder_token` that is not already in the tokenizer. Only added {num_added_tokens}"
                 )
-
-            # Convert the initializer_token, placeholder_token to ids
-            init_token_ids = tokenizer.encode(self.embed_config.init_words, add_special_tokens=False)
-            # if length of token ids is more than number of orm embedding tokens fill with *
-            if len(init_token_ids) > self.embed_config.tokens:
-                init_token_ids = init_token_ids[:self.embed_config.tokens]
-            elif len(init_token_ids) < self.embed_config.tokens:
-                pad_token_id = tokenizer.encode(["*"], add_special_tokens=False)
-                init_token_ids += pad_token_id * (self.embed_config.tokens - len(init_token_ids))
-
-            placeholder_token_ids = tokenizer.encode(placeholder_tokens, add_special_tokens=False)
+            
+            placeholder_token_ids = tokenizer.encode(''.join(placeholder_tokens), add_special_tokens=False) # space or no space? 🤔
             self.placeholder_token_ids.append(placeholder_token_ids)
 
             # Resize the token embeddings as we are adding new special tokens to the tokenizer
@@ -146,7 +155,7 @@ class Embedding:
     def inject_embedding_to_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
         embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
-        default_replacements = ["[name]", "[trigger]"]
+        default_replacements = ["[name]", "[trigger]", self.trigger]
 
         replace_with = embedding_tokens if expand_token else self.trigger
         if to_replace_list is None:
@@ -168,6 +177,7 @@ class Embedding:
         if num_instances == 0 and add_if_not_present:
             # add it to the beginning of the prompt
             output_prompt = replace_with + " " + output_prompt
+
 
         if num_instances > 1:
             print(
