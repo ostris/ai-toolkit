@@ -24,6 +24,10 @@ from PIL import Image
 from transformers import (
     CLIPProcessor,
     Qwen2_5_VLForConditionalGeneration,
+    AutoTokenizer,
+    Qwen2Tokenizer,
+    AutoProcessor
+
 )
 import torch.nn.functional as F
 
@@ -74,12 +78,17 @@ class OmniGen2Model(BaseModel):
         scheduler = OmniGen2Model.get_train_scheduler()
 
         self.print_and_status_update("Loading Qwen2.5 VL")
-        processor = CLIPProcessor.from_pretrained(
-            extras_path, subfolder="processor", use_fast=True
-        )
+        # processor = CLIPProcessor.from_pretrained(
+        #     extras_path, subfolder="processor", use_fast=True
+        # )
 
+        processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+
+        # mllm = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        #     extras_path, subfolder="mllm", torch_dtype=torch.bfloat16
+        # )
         mllm = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            extras_path, subfolder="mllm", torch_dtype=torch.bfloat16
+            "Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype=torch.bfloat16
         )
         mllm.to(self.device_torch, dtype=dtype)
         if self.model_config.quantize_te:
@@ -150,7 +159,7 @@ class OmniGen2Model(BaseModel):
         flush()
 
         text_encoder_list = [mllm]
-        tokenizer_list = [processor]
+        tokenizer_list = [processor.tokenizer]
 
         flush()
 
