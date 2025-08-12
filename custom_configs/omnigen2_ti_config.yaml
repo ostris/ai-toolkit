@@ -1,0 +1,102 @@
+job: extension
+config:
+  name: test_3
+  process:
+  - type: ui_trainer
+    training_folder: /data/shivanvitha/ai-toolkit/output
+    sqlite_db_path: /data/shivanvitha/ai-toolkit/aitk_db.db
+    device: cuda
+    trigger_word: '[E]'
+    performance_log_every: 10
+    network:
+      type: lora
+      linear: 32
+      linear_alpha: 32
+      conv: 16
+      conv_alpha: 16
+      lokr_full_rank: true
+      lokr_factor: -1
+      network_kwargs:
+        ignore_if_contains: []
+    save:
+      dtype: bf16
+      save_every: 100
+      max_step_saves_to_keep: 4
+      save_format: diffusers
+      push_to_hub: false
+    datasets:
+    - folder_path: /data/shivanvitha/ai-toolkit/datasets/eboy
+      control_path: null
+      mask_path: null
+      mask_min_value: 0.1
+      default_caption: ''
+      caption_ext: txt
+      caption_dropout_rate: 0.05
+      cache_latents_to_disk: false
+      is_reg: false
+      network_weight: 1
+      resolution:
+      - 512
+      - 768
+      - 1024
+      controls: []
+      shrink_video_to_frames: true
+      num_frames: 1
+      do_i2v: true
+    train:
+      batch_size: 1
+      bypass_guidance_embedding: false
+      steps: 500
+      gradient_accumulation: 1
+      train_unet: true
+      train_text_encoder: false
+      gradient_checkpointing: true
+      noise_scheduler: flowmatch
+      optimizer: adamw8bit
+      timestep_type: sigmoid
+      content_or_style: balanced
+      optimizer_params:
+        weight_decay: 0.0001
+      unload_text_encoder: false
+      cache_text_embeddings: false
+      lr: 0.0001
+      ema_config:
+        use_ema: false
+        ema_decay: 0.99
+      skip_first_sample: false
+      disable_sampling: false
+      dtype: bf16
+      diff_output_preservation: false
+      diff_output_preservation_multiplier: 1
+      diff_output_preservation_class: person
+    model:
+      name_or_path: OmniGen2/OmniGen2
+      quantize: false
+      qtype: qfloat8
+      quantize_te: false
+      qtype_te: qfloat8
+      arch: omnigen2
+      low_vram: false
+      model_kwargs: {}
+    embedding:
+      trigger: "[E]"
+      tokens: 10
+      init_words: "A 17 year old lean Indian boy"
+
+    sample:
+      sampler: flowmatch
+      sample_every: 250
+      width: 1024
+      height: 1024
+      samples:
+      - prompt: "[E] boy studying seriously in a library"
+      neg: ''
+      seed: 42
+      walk_seed: true
+      guidance_scale: 4
+      sample_steps: 25
+      num_frames: 1
+      fps: 1
+meta:
+  name: test
+  version: '1.0'
