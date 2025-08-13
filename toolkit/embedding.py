@@ -30,11 +30,18 @@ class Embedding:
             embed_config = [embed_config]
         self.trigger = []
         self.embedding_tokens = {}
+        self.sd = sd
 
+        # handle dual tokenizer
+        self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
+        self.text_encoder_list = self.sd.text_encoder if isinstance(self.sd.text_encoder, list) else [
+            self.sd.text_encoder]
+        
+        self.placeholder_token_ids = [[]] * len(self.tokenizer_list)
+        self.name = ''
         # import pdb; pdb.set_trace()
         for config in embed_config:
-            self.name = config.trigger
-            self.sd = sd
+            self.name += config.trigger
             self.trigger.append(config.trigger)
             self.config = config
             self.step = 0
@@ -49,17 +56,16 @@ class Embedding:
             #     additional_tokens.append(f"{self.config.trigger}_{i}")
             # placeholder_tokens += additional_tokens
 
-            # handle dual tokenizer
-            self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
-            self.text_encoder_list = self.sd.text_encoder if isinstance(self.sd.text_encoder, list) else [
-                self.sd.text_encoder]
+            # # handle dual tokenizer
+            # self.tokenizer_list = self.sd.tokenizer if isinstance(self.sd.tokenizer, list) else [self.sd.tokenizer]
+            # self.text_encoder_list = self.sd.text_encoder if isinstance(self.sd.text_encoder, list) else [
+            #     self.sd.text_encoder]
 
-            self.placeholder_token_ids = []
             self.embedding_tokens[self.config.trigger] = []
 
             # print(f"Adding {placeholder_tokens} tokens to tokenizer")
             # print(f"Adding {self.config.tokens} tokens to tokenizer")
-
+            count = 0
             for text_encoder, tokenizer in zip(self.text_encoder_list, self.tokenizer_list):
                 # num_added_tokens = tokenizer.add_tokens(placeholder_tokens)
                 # if num_added_tokens != self.config.tokens:
@@ -86,7 +92,8 @@ class Embedding:
                     )
                 
                 placeholder_token_ids = tokenizer.encode(''.join(placeholder_tokens), add_special_tokens=False) # space or no space? 🤔
-                self.placeholder_token_ids.append(placeholder_token_ids)
+                self.placeholder_token_ids[count] += placeholder_token_ids
+                # import pdb; pdb.set_trace()
 
                 # Resize the token embeddings as we are adding new special tokens to the tokenizer
                 text_encoder.resize_token_embeddings(len(tokenizer))
@@ -100,12 +107,14 @@ class Embedding:
                 # replace "[name] with this. on training. This is automatically generated in pipeline on inference
                 self.embedding_tokens[self.config.trigger].append(" ".join(tokenizer.convert_ids_to_tokens(placeholder_token_ids)))
 
+                count += 1
             # backup text encoder embeddings
             self.orig_embeds_params = [x.get_input_embeddings().weight.data.clone() for x in self.text_encoder_list]
 
     def restore_embeddings(self):
         with torch.no_grad():
             # Let's make sure we don't update any embedding weights besides the newly added token
+            # import pdb; pdb.set_trace()
             for text_encoder, tokenizer, orig_embeds, placeholder_token_ids in zip(self.text_encoder_list,
                                                                                    self.tokenizer_list,
                                                                                    self.orig_embeds_params,
