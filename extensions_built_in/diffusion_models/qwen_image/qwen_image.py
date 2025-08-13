@@ -125,7 +125,7 @@ class QwenImageModel(BaseModel):
 
         self.print_and_status_update("Text Encoder")
         tokenizer = Qwen2Tokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
+            base_model_path, subfolder="tokenizer"
         )
         text_encoder = Qwen2_5_VLForConditionalGeneration.from_pretrained(
             base_model_path, subfolder="text_encoder", torch_dtype=dtype
