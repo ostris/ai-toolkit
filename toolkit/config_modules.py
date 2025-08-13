@@ -462,7 +462,7 @@ class TrainConfig:
 
         ema_config: Union[Dict, None] = kwargs.get('ema_config', None)
         # if it is set explicitly to false, leave it false. 
-        if ema_config is not None and ema_config.get('use_ema', None) is not None:
+        if ema_config is not None and ema_config.get('use_ema', False):
             ema_config['use_ema'] = True
             print(f"Using EMA")
         else:
