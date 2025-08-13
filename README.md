@@ -137,6 +137,9 @@ pip3 install -r requirements.txt
 ```
 
 Windows:
+
+If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
+
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
