@@ -58,6 +58,6 @@ def unload_text_encoder(model: "BaseModel"):
             model.text_encoder = text_encoder_list
         else:
             # only has a single text encoder
-            model.text_encoder = FakeTextEncoder()
+            model.text_encoder = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
 
     flush()
