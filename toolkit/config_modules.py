@@ -185,6 +185,9 @@ class NetworkConfig:
             self.conv_alpha = 9999999999
         # -1 automatically finds the largest factor
         self.lokr_factor = kwargs.get('lokr_factor', -1)
+        
+        # for multi stage models
+        self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']

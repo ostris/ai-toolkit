@@ -12,7 +12,6 @@ from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from typing import Any, Callable, Dict, List, Optional, Union
 
 
-
 class Wan22Pipeline(WanPipeline):
     def __init__(
         self,
@@ -52,6 +51,7 @@ class Wan22Pipeline(WanPipeline):
         num_frames: int = 81,
         num_inference_steps: int = 50,
         guidance_scale: float = 5.0,
+        guidance_scale_2: Optional[float] = None,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator,
                                   List[torch.Generator]]] = None,
@@ -77,11 +77,15 @@ class Wan22Pipeline(WanPipeline):
         vae_device = self.vae.device
         transformer_device = self.transformer.device
         text_encoder_device = self.text_encoder.device
-        device = self.transformer.device
+        device = self._exec_device
         
         if self._aggressive_offload:
             print("Unloading vae")
             self.vae.to("cpu")
+            print("Unloading transformer")
+            self.transformer.to("cpu")
+            if self.transformer_2 is not None:
+                self.transformer_2.to("cpu")
             self.text_encoder.to(device)
             flush()
         
@@ -95,9 +99,14 @@ class Wan22Pipeline(WanPipeline):
             prompt_embeds,
             negative_prompt_embeds,
             callback_on_step_end_tensor_inputs,
+            guidance_scale_2
         )
+        
+        if self.config.boundary_ratio is not None and guidance_scale_2 is None:
+            guidance_scale_2 = guidance_scale
 
         self._guidance_scale = guidance_scale
+        self._guidance_scale_2 = guidance_scale_2
         self._attention_kwargs = attention_kwargs
         self._current_timestep = None
         self._interrupt = False
@@ -160,6 +169,13 @@ class Wan22Pipeline(WanPipeline):
         num_warmup_steps = len(timesteps) - \
             num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
+        
+        if self.config.boundary_ratio is not None:
+            boundary_timestep = self.config.boundary_ratio * self.scheduler.config.num_train_timesteps
+        else:
+            boundary_timestep = None
+        
+        current_model = self.transformer
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
@@ -167,6 +183,25 @@ class Wan22Pipeline(WanPipeline):
                     continue
 
                 self._current_timestep = t
+                
+                if boundary_timestep is None or t >= boundary_timestep:
+                    if self._aggressive_offload and current_model != self.transformer:
+                        if self.transformer_2 is not None:
+                            self.transformer_2.to("cpu")
+                        self.transformer.to(device)
+                    # wan2.1 or high-noise stage in wan2.2
+                    current_model = self.transformer
+                    current_guidance_scale = guidance_scale
+                else:
+                    if self._aggressive_offload and current_model != self.transformer_2:
+                        if self.transformer is not None:
+                            self.transformer.to("cpu")
+                        if self.transformer_2 is not None:
+                            self.transformer_2.to(device)
+                    # low-noise stage in wan2.2
+                    current_model = self.transformer_2
+                    current_guidance_scale = guidance_scale_2
+                    
                 latent_model_input = latents.to(device, transformer_dtype)
                 if self.config.expand_timesteps:
                     # seq_len: num_latent_frames * latent_height//2 * latent_width//2
@@ -176,7 +211,7 @@ class Wan22Pipeline(WanPipeline):
                 else:
                     timestep = t.expand(latents.shape[0])
 
-                noise_pred = self.transformer(
+                noise_pred = current_model(
                     hidden_states=latent_model_input,
                     timestep=timestep,
                     encoder_hidden_states=prompt_embeds,
@@ -185,14 +220,14 @@ class Wan22Pipeline(WanPipeline):
                 )[0]
 
                 if self.do_classifier_free_guidance:
-                    noise_uncond = self.transformer(
+                    noise_uncond = current_model(
                         hidden_states=latent_model_input,
                         timestep=timestep,
                         encoder_hidden_states=negative_prompt_embeds,
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
                     )[0]
-                    noise_pred = noise_uncond + guidance_scale * \
+                    noise_pred = noise_uncond + current_guidance_scale * \
                         (noise_pred - noise_uncond)
 
                 # compute the previous noisy sample x_t -> x_t-1
@@ -259,10 +294,8 @@ class Wan22Pipeline(WanPipeline):
         
         # move transformer back to device
         if self._aggressive_offload:
-            print("Moving transformer back to device")
-            self.transformer.to(self._execution_device)
-            if self.transformer_2 is not None:
-                self.transformer_2.to(self._execution_device)
+            # print("Moving transformer back to device")
+            # self.transformer.to(self._execution_device)
             flush()
 
         if not return_dict:

@@ -437,19 +437,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # Combine and sort the lists
             combined_items = safetensors_files + directories + pt_files
             combined_items.sort(key=os.path.getctime)
+            
+            num_saves_to_keep = self.save_config.max_step_saves_to_keep
+            
+            if hasattr(self.sd, 'max_step_saves_to_keep_multiplier'):
+                num_saves_to_keep *= self.sd.max_step_saves_to_keep_multiplier
 
             # Use slicing with a check to avoid 'NoneType' error
             safetensors_to_remove = safetensors_files[
-                                    :-self.save_config.max_step_saves_to_keep] if safetensors_files else []
-            pt_files_to_remove = pt_files[:-self.save_config.max_step_saves_to_keep] if pt_files else []
-            directories_to_remove = directories[:-self.save_config.max_step_saves_to_keep] if directories else []
-            embeddings_to_remove = embed_files[:-self.save_config.max_step_saves_to_keep] if embed_files else []
-            critic_to_remove = critic_items[:-self.save_config.max_step_saves_to_keep] if critic_items else []
+                                    :-num_saves_to_keep] if safetensors_files else []
+            pt_files_to_remove = pt_files[:-num_saves_to_keep] if pt_files else []
+            directories_to_remove = directories[:-num_saves_to_keep] if directories else []
+            embeddings_to_remove = embed_files[:-num_saves_to_keep] if embed_files else []
+            critic_to_remove = critic_items[:-num_saves_to_keep] if critic_items else []
 
             items_to_remove = safetensors_to_remove + pt_files_to_remove + directories_to_remove + embeddings_to_remove + critic_to_remove
 
             # remove all but the latest max_step_saves_to_keep
-            # items_to_remove = combined_items[:-self.save_config.max_step_saves_to_keep]
+            # items_to_remove = combined_items[:-num_saves_to_keep]
 
             # remove duplicates
             items_to_remove = list(dict.fromkeys(items_to_remove))
