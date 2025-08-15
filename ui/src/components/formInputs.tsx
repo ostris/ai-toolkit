@@ -12,7 +12,7 @@ const Select = dynamic(() => import('react-select'), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
 const inputClasses =
-  'w-full text-sm px-3 py-1 bg-gray-800 border border-gray-700 rounded-sm focus:ring-2 focus:ring-gray-600 focus:border-transparent';
+'w-full text-sm px-3 py-1 bg-gray-800 border border-gray-700 rounded-sm focus:ring-2 focus:ring-gray-600 focus:border-transparent text-white';
 
 export interface InputProps {
   label?: string;
