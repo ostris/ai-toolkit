@@ -172,6 +172,11 @@ class BaseModel:
         self.sample_prompts_cache = None
         
         self.accuracy_recovery_adapter: Union[None, 'LoRASpecialNetwork'] = None
+        self.is_multistage = False
+        # a list of multistage boundaries starting with train step 1000 to first idx
+        self.multistage_boundaries: List[float] = [0.0]
+        # a list of trainable multistage boundaries
+        self.trainable_multistage_boundaries: List[int] = [0]
 
     # properties for old arch for backwards compatibility
     @property
@@ -1502,3 +1507,7 @@ class BaseModel:
     def get_base_model_version(self) -> str:
         # override in child classes to get the base model version
         return "unknown"
+
+    def get_model_to_train(self):
+        # called to get model to attach LoRAs to. Can be overridden in child classes
+        return self.unet

@@ -283,7 +283,7 @@ export const FormGroup: React.FC<FormGroupProps> = props => {
   return (
     <div className={classNames(className)}>
       {label && (
-        <label className={labelClasses}>
+        <label className={classNames(labelClasses, 'mb-2')}>
           {label}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
@@ -292,7 +292,7 @@ export const FormGroup: React.FC<FormGroupProps> = props => {
           )}
         </label>
       )}
-      <div className="px-4 space-y-2">{children}</div>
+      <div className="space-y-2">{children}</div>
     </div>
   );
 };

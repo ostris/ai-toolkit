@@ -27,7 +27,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
   // This way Tailwind can properly generate the class
   // I hate this, but it's the only way to make it work
   const gridColsClass = useMemo(() => {
-    const cols = Math.min(numSamples, 20);
+    const cols = Math.min(numSamples, 40);
 
     switch (cols) {
       case 1:
@@ -70,6 +70,46 @@ export default function SampleImages({ job }: SampleImagesProps) {
         return 'grid-cols-19';
       case 20:
         return 'grid-cols-20';
+      case 21:
+        return 'grid-cols-21';
+      case 22:
+        return 'grid-cols-22';
+      case 23:
+        return 'grid-cols-23';
+      case 24:
+        return 'grid-cols-24';
+      case 25:
+        return 'grid-cols-25';
+      case 26:
+        return 'grid-cols-26';
+      case 27:
+        return 'grid-cols-27';
+      case 28:
+        return 'grid-cols-28';
+      case 29:
+        return 'grid-cols-29';
+      case 30:
+        return 'grid-cols-30';
+      case 31:
+        return 'grid-cols-31';
+      case 32:
+        return 'grid-cols-32';
+      case 33:
+        return 'grid-cols-33';
+      case 34:
+        return 'grid-cols-34';
+      case 35:
+        return 'grid-cols-35';
+      case 36:
+        return 'grid-cols-36';
+      case 37:
+        return 'grid-cols-37';
+      case 38:
+        return 'grid-cols-38';
+      case 39:
+        return 'grid-cols-39';
+      case 40:
+        return 'grid-cols-40';
       default:
         return 'grid-cols-1';
     }

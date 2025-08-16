@@ -40,10 +40,25 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
 
-  let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6';
+  const numTopCards = useMemo(() => {
+    let count = 4; // job settings, model config, target config, save config
+    if (modelArch?.additionalSections?.includes('model.multistage')) {
+      count += 1; // add multistage card
+    }
+    if (!modelArch?.disableSections?.includes('model.quantize')) {
+      count += 1; // add quantization card
+    }
+    return count;
+    
+  }, [modelArch]);
 
-  if (modelArch?.disableSections?.includes('model.quantize')) {
-    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
+  let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
+
+  if (numTopCards == 5) {
+    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6';
+  }
+  if (numTopCards == 6) {
+    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6 gap-6';
   }
 
   const transformerQuantizationOptions: GroupedSelectOption[] | SelectOption[] = useMemo(() => {
@@ -91,7 +106,7 @@ export default function SimpleJob({
     <>
       <form onSubmit={handleSubmit} className="space-y-8">
         <div className={topBarClass}>
-          <Card title="Job Settings">
+          <Card title="Job">
             <TextInput
               label="Training Name"
               value={jobConfig.config.name}
@@ -124,7 +139,7 @@ export default function SimpleJob({
           </Card>
 
           {/* Model Configuration Section */}
-          <Card title="Model Configuration">
+          <Card title="Model">
             <SelectInput
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
@@ -239,7 +254,32 @@ export default function SimpleJob({
               />
             </Card>
           )}
-          <Card title="Target Configuration">
+          {modelArch?.additionalSections?.includes('model.multistage') && (
+            <Card title="Multistage">
+              <FormGroup label="Stages to Train" docKey={'model.multistage'}>
+                <Checkbox
+                  label="High Noise"
+                  checked={jobConfig.config.process[0].model.model_kwargs?.train_high_noise || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.train_high_noise')}
+                />
+                <Checkbox
+                  label="Low Noise"
+                  checked={jobConfig.config.process[0].model.model_kwargs?.train_low_noise || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.train_low_noise')}
+                />
+              </FormGroup>
+              <NumberInput
+                  label="Switch Every"
+                  value={jobConfig.config.process[0].train.switch_boundary_every}
+                  onChange={value => setJobConfig(value, 'config.process[0].train.switch_boundary_every')}
+                  placeholder="eg. 1"
+                  docKey={'train.switch_boundary_every'}
+                  min={1}
+                  required
+                />
+            </Card>
+          )}
+          <Card title="Target">
             <SelectInput
               label="Target Type"
               value={jobConfig.config.process[0].network?.type ?? 'lora'}
@@ -295,7 +335,7 @@ export default function SimpleJob({
               </>
             )}
           </Card>
-          <Card title="Save Configuration">
+          <Card title="Save">
             <SelectInput
               label="Data Type"
               value={jobConfig.config.process[0].save.dtype}
@@ -325,7 +365,7 @@ export default function SimpleJob({
           </Card>
         </div>
         <div>
-          <Card title="Training Configuration">
+          <Card title="Training">
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
               <div>
                 <NumberInput
@@ -645,7 +685,7 @@ export default function SimpleJob({
           </Card>
         </div>
         <div>
-          <Card title="Sample Configuration">
+          <Card title="Sample">
             <div
               className={
                 isVideoModel

@@ -78,6 +78,7 @@ export const defaultJobConfig: JobConfig = {
           diff_output_preservation: false,
           diff_output_preservation_multiplier: 1.0,
           diff_output_preservation_class: 'person',
+          switch_boundary_every: 1,
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
