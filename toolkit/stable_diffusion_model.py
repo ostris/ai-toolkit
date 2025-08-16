@@ -211,6 +211,12 @@ class StableDiffusion:
         
         self.sample_prompts_cache = None
         
+        self.is_multistage = False
+        # a list of multistage boundaries starting with train step 1000 to first idx
+        self.multistage_boundaries: List[float] = [0.0]
+        # a list of trainable multistage boundaries
+        self.trainable_multistage_boundaries: List[int] = [0]
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):
@@ -3123,3 +3129,6 @@ class StableDiffusion:
         if self.is_v2:
             return 'sd_2.1'
         return 'sd_1.5'
+
+    def get_model_to_train(self):
+        return self.unet

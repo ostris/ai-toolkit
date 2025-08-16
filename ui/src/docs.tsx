@@ -111,6 +111,36 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'model.multistage': {
+    title: 'Stages to Train',
+    description: (
+      <>
+        Some models have multi stage networks that are trained and used separately in the denoising process. Most
+        common, is to have 2 stages. One for high noise and one for low noise. You can choose to train both stages at
+        once or train them separately. If trained at the same time, The trainer will alternate between training each
+        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the
+        trainer will only train that stage and output a single LoRA.
+      </>
+    ),
+  },
+  'train.switch_boundary_every': {
+    title: 'Switch Boundary Every',
+    description: (
+      <>
+        When training a model with multiple stages, this setting controls how often the trainer will switch between
+        training each stage.
+        <br />
+        <br />
+        For low vram settings, the model not being trained will be unloaded from the gpu to save memory. This takes some
+        time to do, so it is recommended to alternate less often when using low vram. A setting like 10 or 20 is
+        recommended for low vram settings.
+        <br />
+        <br />
+        The swap happens at the batch level, meaning it will swap between a gradient accumulation steps. To train both
+        stages in a single step, set them to switch every 1 step and set gradient accumulation to 2.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

@@ -260,6 +260,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 torch.profiler.ProfilerActivity.CUDA,
             ],
         )
+        
+        self.current_boundary_index = 0
+        self.steps_this_boundary = 0
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -1171,6 +1174,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.sd.noise_scheduler.set_timesteps(
                         num_train_timesteps, device=self.device_torch
                     )
+            if self.sd.is_multistage:
+                with self.timer('adjust_multistage_timesteps'):
+                    # get our current sample range
+                    boundaries = [1000] + self.sd.multistage_boundaries
+                    boundary_max, boundary_min = boundaries[self.current_boundary_index], boundaries[self.current_boundary_index + 1]
+                    lo = torch.searchsorted(self.sd.noise_scheduler.timesteps, -torch.tensor(boundary_max, device=self.sd.noise_scheduler.timesteps.device), right=False)
+                    hi = torch.searchsorted(self.sd.noise_scheduler.timesteps, -torch.tensor(boundary_min,  device=self.sd.noise_scheduler.timesteps.device), right=True)
+                    first_idx = lo.item() if hi > lo else 0
+                    last_idx  = (hi - 1).item() if hi > lo else 999
+                    
+                    min_noise_steps = first_idx
+                    max_noise_steps = last_idx
+
+            # clip min max indicies
+            min_noise_steps = max(min_noise_steps, 0)
+            max_noise_steps = min(max_noise_steps, num_train_timesteps - 1)
+            
+                    
             with self.timer('prepare_timesteps_indices'):
 
                 content_or_style = self.train_config.content_or_style
@@ -1209,11 +1230,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         0,
                         self.train_config.num_train_timesteps - 1,
                         min_noise_steps,
-                        max_noise_steps - 1
+                        max_noise_steps
                     )
                     timestep_indices = timestep_indices.long().clamp(
-                        min_noise_steps + 1,
-                        max_noise_steps - 1
+                        min_noise_steps,
+                        max_noise_steps
                     )
                     
                 elif content_or_style == 'balanced':
@@ -1226,7 +1247,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.train_config.noise_scheduler == 'flowmatch':
                             # flowmatch uses indices, so we need to use indices
                             min_idx = 0
-                            max_idx = max_noise_steps - 1
+                            max_idx = max_noise_steps
                         timestep_indices = torch.randint(
                             min_idx,
                             max_idx,
@@ -1676,7 +1697,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 self.network = NetworkClass(
                     text_encoder=text_encoder,
-                    unet=unet,
+                    unet=self.sd.get_model_to_train(),
                     lora_dim=self.network_config.linear,
                     multiplier=1.0,
                     alpha=self.network_config.linear_alpha,

@@ -1862,7 +1862,20 @@ class SDTrainer(BaseSDTrainProcess):
         total_loss = None
         self.optimizer.zero_grad()
         for batch in batch_list:
+            if self.sd.is_multistage:
+                # handle multistage switching
+                if self.steps_this_boundary >= self.train_config.switch_boundary_every:
+                    # iterate to make sure we only train trainable_multistage_boundaries
+                    while True:
+                        self.steps_this_boundary = 0
+                        self.current_boundary_index += 1
+                        if self.current_boundary_index >= len(self.sd.multistage_boundaries):
+                            self.current_boundary_index = 0
+                        if self.current_boundary_index in self.sd.trainable_multistage_boundaries:
+                            # if this boundary is trainable, we can stop looking
+                            break
             loss = self.train_single_accumulation(batch)
+            self.steps_this_boundary += 1
             if total_loss is None:
                 total_loss = loss
             else:
@@ -1907,7 +1920,7 @@ class SDTrainer(BaseSDTrainProcess):
                 self.adapter.restore_embeddings()
 
         loss_dict = OrderedDict(
-            {'loss': loss.item()}
+            {'loss': (total_loss / len(batch_list)).item()}
         )
 
         self.end_of_training_loop()

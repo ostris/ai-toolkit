@@ -1,6 +1,6 @@
 from functools import partial
 import os
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, List
 from typing_extensions import Self
 import torch
 import yaml
@@ -134,13 +134,15 @@ class DualWanTransformer3DModel(torch.nn.Module):
                     getattr(self, t_name).to(self.device_torch)
                     torch.cuda.empty_cache()
                 self._active_transformer_name = t_name
-            
+
         if self.transformer.device != hidden_states.device:
             if self.low_vram:
                 # move other transformer to cpu
-                other_tname = 'transformer_1' if t_name == 'transformer_2' else 'transformer_2'
+                other_tname = (
+                    "transformer_1" if t_name == "transformer_2" else "transformer_2"
+                )
                 getattr(self, other_tname).to("cpu")
-            
+
             self.transformer.to(hidden_states.device)
 
         return self.transformer(
@@ -184,11 +186,33 @@ class Wan2214bModel(Wan225bModel):
         self.target_lora_modules = ["DualWanTransformer3DModel"]
         self._wan_cache = None
 
+        self.is_multistage = True
+        # multistage boundaries split the models up when sampling timesteps
+        # for wan 2.2 14b. the timesteps are 1000-875 for transformer 1 and 875-0 for transformer 2
+        self.multistage_boundaries: List[float] = [0.875, 0.0]
+
+        self.train_high_noise = model_config.model_kwargs.get("train_high_noise", True)
+        self.train_low_noise = model_config.model_kwargs.get("train_low_noise", True)
+
+        self.trainable_multistage_boundaries: List[int] = []
+        if self.train_high_noise:
+            self.trainable_multistage_boundaries.append(0)
+        if self.train_low_noise:
+            self.trainable_multistage_boundaries.append(1)
+
+        if len(self.trainable_multistage_boundaries) == 0:
+            raise ValueError(
+                "At least one of train_high_noise or train_low_noise must be True in model.model_kwargs"
+            )
+
     @property
     def max_step_saves_to_keep_multiplier(self):
         # the cleanup mechanism checks this to see how many saves to keep
         # if we are training a LoRA, we need to set this to 2 so we keep both the high noise and low noise LoRAs at saves to keep
-        if self.network is not None:
+        if (
+            self.network is not None
+            and self.network.network_config.split_multistage_loras
+        ):
             return 2
         return 1
 
@@ -264,7 +288,7 @@ class Wan2214bModel(Wan225bModel):
             transformer_1.to(self.quantize_device, dtype=dtype)
             flush()
 
-        if self.model_config.quantize:
+        if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
             # todo handle two ARAs
             self.print_and_status_update("Quantizing Transformer 1")
             quantize_model(self, transformer_1)
@@ -289,7 +313,7 @@ class Wan2214bModel(Wan225bModel):
             transformer_2.to(self.quantize_device, dtype=dtype)
             flush()
 
-        if self.model_config.quantize:
+        if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is None:
             # todo handle two ARAs
             self.print_and_status_update("Quantizing Transformer 2")
             quantize_model(self, transformer_2)
@@ -309,7 +333,13 @@ class Wan2214bModel(Wan225bModel):
             boundary_ratio=boundary_ratio_t2v,
             low_vram=self.model_config.low_vram,
         )
-
+        
+        if self.model_config.quantize and self.model_config.accuracy_recovery_adapter is not None:
+            # apply the accuracy recovery adapter to both transformers
+            self.print_and_status_update("Applying Accuracy Recovery Adapter to Transformers")
+            quantize_model(self, transformer)
+            flush()
+            
         return transformer
 
     def get_generation_pipeline(self):
@@ -407,17 +437,20 @@ class Wan2214bModel(Wan225bModel):
             # just save as a combo lora
             save_file(state_dict, output_path, metadata=metadata)
             return
-        
+
         # we need to build out both dictionaries for high and low noise LoRAs
         high_noise_lora = {}
         low_noise_lora = {}
+        
+        only_train_high_noise = self.train_high_noise and not self.train_low_noise
+        only_train_low_noise = self.train_low_noise and not self.train_high_noise
 
         for key in state_dict:
-            if ".transformer_1." in key:
+            if ".transformer_1." in key or only_train_high_noise:
                 # this is a high noise LoRA
                 new_key = key.replace(".transformer_1.", ".")
                 high_noise_lora[new_key] = state_dict[key]
-            elif ".transformer_2." in key:
+            elif ".transformer_2." in key or only_train_low_noise:
                 # this is a low noise LoRA
                 new_key = key.replace(".transformer_2.", ".")
                 low_noise_lora[new_key] = state_dict[key]
@@ -439,11 +472,14 @@ class Wan2214bModel(Wan225bModel):
 
     def load_lora(self, file: str):
         # if it doesnt have high_noise or low_noise, it is a combo LoRA
-        if "_high_noise.safetensors" not in file and "_low_noise.safetensors" not in file:
-            # this is a combined LoRA, we need to split it up
+        if (
+            "_high_noise.safetensors" not in file
+            and "_low_noise.safetensors" not in file
+        ):
+            # this is a combined LoRA, we dont need to split it up
             sd = load_file(file)
             return sd
-        
+
         # we may have been passed the high_noise or the low_noise LoRA path, but we need to load both
         high_noise_lora_path = file.replace(
             "_low_noise.safetensors", "_high_noise.safetensors"
@@ -454,7 +490,7 @@ class Wan2214bModel(Wan225bModel):
 
         combined_dict = {}
 
-        if os.path.exists(high_noise_lora_path):
+        if os.path.exists(high_noise_lora_path) and self.train_high_noise:
             # load the high noise LoRA
             high_noise_lora = load_file(high_noise_lora_path)
             for key in high_noise_lora:
@@ -462,7 +498,7 @@ class Wan2214bModel(Wan225bModel):
                     "diffusion_model.", "diffusion_model.transformer_1."
                 )
                 combined_dict[new_key] = high_noise_lora[key]
-        if os.path.exists(low_noise_lora_path):
+        if os.path.exists(low_noise_lora_path) and self.train_low_noise:
             # load the low noise LoRA
             low_noise_lora = load_file(low_noise_lora_path)
             for key in low_noise_lora:
@@ -470,5 +506,35 @@ class Wan2214bModel(Wan225bModel):
                     "diffusion_model.", "diffusion_model.transformer_2."
                 )
                 combined_dict[new_key] = low_noise_lora[key]
+        
+        # if we are not training both stages, we wont have transformer designations in the keys
+        if not self.train_high_noise and not self.train_low_noise:
+            new_dict = {}
+            for key in combined_dict:
+                if ".transformer_1." in key:
+                    new_key = key.replace(".transformer_1.", ".")
+                elif ".transformer_2." in key:
+                    new_key = key.replace(".transformer_2.", ".")
+                else:
+                    new_key = key
+                new_dict[new_key] = combined_dict[key]
+            combined_dict = new_dict
 
         return combined_dict
+
+    def get_model_to_train(self):
+        # todo, loras wont load right unless they have the transformer_1 or transformer_2 in the key.
+        # called when setting up the LoRA. We only need to get the model for the stages we want to train.
+        if self.train_high_noise and self.train_low_noise:
+            # we are training both stages, return the unified model
+            return self.model
+        elif self.train_high_noise:
+            # we are only training the high noise stage, return transformer_1
+            return self.model.transformer_1
+        elif self.train_low_noise:
+            # we are only training the low noise stage, return transformer_2
+            return self.model.transformer_2
+        else:
+            raise ValueError(
+                "At least one of train_high_noise or train_low_noise must be True in model.model_kwargs"
+            )
