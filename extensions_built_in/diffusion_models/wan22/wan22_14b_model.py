@@ -204,6 +204,10 @@ class Wan2214bModel(Wan225bModel):
             raise ValueError(
                 "At least one of train_high_noise or train_low_noise must be True in model.model_kwargs"
             )
+        
+        # if we are only training one or the other, the target LoRA modules will be the wan transformer class
+        if not self.train_high_noise or not self.train_low_noise:
+            self.target_lora_modules = ["WanTransformer3DModel"]
 
     @property
     def max_step_saves_to_keep_multiplier(self):
