@@ -1864,7 +1864,7 @@ class SDTrainer(BaseSDTrainProcess):
         for batch in batch_list:
             if self.sd.is_multistage:
                 # handle multistage switching
-                if self.steps_this_boundary >= self.train_config.switch_boundary_every:
+                if self.steps_this_boundary >= self.train_config.switch_boundary_every or self.current_boundary_index not in self.sd.trainable_multistage_boundaries:
                     # iterate to make sure we only train trainable_multistage_boundaries
                     while True:
                         self.steps_this_boundary = 0
