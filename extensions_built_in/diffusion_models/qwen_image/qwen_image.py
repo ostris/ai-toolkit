@@ -13,7 +13,7 @@ from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscre
 from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype
+# from toolkit.util.quantize import quantize, get_qtype
 import torch.nn.functional as F
 
 from diffusers import QwenImagePipeline, QwenImageTransformer2DModel, AutoencoderKLQwenImage

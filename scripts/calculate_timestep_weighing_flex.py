@@ -13,7 +13,7 @@ if True:
     import torch
     from optimum.quanto import freeze, qfloat8, QTensor, qint4
     from diffusers import FluxTransformer2DModel, FluxPipeline, AutoencoderKL, FlowMatchEulerDiscreteScheduler
-    from toolkit.util.quantize import quantize, get_qtype
+    # from toolkit.util.quantize import quantize, get_qtype    
     from transformers import T5EncoderModel, T5TokenizerFast, CLIPTextModel, CLIPTokenizer
     from torchvision import transforms
 

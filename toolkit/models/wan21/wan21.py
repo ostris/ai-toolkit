@@ -29,8 +29,9 @@ import copy
 from toolkit.config_modules import ModelConfig, GenerateImageConfig, ModelArch
 import torch
 from optimum.quanto import freeze, qfloat8, QTensor, qint4
-from toolkit.util.quantize import quantize, get_qtype
+# from toolkit.util.quantize import quantize, get_qtype
 from diffusers import FlowMatchEulerDiscreteScheduler, UniPCMultistepScheduler
+
 from typing import TYPE_CHECKING, List
 from toolkit.accelerator import unwrap_model
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler

@@ -13,7 +13,7 @@ from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscre
 from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze, QTensor
-from toolkit.util.quantize import quantize, get_qtype
+# from toolkit.util.quantize import quantize, get_qtype
 from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
 from .pipeline import ChromaPipeline
 from einops import rearrange, repeat

@@ -17,7 +17,7 @@ from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
-from toolkit.util.quantize import quantize, get_qtype
+# from toolkit.util.quantize import quantize, get_qtype
 from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
 from .pipeline import Flex2Pipeline
 from einops import rearrange, repeat

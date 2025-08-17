@@ -19,7 +19,7 @@ import torch
 import diffusers
 from diffusers import AutoencoderKL, CogView4Transformer2DModel, CogView4Pipeline
 from optimum.quanto import freeze, qfloat8, QTensor, qint4
-from toolkit.util.quantize import quantize, get_qtype
+# from toolkit.util.quantize import quantize, get_qtype
 from transformers import GlmModel, AutoTokenizer
 from diffusers import FlowMatchEulerDiscreteScheduler
 from typing import TYPE_CHECKING

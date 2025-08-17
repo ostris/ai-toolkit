@@ -13,7 +13,8 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
-from toolkit.util.quantize import quantize, get_qtype
+# from toolkit.util.quantize import quantize, get_qtype
+
 from .src.pipelines.omnigen2.pipeline_omnigen2 import OmniGen2Pipeline
 from .src.models.transformers import OmniGen2Transformer2DModel
 from .src.models.transformers.repo import OmniGen2RotaryPosEmbed
