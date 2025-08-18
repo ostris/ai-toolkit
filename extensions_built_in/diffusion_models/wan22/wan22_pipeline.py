@@ -10,6 +10,7 @@ from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 from diffusers.pipelines.wan.pipeline_wan import XLA_AVAILABLE
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from typing import Any, Callable, Dict, List, Optional, Union
+from diffusers.image_processor import PipelineImageInput
 
 
 class Wan22Pipeline(WanPipeline):
@@ -149,6 +150,18 @@ class Wan22Pipeline(WanPipeline):
 
         # 5. Prepare latent variables
         num_channels_latents = self.transformer.config.in_channels
+        
+        conditioning = None # wan2.2 i2v conditioning
+        # check shape of latents to see if it is first frame conditioned for 2.2 14b i2v
+        if latents is not None:
+            if latents.shape[1] == 36:
+                # first 16 channels are latent. other 20 are conditioning
+                conditioning = latents[:, 16:]
+                latents = latents[:, :16]
+                
+                # we need to trick the in_channls to think it is only 16 channels
+                num_channels_latents = 16
+                
         latents = self.prepare_latents(
             batch_size * num_videos_per_prompt,
             num_channels_latents,
@@ -210,6 +223,13 @@ class Wan22Pipeline(WanPipeline):
                     timestep = temp_ts.unsqueeze(0).expand(latents.shape[0], -1)
                 else:
                     timestep = t.expand(latents.shape[0])
+                
+                pre_condition_latent_model_input = latent_model_input.clone()
+                
+                if conditioning is not None:
+                    # conditioning is first frame conditioning for 2.2 i2v
+                    latent_model_input = torch.cat(
+                        [latent_model_input, conditioning], dim=1)
 
                 noise_pred = current_model(
                     hidden_states=latent_model_input,
@@ -235,7 +255,7 @@ class Wan22Pipeline(WanPipeline):
                     noise_pred, t, latents, return_dict=False)[0]
                 
                 # apply i2v mask
-                latents = (latent_model_input * (1 - mask)) + (
+                latents = (pre_condition_latent_model_input * (1 - mask)) + (
                     latents * mask
                 )
 

@@ -6,6 +6,7 @@ import torch
 import yaml
 from toolkit.accelerator import unwrap_model
 from toolkit.basic import flush
+from toolkit.models.wan21.wan_utils import add_first_frame_conditioning
 from toolkit.prompt_utils import PromptEmbeds
 from PIL import Image
 from diffusers import UniPCMultistepScheduler
@@ -21,11 +22,10 @@ from diffusers import WanTransformer3DModel
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from torchvision.transforms import functional as TF
 
-from toolkit.models.wan21.wan21 import AggressiveWanUnloadPipeline, Wan21
+from toolkit.models.wan21.wan21 import Wan21
 from .wan22_5b_model import (
     scheduler_config,
     time_text_monkeypatch,
-    Wan225bModel,
 )
 from safetensors.torch import load_file, save_file
 
@@ -239,8 +239,8 @@ class Wan2214bModel(Wan21):
         )
 
     def get_bucket_divisibility(self):
-        # 16x compression  and 2x2 patch size
-        return 32
+        # 8x compression  and 2x2 patch size
+        return 16
 
     def load_wan_transformer(self, transformer_path, subfolder=None):
         if self.model_config.split_model_over_gpus:
@@ -378,7 +378,7 @@ class Wan2214bModel(Wan21):
 
     def generate_single_image(
         self,
-        pipeline: AggressiveWanUnloadPipeline,
+        pipeline: Wan22Pipeline,
         gen_config: GenerateImageConfig,
         conditional_embeds: PromptEmbeds,
         unconditional_embeds: PromptEmbeds,
@@ -513,7 +513,7 @@ class Wan2214bModel(Wan21):
                 combined_dict[new_key] = low_noise_lora[key]
         
         # if we are not training both stages, we wont have transformer designations in the keys
-        if not self.train_high_noise and not self.train_low_noise:
+        if not self.train_high_noise or not self.train_low_noise:
             new_dict = {}
             for key in combined_dict:
                 if ".transformer_1." in key:
