@@ -224,9 +224,9 @@ export const modelArchs: ModelArch[] = [
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['Qwen/Qwen-Image', defaultNameOrPath],
-      'config.process[0].model.quantize': [true, false],
-      'config.process[0].model.quantize_te': [true, false],
-      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].model.quantize': [false, true],
+      'config.process[0].model.quantize_te': [false, true],
+      'config.process[0].model.low_vram': [false, true],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],

@@ -9,7 +9,7 @@ export const defaultDatasetConfig: DatasetConfig = { // needs addition here
   initializer_concept: '',
   default_caption: '',
   caption_ext: 'txt',
-  caption_dropout_rate: 0.05,
+  caption_dropout_rate: 0.0,
   cache_latents_to_disk: false,
   is_reg: false,
   network_weight: 1,
@@ -61,7 +61,7 @@ export const defaultJobConfig: JobConfig = {
           train_text_encoder: false,
           gradient_checkpointing: true,
           noise_scheduler: 'flowmatch',
-          optimizer: 'adamw8bit',
+          optimizer: 'adamw',
           timestep_type: 'sigmoid',
           content_or_style: 'balanced',
           optimizer_params: {
