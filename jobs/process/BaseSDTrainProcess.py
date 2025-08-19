@@ -571,6 +571,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # replace extension
                     emb_file_path = os.path.splitext(emb_file_path)[0] + ".pt"
                 self.embedding.save(emb_file_path)
+
+                ### save the token mapping here!!
+                # import pdb; pdb.set_trace()
+                with open(os.path.join(self.save_root, "tokens.json"), "w") as file:
+                    json.dump(self.embedding.embedding_tokens, file, indent=4)
             
             if self.decorator is not None:
                 dec_filename = f'{self.job.name}{step_num}.safetensors'
