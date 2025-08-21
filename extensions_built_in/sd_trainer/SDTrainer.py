@@ -999,11 +999,16 @@ class SDTrainer(BaseSDTrainProcess):
                 if batch.prompt_embeds is not None:
                     embeds_to_use = batch.prompt_embeds.clone().to(self.device_torch, dtype=dtype)
                 else:
+                    prompt_kwargs = {}
+                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
+                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
                     embeds_to_use = self.sd.encode_prompt(
                         prompt_list,
                         long_prompts=self.do_long_prompts).to(
                         self.device_torch,
-                        dtype=dtype).detach()
+                        dtype=dtype,
+                        **prompt_kwargs
+                    ).detach()
 
             # dont use network on this
             # self.network.multiplier = 0.0
@@ -1370,6 +1375,9 @@ class SDTrainer(BaseSDTrainProcess):
 
                 with self.timer('encode_prompt'):
                     unconditional_embeds = None
+                    prompt_kwargs = {}
+                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
+                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
@@ -1406,7 +1414,9 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
-                                long_prompts=self.do_long_prompts).to(
+                                long_prompts=self.do_long_prompts,
+                                **prompt_kwargs
+                            ).to(
                                 self.device_torch,
                                 dtype=dtype)
 
@@ -1418,7 +1428,9 @@ class SDTrainer(BaseSDTrainProcess):
                                     self.batch_negative_prompt,
                                     self.batch_negative_prompt,
                                     dropout_prob=self.train_config.prompt_dropout_prob,
-                                    long_prompts=self.do_long_prompts).to(
+                                    long_prompts=self.do_long_prompts,
+                                    **prompt_kwargs
+                                ).to(
                                     self.device_torch,
                                     dtype=dtype)
                                 if isinstance(self.adapter, CustomAdapter):
@@ -1436,7 +1448,9 @@ class SDTrainer(BaseSDTrainProcess):
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
-                                long_prompts=self.do_long_prompts).to(
+                                long_prompts=self.do_long_prompts,
+                                **prompt_kwargs
+                            ).to(
                                 self.device_torch,
                                 dtype=dtype)
                             if self.train_config.do_cfg:
@@ -1445,7 +1459,9 @@ class SDTrainer(BaseSDTrainProcess):
                                 unconditional_embeds = self.sd.encode_prompt(
                                     self.batch_negative_prompt,
                                     dropout_prob=self.train_config.prompt_dropout_prob,
-                                    long_prompts=self.do_long_prompts).to(
+                                    long_prompts=self.do_long_prompts,
+                                    **prompt_kwargs
+                                ).to(
                                     self.device_torch,
                                     dtype=dtype)
                                 if isinstance(self.adapter, CustomAdapter):
@@ -1459,7 +1475,9 @@ class SDTrainer(BaseSDTrainProcess):
                                 self.diff_output_preservation_embeds = self.sd.encode_prompt(
                                     dop_prompts, dop_prompts_2,
                                     dropout_prob=self.train_config.prompt_dropout_prob,
-                                    long_prompts=self.do_long_prompts).to(
+                                    long_prompts=self.do_long_prompts,
+                                    **prompt_kwargs
+                                ).to(
                                     self.device_torch,
                                     dtype=dtype)
                         # detach the embeddings
