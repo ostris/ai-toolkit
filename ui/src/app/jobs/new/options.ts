@@ -214,9 +214,10 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['network.conv'],
     additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage'],
-    // accuracyRecoveryAdapters: {
-    //   '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint3.safetensors',
-    // },
+    accuracyRecoveryAdapters: {
+      // '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint3.safetensors',
+      '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint4.safetensors',
+    },
   },
   {
     name: 'wan22_14b_i2v',
@@ -244,6 +245,9 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['network.conv'],
     additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'model.multistage'],
+    accuracyRecoveryAdapters: {
+      '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_i2v_torchao_uint4.safetensors',
+    },
   },
   {
     name: 'wan22_5b',
