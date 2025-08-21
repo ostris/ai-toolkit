@@ -50,6 +50,7 @@ class FileItemDTO(
         self.is_video = self.dataset_config.num_frames > 1
         size_database = kwargs.get('size_database', {})
         dataset_root =  kwargs.get('dataset_root', None)
+        self.encode_control_in_text_embeddings = kwargs.get('encode_control_in_text_embeddings', False)
         if dataset_root is not None:
             # remove dataset root from path
             file_key = self.path.replace(dataset_root, '')
