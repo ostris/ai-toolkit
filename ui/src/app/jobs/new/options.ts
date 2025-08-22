@@ -10,7 +10,7 @@ type AdditionalSections =
   | 'datasets.num_frames'
   | 'model.multistage'
   | 'model.low_vram';
-type ModelGroup = 'image' | 'video';
+type ModelGroup = 'image' | 'instruction' | 'video';
 
 export interface ModelArch {
   name: string;
@@ -44,7 +44,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flux_kontext',
     label: 'FLUX.1-Kontext-dev',
-    group: 'image',
+    group: 'instruction',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-Kontext-dev', defaultNameOrPath],
@@ -307,6 +307,27 @@ export const modelArchs: ModelArch[] = [
     },
   },
   {
+    name: 'qwen_image_edit',
+    label: 'Qwen-Image-Edit',
+    group: 'instruction',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_torchao_uint3.safetensors',
+    },
+  },
+  {
     name: 'hidream',
     label: 'HiDream',
     group: 'image',
@@ -327,7 +348,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'hidream_e1',
     label: 'HiDream E1',
-    group: 'image',
+    group: 'instruction',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-E1-1', defaultNameOrPath],
