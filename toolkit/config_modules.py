@@ -1232,5 +1232,10 @@ def validate_configs(
         for dataset in dataset_configs:
             if not dataset.cache_text_embeddings:
                 raise ValueError("All datasets must have cache_text_embeddings set to True when caching text embeddings is enabled.")
+    
+    # qwen image edit cannot cache text embeddings
+    if model_config.arch == 'qwen_image_edit':
+        if train_config.unload_text_encoder:
+            raise ValueError("Cannot cache unload text encoder with qwen_image_edit model. Control images are encoded with text embeddings. You can cache the text embeddings though")
 
     

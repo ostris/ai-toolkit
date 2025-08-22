@@ -36,6 +36,7 @@ from diffusers import \
     UNet2DConditionModel
 from diffusers import PixArtAlphaPipeline
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjection
+from torchvision.transforms import functional as TF
 
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
@@ -177,6 +178,9 @@ class BaseModel:
         self.multistage_boundaries: List[float] = [0.0]
         # a list of trainable multistage boundaries
         self.trainable_multistage_boundaries: List[int] = [0]
+        
+        # set true for models that encode control image into text embeddings
+        self.encode_control_in_text_embeddings = False
 
     # properties for old arch for backwards compatibility
     @property
@@ -287,7 +291,7 @@ class BaseModel:
         raise NotImplementedError(
             "get_noise_prediction must be implemented in child classes")
 
-    def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
+    def get_prompt_embeds(self, prompt: str, control_images=None) -> PromptEmbeds:
         raise NotImplementedError(
             "get_prompt_embeds must be implemented in child classes")
         
@@ -496,17 +500,34 @@ class BaseModel:
                     if self.sample_prompts_cache is not None:
                         conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
-                    else: 
+                    else:
+                        ctrl_img = None
+                        # load the control image if out model uses it in text encoding
+                        if gen_config.ctrl_img is not None and self.encode_control_in_text_embeddings:
+                            ctrl_img = Image.open(gen_config.ctrl_img).convert("RGB")
+                            # convert to 0 to 1 tensor
+                            ctrl_img = (
+                                TF.to_tensor(ctrl_img)
+                                .unsqueeze(0)
+                                .to(self.device_torch, dtype=self.torch_dtype)
+                            )
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
                         conditional_embeds = self.encode_prompt(
-                            gen_config.prompt, gen_config.prompt_2, force_all=True)
+                            gen_config.prompt, 
+                            gen_config.prompt_2, 
+                            force_all=True,
+                            control_images=ctrl_img
+                        )
 
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = True
                         unconditional_embeds = self.encode_prompt(
-                            gen_config.negative_prompt, gen_config.negative_prompt_2, force_all=True
+                            gen_config.negative_prompt, 
+                            gen_config.negative_prompt_2, 
+                            force_all=True,
+                            control_images=ctrl_img
                         )
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
@@ -989,6 +1010,7 @@ class BaseModel:
             long_prompts=False,
             max_length=None,
             dropout_prob=0.0,
+            control_images=None,
     ) -> PromptEmbeds:
         # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt
@@ -998,6 +1020,9 @@ class BaseModel:
 
         if prompt2 is not None and not isinstance(prompt2, list):
             prompt2 = [prompt2]
+        # if control_images in the signature, pass it. This keep from breaking plugins
+        if self.encode_control_in_text_embeddings:
+            return self.get_prompt_embeds(prompt, control_images=control_images)
 
         return self.get_prompt_embeds(prompt)
 
