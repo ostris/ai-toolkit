@@ -1,5 +1,12 @@
 # Fine-Tuning and Inference with TI LoRAs
 
+## Tips for Dataset Images
+- Use high quality .png images
+- Gather images keeping the target generations in mind (Eg,: If the output scenes of Alia Bhatt are to be set in Pakistan, use her images from Raazi instead of Rocky aur Rani)
+- ALWAYS include the special token in EVERY prompt in the dataset
+- Keep your prompts concise and straight to the point
+- Make sure that the face is clear in every image and include long/wide range shots as well if the inference outputs should have the same
+
 ## Fine-Tuning
 
 ### On AMD MI300X GPUs - dheyo_amd Branch
@@ -132,6 +139,8 @@ lh100.dheyo.ai:7777
 - Create a command and launch it
 
 Always look out for idle GPUs and give the device ID accordingly in the environment variable (`HIP_VISIBLE_DEVICES` or `CUDA_VISIBLE_DEVICES`) in front of the actual script command
+
+**For multi prompt bulk generation, each prompt should start on a newline**
 
 ### On AMD:
 
