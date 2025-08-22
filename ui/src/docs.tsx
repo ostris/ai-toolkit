@@ -80,6 +80,17 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.preserve_resolutions': {
+    title: 'Preserve Resolutions',
+    description: (
+      <>
+        This disables any kind of resizing or bucketing and will train your images at their original resolutions.
+        <br />
+        <br />
+        Any specified resolution settings will be ignored.
+      </>
+    ),
+  },
   'datasets.do_i2v': {
     title: 'Do I2V',
     description: (
@@ -118,8 +129,8 @@ const docs: { [key: string]: ConfigDoc } = {
         Some models have multi stage networks that are trained and used separately in the denoising process. Most
         common, is to have 2 stages. One for high noise and one for low noise. You can choose to train both stages at
         once or train them separately. If trained at the same time, The trainer will alternate between training each
-        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the
-        trainer will only train that stage and output a single LoRA.
+        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the trainer
+        will only train that stage and output a single LoRA.
       </>
     ),
   },
