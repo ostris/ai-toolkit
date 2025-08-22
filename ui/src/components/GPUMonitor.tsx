@@ -101,8 +101,8 @@ const GpuMonitor: React.FC = () => {
     if (!gpuData.hasNvidiaSmi) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
-          <strong className="font-bold">No AMD GPUs detected!</strong>
-          <span className="block sm:inline"> rocm-smi is not available on this system.</span>
+          <strong className="font-bold">No NVIDIA GPUs detected!</strong>
+          <span className="block sm:inline"> nvidia-smi is not available on this system.</span>
           {gpuData.error && <p className="mt-2 text-sm">{gpuData.error}</p>}
         </div>
       );
