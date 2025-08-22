@@ -507,17 +507,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
             step_num = f"_{str(step).zfill(9)}"
 
         # self.sd.tokenizer.save_pretrained(os.path.join(self.save_root, f'tokenizer_{self.job.name}_{step_num}'))
-        if isinstance(self.sd.tokenizer, List):
-            for idx, tokenizer in enumerate(self.sd.tokenizer):
-                tokenizer.save_pretrained(os.path.join(self.save_root, f'tokenizer_{idx}_{self.job.name}_{step_num}'))
-        else:
-            self.sd.tokenizer.save_pretrained(os.path.join(self.save_root, f'tokenizer_{self.job.name}_{step_num}'))
+        if self.embedding is not None:
+            if isinstance(self.sd.tokenizer, List):
+                for idx, tokenizer in enumerate(self.sd.tokenizer):
+                    tokenizer.save_pretrained(os.path.join(self.save_root, f'tokenizer_{idx}_{self.job.name}_{step_num}'))
+            else:
+                self.sd.tokenizer.save_pretrained(os.path.join(self.save_root, f'tokenizer_{self.job.name}_{step_num}'))
 
-        if isinstance(self.sd.text_encoder, List):
-            for idx, text_encoder in enumerate(self.sd.text_encoder):
-                text_encoder.save_pretrained(os.path.join(self.save_root, f'text_encoder_{idx}_{self.job.name}_{step_num}'))
-        else:
-            self.sd.text_encoder.save_pretrained(os.path.join(self.save_root, f'text_encoder_{self.job.name}_{step_num}'))
+            if isinstance(self.sd.text_encoder, List):
+                for idx, text_encoder in enumerate(self.sd.text_encoder):
+                    text_encoder.save_pretrained(os.path.join(self.save_root, f'text_encoder_{idx}_{self.job.name}_{step_num}'))
+            else:
+                self.sd.text_encoder.save_pretrained(os.path.join(self.save_root, f'text_encoder_{self.job.name}_{step_num}'))
 
 
         self.update_training_metadata()
