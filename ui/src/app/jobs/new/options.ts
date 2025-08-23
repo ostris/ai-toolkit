@@ -106,7 +106,7 @@ export const modelArchs: ModelArch[] = [
     group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['lodestones/Chroma', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['lodestones/Chroma1-Base', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
