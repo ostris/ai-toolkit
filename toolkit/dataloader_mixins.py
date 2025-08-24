@@ -1865,7 +1865,9 @@ class TextEmbeddingCachingMixin:
                         self.sd.set_device_state_preset('cache_text_encoder')
                         did_move = True
                         
-                    if file_item.encode_control_in_text_embeddings and file_item.control_path is not None:
+                    if file_item.encode_control_in_text_embeddings:
+                        if file_item.control_path is None:
+                            raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
                         # load the control image and feed it into the text encoder
                         ctrl_img = Image.open(file_item.control_path).convert("RGB")
                         # convert to 0 to 1 tensor
