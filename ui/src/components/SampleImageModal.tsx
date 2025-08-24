@@ -45,7 +45,8 @@ export default function SampleImageModal() {
       promptIdx: 0,
     };
     if (imageModal?.imgPath) {
-      const filename = imageModal.imgPath.split('/').pop();
+      const sep = imageModal.imgPath.includes('\\') ? '\\' : '/';
+      const filename = imageModal.imgPath.split(sep).pop();
       if (!filename) return ii;
       // filename is <timestep>__<zero_pad_step>_<prompt_idx>.<ext>
       ii.filename = filename as string;
