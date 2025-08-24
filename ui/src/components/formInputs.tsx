@@ -201,7 +201,7 @@ export const SelectInput = (props: SelectInputProps) => {
 };
 
 export interface CheckboxProps {
-  label?: string;
+  label?: string | React.ReactNode;
   checked: boolean;
   onChange: (checked: boolean) => void;
   className?: string;

@@ -8,6 +8,7 @@ import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/comp
 import Card from '@/components/Card';
 import { X } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
+import {FlipHorizontal2, FlipVertical2} from "lucide-react"
 
 type Props = {
   jobConfig: JobConfig;
@@ -637,6 +638,18 @@ export default function SimpleJob({
                             docKey="datasets.do_i2v"
                           />
                         )}
+                      </FormGroup>
+                      <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
+                        <Checkbox
+                          label={<>Flip X <FlipHorizontal2 className="inline-block w-4 h-4 ml-1" /></>}
+                          checked={dataset.flip_x || false}
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_x`)}
+                        />
+                        <Checkbox
+                          label={<>Flip Y <FlipVertical2 className="inline-block w-4 h-4 ml-1" /></>}
+                          checked={dataset.flip_y || false}
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_y`)}
+                        />
                       </FormGroup>
                     </div>
                     <div>
