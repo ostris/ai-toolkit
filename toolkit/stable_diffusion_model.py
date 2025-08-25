@@ -1145,6 +1145,8 @@ class StableDiffusion:
             # the network to drastically speed up inference
             unique_network_weights = set([x.network_multiplier for x in image_configs])
             if len(unique_network_weights) == 1 and network.can_merge_in:
+                # make sure it is on device before merging. 
+                self.unet.to(self.device_torch)
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
                 network.merge_in(merge_weight=merge_multiplier)
