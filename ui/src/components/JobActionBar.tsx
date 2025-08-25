@@ -1,9 +1,9 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, OctagonX } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions } from '@/utils/jobs';
+import { startJob, stopJob, deleteJob, getAvaliableJobActions, forceStopJob } from '@/utils/jobs';
 
 interface JobActionBarProps {
   job: Job;
@@ -31,6 +31,24 @@ export default function JobActionBar({ job, onRefresh, afterDelete, className, h
         >
           <Play />
         </Button>
+      )}
+      {!canStart && (<Button
+        onClick={() => {
+          openConfirm({
+            title: 'Force Stop Job',
+            message: `This will reset the status of "${job.name}" that is marked as running but may not actually be running. Use this only if you believe the UI is stuck in a running state.`,
+            type: 'warning',
+            confirmText: 'Force Stop',
+            onConfirm: async () => {
+              await forceStopJob(job.id);
+              if (onRefresh) onRefresh();
+            },
+          });
+        }}
+        className={`ml-2 opacity-100`}
+      >
+        <OctagonX />
+      </Button>
       )}
       {canStop && (
         <Button
