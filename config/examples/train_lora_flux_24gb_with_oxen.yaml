@@ -1,12 +1,8 @@
-# IMPORTANT: The Wan2.1 14B model is huge. This config should work on 24GB GPUs. It cannot
-# support keeping the text encoder on GPU while training with 24GB, so it is only good
-# for training on a single prompt, for example a person with a trigger word.
-# to train on captions, you need more vran for now.
 ---
 job: extension
 config:
   # this name will be the folder and filename name
-  name: "my_first_wan21_14b_lora_v1"
+  name: "my_first_flux_lora_with_oxen_v1"
   process:
     - type: 'sd_trainer'
       # root folder to save training sessions/samples/weights
@@ -16,12 +12,23 @@ config:
       device: cuda:0
       # if a trigger word is specified, it will be added to captions of training data if it does not already exist
       # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
-      # this is probably needed for 24GB cards when offloading TE to CPU
-      trigger_word: "p3r5on"
+#      trigger_word: "p3r5on"
+      
+      # Oxen experiment tracking configuration (NEW!)
+      oxen:
+        enabled: true  # Enable Oxen experiment tracking
+        repo_id: "your-username/your-experiment-repo"  # Replace with your Oxen repo ID (namespace/repo_name)
+        host: "hub.oxen.ai"  # Oxen host (default: hub.oxen.ai)
+        scheme: "https"  # URL scheme (default: https)
+        output_dir_base: "experiments"  # Base directory for experiment outputs
+        experiment_type: "flux-lora-training"  # Type/category for the experiment
+        fine_tune_id: "flux_experiment_001"  # Optional: Custom ID for this training run
+        log_every: 100  # Log metrics every N steps (set to match or be multiple of logging.log_every)
+      
       network:
         type: "lora"
-        linear: 32
-        linear_alpha: 32
+        linear: 16
+        linear_alpha: 16
       save:
         dtype: float16 # precision to save
         save_every: 250 # save every this many steps
@@ -30,72 +37,78 @@ config:
         # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
 #       hf_repo_id: your-username/your-model-slug
 #       hf_private: true #whether the repo is private or public
+      
+      # Standard logging configuration
+      logging:
+        log_every: 10  # Log to standard logger every N steps
+        verbose: false
+        use_wandb: false  # Can use both Oxen and W&B simultaneously if desired
+        
       datasets:
         # datasets are a folder of images. captions need to be txt files with the same name as the image
         # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
         # images will automatically be resized and bucketed into the resolution specified
         # on windows, escape back slashes with another backslash so
         # "C:\\path\\to\\images\\folder"
-        # AI-Toolkit does not currently support video datasets, we will train on 1 frame at a time
-        # it works well for characters, but not as well for "actions"
         - folder_path: "/path/to/images/folder"
           caption_ext: "txt"
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
-          resolution: [ 632 ]  # will be around 480p
+          resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions
       train:
         batch_size: 1
         steps: 2000  # total number of steps to train 500 - 4000 is a good range
-        gradient_accumulation: 1
+        gradient_accumulation_steps: 1
         train_unet: true
-        train_text_encoder: false  # probably won't work with wan
+        train_text_encoder: false  # probably won't work with flux
         gradient_checkpointing: true  # need the on unless you have a ton of vram
         noise_scheduler: "flowmatch" # for training only
-        timestep_type: 'sigmoid'
         optimizer: "adamw8bit"
         lr: 1e-4
-        optimizer_params:
-          weight_decay: 1e-4
         # uncomment this to skip the pre training sample
 #        skip_first_sample: true
         # uncomment to completely disable sampling
 #        disable_sampling: true
+        # uncomment to use new vell curved weighting. Experimental but may produce better results
+#        linear_timesteps: true
+
         # ema will smooth out learning, but could slow it down. Recommended to leave on.
         ema_config:
           use_ema: true
           ema_decay: 0.99
+
+        # will probably need this if gpu supports it for flux, other dtypes may not work correctly
         dtype: bf16
-        # required for 24GB cards
-        # this will encode your trigger word and use those embeddings for every image in the dataset
-        unload_text_encoder: true
       model:
         # huggingface model name or path
-        name_or_path: "Wan-AI/Wan2.1-T2V-14B-Diffusers"
-        arch: 'wan21'
-        # these settings will save as much vram as possible
-        quantize: true
-        quantize_te: true
-        low_vram: true 
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        is_flux: true
+        quantize: true  # run 8bit mixed precision
+#        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
-        sampler: "flowmatch"
+        sampler: "flowmatch" # must match train.noise_scheduler
         sample_every: 250 # sample every this many steps
-        width: 832
-        height: 480
-        num_frames: 40
-        fps: 15
-        # samples take a long time. so use them sparingly
-        # samples will be animated webp files, if you don't see them animated, open in a browser.
+        width: 1024
+        height: 1024
         prompts:
           # you can add [trigger] to the prompts here and it will be replaced with the trigger word
 #          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
-          - "dog playing the guitar, on stage, singing a song, laser lights, punk rocker"
-          - "a dog playing with a ball"
-        neg: ""  
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "hipster man with a beard, building a chair, in a wood shop"
+          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+          - "a man holding a sign that says, 'this is a sign'"
+          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+        neg: ""  # not used on flux
         seed: 42
         walk_seed: true
-        guidance_scale: 5
-        sample_steps: 30
+        guidance_scale: 4
+        sample_steps: 20
 # you can add any additional meta info here. [name] is replaced with config name at top
 meta:
   name: "[name]"

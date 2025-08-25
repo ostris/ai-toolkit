@@ -9,6 +9,7 @@ import os
 import re
 import traceback
 from typing import Union, List, Optional
+from datetime import datetime
 
 import numpy as np
 import yaml
@@ -59,7 +60,7 @@ from tqdm import tqdm
 
 from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
     GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs, \
-    DecoratorConfig
+    DecoratorConfig, OxenConfig
 from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
@@ -71,6 +72,16 @@ import hashlib
 
 from toolkit.util.blended_blur_noise import get_blended_blur_noise
 from toolkit.util.get_model import get_model_class
+
+# Import Oxen integration (with try/except for optional dependency)
+try:
+    from toolkit.oxen_experiment import AIToolkitOxenExperiment
+    from toolkit.oxen_logger import AIToolkitOxenLogger
+    OXEN_AVAILABLE = True
+except ImportError:
+    OXEN_AVAILABLE = False
+    AIToolkitOxenExperiment = None
+    AIToolkitOxenLogger = None
 
 def flush():
     torch.cuda.empty_cache()
@@ -127,6 +138,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
         self.logger = create_logger(self.logging_config, config)
+
+        # Initialize Oxen experiment tracking if enabled
+        print(f"BaseSDTrainProcess: Initializing Oxen experiment tracking... {self.name}")
+        self.oxen_config = OxenConfig(**self.get_conf('oxen', {}))
+        self.oxen_experiment = None
+        self.oxen_logger = None
+
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -2022,6 +2040,63 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # make sure all params require grad
         self.ensure_params_requires_grad(force=True)
 
+        # Initialize Oxen experiment tracking if enabled
+        if self.oxen_config.enabled and OXEN_AVAILABLE and self.oxen_experiment is None:
+            if self.accelerator.is_main_process:
+                print_acc("Initializing Oxen experiment tracking...")
+                try:
+                    # Get model name from config
+                    model_name = self.model_config.name_or_path or "unknown-model"
+
+                    # Initialize experiment
+                    self.oxen_experiment = AIToolkitOxenExperiment(
+                        repo_id=self.oxen_config.repo_id,
+                        base_model_name=model_name,
+                        fine_tuned_model_name=self.name,
+                        output_dir_base=self.oxen_config.output_dir_base,
+                        experiment_type=self.oxen_config.experiment_type,
+                        is_main_process=True,
+                        fine_tune_id=self.oxen_config.fine_tune_id,
+                        host=self.oxen_config.host,
+                        scheme=self.oxen_config.scheme,
+                    )
+
+                    # Initialize logger
+                    self.oxen_logger = AIToolkitOxenLogger(
+                        experiment=self.oxen_experiment,
+                        is_main_process=True,
+                        fine_tune_id=self.oxen_config.fine_tune_id,
+                    )
+
+                    print_acc(f"Oxen experiment initialized: {self.oxen_experiment.name}")
+
+                except Exception as e:
+                    print_acc(f"Warning: Failed to initialize Oxen experiment: {e}")
+                    self.oxen_experiment = None
+                    self.oxen_logger = None
+            
+            # Broadcast experiment details to other processes if using distributed training
+            if hasattr(self.accelerator, 'num_processes') and self.accelerator.num_processes > 1:
+                if self.accelerator.is_main_process:
+                    details = self.oxen_experiment.get_details_for_broadcast() if self.oxen_experiment else {}
+                else:
+                    details = {}
+                
+                # Broadcast details to all processes
+                details = self.accelerator.broadcast_object_list([details])[0]
+                
+                if not self.accelerator.is_main_process and details:
+                    # Initialize experiment on non-main processes
+                    self.oxen_experiment = AIToolkitOxenExperiment(
+                        repo_id=details.get('repo_id'),
+                        base_model_name="",  # Not used on non-main processes
+                        fine_tuned_model_name=self.name,
+                        output_dir_base="",  # Not used on non-main processes
+                        is_main_process=False,
+                        host=details.get('host', 'hub.oxen.ai'),
+                        scheme=details.get('scheme', 'https'),
+                    )
+                    self.oxen_experiment.update_from_broadcast(details)
 
         ###################################################################
         # TRAIN LOOP
@@ -2189,6 +2264,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
+                        
+                        # Save sample images to Oxen if enabled
+                        if self.oxen_logger and self.oxen_config.enabled:
+                            try:
+                                sample_dir = os.path.join(self.save_root, "samples")
+                                if os.path.exists(sample_dir):
+                                    self.oxen_logger.save_sample_images(sample_dir, self.step_num)
+                            except Exception as e:
+                                print_acc(f"Warning: Failed to save sample images to Oxen: {e}")
+                        
                         if self.train_config.unload_text_encoder:
                             # make sure the text encoder is unloaded
                             self.sd.text_encoder_to('cpu')
@@ -2205,6 +2290,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.progress_bar.pause()
                         print_acc(f"\nSaving at step {self.step_num}")
                         self.save(self.step_num)
+                        
+                        # Save checkpoint to Oxen if enabled
+                        if self.oxen_logger and self.oxen_config.enabled:
+                            try:
+                                checkpoint_path = os.path.join(self.save_root, f"step_{self.step_num}")
+                                if os.path.exists(checkpoint_path):
+                                    self.oxen_logger.save_checkpoint(checkpoint_path, self.step_num)
+                            except Exception as e:
+                                print_acc(f"Warning: Failed to save checkpoint to Oxen: {e}")
+                        
                         self.ensure_params_requires_grad()
                         # clear any grads
                         optimizer.zero_grad()
@@ -2235,6 +2330,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 self.logger.log({
                                     f'loss/{key}': value,
                                 })
+                            
+                            # log to Oxen if enabled
+                            if self.oxen_logger and self.oxen_config.enabled:
+                                try:
+                                    # Prepare metrics for Oxen
+                                    oxen_metrics = {
+                                        'step': self.step_num,
+                                        'learning_rate': learning_rate,
+                                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        'loss': loss_dict.get('loss', 0.0),
+                                        'epoch': self.step_num / len(self.data_loader.dataset) if self.data_loader and hasattr(self.data_loader, 'dataset') else 0.0,
+                                    }
+
+                                    self.oxen_logger.log_metrics(oxen_metrics, self.step_num)
+                                except Exception as e:
+                                    print_acc(f"Warning: Failed to log metrics to Oxen: {e}")
                     elif self.logging_config.log_every is None:
                         if self.accelerator.is_main_process:
                             # log every step
@@ -2245,6 +2356,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 self.logger.log({
                                     f'loss/{key}': value,
                                 })
+                            
+                            # log to Oxen if enabled (every step)
+                            if self.oxen_logger and self.oxen_config.enabled:
+                                try:
+                                    # Prepare metrics for Oxen
+                                    oxen_metrics = {
+                                        'step': self.step_num,
+                                        'learning_rate': learning_rate,
+                                        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        'loss': loss_dict.get('loss', 0.0),
+                                        'epoch': self.step_num / len(self.data_loader.dataset) if self.data_loader and hasattr(self.data_loader, 'dataset') else 0.0,
+                                    }
+
+                                    self.oxen_logger.log_metrics(oxen_metrics, self.step_num)
+                                except Exception as e:
+                                    print_acc(f"Warning: Failed to log metrics to Oxen: {e}")
 
 
                     if self.performance_log_every > 0 and self.step_num % self.performance_log_every == 0:
@@ -2289,6 +2416,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.accelerator.is_main_process:
             self.save()
             self.logger.finish()
+            
+            # Finalize Oxen experiment if enabled
+            if self.oxen_logger and self.oxen_config.enabled:
+                try:
+                    print_acc("Finalizing Oxen experiment...")
+                    # Final model path (use the save_root directory)
+                    final_model_path = self.save_root if os.path.exists(self.save_root) else None
+                    self.oxen_logger.finalize_experiment(final_model_path)
+                    print_acc("Oxen experiment finalized successfully")
+                except Exception as e:
+                    print_acc(f"Warning: Failed to finalize Oxen experiment: {e}")
+        
         self.accelerator.end_training()
 
         if self.accelerator.is_main_process:
