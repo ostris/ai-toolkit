@@ -16,6 +16,8 @@ export const defaultDatasetConfig: DatasetConfig = {
   shrink_video_to_frames: true,
   num_frames: 1,
   do_i2v: true,
+  flip_x: false,
+  flip_y: false,
 };
 
 export const defaultJobConfig: JobConfig = {

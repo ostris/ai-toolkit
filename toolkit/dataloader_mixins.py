@@ -30,6 +30,7 @@ import albumentations as A
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
 from toolkit.prompt_utils import PromptEmbeds
+from torchvision.transforms import functional as TF
 
 from toolkit.train_tools import get_torch_dtype
 
@@ -1811,6 +1812,9 @@ class TextEmbeddingFileItemDTOMixin:
             ("text_embedding_space_version", self.text_embedding_space_version),
             ("text_embedding_version", self.text_embedding_version),
         ])
+        # if we have a control image, cache the path
+        if self.encode_control_in_text_embeddings and self.control_path is not None:
+            item["control_path"] = self.control_path
         return item
 
     def get_text_embedding_path(self: 'FileItemDTO', recalculate=False):
@@ -1869,7 +1873,21 @@ class TextEmbeddingCachingMixin:
                     if not did_move:
                         self.sd.set_device_state_preset('cache_text_encoder')
                         did_move = True
-                    prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
+                        
+                    if file_item.encode_control_in_text_embeddings:
+                        if file_item.control_path is None:
+                            raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
+                        # load the control image and feed it into the text encoder
+                        ctrl_img = Image.open(file_item.control_path).convert("RGB")
+                        # convert to 0 to 1 tensor
+                        ctrl_img = (
+                            TF.to_tensor(ctrl_img)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                    else:
+                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
                     # save it
                     prompt_embeds.save(text_embedding_path)
                     del prompt_embeds

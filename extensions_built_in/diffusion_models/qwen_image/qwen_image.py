@@ -16,7 +16,7 @@ from toolkit.util.quantize import quantize, get_qtype, quantize_model
 import torch.nn.functional as F
 
 from diffusers import QwenImagePipeline, QwenImageTransformer2DModel, AutoencoderKLQwenImage
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer
+from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
 from tqdm import tqdm
 
 if TYPE_CHECKING:
@@ -43,7 +43,8 @@ scheduler_config = {
 
 class QwenImageModel(BaseModel):
     arch = "qwen_image"
-    _qwen_image_keep_processor = False
+    _qwen_image_keep_visual = False
+    _qwen_pipeline = QwenImagePipeline
 
     def __init__(
             self,
@@ -119,10 +120,9 @@ class QwenImageModel(BaseModel):
         
         # remove the visual model as it is not needed for image generation
         self.processor = None
-        if self._qwen_image_keep_processor:
-            self.processor = text_encoder.model.visual
-        text_encoder.model.visual = None
-        
+        if not self._qwen_image_keep_visual:
+            text_encoder.model.visual = None
+
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
 
@@ -140,13 +140,27 @@ class QwenImageModel(BaseModel):
         self.noise_scheduler = QwenImageModel.get_train_scheduler()
 
         self.print_and_status_update("Making pipe")
+        
+        kwargs = {}
+        
+        if self._qwen_image_keep_visual:
+            try:
+                self.processor = Qwen2VLProcessor.from_pretrained(
+                    model_path, subfolder="processor"
+                )
+            except OSError:
+                self.processor = Qwen2VLProcessor.from_pretrained(
+                    base_model_path, subfolder="processor"
+                )
+            kwargs['processor'] = self.processor
 
-        pipe: QwenImagePipeline = QwenImagePipeline(
+        pipe: QwenImagePipeline = self._qwen_pipeline(
             scheduler=self.noise_scheduler,
             text_encoder=None,
             tokenizer=tokenizer,
             vae=vae,
             transformer=None,
+            **kwargs
         )
         # for quantization, it works best to do these after making the pipe
         pipe.text_encoder = text_encoder
@@ -261,21 +275,13 @@ class QwenImageModel(BaseModel):
         latent_model_input = latent_model_input.permute(0, 2, 4, 1, 3, 5)
         latent_model_input = latent_model_input.reshape(batch_size, (height // ps) * (width // ps), num_channels_latents * (ps * ps))
 
-        # clamp text length to RoPE capacity for this image size
         # img_shapes passed to the model
         img_h2, img_w2 = height // ps, width // ps
-        img_shapes = [(1, img_h2, img_w2)] * batch_size
+        img_shapes = [[(1, img_h2, img_w2)]] * batch_size
 
-        # QwenEmbedRope logic:
-        max_vid_index = max(img_h2 // ps, img_w2 // ps)
-
-        rope_cap = 1024 - max_vid_index  # available text positions in RoPE cache
-        seq_len_actual = text_embeddings.text_embeds.shape[1]
-        use_len = min(seq_len_actual, rope_cap)
-
-        enc_hs = text_embeddings.text_embeds[:, :use_len].to(self.device_torch, self.torch_dtype)
-        prompt_embeds_mask = text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64)[:, :use_len]
-        txt_seq_lens = [use_len] * batch_size
+        enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
+        prompt_embeds_mask = text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64)
+        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
 
         noise_pred = self.transformer(
             hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),

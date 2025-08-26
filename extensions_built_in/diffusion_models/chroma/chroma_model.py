@@ -129,6 +129,12 @@ class ChromaModel(BaseModel):
                 repo_id='lodestones/Chroma',
                 filename=f"chroma-unlocked-v{version}.safetensors",
             )
+        elif model_path.startswith("lodestones/Chroma1-"):
+            # will have a file in the repo that is Chroma1-whatever.safetensors
+            model_path = huggingface_hub.hf_hub_download(
+                repo_id=model_path,
+                filename=f"{model_path.split('/')[-1]}.safetensors",
+            )
         else:
             # check if the model path is a local file
             if os.path.exists(model_path):

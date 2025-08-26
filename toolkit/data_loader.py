@@ -497,6 +497,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
+                    encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
                 )
                 self.file_list.append(file_item)
             except Exception as e:

@@ -217,6 +217,9 @@ class StableDiffusion:
         # a list of trainable multistage boundaries
         self.trainable_multistage_boundaries: List[int] = [0]
         
+        # set true for models that encode control image into text embeddings
+        self.encode_control_in_text_embeddings = False
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):
@@ -1142,6 +1145,8 @@ class StableDiffusion:
             # the network to drastically speed up inference
             unique_network_weights = set([x.network_multiplier for x in image_configs])
             if len(unique_network_weights) == 1 and network.can_merge_in:
+                # make sure it is on device before merging. 
+                self.unet.to(self.device_torch)
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
                 network.merge_in(merge_weight=merge_multiplier)
@@ -2356,6 +2361,7 @@ class StableDiffusion:
             long_prompts=False,
             max_length=None,
             dropout_prob=0.0,
+            control_images=None,
     ) -> PromptEmbeds:
         # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt

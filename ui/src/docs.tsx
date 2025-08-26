@@ -101,6 +101,20 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.flip': {
+    title: 'Flip X and Flip Y',
+    description: (
+      <>
+        You can augment your dataset on the fly by flipping the x (horizontal) and/or y (vertical) axis. Flipping a single axis will effectively double your dataset.
+        It will result it training on normal images, and the flipped versions of the images. This can be very helpful, but keep in mind it can also
+        be destructive. There is no reason to train people upside down, and flipping a face can confuse the model as a person's right side does not
+        look identical to their left side. For text, obviously flipping text is not a good idea.
+        <br />
+        <br />
+        Control images for a dataset will also be flipped to match the images, so they will always match on the pixel level.
+      </>
+    ),
+  },
   'train.unload_text_encoder': {
     title: 'Unload Text Encoder',
     description: (
