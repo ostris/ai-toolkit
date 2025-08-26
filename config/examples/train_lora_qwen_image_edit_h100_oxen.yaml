@@ -2,7 +2,7 @@
 job: extension
 config:
   # this name will be the folder and filename name
-  name: "my_first_qwen_image_edit_lora_lr_2e4"
+  name: "qwen_image_edit_bloxxxy"
   process:
     - type: 'sd_trainer'
       # root folder to save training sessions/samples/weights
@@ -23,16 +23,17 @@ config:
         scheme: "https"  # URL scheme (default: https)
         output_dir_base: "experiments"  # Base directory for experiment outputs
         experiment_type: "flux-lora-training"  # Type/category for the experiment
-        fine_tune_id: "flux_experiment_001"  # Optional: Custom ID for this training run
+        # fine_tune_id: "flux_experiment_001"  # Optional: Custom ID for this training run
         log_every: 10  # Log metrics every N steps (set to match or be multiple of logging.log_every)
 
       network:
         type: "lora"
         linear: 16
         linear_alpha: 16
+
       save:
         dtype: float16 # precision to save
-        save_every: 10 # save every this many steps
+        save_every: 50 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
 
       # Standard logging configuration
@@ -53,12 +54,13 @@ config:
           # default_caption: "a person" # if caching text embeddings, if you don't have captions, this will get cached
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           resolution: [ 512, 768, 1024 ]  # qwen image enjoys multiple resolutions
+
       train:
         batch_size: 1
         # caching text embeddings is not required for H100
         cache_text_embeddings: false
 
-        steps: 3000  # total number of steps to train 500 - 4000 is a good range
+        steps: 13  # total number of steps to train 500 - 4000 is a good range
         gradient_accumulation: 1
         timestep_type: "weighted"
         train_unet: true
@@ -86,12 +88,12 @@ config:
         low_vram: false
       sample:
         sampler: "flowmatch" # must match train.noise_scheduler
-        sample_every: 250 # sample every this many steps
+        sample_every: 10 # sample every this many steps
         width: 512
         height: 512
         samples:
-          # - prompt: "training in the gym"
-          #   ctrl_img: "data/Oxen-Character-Simple-Vector-Graphic/data/control/image_0a378be2-95a8-4b6b-b11d-29ead91731bc.jpg"
+          - prompt: "training in the gym"
+            ctrl_img: "data/Oxen-Character-Simple-Vector-Graphic/data/control/image_0a378be2-95a8-4b6b-b11d-29ead91731bc.jpg"
           # - prompt: "working on a workbench"
           #   ctrl_img: "data/Oxen-Character-Simple-Vector-Graphic/data/control/image_0a378be2-95a8-4b6b-b11d-29ead91731bc.jpg"
           # - prompt: "hammering nails"

@@ -179,32 +179,50 @@ class AIToolkitOxenLogger:
         except Exception as e:
             print(f"Main process: Error saving checkpoint to Oxen: {e}")
 
+    def add_samples(self, sample_dir: str):
+        """
+        Add sample images to Oxen workspace in the "samples" directory.
+        
+        Args:
+            sample_dir: Directory containing sample images
+        """
+        if not self.enabled or not self.is_main_process or self.workspace is None:
+            print(f"Main process: Skipping sample images")
+            return
+
+        try:
+            if not os.path.exists(sample_dir):
+                print(f"Main process: Sample directory does not exist: {sample_dir}")
+                return
+                
+            print(f"Main process: Adding sample images to Oxen workspace from: {sample_dir}")
+            
+            # Add all sample images to the "samples" directory in workspace
+            for root, dirs, files in os.walk(sample_dir):
+                for file in files:
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                        file_path = os.path.join(root, file)
+                        dst_path = os.path.join(self.experiment.name, "samples")
+                        print(f"Main process: Adding sample image: {file_path} -> {dst_path}")
+                        self.workspace.add(file_path, dst=dst_path)
+            
+            print(f"Main process: Sample images added to Oxen workspace successfully")
+            
+        except Exception as e:
+            print(f"Main process: Error adding sample images to Oxen: {e}")
+
     def save_sample_images(self, sample_dir: str, step: int):
         """
         Save sample images to Oxen workspace.
         
         Args:
-            sample_dir: Directory containing sample images
+            sample_dir: Directory containing sample images  
             step: Current training step
         """
-        if not self.enabled or not self.is_main_process or self.workspace is None:
-            return
+        # Delegate to add_samples for the actual work
+        self.add_samples(sample_dir)
 
-        try:
-            print(f"Main process: Saving sample images at step {step}: {sample_dir}")
-            if os.path.isdir(sample_dir):
-                for root, dirs, files in os.walk(sample_dir):
-                    for file in files:
-                        if file.lower().endswith(('.png', '.jpg', '.jpeg')):
-                            file_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(file_path, sample_dir)
-                            self.workspace.add(file_path, dst=f"samples/{rel_path}")
-            print(f"Main process: Sample images saved successfully")
-            
-        except Exception as e:
-            print(f"Main process: Error saving sample images to Oxen: {e}")
-
-    def finalize_experiment(self, final_model_path: Optional[str] = None):
+    def finalize_experiment(self, final_model_path: str):
         """
         Finalize the experiment by committing all changes and saving final model.
         
@@ -212,34 +230,26 @@ class AIToolkitOxenLogger:
             final_model_path: Path to the final trained model
         """
         if not self.enabled or not self.is_main_process or self.workspace is None:
+            print(f"Main process: Skipping finalizing experiment")
             return
 
         try:
-            print(f"Main process: Finalizing experiment")
+            print(f"Main process: Finalizing experiment: {final_model_path}")
             
             # Save final model if provided
             if final_model_path and os.path.exists(final_model_path):
                 print(f"Main process: Saving final model: {final_model_path}")
                 if os.path.isfile(final_model_path):
-                    self.workspace.add(final_model_path, dst="final_model")
+                    self.workspace.add(final_model_path, dst=self.experiment.name)
                 elif os.path.isdir(final_model_path):
                     for root, dirs, files in os.walk(final_model_path):
                         for file in files:
                             file_path = os.path.join(root, file)
+                            # Preserve the relative path structure from final_model_path
                             rel_path = os.path.relpath(file_path, final_model_path)
-                            self.workspace.add(file_path, dst=f"final_model/{rel_path}")
-
-            # Add experiment directory contents
-            if self.experiment.dir and os.path.exists(self.experiment.dir):
-                print(f"Main process: Adding experiment directory to workspace: {self.experiment.dir}")
-                for root, dirs, files in os.walk(self.experiment.dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        file_size = os.path.getsize(file_path)
-                        formatted_size = self._format_file_size(file_size)
-                        print(f"Main process: Adding {file_path} ({formatted_size})")
-                        rel_path = os.path.relpath(file_path, self.experiment.dir)
-                        self.workspace.add(file_path, dst=f"experiments/{rel_path}")
+                            dst_path = os.path.join(self.experiment.name, os.path.dirname(rel_path))
+                            print(f"Main process: Saving final model file {file_path} -> {dst_path}")
+                            self.workspace.add(file_path, dst=dst_path)
 
             # Final commit
             self.workspace.commit("Final experiment state with all artifacts")

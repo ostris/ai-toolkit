@@ -140,7 +140,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.logger = create_logger(self.logging_config, config)
 
         # Initialize Oxen experiment tracking if enabled
-        print(f"BaseSDTrainProcess: Initializing Oxen experiment tracking... {self.name}")
         self.oxen_config = OxenConfig(**self.get_conf('oxen', {}))
         self.oxen_experiment = None
         self.oxen_logger = None
@@ -2056,7 +2055,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         output_dir_base=self.oxen_config.output_dir_base,
                         experiment_type=self.oxen_config.experiment_type,
                         is_main_process=True,
-                        fine_tune_id=self.oxen_config.fine_tune_id,
                         host=self.oxen_config.host,
                         scheme=self.oxen_config.scheme,
                     )
@@ -2269,8 +2267,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.oxen_logger and self.oxen_config.enabled:
                             try:
                                 sample_dir = os.path.join(self.save_root, "samples")
-                                if os.path.exists(sample_dir):
-                                    self.oxen_logger.save_sample_images(sample_dir, self.step_num)
+                                self.oxen_logger.add_samples(sample_dir)
                             except Exception as e:
                                 print_acc(f"Warning: Failed to save sample images to Oxen: {e}")
                         
@@ -2400,11 +2397,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.grad_accumulation_step += 1
                 self.end_step_hook()
 
-
+        print_acc(f"Training loop finished {self.step_num} steps")
         ###################################################################
         ##  END TRAIN LOOP
         ###################################################################
         self.accelerator.wait_for_everyone()
+        print_acc("Waiting for everyone to finish training")
         if self.progress_bar is not None:
             self.progress_bar.close()
         if self.train_config.free_u:
@@ -2412,7 +2410,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
-        print_acc("")
+        print_acc("Training finished")
         if self.accelerator.is_main_process:
             self.save()
             self.logger.finish()
@@ -2421,9 +2419,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.oxen_logger and self.oxen_config.enabled:
                 try:
                     print_acc("Finalizing Oxen experiment...")
-                    # Final model path (use the save_root directory)
-                    final_model_path = self.save_root if os.path.exists(self.save_root) else None
-                    self.oxen_logger.finalize_experiment(final_model_path)
+                    self.oxen_logger.finalize_experiment(self.save_root)
                     print_acc("Oxen experiment finalized successfully")
                 except Exception as e:
                     print_acc(f"Warning: Failed to finalize Oxen experiment: {e}")

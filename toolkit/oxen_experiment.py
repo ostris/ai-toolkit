@@ -25,7 +25,6 @@ class AIToolkitOxenExperiment:
         output_dir_base: str,
         experiment_type: str = "diffusion-training",
         is_main_process: bool = True,
-        fine_tune_id: Optional[str] = None,
         host: str = "hub.oxen.ai",
         scheme: str = "https",
     ):
@@ -39,7 +38,6 @@ class AIToolkitOxenExperiment:
             output_dir_base: The base directory within the repo for saving outputs
             experiment_type: A prefix for the experiment branch name
             is_main_process: Boolean flag, True if this process should perform setup actions
-            fine_tune_id: Optional ID for the fine-tuning run, used for branch naming
             host: Host for the Oxen repository (default: "hub.oxen.ai")
             scheme: URL scheme for the repository (default: "https")
         """
@@ -55,7 +53,6 @@ class AIToolkitOxenExperiment:
         self.name: Optional[str] = None
         self.dir: Optional[Path] = None
         self.experiment_number = 0
-        self.fine_tune_id = fine_tune_id
 
         if self.is_main_process:
             try:
@@ -67,19 +64,20 @@ class AIToolkitOxenExperiment:
                 branches = self.repo.branches()
                 print(f"Oxen Experiment: Branches: {len(branches)}")
 
-                # If no existing branch found (or no fine_tune_id provided), create new one
+                # If no existing branch found, create new one
                 if not self.name:
-                    # Count existing branches for sequencing
-                    experiment_number = 0
-                    for branch in branches:
-                        if branch.name.startswith(f"{experiment_type}_"):
-                            experiment_number += 1
-                    self.experiment_number = experiment_number
-                    # Create base name with sequence and timestamp
+                    # Create base name
                     base_name = f"models/{fine_tuned_model_name}"
-
+                    
+                    # Check if branch already exists and make it unique
                     self.name = base_name
-
+                    experiment_number = 0
+                    
+                    # Keep trying with incremented numbers until we find a unique name
+                    while any(branch.name == self.name for branch in branches):
+                        self.name = f"{base_name}_v{experiment_number}"
+                        experiment_number += 1
+                    
                     print(f"Rank 0: Creating new branch '{self.name}'")
                     self.repo.create_checkout_branch(self.name)
 
