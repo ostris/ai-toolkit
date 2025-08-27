@@ -305,8 +305,11 @@ class SDTrainer(BaseSDTrainProcess):
                 
             # enable gradient checkpointing on the vae
             if vae is not None and self.train_config.gradient_checkpointing:
-                vae.enable_gradient_checkpointing()
-                vae.train()
+                try:
+                    vae.enable_gradient_checkpointing()
+                    vae.train()
+                except:
+                    pass
 
 
     def process_output_for_turbo(self, pred, noisy_latents, timesteps, noise, batch):
