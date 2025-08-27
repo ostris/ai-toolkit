@@ -1,9 +1,64 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
 import { JobConfig } from '@/types';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
+import { Button } from '@headlessui/react';
+import { FaDownload } from 'react-icons/fa';
+import { apiClient } from '@/utils/api';
+import classNames from 'classnames';
+
+interface SampleImagesMenuProps {
+  job?: Job | null;
+}
+
+export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
+  const [isZipping, setIsZipping] = useState(false);
+
+  const downloadZip = async () => {
+    if (isZipping) return;
+    setIsZipping(true);
+
+    try {
+      const res = await apiClient.post('/api/zip', {
+        zipTarget: 'samples',
+        jobName: job?.name,
+      });
+
+      const zipPath = res.data.zipPath; // e.g. /mnt/Train2/out/ui/.../samples.zip
+      if (!zipPath) throw new Error('No zipPath in response');
+
+      const downloadPath = `/api/files/${encodeURIComponent(zipPath)}`;
+      const a = document.createElement('a');
+      a.href = downloadPath;
+      // optional: suggest filename (browser may ignore if server sets Content-Disposition)
+      a.download = 'samples.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      console.error('Error downloading zip:', err);
+    } finally {
+      setIsZipping(false);
+    }
+  };
+  return (
+    <Button
+      onClick={downloadZip}
+      className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
+        'opacity-50 cursor-not-allowed': isZipping,
+      })}
+    >
+      {isZipping ? (
+        <LuLoader className="animate-spin inline-block mr-2" />
+      ) : (
+        <FaDownload className="inline-block mr-2" />
+      )}
+      {isZipping ? 'Preparing' : 'Download'}
+    </Button>
+  );
+};
 
 interface SampleImagesProps {
   job: Job;

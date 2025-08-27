@@ -5,7 +5,7 @@ import { FaChevronLeft } from 'react-icons/fa';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
-import SampleImages from '@/components/SampleImages';
+import SampleImages, {SampleImagesMenu} from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
@@ -18,6 +18,7 @@ interface Page {
   name: string;
   value: PageKey;
   component: React.ComponentType<{ job: Job }>;
+  menuItem?: React.ComponentType<{ job?: Job | null }> | null;
   mainCss?: string;
 }
 
@@ -32,6 +33,7 @@ const pages: Page[] = [
     name: 'Samples',
     value: 'samples',
     component: SampleImages,
+    menuItem: SampleImagesMenu,
     mainCss: 'pt-24',
   },
   {
@@ -47,6 +49,8 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
+
+  const page = pages.find(p => p.value === pageKey);
 
   return (
     <>
@@ -94,6 +98,15 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             {page.name}
           </Button>
         ))}
+        {
+          page?.menuItem && (
+            <>
+            <div className='flex-grow'>
+            </div>
+              <page.menuItem job={job} />
+            </>
+          )
+        }
       </div>
     </>
   );
