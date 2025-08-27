@@ -2189,6 +2189,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.step_num != self.start_step:
                     if is_sample_step or is_save_step:
                         self.accelerator.wait_for_everyone()
+                        
+                    if is_save_step:
+                        self.accelerator
+                        # print above the progress bar
+                        if self.progress_bar is not None:
+                            self.progress_bar.pause()
+                        print_acc(f"\nSaving at step {self.step_num}")
+                        self.save(self.step_num)
+                        self.ensure_params_requires_grad()
+                        # clear any grads
+                        optimizer.zero_grad()
+                        flush()
+                        flush_next = True
+                        if self.progress_bar is not None:
+                            self.progress_bar.unpause()
+                            
                     if is_sample_step:
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
@@ -2203,21 +2219,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         flush()
 
                         self.ensure_params_requires_grad()
-                        if self.progress_bar is not None:
-                            self.progress_bar.unpause()
-
-                    if is_save_step:
-                        self.accelerator
-                        # print above the progress bar
-                        if self.progress_bar is not None:
-                            self.progress_bar.pause()
-                        print_acc(f"\nSaving at step {self.step_num}")
-                        self.save(self.step_num)
-                        self.ensure_params_requires_grad()
-                        # clear any grads
-                        optimizer.zero_grad()
-                        flush()
-                        flush_next = True
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
 
