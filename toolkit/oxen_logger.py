@@ -234,7 +234,7 @@ class AIToolkitOxenLogger:
             return
 
         try:
-            print(f"Main process: Finalizing experiment: {final_model_path}")
+            print(f"Main process: Finalizing experiment {self.experiment.name} -> {final_model_path}")
             
             # Save final model if provided
             if final_model_path and os.path.exists(final_model_path):
@@ -242,6 +242,7 @@ class AIToolkitOxenLogger:
                 
                 def add_file_with_rename(file_path, dst_path):
                     """Helper function to add file with potential renaming"""
+                    print(f"Main process: Adding file in experiment {self.experiment.name} -> {os.path.basename(file_path)}")
                     if os.path.basename(file_path) == f"{self.experiment.name}.safetensors":
                         # Rename to model.safetensors
                         import shutil
