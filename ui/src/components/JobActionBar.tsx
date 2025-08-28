@@ -1,9 +1,9 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause } from 'lucide-react';
+import { Eye, Trash2, Copy, Pen, Play, Pause } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions } from '@/utils/jobs';
+import { startJob, stopJob, duplicateJob, deleteJob, getAvaliableJobActions } from '@/utils/jobs';
 
 interface JobActionBarProps {
   job: Job;
@@ -62,6 +62,12 @@ export default function JobActionBar({ job, onRefresh, afterDelete, className, h
           <Pen />
         </Link>
       )}
+      <Button onClick={async () => {
+        await duplicateJob(job.id)
+        if (afterDelete) afterDelete();
+      }} className="ml-2 opacity-100">
+        <Copy />
+      </Button>
       <Button
         onClick={() => {
           let message = `Are you sure you want to delete the job "${job.name}"? This will also permanently remove it from your disk.`;

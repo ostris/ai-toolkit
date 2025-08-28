@@ -34,6 +34,40 @@ export const stopJob = (jobID: string) => {
   });
 };
 
+export const duplicateJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs?id=${jobID}`)
+      .then(res => res.data)
+      .then(data => {
+        const jobConfig = JSON.parse(data.job_config);
+        const gpuIDs = data.gpu_ids;
+
+        jobConfig.config.name = `${jobConfig.config.name}_copy`;
+
+        apiClient
+          .post('/api/jobs', {
+            id: '',
+            name: jobConfig.config.name,
+            gpu_ids: gpuIDs,
+            job_config: jobConfig,
+          })
+          .then(() => {
+            console.log('Job duplicated');
+            resolve();
+          })
+          .catch(error => {
+            console.log('Error duplicating job:', error);
+            reject(error);
+          })
+      })
+      .catch(error => {
+        console.log('Error duplicating job:', error);
+        reject(error);
+      })
+  });
+}
+
 export const deleteJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
