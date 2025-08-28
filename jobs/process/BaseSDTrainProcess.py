@@ -521,7 +521,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             step_num = f"_{str(step).zfill(9)}"
 
         self.update_training_metadata()
-        filename = f'{self.job.name}{step_num}.safetensors'
+        filename = f'model{step_num}.safetensors'
         file_path = os.path.join(self.save_root, filename)
 
         save_meta = copy.deepcopy(self.meta)
@@ -2053,7 +2053,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         base_model_name=model_name,
                         fine_tuned_model_name=self.name,
                         output_dir_base=self.oxen_config.output_dir_base,
-                        experiment_type=self.oxen_config.experiment_type,
                         is_main_process=True,
                         host=self.oxen_config.host,
                         scheme=self.oxen_config.scheme,
