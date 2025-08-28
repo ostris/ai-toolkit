@@ -8,6 +8,8 @@ import { apiClient } from '@/utils/api';
 export default function Settings() {
   const { settings, setSettings } = useSettings();
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [debugStatus, setDebugStatus] = useState<'idle' | 'stopping' | 'success' | 'error'>('idle');
+  const [debugMessage, setDebugMessage] = useState<string>('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +32,28 @@ export default function Settings() {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setSettings(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleStopAllJobs = async () => {
+    setDebugStatus('stopping');
+    setDebugMessage('');
+
+    try {
+      const response = await apiClient.post('/api/jobs/stop-all');
+      const data = response.data;
+      
+      setDebugStatus('success');
+      setDebugMessage(data.message);
+    } catch (error: any) {
+      console.error('Error stopping all running jobs:', error);
+      setDebugStatus('error');
+      setDebugMessage(error.response?.data?.error || 'Failed to stop running jobs');
+    } finally {
+      setTimeout(() => {
+        setDebugStatus('idle');
+        setDebugMessage('');
+      }, 5000);
+    }
   };
 
   return (
@@ -123,6 +147,40 @@ export default function Settings() {
           {status === 'success' && <p className="text-green-500 text-center">Settings saved successfully!</p>}
           {status === 'error' && <p className="text-red-500 text-center">Error saving settings. Please try again.</p>}
         </form>
+
+        {/* Debug Section */}
+        <div className="mt-12 pt-8 border-t border-gray-700">
+          <h2 className="text-lg font-semibold text-red-400 mb-4">Debug Tools</h2>
+          <div className="bg-gray-800 p-4 rounded-lg border border-red-600">
+            <div className="flex flex-col space-y-4">
+              <div>
+                <h3 className="text-sm font-medium text-red-300 mb-2">Force Stop All Running Jobs</h3>
+                <p className="text-gray-400 text-sm mb-3">
+                  This will immediately change the status of all running jobs to "stopped" in the database. 
+                  Use this only if jobs appear stuck in running state.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleStopAllJobs}
+                  disabled={debugStatus === 'stopping'}
+                  className="px-4 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {debugStatus === 'stopping' ? 'Stopping Jobs...' : 'Stop All Running Jobs'}
+                </button>
+              </div>
+
+              {debugMessage && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  debugStatus === 'success' 
+                    ? 'bg-green-900 text-green-300 border border-green-700' 
+                    : 'bg-red-900 text-red-300 border border-red-700'
+                }`}>
+                  {debugMessage}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </MainContent>
     </>
   );
