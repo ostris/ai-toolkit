@@ -239,17 +239,35 @@ class AIToolkitOxenLogger:
             # Save final model if provided
             if final_model_path and os.path.exists(final_model_path):
                 print(f"Main process: Saving final model: {final_model_path}")
+                
+                def add_file_with_rename(file_path, dst_path):
+                    """Helper function to add file with potential renaming"""
+                    if os.path.basename(file_path) == f"{self.experiment.name}.safetensors":
+                        # Rename to model.safetensors
+                        import shutil
+                        temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
+                        os.makedirs(temp_dir, exist_ok=True)
+                        temp_file_path = os.path.join(temp_dir, "model.safetensors")
+                        shutil.copy2(file_path, temp_file_path)
+                        
+                        # Add renamed file and cleanup
+                        final_dst = os.path.join(os.path.dirname(dst_path), "model.safetensors")
+                        self.workspace.add(temp_file_path, dst=final_dst)
+                        shutil.rmtree(temp_dir)
+                        print(f"Main process: Saved {file_path} -> {final_dst} (renamed)")
+                    else:
+                        self.workspace.add(file_path, dst=dst_path)
+                        print(f"Main process: Saved {file_path} -> {dst_path}")
+                
                 if os.path.isfile(final_model_path):
-                    self.workspace.add(final_model_path, dst=self.experiment.name)
+                    add_file_with_rename(final_model_path, self.experiment.name)
                 elif os.path.isdir(final_model_path):
                     for root, dirs, files in os.walk(final_model_path):
                         for file in files:
                             file_path = os.path.join(root, file)
-                            # Preserve the relative path structure from final_model_path
                             rel_path = os.path.relpath(file_path, final_model_path)
                             dst_path = os.path.join(self.experiment.name, os.path.dirname(rel_path))
-                            print(f"Main process: Saving final model file {file_path} -> {dst_path}")
-                            self.workspace.add(file_path, dst=dst_path)
+                            add_file_with_rename(file_path, dst_path)
 
             # Final commit
             self.workspace.commit("Final experiment state with all artifacts")
