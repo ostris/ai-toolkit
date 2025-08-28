@@ -242,8 +242,9 @@ class AIToolkitOxenLogger:
                 
                 def add_file_with_rename(file_path, dst_path):
                     """Helper function to add file with potential renaming"""
-                    print(f"Main process: Adding file in experiment {self.experiment.name} -> {os.path.basename(file_path)}")
-                    if os.path.basename(file_path) == f"{self.experiment.name}.safetensors":
+                    name = self.experiment.name.split("/")[-1]
+                    print(f"Main process: Adding file in experiment {name} -> {os.path.basename(file_path)}")
+                    if os.path.basename(file_path) == f"{name}.safetensors":
                         # Rename to model.safetensors
                         import shutil
                         temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
