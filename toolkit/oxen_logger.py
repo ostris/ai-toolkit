@@ -253,10 +253,9 @@ class AIToolkitOxenLogger:
                         shutil.copy2(file_path, temp_file_path)
                         
                         # Add renamed file and cleanup
-                        final_dst = os.path.join(os.path.dirname(dst_path), "model.safetensors")
-                        self.workspace.add(temp_file_path, dst=final_dst)
+                        self.workspace.add(temp_file_path, dst=dst_path)
                         shutil.rmtree(temp_dir)
-                        print(f"Main process: Saved {file_path} -> {final_dst} (renamed)")
+                        print(f"Main process: Saved {temp_file_path} -> {dst_path} (renamed)")
                     else:
                         self.workspace.add(file_path, dst=dst_path)
                         print(f"Main process: Saved {file_path} -> {dst_path}")
