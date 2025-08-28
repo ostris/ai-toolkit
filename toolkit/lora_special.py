@@ -285,6 +285,31 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                 root_module: torch.nn.Module,
                 target_replace_modules: List[torch.nn.Module],
         ) -> List[LoRAModule]:
+
+
+            #############
+            ### need to handle regex for self.only_if_contains!!!
+            if self.only_if_contains:
+                expanded_only_if_contains = []
+                for layers in self.only_if_contains:
+                    if  ".*." in layers:
+                        transformer_block_names = base_model.get_transformer_block_names()
+                        # num_blocks = len(root_module.transformer_blocks)
+                        for block_name in transformer_block_names:
+                            blocks = getattr(root_module, block_name) 
+                            num_blocks = len(blocks)
+                            for block_id in range(num_blocks):
+                                expanded_only_if_contains.append(layers.replace("*", str(block_id)))
+                    else:
+                        expanded_only_if_contains.append(layers)
+            
+                self.only_if_contains = expanded_only_if_contains
+                # import pdb; pdb.set_trace()
+                print(self.only_if_contains)
+            #############
+
+
+
             unet_prefix = self.LORA_PREFIX_UNET
             if self.peft_format:
                 unet_prefix = self.PEFT_PREFIX_UNET
