@@ -23,7 +23,6 @@ class AIToolkitOxenExperiment:
         base_model_name: str,
         fine_tuned_model_name: str,
         output_dir_base: str,
-        experiment_type: str = "diffusion-training",
         is_main_process: bool = True,
         host: str = "hub.oxen.ai",
         scheme: str = "https",
@@ -36,7 +35,6 @@ class AIToolkitOxenExperiment:
             base_model_name: The base model name (e.g., "black-forest-labs/FLUX.1-dev")
             fine_tuned_model_name: The fine-tuned model name (e.g., "black-forest-labs/FLUX.1-dev-lora")
             output_dir_base: The base directory within the repo for saving outputs
-            experiment_type: A prefix for the experiment branch name
             is_main_process: Boolean flag, True if this process should perform setup actions
             host: Host for the Oxen repository (default: "hub.oxen.ai")
             scheme: URL scheme for the repository (default: "https")

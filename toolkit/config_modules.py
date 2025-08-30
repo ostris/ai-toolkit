@@ -44,7 +44,6 @@ class OxenConfig:
         self.host: str = kwargs.get('host', 'hub.oxen.ai')
         self.scheme: str = kwargs.get('scheme', 'https')
         self.output_dir_base: str = kwargs.get('output_dir_base', 'experiments')
-        self.experiment_type: str = kwargs.get('experiment_type', 'training')
         self.fine_tune_id: Optional[str] = kwargs.get('fine_tune_id', None)
         self.log_every: int = kwargs.get('log_every', 100)
 

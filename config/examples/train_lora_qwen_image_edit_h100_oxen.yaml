@@ -22,7 +22,6 @@ config:
         host: "dev.hub.oxen.ai"  # Oxen host (default: hub.oxen.ai)
         scheme: "https"  # URL scheme (default: https)
         output_dir_base: "experiments"  # Base directory for experiment outputs
-        experiment_type: "flux-lora-training"  # Type/category for the experiment
         # fine_tune_id: "flux_experiment_001"  # Optional: Custom ID for this training run
         log_every: 10  # Log metrics every N steps (set to match or be multiple of logging.log_every)
 

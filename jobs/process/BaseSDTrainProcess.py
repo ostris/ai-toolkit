@@ -385,6 +385,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if self.ema is not None:
             self.ema.train()
+        
+        # Save sample images to Oxen if enabled
+        if self.oxen_logger and self.oxen_config.enabled:
+            try:
+                sample_dir = os.path.join(self.save_root, "samples")
+                self.oxen_logger.add_samples(sample_dir)
+            except Exception as e:
+                print_acc(f"Warning: Failed to save sample images to Oxen: {e}")
+        
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
@@ -2261,15 +2270,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
-                        
-                        # Save sample images to Oxen if enabled
-                        if self.oxen_logger and self.oxen_config.enabled:
-                            try:
-                                sample_dir = os.path.join(self.save_root, "samples")
-                                self.oxen_logger.add_samples(sample_dir)
-                            except Exception as e:
-                                print_acc(f"Warning: Failed to save sample images to Oxen: {e}")
-                        
+
                         if self.train_config.unload_text_encoder:
                             # make sure the text encoder is unloaded
                             self.sd.text_encoder_to('cpu')
