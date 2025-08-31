@@ -155,6 +155,17 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.force_first_sample': {
+    title: 'Force First Sample',
+    description: (
+      <>
+        This option will force the trainer to generate samples when it starts. The trainer will normally only generate a first sample
+        when nothing has been trained yet, but will not do a first sample when resuming from an existing checkpoint. This option
+        forces a first sample every time the trainer is started. This can be useful if you have changed sample prompts and want to see
+        the new prompts right away.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

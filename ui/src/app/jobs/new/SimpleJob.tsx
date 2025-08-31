@@ -809,7 +809,28 @@ export default function SimpleJob({
                       label="Skip First Sample"
                       className="pt-4"
                       checked={jobConfig.config.process[0].train.skip_first_sample || false}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.skip_first_sample')}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].train.skip_first_sample');
+                        // cannot do both, so disable the other
+                        if (value){
+                          setJobConfig(false, 'config.process[0].train.force_first_sample');
+                        }
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Checkbox
+                      label="Force First Sample"
+                      className="pt-1"
+                      checked={jobConfig.config.process[0].train.force_first_sample || false}
+                      docKey={'train.force_first_sample'}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].train.force_first_sample');
+                        // cannot do both, so disable the other
+                        if (value){
+                          setJobConfig(false, 'config.process[0].train.skip_first_sample');
+                        }
+                      }}
                     />
                   </div>
                   <div>
@@ -817,7 +838,13 @@ export default function SimpleJob({
                       label="Disable Sampling"
                       className="pt-1"
                       checked={jobConfig.config.process[0].train.disable_sampling || false}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.disable_sampling')}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].train.disable_sampling');
+                        // cannot do both, so disable the other
+                        if (value){
+                          setJobConfig(false, 'config.process[0].train.force_first_sample');
+                        }
+                      }}
                     />
                   </div>
                 </FormGroup>
