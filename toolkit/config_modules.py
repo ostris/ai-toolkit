@@ -818,7 +818,7 @@ class DatasetConfig:
         # be the part conditioned to be inpainted. The alpha 1 (visible) section will be the part that is ignored
         self.inpaint_path: Union[str,List[str]] = kwargs.get('inpaint_path', None)
         # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
-        self.full_size_control_images: bool = kwargs.get('full_size_control_images', False)
+        self.full_size_control_images: bool = kwargs.get('full_size_control_images', True)
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
                                          None)  # focus mask (black and white. White has higher loss than black)
