@@ -876,8 +876,19 @@ class ControlFileItemDTOMixin:
         
         for control_path in control_path_list:
             try:
-                img = Image.open(control_path).convert('RGB')
+                img = Image.open(control_path)
                 img = exif_transpose(img)
+
+                if img.mode in ("RGBA", "LA"):
+                    # Create a background with the specified transparent color
+                    transparent_color = tuple(self.dataset_config.control_transparent_color)
+                    background = Image.new("RGB", img.size, transparent_color)
+                    # Paste the image on top using its alpha channel as mask
+                    background.paste(img, mask=img.getchannel("A"))
+                    img = background
+                else:
+                    # Already no alpha channel
+                    img = img.convert("RGB")
             except Exception as e:
                 print_acc(f"Error: {e}")
                 print_acc(f"Error loading image: {control_path}")
