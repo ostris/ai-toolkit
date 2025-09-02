@@ -26,50 +26,41 @@ import argparse
 
 global accelerator, pipeline, aspect_ratio
 
-einstructions = """
-## 💡 Usage Tips
-You can adjust the following key hyperparameters based on your specific use case.
-- `Text Guidance Scale`: Controls how strictly the output adheres to the text prompt (Classifier-Free Guidance).
-- `Number of Inference steps`: Controls image denoising during image generations. If you are unsure about what to set, leave it as default.
-- `Number of images per prompt`: Set this to the number of images you want to generate per prompt (default is 1)
-
-
-**Suggestions for generation:**
-1. Be Specific with Instructions
-  - Clearly describe **what you want in the output image** in a clear and concise manner.
-  - This checkpoint works best for close up and torso-level shots of Allu Arjun and Alia Bhatt as it was not trained with long or wide range shots
-  - **STRICTLY** use the phrase "(([A] man))" and "(([AB] woman))" for Allu Arjun and Alia Bhatt respectively.
-  - Example prompt-1: A photo of (([A] man)) and (([AB] woman)) sitting in a restaurant, having coffee
-  - Example prompt-2: A photo of (([A] man)) with an angry expression, wearing white shirt covered in blood with dusty road in the background
-  - Example prompt-3: A photo of (([AB] woman)) looking scared standing in a court room, with random people in the background
-
-2. Aspect Ratio
-  - For obtaining both Allu Arjun and Alia Bhatt in one frame, mostly use `16:9 aspect ratio (width = 1664; height = 928)`
-
-3. Prioritize English
-  - The model currently performs best with **English** prompts.
-"""
-
-
 
 """
 ## PIPELINE - 1
 
-python3 -u gradio_qwen_image_aa_and_ab.py --model_path "Qwen/Qwen-Image" \
+CUDA_VISIBLE_DEVICES=0 python3 -u gradio_qwen_image_aa_and_ab.py --model_path "Qwen/Qwen-Image" \
 --transformer_lora_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/hub/models--shivmlops21--allu_arjun_and_alia_bhatt_1/snapshots/e3f588e48a4c67dff8dd173f5fb0343e86ddd405/aa_and_ab_qwen_image_1_LoRA_000007200.safetensors \
 --tokenizer_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/hub/models--shivmlops21--allu_arjun_and_alia_bhatt_1/snapshots/e3f588e48a4c67dff8dd173f5fb0343e86ddd405/tokenizer_0_aa_and_ab_qwen_image_1__000007200 \
 --text_encoder_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/hub/models--shivmlops21--allu_arjun_and_alia_bhatt_1/snapshots/e3f588e48a4c67dff8dd173f5fb0343e86ddd405/text_encoder_0_aa_and_ab_qwen_image_1__000007200 \
---token_abstraction_json_path tokens.json 
+--token_abstraction_json_path tokens.json \
+--instructions_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/gradio_app_instructions/aa_and_ab.md \
+--port 8900
 
 --------
 
 ## PIPELINE - 2
 
-python3 gradio_qwen_image_aa_and_ab.py --model_path "Qwen/Qwen-Image" \
+CUDA_VISIBLE_DEVICES=0 python3 gradio_qwen_image_aa_and_ab.py --model_path "Qwen/Qwen-Image" \
 --transformer_lora_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/hub/models--shivmlops21--allu_arjun_and_alia_bhatt_3/snapshots/203d95a4cfcf0a0e6447460731541ec2777d67cb/aa_and_ab_qwen_image_3_LoRA.safetensors \
 --tokenizer_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/hub/models--shivmlops21--allu_arjun_and_alia_bhatt_3/snapshots/203d95a4cfcf0a0e6447460731541ec2777d67cb/tokenizer_0_aa_and_ab_qwen_image_3_ \
 --text_encoder_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/hub/models--shivmlops21--allu_arjun_and_alia_bhatt_3/snapshots/203d95a4cfcf0a0e6447460731541ec2777d67cb/text_encoder_0_aa_and_ab_qwen_image_3_ \
---token_abstraction_json_path tokens_3.json 
+--token_abstraction_json_path tokens_3.json \
+--instructions_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/gradio_app_instructions/aa_and_ab.md \
+--port 8900
+
+--------
+
+## RDJ Pipeline - 1
+
+CUDA_VISIBLE_DEVICES=0 python3 gradio_qwen_image_aa_and_ab.py --model_path "Qwen/Qwen-Image" \
+--transformer_lora_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/robert_downey_jr_ai/rdj_ai_LoRA.safetensors \
+--tokenizer_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/robert_downey_jr_ai/tokenizer_0_rdj_ai_ \
+--text_encoder_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/robert_downey_jr_ai/text_encoder_0_rdj_ai_ \
+--token_abstraction_json_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/robert_downey_jr_ai/tokens.json \
+--instructions_path /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/gradio_app_instructions/rdj.md \
+--port 7878 
 
 """
 
@@ -83,13 +74,13 @@ def parse_args() -> argparse.Namespace:
         help="Path to model checkpoint.",
     )
     parser.add_argument(
-        "--tokenizer_path", # data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/aa_and_ab_qwen_image_1/tokenizer_0_aa_and_ab_qwen_image_1__000007200
+        "--tokenizer_path", 
         type=str,
         required=True,
         help="Path to updated tokenizer.",
     )
     parser.add_argument(
-        "--text_encoder_path", # data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/aa_and_ab_qwen_image_1/text_encoder_0_aa_and_ab_qwen_image_1__000007200
+        "--text_encoder_path", 
         type=str,
         required=True,
         help="Path to text encoder checkpoint.",
@@ -106,6 +97,18 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Path to transformer LoRA checkpoint.",
+    )
+    parser.add_argument(
+        "--instructions_path",
+        type=str,
+        default=None,
+        help="Path to instructions markdown file",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8900,
+        help="Server port",
     )
 
     parser.add_argument(
@@ -124,6 +127,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+
+args = parse_args()
+with open(args.instructions_path, 'r') as md_file:
+    einstructions = md_file.read()
 
 
 # lora_weights_path = "data/shivanvitha/dheyo_ai_toolkit/ai-toolkit/output/aa_and_ab_qwen_image_1"
@@ -372,4 +381,5 @@ with gr.Blocks() as demo:
     )
 
 init()
-demo.launch(server_name="0.0.0.0", server_port=8900) # generation port
+args = parse_args()
+demo.launch(server_name="0.0.0.0", server_port=args.port) 
