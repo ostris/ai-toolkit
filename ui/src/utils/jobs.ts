@@ -50,6 +50,22 @@ export const deleteJob = (jobID: string) => {
   });
 };
 
+export const forceJobStatus = (jobID: string, status: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .post(`/api/jobs/${jobID}/force-status`, { status })
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job status forced:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error forcing job status:', error);
+        reject(error);
+      });
+  });
+};
+
 export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
@@ -65,7 +81,10 @@ export const getAvaliableJobActions = (job: Job) => {
   if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
     canStart = true;
   }
-  return { canDelete, canEdit, canStop, canStart };
+  // Show force action for stuck jobs (running with stop flag, or stopping status)
+  const canForce = (job.status === 'running' && isStopping) || job.info?.toLowerCase().includes('stopping');
+  
+  return { canDelete, canEdit, canStop, canStart, canForce };
 };
 
 export const getNumberOfSamples = (job: Job) => {
