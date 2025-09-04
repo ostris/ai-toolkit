@@ -4,6 +4,7 @@ import math
 import weakref
 import os
 import re
+import fnmatch
 import sys
 from typing import List, Optional, Dict, Type, Union
 import torch
@@ -289,23 +290,42 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
             #############
             ### need to handle regex for self.only_if_contains!!!
+            # if self.only_if_contains:
+            #     expanded_only_if_contains = []
+            #     for layers in self.only_if_contains:
+            #         if  ".*." in layers:
+            #             transformer_block_names = base_model.get_transformer_block_names()
+            #             # num_blocks = len(root_module.transformer_blocks)
+            #             for block_name in transformer_block_names:
+            #                 blocks = getattr(root_module, block_name) 
+            #                 num_blocks = len(blocks)
+            #                 for block_id in range(num_blocks):
+            #                     expanded_only_if_contains.append(layers.replace("*", str(block_id)))
+            #         else:
+            #             expanded_only_if_contains.append(layers)
+            
+            #     self.only_if_contains = expanded_only_if_contains
+            #     # import pdb; pdb.set_trace()
+            #     print(self.only_if_contains)
             if self.only_if_contains:
                 expanded_only_if_contains = []
-                for layers in self.only_if_contains:
-                    if  ".*." in layers:
-                        transformer_block_names = base_model.get_transformer_block_names()
-                        # num_blocks = len(root_module.transformer_blocks)
-                        for block_name in transformer_block_names:
-                            blocks = getattr(root_module, block_name) 
-                            num_blocks = len(blocks)
-                            for block_id in range(num_blocks):
-                                expanded_only_if_contains.append(layers.replace("*", str(block_id)))
-                    else:
-                        expanded_only_if_contains.append(layers)
-            
-                self.only_if_contains = expanded_only_if_contains
-                # import pdb; pdb.set_trace()
-                print(self.only_if_contains)
+                transformer_block_handles = base_model.get_transformer_block_names()
+                for layer in self.only_if_contains:
+                    for handle in transformer_block_handles:
+                        module_list = getattr(root_module, handle) 
+                        layers_list = [name for name, _ in module_list.named_modules()]
+                        # pattern = re.compile(layer)
+                        try:
+                            pattern = re.compile(layer)
+                        except re.error:
+                            pattern = re.compile(fnmatch.translate(layer))
+                        # Get matching layers here!!!!!
+                        matched_layers = [f"transformer.{handle}.{item}" for item in layers_list if pattern.match(item)]
+                        expanded_only_if_contains += matched_layers
+
+            self.only_if_contains = list(set(expanded_only_if_contains))
+            print(self.only_if_contains)
+
             #############
 
 
