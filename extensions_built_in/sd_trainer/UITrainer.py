@@ -33,7 +33,7 @@ class UITrainer(SDTrainer):
         # Initialize the status
         self._run_async_operation(self._update_status("running", "Starting"))
         self._stop_watcher_started = False
-        self.start_stop_watcher(interval_sec=2.0)
+        # self.start_stop_watcher(interval_sec=2.0)
     
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
