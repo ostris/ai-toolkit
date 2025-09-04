@@ -1053,8 +1053,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             trigger=self.trigger_word,
                             add_if_not_present=not is_reg,
                         )
-                    
-                    print(prompt)
 
                     if not is_reg and self.train_config.prompt_saturation_chance > 0.0:
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
