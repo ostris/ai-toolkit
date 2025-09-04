@@ -8,6 +8,8 @@ import SampleImageModal from '@/components/SampleImageModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
+import AddSingleImageModal from '@/components/AddSingleImageModal';
+import CheckpointUploadModal from '@/components/CheckpointUploadModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +43,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ConfirmModal />
         <DocModal />
         <SampleImageModal />
+        <AddSingleImageModal />
+        <CheckpointUploadModal />
       </body>
     </html>
   );
