@@ -814,9 +814,38 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         return latest_path
 
+    def is_base_checkpoint(self, checkpoint_path):
+        """Check if the given checkpoint is marked as a base checkpoint"""
+        if not os.path.isfile(checkpoint_path):
+            return False
+        
+        # Get the directory containing the checkpoint
+        checkpoint_dir = os.path.dirname(checkpoint_path)
+        marker_path = os.path.join(checkpoint_dir, '.base_checkpoint')
+        
+        if not os.path.exists(marker_path):
+            return False
+        
+        try:
+            # Read the marker file to get the base checkpoint filename
+            with open(marker_path, 'r', encoding='utf-8') as f:
+                base_filename = f.read().strip()
+            
+            # Check if the current checkpoint matches the base checkpoint
+            checkpoint_filename = os.path.basename(checkpoint_path)
+            return checkpoint_filename == base_filename
+        except:
+            return False
+
     def load_training_state_from_metadata(self, path):
         if not self.accelerator.is_main_process:
             return
+        
+        # Skip loading training state if this is a base checkpoint
+        if self.is_base_checkpoint(path):
+            print_acc(f"Skipping training state from base checkpoint: {path}")
+            return
+            
         meta = None
         # if path is folder, then it is diffusers
         if os.path.isdir(path):
