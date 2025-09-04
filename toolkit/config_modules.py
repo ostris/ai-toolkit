@@ -89,7 +89,7 @@ class SampleConfig:
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
         if self.num_frames > 1 and self.ext not in ['webp']:
-            print("Changing sample extention to animated webp")
+            print("Changing sample extension to animated webp")
             self.ext = 'webp'
         
         prompts: list[str] = kwargs.get('prompts', [])

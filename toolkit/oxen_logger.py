@@ -200,7 +200,8 @@ class AIToolkitOxenLogger:
             # Add all sample images to the "samples" directory in workspace
             for root, dirs, files in os.walk(sample_dir):
                 for file in files:
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    print(f"Main process: Considering sample: {file}")
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
                         file_path = os.path.join(root, file)
                         dst_path = os.path.join(self.experiment.name, "samples")
                         print(f"Main process: Adding sample image: {file_path} -> {dst_path}")
@@ -210,17 +211,6 @@ class AIToolkitOxenLogger:
             
         except Exception as e:
             print(f"Main process: Error adding sample images to Oxen: {e}")
-
-    def save_sample_images(self, sample_dir: str, step: int):
-        """
-        Save sample images to Oxen workspace.
-        
-        Args:
-            sample_dir: Directory containing sample images  
-            step: Current training step
-        """
-        # Delegate to add_samples for the actual work
-        self.add_samples(sample_dir)
 
     def finalize_experiment(self, final_model_path: str):
         """
