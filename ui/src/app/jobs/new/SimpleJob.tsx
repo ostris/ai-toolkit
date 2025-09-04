@@ -50,7 +50,6 @@ export default function SimpleJob({
       count += 1; // add quantization card
     }
     return count;
-    
   }, [modelArch]);
 
   let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
@@ -78,7 +77,7 @@ export default function SimpleJob({
     let ARAs: SelectOption[] = [];
     if (modelArch.accuracyRecoveryAdapters) {
       for (const [label, value] of Object.entries(modelArch.accuracyRecoveryAdapters)) {
-         ARAs.push({ value, label });
+        ARAs.push({ value, label });
       }
     }
     if (ARAs.length > 0) {
@@ -270,14 +269,14 @@ export default function SimpleJob({
                 />
               </FormGroup>
               <NumberInput
-                  label="Switch Every"
-                  value={jobConfig.config.process[0].train.switch_boundary_every}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.switch_boundary_every')}
-                  placeholder="eg. 1"
-                  docKey={'train.switch_boundary_every'}
-                  min={1}
-                  required
-                />
+                label="Switch Every"
+                value={jobConfig.config.process[0].train.switch_boundary_every}
+                onChange={value => setJobConfig(value, 'config.process[0].train.switch_boundary_every')}
+                placeholder="eg. 1"
+                docKey={'train.switch_boundary_every'}
+                min={1}
+                required
+              />
             </Card>
           )}
           <Card title="Target">
@@ -638,6 +637,14 @@ export default function SimpleJob({
                             docKey="datasets.do_i2v"
                           />
                         )}
+                        <Checkbox
+                          label="Preserve Resolutions"
+                          checked={dataset.preserve_resolutions || false}
+                          onChange={value =>
+                            setJobConfig(value, `config.process[0].datasets[${i}].preserve_resolutions`)
+                          }
+                          docKey="datasets.preserve_resolutions"
+                        />
                       </FormGroup>
                       <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
                         <Checkbox
@@ -663,6 +670,7 @@ export default function SimpleJob({
                               {resGroup.map(res => (
                                 <Checkbox
                                   key={res}
+                                  disabled={dataset.preserve_resolutions}
                                   label={res.toString()}
                                   checked={dataset.resolution.includes(res)}
                                   onChange={value => {

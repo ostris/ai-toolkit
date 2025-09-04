@@ -237,42 +237,52 @@ class BucketsMixin:
                     file_item.crop_x = 0
                     file_item.crop_y = int(file_item.scale_to_height / 2 - resolution / 2)
             elif not did_process_poi:
-                bucket_resolution = get_bucket_for_image_size(
-                    width, height,
-                    resolution=resolution,
-                    divisibility=bucket_tolerance
-                )
-
-                # Calculate scale factors for width and height
-                width_scale_factor = bucket_resolution["width"] / width
-                height_scale_factor = bucket_resolution["height"] / height
-
-                # Use the maximum of the scale factors to ensure both dimensions are scaled above the bucket resolution
-                max_scale_factor = max(width_scale_factor, height_scale_factor)
-
-                # round up
-                file_item.scale_to_width = int(math.ceil(width * max_scale_factor))
-                file_item.scale_to_height = int(math.ceil(height * max_scale_factor))
-
-                file_item.crop_height = bucket_resolution["height"]
-                file_item.crop_width = bucket_resolution["width"]
-
-                new_width = bucket_resolution["width"]
-                new_height = bucket_resolution["height"]
-
-                if self.dataset_config.random_crop:
-                    # random crop
-                    crop_x = random.randint(0, file_item.scale_to_width - new_width)
-                    crop_y = random.randint(0, file_item.scale_to_height - new_height)
-                    file_item.crop_x = crop_x
-                    file_item.crop_y = crop_y
+                if hasattr(self.dataset_config, 'preserve_resolutions') and self.dataset_config.preserve_resolutions:
+                    # Don't resize at all
+                    file_item.scale_to_width = width
+                    file_item.scale_to_height = height
+                    file_item.crop_width = width
+                    file_item.crop_height = height
+                    file_item.crop_x = 0
+                    file_item.crop_y = 0
+                    
                 else:
-                    # do central crop
-                    file_item.crop_x = int((file_item.scale_to_width - new_width) / 2)
-                    file_item.crop_y = int((file_item.scale_to_height - new_height) / 2)
+                    bucket_resolution = get_bucket_for_image_size(
+                        width, height,
+                        resolution=resolution,
+                        divisibility=bucket_tolerance
+                    )
 
-                if file_item.crop_y < 0 or file_item.crop_x < 0:
-                    print_acc('debug')
+                    # Calculate scale factors for width and height
+                    width_scale_factor = bucket_resolution["width"] / width
+                    height_scale_factor = bucket_resolution["height"] / height
+
+                    # Use the maximum of the scale factors to ensure both dimensions are scaled above the bucket resolution
+                    max_scale_factor = max(width_scale_factor, height_scale_factor)
+
+                    # round up
+                    file_item.scale_to_width = int(math.ceil(width * max_scale_factor))
+                    file_item.scale_to_height = int(math.ceil(height * max_scale_factor))
+
+                    file_item.crop_height = bucket_resolution["height"]
+                    file_item.crop_width = bucket_resolution["width"]
+
+                    new_width = bucket_resolution["width"]
+                    new_height = bucket_resolution["height"]
+
+                    if self.dataset_config.random_crop:
+                        # random crop
+                        crop_x = random.randint(0, file_item.scale_to_width - new_width)
+                        crop_y = random.randint(0, file_item.scale_to_height - new_height)
+                        file_item.crop_x = crop_x
+                        file_item.crop_y = crop_y
+                    else:
+                        # do central crop
+                        file_item.crop_x = int((file_item.scale_to_width - new_width) / 2)
+                        file_item.crop_y = int((file_item.scale_to_height - new_height) / 2)
+
+                    if file_item.crop_y < 0 or file_item.crop_x < 0:
+                        print_acc('debug')
 
             # check if bucket exists, if not, create it
             bucket_key = f'{file_item.crop_width}x{file_item.crop_height}'
@@ -288,7 +298,6 @@ class BucketsMixin:
             for key, bucket in self.buckets.items():
                 print_acc(f'{key}: {len(bucket.file_list_idx)} files')
             print_acc(f'{len(self.buckets)} buckets made')
-
 
 class CaptionProcessingDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):

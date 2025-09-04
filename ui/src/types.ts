@@ -87,6 +87,7 @@ export interface DatasetConfig {
   num_frames: number;
   shrink_video_to_frames: boolean;
   do_i2v: boolean;
+  preserve_resolutions: boolean;
   flip_x: boolean;
   flip_y: boolean;
 }
