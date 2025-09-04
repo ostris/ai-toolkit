@@ -142,6 +142,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.is_latents_cached = True
         # import pdb; pdb.set_trace()
         self.enable_ti = self.train_config.enable_ti
+        self.enable_ttb = self.train_config.enable_ti
         raw_datasets = self.get_conf('datasets', None)
         if raw_datasets is not None and len(raw_datasets) > 0:
             raw_datasets = preprocess_dataset_raw_config(raw_datasets)
@@ -312,7 +313,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.embedding is not None:
                 # import pdb; pdb.set_trace()
                 prompt = self.embedding.inject_embedding_to_prompt(
-                    prompt, expand_token=True, add_if_not_present=False
+                    prompt, self.enable_ttb, expand_token=True, add_if_not_present=False
                 )
             if self.adapter is not None and isinstance(self.adapter, ClipVisionAdapter):
                 prompt = self.adapter.inject_trigger_into_prompt(
@@ -1033,6 +1034,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     if self.embedding is not None:
                         prompt = self.embedding.inject_embedding_to_prompt(
                             prompt,
+                            self.enable_ttb,
                             expand_token=True,
                             add_if_not_present=not is_reg,
                         )
@@ -1051,6 +1053,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             trigger=self.trigger_word,
                             add_if_not_present=not is_reg,
                         )
+                    
+                    print(prompt)
 
                     if not is_reg and self.train_config.prompt_saturation_chance > 0.0:
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
@@ -1561,6 +1565,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             custom_pipeline=self.custom_pipeline,
             noise_scheduler=sampler,
         )
+
         
         self.hook_after_sd_init_before_load()
         # run base sd process run
@@ -1576,6 +1581,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         tokenizer = self.sd.tokenizer
         text_encoder = self.sd.text_encoder
         noise_scheduler = self.sd.noise_scheduler
+
+        # import pdb; pdb.set_trace()
 
         if self.train_config.xformers:
             vae.enable_xformers_memory_efficient_attention()

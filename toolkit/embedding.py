@@ -172,14 +172,18 @@ class Embedding:
     # however, on training we don't use that pipeline, so we have to do it ourselves
 
     ### update this function!!!!
-    def inject_embedding_to_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
+    def inject_embedding_to_prompt(self, prompt, enable_ttb, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
         embedding_tokens = self.embedding_tokens  # shoudl be the same
         # import pdb; pdb.set_trace()
         for trigger in self.trigger:
             to_replace_list = None
             default_replacements = ["[name]", "[trigger]", trigger]
-            replace_with = embedding_tokens[trigger][0] if expand_token else trigger
+            if enable_ttb:
+                replace_with = f"{trigger} {embedding_tokens[trigger][0]}" if expand_token else trigger
+            else:
+                replace_with = embedding_tokens[trigger][0] if expand_token else trigger
+
             if to_replace_list is None:
                 to_replace_list = default_replacements
             else:
