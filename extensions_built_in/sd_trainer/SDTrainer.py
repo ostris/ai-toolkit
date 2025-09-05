@@ -724,6 +724,10 @@ class SDTrainer(BaseSDTrainProcess):
                 # add min_snr_gamma
                 loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
 
+        signal_power = torch.mean(target ** 2)
+        noise_power = torch.mean(loss)  
+        epsilon = 1e-10  
+        snr = 10 * torch.log10(signal_power / (noise_power + epsilon))
         loss = loss.mean()
 
         # check for additional losses
@@ -739,7 +743,7 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss + norm_std_loss
 
 
-        return loss + additional_loss
+        return loss + additional_loss, snr
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
         return batch
@@ -1800,7 +1804,7 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.train_config.diff_output_preservation and not do_inverted_masked_prior:
                             prior_to_calculate_loss = None
                         
-                        loss = self.calculate_loss(
+                        loss, snr = self.calculate_loss(
                             noise_pred=noise_pred,
                             noise=noise,
                             noisy_latents=noisy_latents,
@@ -1851,7 +1855,7 @@ class SDTrainer(BaseSDTrainProcess):
                     # else:
                     self.accelerator.backward(loss)
 
-        return loss.detach()
+        return loss.detach(), snr
         # flush()
 
     def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
@@ -1862,7 +1866,7 @@ class SDTrainer(BaseSDTrainProcess):
         total_loss = None
         self.optimizer.zero_grad()
         for batch in batch_list:
-            loss = self.train_single_accumulation(batch)
+            loss, snr = self.train_single_accumulation(batch)
             if total_loss is None:
                 total_loss = loss
             else:
@@ -1907,7 +1911,7 @@ class SDTrainer(BaseSDTrainProcess):
                 self.adapter.restore_embeddings()
 
         loss_dict = OrderedDict(
-            {'loss': loss.item()}
+            {'loss': loss.item(), 'snr': snr.item()}
         )
 
         self.end_of_training_loop()
