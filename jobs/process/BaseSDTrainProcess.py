@@ -21,7 +21,8 @@ import torch
 import torch.backends.cuda
 from huggingface_hub import HfApi, Repository, interpreter_login
 from huggingface_hub.utils import HfFolder
-
+import torchvision.transforms as transforms
+import uuid
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
@@ -1507,6 +1508,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # set trainable params
         self.sd.adapter = self.adapter
 
+
+    def save_preprocessed_images (self, batch_list):
+        for processed_tensor in batch_list[0].tensor:
+            temp_tensor = processed_tensor.cpu()
+            temp_tensor = (temp_tensor - temp_tensor.min()) / (temp_tensor.max() - temp_tensor.min())
+            to_pil = transforms.ToPILImage()
+            processed_image = to_pil(temp_tensor)
+            os.makedirs(f"{self.save_root}/preprocessed_images", exist_ok=True)
+            processed_file_name = f"{self.save_root}/preprocessed_images/{uuid.uuid4().hex}.png"
+            processed_image.save(processed_file_name)
+            print(f"Saved {processed_file_name}")
+
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
@@ -2111,6 +2124,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         batch = None
                     batch_list.append(batch)
                     batch_step += 1
+
+                if self.epoch_num == 0:
+                    self.save_preprocessed_images(batch_list)
+
 
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:
