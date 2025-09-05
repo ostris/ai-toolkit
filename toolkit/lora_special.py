@@ -323,8 +323,8 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         matched_layers = [f"transformer.{handle}.{item}" for item in layers_list if pattern.match(item)]
                         expanded_only_if_contains += matched_layers
 
-            self.only_if_contains = list(set(expanded_only_if_contains))
-            print(self.only_if_contains)
+                self.only_if_contains = list(set(expanded_only_if_contains))
+                print(self.only_if_contains)
 
             #############
 
