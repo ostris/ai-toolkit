@@ -1,110 +1,228 @@
-# AI-Toolkit with AMD MI300X GPUs
+# Fine-Tuning and Inference with TI LoRAs
 
-## Set up and Installations
+## H200s Dev Set-Up
 
-### Clone the Repo
+In config:
+
 ```bash
-git clone git@github.com:dheyoai/ai-toolkit.git
+Host shivampc
+  HostName shivampc.pratikn.com
+  User gpuaccess
+  IdentityFile /Users/shivanvitha/id_rsa
+  ProxyCommand /opt/homebrew/bin/cloudflared access ssh --hostname %h
+
+Host h200vm
+  HostName localhost
+  Port 32777
+  User root
+  ProxyJump shivampc
+  IdentityFile /Users/shivanvitha/id_rsa
 ```
 
-### Switch to AMD branch
+Enable key-based authentication:
+
 ```bash
-git checkout dheyo_amd
+cat id_rsa.pub | ssh -o ProxyCommand="cloudflared access ssh --hostname shivampc.pratikn.com" gpuaccess@localhost "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+
+
+cat id_rsa.pub | ssh -J gpuaccess@shivampc -p 32777 root@localhost "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
 ```
 
-### Create and Activate Virtual Environment
+## Tips for Dataset Images
+- Use high quality .png images
+- Gather images keeping the target generations in mind (Eg,: If the output scenes of Alia Bhatt are to be set in Pakistan, use her images from Raazi instead of Rocky aur Rani)
+- ALWAYS include the special token in EVERY prompt in the dataset
+- Keep your prompts concise and straight to the point
+- Make sure that the face is clear in every image and include long/wide range shots as well if the inference outputs should have the same
+
+## Fine-Tuning
+
+### On AMD MI300X GPUs - dheyo_amd Branch
+
+- Login to the jump server from your VSCode on `193.143.78.200`
+
+- SSH to gpu-60 with Tunneling
 
 ```bash
-python3 -m venv aitool
+ssh -L 7777:localhost:7777 ubuntu@gpu-60
+```
+
+- Navigate to ai-toolkit directory 
+
+```bash
+cd /shareddata/dheyo/shivanvitha/ai-toolkit
+```
+
+- Activate the virtual environment
+
+```bash 
 source aitool/bin/activate
 ```
 
-### Install pytorch
-
-```bash
-uv pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/rocm6.4
-```
-
-### Install Other Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-## CLI Launch
-```bash
-python3 run.py <path/to/config/yaml>
-```
-
-## GUI Launch
+- Launch UI 
 
 ```bash
 cd ui
+```
+
+```bash
 npm run build_and_start
 ```
 
-Open localhost/loopback URL on port 7777 on the browser
-```
+- Open the application on port 7777 on the browser 
+
+```bash 
 http://localhost:7777/
 ```
 
-**Note**: Make sure to use SSH Tunneling when using gpu-22 or gpu-60 
+- Upload dataset(s): Navigate to the `Datasets` link on the left menu and add your images there. Write the captions for each image in the textbox provided beneath each image. [DO NOT FORGET TO PRESS ENTER ONCE YOU FINISH WRITING EVERY SINGLE CAPTION]
+
+- **IMPORTANT: Assign a unique special token to each character and follow it up by the class of the subject. (eg.,: [A] man, [AB] woman)**
+
+- Navigate to the `+ New Job` section on the left menu and choose the below settings:
+
+| Nodel Configuration     | Value           |
+|-----------------|--------------------------|
+| Training Name   | Give some name based on the character(s) that you are about to train |
+| GPU ID      | Choose any idle GPU (among the 8 [`GPU #0`, `GPU #1`,..., `GPU #7` ]) |
+| Model Architecture | Qwen/Qwen-Image |
+| Save Every      | 300 or 400 |
+| Batch Size      | 2 |
+| Steps      | At least 4000 |
+
+- Leave the `Embedding Training` option as it is in the training configuration
+
+| Dataset Configuration     | Value           |
+|-----------------|--------------------------|
+| Dataset 1 - Trigger/Special Token | The special token to be used for the character in the dataset (eg,: [A], [AB], etc..) |
+| Dataset 1 - Initializer Concept | A short description of the character (eg,: A 35 year old Indian man with a strong build, brown skin, beard and mustache, A young Indian woman with fair skin, dimples on cheeks, fair skin, slim build)|
+
+Do the same if there are more than one datasets to be trained after clicking on `Add Dataset`
+
+- Sample Prompts: At the bottom of the page you can provide certain validation prompts. Make sure that these have the special trigger followed by the class of the object just like in the training dataset prompts
+
+- Click on `Create Job` after adding all the settings
+
+- Click on the play button at the top right corner
+
+- **Note: If the training fails, ping Shivanvitha Ambati well before 10pm**
+
+
+
+----
+
+
+### On NVIDIA H100 GPUs - dheyo_nvidia Branch
+
+- Login to dheyo01 VSCode on `lh100.dheyo.ai` with password `Gailen804!`
+
+- Navigate to the working directory 
+
 ```bash
-ssh -L 7777:localhost:7777 ubuntu@gpu-22
+cd /data/shivanvitha/dheyo_ai_toolkit/ai-toolkit
 ```
 
-## MI300X Monitoring Dashboard
-![AMD MI300X Dashboard](./assets/gpu_dashboard.png)
+- Activate the virtual environment 
+
+```bash 
+source ../../../ai-toolkit/aitool/bin/activate
+```
+
+- Launch UI 
+
+```bash
+cd ui
+```
+
+```bash
+npm run build_and_start
+```
+
+- Open the application on port 7777 on the browser 
+
+```bash 
+lh100.dheyo.ai:7777
+```
+
+- The rest of the instructions are same as described in the AMD section
+
+----
+
+## Inference 
+
+- Stay in the same directory (irrespective of which machine) and find the file with the name -- `inference_qwen_image_lora.py`
+
+- The checkpoints are stored in the `output` directory. Find the sub-directory under this with the training name you provided during fine-tuning
+
+- Copy the absolute paths of the below
+
+| Category     | Pattern           |
+|-----------------|--------------------------|
+| Transformer LoRA Path  | <your_training_name>_<ckpt_number>.safetensors |
+| Text Encoder Path      | text_encoder_<your_training_name>_<ckpt_number> |
+| Tokenizer Path | tokenizer_<your_training_name>_<ckpt_number> |
+| Token Abstraction JSON apth      | There will be a tokens.json file |
 
 
-## A Lazy Fix
+- Create a command and launch it
 
-If you are using the latest version of transformers (eg., 4.54.0.dev0), use the below hacky way to fix a bug related to Qwen Image.
+Always look out for idle GPUs and give the device ID accordingly in the environment variable (`HIP_VISIBLE_DEVICES` or `CUDA_VISIBLE_DEVICES`) in front of the actual script command
 
-In `<venv>/lib/python3.10/site-packages/transformers/configuration_utils.py` add a line in `get_text_config()` function to prevent qwen_image experiments from failing.
+**For multi prompt bulk generation, each prompt should start on a newline**
 
-```python
-    def get_text_config(self, decoder=False) -> "PretrainedConfig":
-        """
-        Returns the config that is meant to be used with text IO. On most models, it is the original config instance
-        itself. On specific composite models, it is under a set of valid names.
+### On AMD:
 
-        Args:
-            decoder (`Optional[bool]`, *optional*, defaults to `False`):
-                If set to `True`, then only search for decoder config names.
-        """
-        decoder_possible_text_config_names = ("decoder", "generator", "text_config")
-        encoder_possible_text_config_names = ("text_encoder",)
-        if decoder:
-            possible_text_config_names = decoder_possible_text_config_names
-        else:
-            possible_text_config_names = encoder_possible_text_config_names + decoder_possible_text_config_names
+Single Prompt Inference:
 
-        valid_text_config_names = []
-        for text_config_name in possible_text_config_names:
-            if hasattr(self, text_config_name):
-                text_config = getattr(self, text_config_name, None)
-                if text_config is not None:
-                    valid_text_config_names += [text_config_name]
+```bash
+HIP_VISIBLE_DEVICES=7 python3 inference_qwen_image_lora.py --model_path "Qwen/Qwen-Image" \
+--transformer_lora_path <your_transformer_lora_path> \
+--tokenizer_path <your_tokenizer_path> \
+--text_encoder_path <your_text_encoder_path> \
+--token_abstraction_json_path tokens.json \
+--num_inference_steps 50 \
+--output_image_path inferenced_images/<some_file_name>.png \
+--instruction "A photo of [A] man in prison, crying, wearing prison outfit with 420 written on his shirt" \
+--aspect_ratio "16:9"
+```
 
-        if len(valid_text_config_names) > 1:
-            raise ValueError(
-                f"Multiple valid text configs were found in the model config: {valid_text_config_names}. In this "
-                "case, using `get_text_config()` would be ambiguous. Please specify the desied text config directly."
-            )
-        elif len(valid_text_config_names) == 1:
-            config_to_return = getattr(self, valid_text_config_names[0])
-            config_to_return = PretrainedConfig.from_dict(config_to_return) ### 👈 add this line 
-        else:
-            config_to_return = self
-        return config_to_return
+Multiple Prompt Inference:
+```bash
+HIP_VISIBLE_DEVICES=7 python3 inference_qwen_image_lora.py --model_path "Qwen/Qwen-Image" \
+--transformer_lora_path <your_transformer_lora_path> \
+--tokenizer_path <your_tokenizer_path> \
+--text_encoder_path <your_text_encoder_path> \
+--token_abstraction_json_path tokens.json \
+--num_inference_steps 50 \
+--output_image_path inferenced_images/<some_file_name>.png \
+--prompts_path <your_prompts_txt_file>.txt \ \
+--aspect_ratio "16:9"
 ```
 
 
-## Notes
+### On NVIDIA:
 
-Support for the following features has been disabled temporarily 
-- Quantization of DiT/Text Encoder with Torchao
-- 8-bit Optimizer Quantization using bitsandbytes
+```bash
+CUDA_VISIBLE_DEVICES=1 python3 inference_qwen_image_lora.py --model_path "Qwen/Qwen-Image" \
+--transformer_lora_path <your_transformer_lora_path> \
+--tokenizer_path <your_tokenizer_path> \
+--text_encoder_path <your_text_encoder_path> \
+--token_abstraction_json_path tokens.json \
+--num_inference_steps 50 \
+--output_image_path inferenced_images/<some_file_name>.png \
+--instruction "A photo of [A] man in prison, crying, wearing prison outfit with 420 written on his shirt" \
+--aspect_ratio "16:9"
+```
 
-Therefore, you cannot use quantization on AMD GPUs for now. 
+Multiple Prompt Inference:
+```bash
+CUDA_VISIBLE_DEVICES=1 python3 inference_qwen_image_lora.py --model_path "Qwen/Qwen-Image" \
+--transformer_lora_path <your_transformer_lora_path> \
+--tokenizer_path <your_tokenizer_path> \
+--text_encoder_path <your_text_encoder_path> \
+--token_abstraction_json_path tokens.json \
+--num_inference_steps 50 \
+--output_image_path inferenced_images/<some_file_name>.png \
+--prompts_path <your_prompts_txt_file>.txt \ \
+--aspect_ratio "16:9"
+```
