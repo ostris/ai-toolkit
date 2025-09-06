@@ -20,6 +20,9 @@ from toolkit.kohya_lora import LoRANetwork
 from toolkit.models.DoRA import DoRAModule
 from typing import TYPE_CHECKING
 
+from pathlib import Path
+
+
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
 
@@ -209,7 +212,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if base_model is not None:
             self.base_model_ref = weakref.ref(base_model)
 
-        self.only_if_contains: Union[List, None] = only_if_contains
+        self.only_if_contains: Union[List, str, None] = only_if_contains
 
         self.lora_dim = lora_dim
         self.alpha = alpha
@@ -307,7 +310,8 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             #     self.only_if_contains = expanded_only_if_contains
             #     # import pdb; pdb.set_trace()
             #     print(self.only_if_contains)
-            if self.only_if_contains:
+            # if isinstance(self.only_if_contains, List):
+            def process_selective_layers ():
                 expanded_only_if_contains = []
                 transformer_block_handles = base_model.get_transformer_block_names()
                 for layer in self.only_if_contains:
@@ -325,6 +329,15 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
 
                 self.only_if_contains = list(set(expanded_only_if_contains))
                 print(self.only_if_contains)
+
+
+            if isinstance(self.only_if_contains, List):
+                process_selective_layers()
+
+            elif isinstance(self.only_if_contains, str): ## it will be a path to the txt file
+                layer_regex_path = Path(self.only_if_contains)
+                self.only_if_contains = layer_regex_path.read_text(encoding="utf-8").splitlines()
+                process_selective_layers()
 
             #############
 
