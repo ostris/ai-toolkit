@@ -152,8 +152,10 @@ class DataLoaderBatchDTO:
             self.clip_image_embeds_unconditional: Union[List[dict], None] = None
             self.sigmas: Union[torch.Tensor, None] = None  # can be added elseware and passed along training code
             self.extra_values: Union[torch.Tensor, None] = torch.tensor([x.extra_values for x in self.file_items]) if len(self.file_items[0].extra_values) > 0 else None
-            if not is_latents_cached:
-                # only return a tensor if latents are not cached
+            # keep pixel tensors when latents aren't cached or when I2V needs frames
+            needs_frames = any([getattr(x.dataset_config, 'do_i2v', False) for x in self.file_items])
+            if (not is_latents_cached) or needs_frames:
+                # only return a tensor if latents are not cached or i2v requires frames
                 self.tensor: torch.Tensor = torch.cat([x.tensor.unsqueeze(0) for x in self.file_items])
             # if we have encoded latents, we concatenate them
             self.latents: Union[torch.Tensor, None] = None
