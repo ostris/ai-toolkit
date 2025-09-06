@@ -443,8 +443,25 @@ class ImageProcessingDTOMixin:
         transform: Union[None, transforms.Compose],
         only_load_latents=False
     ):
+        # If latents are cached, load and early return like single-image path
         if self.is_latent_cached:
-            raise Exception('Latent caching not supported for videos')
+            # Always load cached latent
+            self.get_latent()
+            # If training I2V, we still need pixel frames for first-frame conditioning
+            needs_frames = bool(getattr(self.dataset_config, 'do_i2v', False))
+            if not needs_frames:
+                # Support ancillary assets if present and return early
+                if self.has_control_image:
+                    self.load_control_image()
+                if self.has_inpaint_image:
+                    self.load_inpaint_image()
+                if self.has_clip_image:
+                    self.load_clip_image()
+                if self.has_mask_image:
+                    self.load_mask_image()
+                if self.has_unconditional:
+                    self.load_unconditional_image()
+                return
         
         if self.augments is not None and len(self.augments) > 0:
             raise Exception('Augments not supported for videos')
@@ -1647,6 +1664,16 @@ class LatentCachingFileItemDTOMixin:
             ("latent_space_version", self.latent_space_version),
             ("latent_version", self.latent_version),
         ])
+        # include video-related settings when applicable to ensure unique cache per frame config
+        try:
+            if hasattr(self, 'dataset_config') and getattr(self.dataset_config, 'num_frames', 1) > 1:
+                item["is_video"] = True
+                item["num_frames"] = int(self.dataset_config.num_frames)
+                item["fps"] = int(getattr(self.dataset_config, 'fps', 0))
+                item["shrink_video_to_frames"] = bool(getattr(self.dataset_config, 'shrink_video_to_frames', True))
+        except (AttributeError, TypeError):
+            # do not fail cache-key building due to optional attributes
+            pass
         # when adding items, do it after so we dont change old latents
         if self.flip_x:
             item["flip_x"] = True
@@ -1702,10 +1729,10 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
-        if self.dataset_config.num_frames > 1:
-            raise Exception("Error: caching latents is not supported for multi-frame datasets")
+        # Support both single-frame (images) and multi-frame (videos)
         with accelerator.main_process_first():
-            print_acc(f"Caching latents for {self.dataset_path}")
+            is_video = getattr(self.dataset_config, 'num_frames', 1) > 1
+            print_acc(f"Caching {'video ' if is_video else ''}latents for {self.dataset_path}")
             # cache all latents to disk
             to_disk = self.is_caching_latents_to_disk
             to_memory = self.is_caching_latents_to_memory
@@ -1755,6 +1782,7 @@ class LatentCachingMixin:
                     # add batch dimension
                     try:
                         imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
+                        # sd.encode_images accepts a list-like; using a 1-item batch works for both images and videos
                         latent = self.sd.encode_images(imgs).squeeze(0)
                     except Exception as e:
                         print_acc(f"Error processing image: {file_item.path}")
@@ -1763,7 +1791,7 @@ class LatentCachingMixin:
                     # save_latent
                     if to_disk:
                         state_dict = OrderedDict([
-                            ('latent', latent.clone().detach().cpu()),
+                            ('latent', latent.clone().detach().cpu().contiguous()),
                         ])
                         # metadata
                         meta = get_meta_for_safetensors(file_item.get_latent_info_dict())
@@ -1772,7 +1800,7 @@ class LatentCachingMixin:
 
                     if to_memory:
                         # keep it in memory
-                        file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
+                        file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype).contiguous()
 
                     del imgs
                     del latent
