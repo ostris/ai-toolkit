@@ -1065,7 +1065,7 @@ class SDTrainer(BaseSDTrainProcess):
         )
     
 
-    def train_single_accumulation(self, batch: DataLoaderBatchDTO):
+    def train_single_accumulation(self, batch: DataLoaderBatchDTO, propagate_backwards: bool):
         with torch.no_grad():
             self.timer.start('preprocess_batch')
             if isinstance(self.adapter, CustomAdapter):
@@ -1813,6 +1813,8 @@ class SDTrainer(BaseSDTrainProcess):
                             mask_multiplier=mask_multiplier,
                             prior_pred=prior_to_calculate_loss,
                         )
+
+                        import pdb; pdb.set_trace()
                     
                     if self.train_config.diff_output_preservation:
                         # send the loss backwards otherwise checkpointing will fail
@@ -1841,24 +1843,29 @@ class SDTrainer(BaseSDTrainProcess):
                     print_acc("loss is nan")
                     loss = torch.zeros_like(loss).requires_grad_(True)
 
-                with self.timer('backward'):
-                    # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
-                    loss = loss * loss_multiplier.mean()
-                    # IMPORTANT if gradient checkpointing do not leave with network when doing backward
-                    # it will destroy the gradients. This is because the network is a context manager
-                    # and will change the multipliers back to 0.0 when exiting. They will be
-                    # 0.0 for the backward pass and the gradients will be 0.0
-                    # I spent weeks on fighting this. DON'T DO IT
-                    # with fsdp_overlap_step_with_backward():
-                    # if self.is_bfloat:
-                    # loss.backward()
-                    # else:
-                    self.accelerator.backward(loss)
+                if propagate_backwards:
+                    with self.timer('backward'):
+                        # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
+                        loss = loss * loss_multiplier.mean()
+                        # IMPORTANT if gradient checkpointing do not leave with network when doing backward
+                        # it will destroy the gradients. This is because the network is a context manager
+                        # and will change the multipliers back to 0.0 when exiting. They will be
+                        # 0.0 for the backward pass and the gradients will be 0.0
+                        # I spent weeks on fighting this. DON'T DO IT
+                        # with fsdp_overlap_step_with_backward():
+                        # if self.is_bfloat:
+                        # loss.backward()
+                        # else:
+                        self.accelerator.backward(loss)
+                # else:
+                    # loss.requires_grad_(False)
+
+
 
         return loss.detach(), snr
         # flush()
 
-    def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]]):
+    def hook_train_loop(self, batch: Union[DataLoaderBatchDTO, List[DataLoaderBatchDTO]], propagate_backwards=True):
         if isinstance(batch, list):
             batch_list = batch
         else:
@@ -1866,7 +1873,7 @@ class SDTrainer(BaseSDTrainProcess):
         total_loss = None
         self.optimizer.zero_grad()
         for batch in batch_list:
-            loss, snr = self.train_single_accumulation(batch)
+            loss, snr = self.train_single_accumulation(batch, propagate_backwards=propagate_backwards)
             if total_loss is None:
                 total_loss = loss
             else:
