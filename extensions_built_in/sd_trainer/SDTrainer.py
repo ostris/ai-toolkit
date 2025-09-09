@@ -1813,8 +1813,6 @@ class SDTrainer(BaseSDTrainProcess):
                             mask_multiplier=mask_multiplier,
                             prior_pred=prior_to_calculate_loss,
                         )
-
-                        import pdb; pdb.set_trace()
                     
                     if self.train_config.diff_output_preservation:
                         # send the loss backwards otherwise checkpointing will fail
