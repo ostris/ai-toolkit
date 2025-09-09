@@ -391,7 +391,7 @@ class StableDiffusion:
             flush()
             
             print_acc("Loading t5")
-            tokenizer_3 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_3", torch_dtype=dtype)
+            tokenizer_3 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_3")
             text_encoder_3 = T5EncoderModel.from_pretrained(
                 base_model_path, 
                 subfolder="text_encoder_3", 
@@ -767,7 +767,7 @@ class StableDiffusion:
             flush()
             
             self.print_and_status_update("Loading T5")
-            tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2", torch_dtype=dtype)
+            tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2")
             text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
                                                             torch_dtype=dtype)
 
@@ -782,7 +782,7 @@ class StableDiffusion:
                 
             self.print_and_status_update("Loading CLIP")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
-            tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+            tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer")
             text_encoder.to(self.device_torch, dtype=dtype)
 
             self.print_and_status_update("Making pipe")
@@ -876,7 +876,7 @@ class StableDiffusion:
                 text_encoder = AutoModel.from_pretrained(self.model_config.te_name_or_path, torch_dtype=dtype)
             else:
                 self.print_and_status_update("Loading Gemma2")
-                tokenizer = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+                tokenizer = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer")
                 text_encoder = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
 
             text_encoder.to(self.device_torch, dtype=dtype)

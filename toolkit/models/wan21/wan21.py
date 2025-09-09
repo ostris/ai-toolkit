@@ -426,7 +426,7 @@ class Wan21(BaseModel):
 
         self.print_and_status_update("Loading UMT5EncoderModel")
         tokenizer = AutoTokenizer.from_pretrained(
-            te_path, subfolder="tokenizer", torch_dtype=dtype)
+            te_path, subfolder="tokenizer")
         text_encoder = UMT5EncoderModel.from_pretrained(
             te_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
 

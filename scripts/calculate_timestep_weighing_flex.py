@@ -61,7 +61,7 @@ with torch.no_grad():
 
     flush()
     print("Loading Text Encoder...")
-    tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2", torch_dtype=dtype)
+    tokenizer_2 = T5TokenizerFast.from_pretrained(base_model_path, subfolder="tokenizer_2")
     text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2", torch_dtype=dtype)
     text_encoder_2.to(device, dtype=dtype)
 
@@ -72,7 +72,7 @@ with torch.no_grad():
 
     print("Loading CLIP")
     text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
-    tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+    tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer")
     text_encoder.to(device, dtype=dtype)
 
     print("Making pipe")

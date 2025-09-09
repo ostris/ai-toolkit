@@ -115,7 +115,7 @@ class FluxKontextModel(BaseModel):
 
         self.print_and_status_update("Loading T5")
         tokenizer_2 = T5TokenizerFast.from_pretrained(
-            base_model_path, subfolder="tokenizer_2", torch_dtype=dtype
+            base_model_path, subfolder="tokenizer_2"
         )
         text_encoder_2 = T5EncoderModel.from_pretrained(
             base_model_path, subfolder="text_encoder_2", torch_dtype=dtype
@@ -134,7 +134,7 @@ class FluxKontextModel(BaseModel):
         text_encoder = CLIPTextModel.from_pretrained(
             base_model_path, subfolder="text_encoder", torch_dtype=dtype)
         tokenizer = CLIPTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+            base_model_path, subfolder="tokenizer")
         text_encoder.to(self.device_torch, dtype=dtype)
 
         self.print_and_status_update("Loading VAE")

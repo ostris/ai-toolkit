@@ -98,7 +98,7 @@ class FLiteModel(BaseModel):
 
         self.print_and_status_update("Loading T5")
         tokenizer = T5TokenizerFast.from_pretrained(
-            extras_path, subfolder="tokenizer", torch_dtype=dtype
+            extras_path, subfolder="tokenizer"
         )
         text_encoder = T5EncoderModel.from_pretrained(
             extras_path, subfolder="text_encoder", torch_dtype=dtype

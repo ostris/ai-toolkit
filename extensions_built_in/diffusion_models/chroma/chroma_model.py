@@ -190,7 +190,7 @@ class ChromaModel(BaseModel):
 
         self.print_and_status_update("Loading T5")
         tokenizer_2 = T5TokenizerFast.from_pretrained(
-            extras_path, subfolder="tokenizer_2", torch_dtype=dtype
+            extras_path, subfolder="tokenizer_2"
         )
         text_encoder_2 = T5EncoderModel.from_pretrained(
             extras_path, subfolder="text_encoder_2", torch_dtype=dtype

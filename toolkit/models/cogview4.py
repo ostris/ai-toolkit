@@ -106,7 +106,7 @@ class CogView4(BaseModel):
 
         self.print_and_status_update("Loading GlmModel")
         tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype)
+            base_model_path, subfolder="tokenizer")
         text_encoder = GlmModel.from_pretrained(
             base_model_path, subfolder="text_encoder", torch_dtype=dtype)
 
