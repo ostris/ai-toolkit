@@ -501,7 +501,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if os.path.exists(yaml_file):
                 os.remove(yaml_file)
 
-        import pdb; pdb.set_trace()
         if len(best_steps) > 0: 
             best_steps_int = [int(step) for step in best_steps]
             self.loss_and_step_list = [tup for tup in self.loss_and_step_list if tup[1] in best_steps_int]
@@ -591,7 +590,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def end_step_hook(self):
         pass
 
-    def save(self, step=None):
+    def save(self, step=None, last=False):
         if not self.accelerator.is_main_process:
             return
         flush()
@@ -802,7 +801,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc(e)
                 print_acc("Could not save optimizer")
 
-        self.clean_up_saves()
+        if not last:
+            self.clean_up_saves()
         with open(f"{self.save_root}/epoch_loss_heap_original.json", 'w') as f:
             json.dump(self.loss_and_step_list, f)
         self.post_save_hook(file_path)
@@ -1624,7 +1624,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
 
 
-    def end_training_loop (self):
+    def end_training_loop (self, unet, noise_scheduler, optimizer, tokenizer, text_encoder):
         ###################################################################
         ##  END TRAIN LOOP
         ###################################################################
@@ -1638,7 +1638,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
-            self.save()
+            self.save(last=True)
             self.logger.finish()
         self.accelerator.end_training()
 
@@ -2395,7 +2395,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if start_saving_after:
                             greatest_loss_and_step = sorted(self.loss_and_step_list, key=lambda x: x[0])[-1] if len(self.loss_and_step_list) > 0 else None
                             if len(self.loss_and_step_list) > 0 and epoch_loss_dict["epoch_loss"] <= greatest_loss_and_step[0]:
-                                print(f"\n\nCurrent step-{self.step_num} (epoch-{self.epoch_num}) loss is lower than or equal to the step-{greatest_loss_and_step[1]} ({epoch_loss_dict['epoch_loss']} <= {greatest_loss_and_step[0]})\n\n")
+                                print(f"\n\nCurrent step-{self.step_num} (epoch-{self.epoch_num}) loss is less than or equal to the loss at step-{greatest_loss_and_step[1]} ({epoch_loss_dict['epoch_loss']} <= {greatest_loss_and_step[0]})\n\n")
                                 self.loss_and_step_list.append((epoch_loss_dict["epoch_loss"], self.step_num))
                                 print_acc(f"\nSaving at step {self.step_num}")
                                 self.save(self.step_num)
@@ -2409,8 +2409,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 last_saved += 1
 
                         
-                        if last_saved == self.train_config.early_stopping_num_epochs:
-                            self.end_training_loop()
+                        # if last_saved == self.train_config.early_stopping_num_epochs:
+                        #     print(f"\n\n\n\n")
+                        #     self.end_training_loop(unet, noise_scheduler, optimizer, tokenizer, text_encoder)
 
                         
                         print(f"\n\nNew epoch begins now\n\n")
@@ -2486,45 +2487,53 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.grad_accumulation_step += 1
                 self.end_step_hook()
 
+            if last_saved == self.train_config.early_stopping_num_epochs:
+                print(f"\n\nTriggering early stopping as there was no downward trend in the aggregate loss in last {last_saved} epoch(s)\n\n")
+                self.end_training_loop(unet, noise_scheduler, optimizer, tokenizer, text_encoder)
+                break
+
 
         ###################################################################
         ##  END TRAIN LOOP
         ###################################################################
-        self.accelerator.wait_for_everyone()
-        if self.progress_bar is not None:
-            self.progress_bar.close()
-        if self.train_config.free_u:
-            self.sd.pipeline.disable_freeu()
-        if not self.train_config.disable_sampling:
-            self.sample(self.step_num)
-            self.logger.commit(step=self.step_num)
-        print_acc("")
-        if self.accelerator.is_main_process:
-            self.save()
-            self.logger.finish()
-        self.accelerator.end_training()
+        if last_saved != self.train_config.early_stopping_num_epochs:
+            self.end_training_loop(unet, noise_scheduler, optimizer, tokenizer, text_encoder)
 
-        if self.accelerator.is_main_process:
-            # push to hub
-            if self.save_config.push_to_hub:
-                if("HF_TOKEN" not in os.environ):
-                    interpreter_login(new_session=False, write_permission=True)
-                self.push_to_hub(
-                    repo_id=self.save_config.hf_repo_id,
-                    private=self.save_config.hf_private
-                )
-        del (
-            self.sd,
-            unet,
-            noise_scheduler,
-            optimizer,
-            self.network,
-            tokenizer,
-            text_encoder,
-        )
+        # self.accelerator.wait_for_everyone()
+        # if self.progress_bar is not None:
+        #     self.progress_bar.close()
+        # if self.train_config.free_u:
+        #     self.sd.pipeline.disable_freeu()
+        # if not self.train_config.disable_sampling:
+        #     self.sample(self.step_num)
+        #     self.logger.commit(step=self.step_num)
+        # print_acc("")
+        # if self.accelerator.is_main_process:
+        #     self.save()
+        #     self.logger.finish()
+        # self.accelerator.end_training()
 
-        flush()
-        self.done_hook()
+        # if self.accelerator.is_main_process:
+        #     # push to hub
+        #     if self.save_config.push_to_hub:
+        #         if("HF_TOKEN" not in os.environ):
+        #             interpreter_login(new_session=False, write_permission=True)
+        #         self.push_to_hub(
+        #             repo_id=self.save_config.hf_repo_id,
+        #             private=self.save_config.hf_private
+        #         )
+        # del (
+        #     self.sd,
+        #     unet,
+        #     noise_scheduler,
+        #     optimizer,
+        #     self.network,
+        #     tokenizer,
+        #     text_encoder,
+        # )
+
+        # flush()
+        # self.done_hook()
 
     def push_to_hub(
     self,
