@@ -112,6 +112,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.train_config = TrainConfig(**self.get_conf('train', {}))
         model_config = self.get_conf('model', {})
         self.modules_being_trained: List[torch.nn.Module] = []
+        self.loss_and_step_list = []
 
         # update modelconfig dtype to match train
         model_config['dtype'] = self.train_config.dtype
@@ -407,79 +408,178 @@ class BaseSDTrainProcess(BaseTrainProcess):
         })
         return info
 
+
     def clean_up_saves(self):
         if not self.accelerator.is_main_process:
             return
-        # remove old saves
-        # get latest saved step
-        latest_item = None
-        if os.path.exists(self.save_root):
-            # pattern is {job_name}_{zero_filled_step} for both files and directories
-            pattern = f"{self.job.name}_*"
-            items = glob.glob(os.path.join(self.save_root, pattern))
-            # Separate files and directories
-            safetensors_files = [f for f in items if f.endswith('.safetensors')]
-            pt_files = [f for f in items if f.endswith('.pt')]
-            directories = [d for d in items if os.path.isdir(d) and not d.endswith('.safetensors')]
-            embed_files = []
-            # do embedding files
-            if self.embed_config is not None:
-                embed_pattern = "".join([self.embed_config[i].trigger for i in range(len(self.embed_config))])
-                embed_pattern = f"{embed_pattern}_*"
-                # embed_pattern = f"{self.embed_config.trigger}_*"
-                embed_items = glob.glob(os.path.join(self.save_root, embed_pattern))
-                # will end in safetensors or pt
-                embed_files = [f for f in embed_items if f.endswith('.safetensors') or f.endswith('.pt')]
 
-            # check for critic files
-            critic_pattern = f"CRITIC_{self.job.name}_*"
-            critic_items = glob.glob(os.path.join(self.save_root, critic_pattern))
+        # Get the best steps based on lowest loss
+        if not self.loss_and_step_list:
+            return None
 
-            # Sort the lists by creation time if they are not empty
-            if safetensors_files:
-                safetensors_files.sort(key=os.path.getctime)
-            if pt_files:
-                pt_files.sort(key=os.path.getctime)
-            if directories:
-                directories.sort(key=os.path.getctime)
-            if embed_files:
-                embed_files.sort(key=os.path.getctime)
-            if critic_items:
-                critic_items.sort(key=os.path.getctime)
+        # import pdb; pdb.set_trace()
+        sorted_loss_steps = sorted(self.loss_and_step_list, key=lambda x: x[0])[:self.save_config.max_step_saves_to_keep]
+        best_steps = [str(step).zfill(9) for _, step in sorted_loss_steps]  # Zero-pad step numbers for matching
 
-            # Combine and sort the lists
-            combined_items = safetensors_files + directories + pt_files
-            combined_items.sort(key=os.path.getctime)
+        # Get all items in save_root
+        if not os.path.exists(self.save_root):
+            return None
 
-            # Use slicing with a check to avoid 'NoneType' error
-            safetensors_to_remove = safetensors_files[
-                                    :-self.save_config.max_step_saves_to_keep] if safetensors_files else []
-            pt_files_to_remove = pt_files[:-self.save_config.max_step_saves_to_keep] if pt_files else []
-            directories_to_remove = directories[:-self.save_config.max_step_saves_to_keep] if directories else []
-            embeddings_to_remove = embed_files[:-self.save_config.max_step_saves_to_keep] if embed_files else []
-            critic_to_remove = critic_items[:-self.save_config.max_step_saves_to_keep] if critic_items else []
+        # Pattern for job-related files and directories
+        pattern = f"{self.job.name}_*"
+        items = glob.glob(os.path.join(self.save_root, pattern))
+        
+        # Separate files and directories
+        safetensors_files = [f for f in items if f.endswith('.safetensors')]
+        # pt_files = [f for f in items if f.endswith('.pt')]
+        # directories = [d for d in items if os.path.isdir(d) and not d.endswith('.safetensors')]
+        embed_files = []
+        tokenizer_dirs = glob.glob(os.path.join(self.save_root, "tokenizer_*"))
+        text_encoder_dirs = glob.glob(os.path.join(self.save_root, "text_encoder_*"))
 
-            items_to_remove = safetensors_to_remove + pt_files_to_remove + directories_to_remove + embeddings_to_remove + critic_to_remove
+        # critic_items = []
 
-            # remove all but the latest max_step_saves_to_keep
-            # items_to_remove = combined_items[:-self.save_config.max_step_saves_to_keep]
+        # Handle embedding files
+        if self.embed_config is not None:
+            embed_pattern =  self.embed_config[0].trigger[:-1]
+            embed_pattern = f"{embed_pattern}*"
+            print(embed_pattern)
+            embed_items = glob.glob(os.path.join(self.save_root, embed_pattern))
+            embed_files = [f for f in embed_items if f.endswith('.safetensors') or f.endswith('.pt')]
 
-            # remove duplicates
-            items_to_remove = list(dict.fromkeys(items_to_remove))
+        # Handle critic files
+        # critic_pattern = f"CRITIC_{self.job.name}_*"
+        # critic_items = glob.glob(os.path.join(self.save_root, critic_pattern))
 
-            for item in items_to_remove:
-                print_acc(f"Removing old save: {item}")
-                if os.path.isdir(item):
-                    shutil.rmtree(item)
-                else:
-                    os.remove(item)
-                # see if a yaml file with same name exists
-                yaml_file = os.path.splitext(item)[0] + ".yaml"
-                if os.path.exists(yaml_file):
-                    os.remove(yaml_file)
-            if combined_items:
-                latest_item = combined_items[-1]
-        return latest_item
+        # Combine all items
+        # combined_items = safetensors_files + pt_files + directories + embed_files + critic_items
+        combined_items = safetensors_files + embed_files + text_encoder_dirs + tokenizer_dirs
+
+        # Filter items to remove (those not matching best steps)
+        items_to_remove, steps_to_remove = [], []
+        # latest_item = None
+
+        # for item in combined_items:
+        #     # Extract step number from item name
+        #     step = None
+        #     for pattern in [f"{self.job.name}_", f"CRITIC_{self.job.name}_", embed_pattern[:-1]]:
+        #         if pattern in item:
+        #             step_part = item.split(pattern)[-1]
+        #             step = step_part.split('.')[0] if '.' in step_part else step_part
+        #             break
+            
+        #     # Keep item if its step is in best_steps
+        #     # if step:
+        #     #     step = step.replace("LoRA_", '')
+        #     if step and step in best_steps:
+        #         if not latest_item or os.path.getctime(item) > os.path.getctime(latest_item):
+        #             latest_item = item
+        #     else:
+        #         items_to_remove.append(item)
+
+        for file in combined_items:
+            found = False
+            for step in best_steps:
+                if step in file:
+                    found = True
+            if not found:
+                items_to_remove.append(file)
+                # steps_to_remove.append(int(step)) ## this is wrong
+
+        # Remove duplicates
+        items_to_remove = list(dict.fromkeys(items_to_remove))
+
+        # Remove old saves and associated YAML files
+        for item in items_to_remove:
+            print_acc(f"Removing old save: {item}")
+            if os.path.isdir(item):
+                shutil.rmtree(item)
+            else:
+                os.remove(item)
+            # Remove associated YAML file
+            yaml_file = os.path.splitext(item)[0] + ".yaml"
+            if os.path.exists(yaml_file):
+                os.remove(yaml_file)
+
+        import pdb; pdb.set_trace()
+        if len(best_steps) > 0: 
+            best_steps_int = [int(step) for step in best_steps]
+            self.loss_and_step_list = [tup for tup in self.loss_and_step_list if tup[1] in best_steps_int]
+
+
+    # def clean_up_saves(self):
+    #     if not self.accelerator.is_main_process:
+    #         return
+    #     # remove old saves
+    #     # get latest saved step
+    #     latest_item = None
+    #     if os.path.exists(self.save_root):
+    #         # pattern is {job_name}_{zero_filled_step} for both files and directories
+    #         pattern = f"{self.job.name}_*"
+    #         items = glob.glob(os.path.join(self.save_root, pattern))
+    #         # Separate files and directories
+    #         safetensors_files = [f for f in items if f.endswith('.safetensors')]
+    #         pt_files = [f for f in items if f.endswith('.pt')]
+    #         directories = [d for d in items if os.path.isdir(d) and not d.endswith('.safetensors')]
+    #         embed_files = []
+    #         # do embedding files
+    #         if self.embed_config is not None:
+    #             embed_pattern = "".join([self.embed_config[i].trigger for i in range(len(self.embed_config))])
+    #             embed_pattern = f"{embed_pattern}_*"
+    #             # embed_pattern = f"{self.embed_config.trigger}_*"
+    #             embed_items = glob.glob(os.path.join(self.save_root, embed_pattern))
+    #             # will end in safetensors or pt
+    #             embed_files = [f for f in embed_items if f.endswith('.safetensors') or f.endswith('.pt')]
+
+    #         # check for critic files
+    #         critic_pattern = f"CRITIC_{self.job.name}_*"
+    #         critic_items = glob.glob(os.path.join(self.save_root, critic_pattern))
+
+    #         # Sort the lists by creation time if they are not empty
+    #         if safetensors_files:
+    #             safetensors_files.sort(key=os.path.getctime)
+    #         if pt_files:
+    #             pt_files.sort(key=os.path.getctime)
+    #         if directories:
+    #             directories.sort(key=os.path.getctime)
+    #         if embed_files:
+    #             embed_files.sort(key=os.path.getctime)
+    #         if critic_items:
+    #             critic_items.sort(key=os.path.getctime)
+
+    #         # Combine and sort the lists
+    #         combined_items = safetensors_files + directories + pt_files
+    #         combined_items.sort(key=os.path.getctime)
+
+    #         # Use slicing with a check to avoid 'NoneType' error
+    #         safetensors_to_remove = safetensors_files[
+    #                                 :-self.save_config.max_step_saves_to_keep] if safetensors_files else []
+    #         pt_files_to_remove = pt_files[:-self.save_config.max_step_saves_to_keep] if pt_files else []
+    #         directories_to_remove = directories[:-self.save_config.max_step_saves_to_keep] if directories else []
+    #         embeddings_to_remove = embed_files[:-self.save_config.max_step_saves_to_keep] if embed_files else []
+    #         critic_to_remove = critic_items[:-self.save_config.max_step_saves_to_keep] if critic_items else []
+
+    #         items_to_remove = safetensors_to_remove + pt_files_to_remove + directories_to_remove + embeddings_to_remove + critic_to_remove
+
+    #         # remove all but the latest max_step_saves_to_keep
+    #         # items_to_remove = combined_items[:-self.save_config.max_step_saves_to_keep]
+
+    #         # remove duplicates
+    #         items_to_remove = list(dict.fromkeys(items_to_remove))
+
+    #         for item in items_to_remove:
+    #             print_acc(f"Removing old save: {item}")
+    #             if os.path.isdir(item):
+    #                 shutil.rmtree(item)
+    #             else:
+    #                 os.remove(item)
+    #             # see if a yaml file with same name exists
+    #             yaml_file = os.path.splitext(item)[0] + ".yaml"
+    #             if os.path.exists(yaml_file):
+    #                 os.remove(yaml_file)
+    #         if combined_items:
+    #             latest_item = combined_items[-1]
+    #     return latest_item
 
     def post_save_hook(self, save_path):
         # override in subclass
@@ -703,6 +803,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc("Could not save optimizer")
 
         self.clean_up_saves()
+        with open(f"{self.save_root}/epoch_loss_heap_original.json", 'w') as f:
+            json.dump(self.loss_and_step_list, f)
         self.post_save_hook(file_path)
 
         if self.ema is not None:
@@ -1520,6 +1622,49 @@ class BaseSDTrainProcess(BaseTrainProcess):
             processed_image.save(processed_file_name)
             print(f"Saved {processed_file_name}")
 
+
+
+    def end_training_loop (self):
+        ###################################################################
+        ##  END TRAIN LOOP
+        ###################################################################
+        self.accelerator.wait_for_everyone()
+        if self.progress_bar is not None:
+            self.progress_bar.close()
+        if self.train_config.free_u:
+            self.sd.pipeline.disable_freeu()
+        if not self.train_config.disable_sampling:
+            self.sample(self.step_num)
+            self.logger.commit(step=self.step_num)
+        print_acc("")
+        if self.accelerator.is_main_process:
+            self.save()
+            self.logger.finish()
+        self.accelerator.end_training()
+
+        if self.accelerator.is_main_process:
+            # push to hub
+            if self.save_config.push_to_hub:
+                if("HF_TOKEN" not in os.environ):
+                    interpreter_login(new_session=False, write_permission=True)
+                self.push_to_hub(
+                    repo_id=self.save_config.hf_repo_id,
+                    private=self.save_config.hf_private
+                )
+        del (
+            self.sd,
+            unet,
+            noise_scheduler,
+            optimizer,
+            self.network,
+            tokenizer,
+            text_encoder,
+        )
+
+        flush()
+        self.done_hook()
+
+
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
@@ -2051,6 +2196,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         start_step_num = self.step_num
         did_first_flush = False
         flush_next = False
+        new_epoch = False
+        epoch_loss_dict = {"epoch_loss": 0.0}
+        last_saved = 0 ## if there is no change overall loss in last_saved number of epochs, we end the training loop!!! 😔
+        print(f"\n\nInitialised epoch loss dict with epoch loss = 0.0\n\n")
         for step in range(start_step_num, self.train_config.steps):
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
@@ -2073,6 +2222,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
                 is_reg_step = False
                 is_save_step = self.save_config.save_every and self.step_num % self.save_config.save_every == 0
+                start_saving_after = (self.step_num >= self.save_config.start_saving_after)
                 is_sample_step = self.sample_config.sample_every and self.step_num % self.sample_config.sample_every == 0
                 if self.train_config.disable_sampling:
                     is_sample_step = False
@@ -2112,6 +2262,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 dataloader_iterator = iter(dataloader)
                                 trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
+                                new_epoch = True ##
+                                # print(f"\n\nNew epoch begins now\n\n")
+                                # epoch_loss_dict["epoch_loss"] = 0.0
+                                # print(f"\n\nEpoch loss dict is reset to epoch loss = 0.0\n\n")
+
                                 if self.train_config.gradient_accumulation_steps == -1:
                                     # if we are accumulating for an entire epoch, trigger a step
                                     self.is_grad_accumulation_step = False
@@ -2150,6 +2305,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             with self.accelerator.accumulate(self.modules_being_trained):
                 try:
                     loss_dict = self.hook_train_loop(batch_list)
+                    epoch_loss_dict["epoch_loss"] += loss_dict["loss"]
+                    print(f"\n\nEpoch loss dict is updated with mini batch/bucket loss: {epoch_loss_dict['epoch_loss']}\n\n")
+                    # if loss_dict.get("epoch_loss"):
+                    #     loss_dict["epoch_loss"] += loss_dict["loss"]
+                    # else:
+                    #     loss_dict["epoch_loss"] = 0.0
                 except Exception as e:
                     traceback.print_exc()
                     #print batch info
@@ -2203,7 +2364,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 # don't do on first step
                 if self.step_num != self.start_step:
-                    if is_sample_step or is_save_step:
+                    # if is_sample_step or is_save_step:
+                    if is_sample_step or start_saving_after:
                         self.accelerator.wait_for_everyone()
                     if is_sample_step:
                         if self.progress_bar is not None:
@@ -2222,13 +2384,40 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
 
-                    if is_save_step:
+                    # if is_save_step:
+                    # if start_saving_after and new_epoch:
+                    if new_epoch:
                         self.accelerator
                         # print above the progress bar
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
-                        print_acc(f"\nSaving at step {self.step_num}")
-                        self.save(self.step_num)
+
+                        if start_saving_after:
+                            greatest_loss_and_step = sorted(self.loss_and_step_list, key=lambda x: x[0])[-1] if len(self.loss_and_step_list) > 0 else None
+                            if len(self.loss_and_step_list) > 0 and epoch_loss_dict["epoch_loss"] <= greatest_loss_and_step[0]:
+                                print(f"\n\nCurrent step-{self.step_num} (epoch-{self.epoch_num}) loss is lower than or equal to the step-{greatest_loss_and_step[1]} ({epoch_loss_dict['epoch_loss']} <= {greatest_loss_and_step[0]})\n\n")
+                                self.loss_and_step_list.append((epoch_loss_dict["epoch_loss"], self.step_num))
+                                print_acc(f"\nSaving at step {self.step_num}")
+                                self.save(self.step_num)
+                                last_saved = 0
+
+                            elif len(self.loss_and_step_list) == 0:
+                                self.loss_and_step_list.append((epoch_loss_dict["epoch_loss"], self.step_num))
+                                print_acc(f"\nSaving at step {self.step_num}")
+                                self.save(self.step_num)
+                            else:
+                                last_saved += 1
+
+                        
+                        if last_saved == self.train_config.early_stopping_num_epochs:
+                            self.end_training_loop()
+
+                        
+                        print(f"\n\nNew epoch begins now\n\n")
+                        epoch_loss_dict["epoch_loss"] = 0.0
+                        print(f"\n\nEpoch loss dict is reset to epoch loss = 0.0\n\n")
+                        new_epoch = False
+                        # epoch_loss_dict["epoch_loss"] = 0.0
                         self.ensure_params_requires_grad()
                         # clear any grads
                         optimizer.zero_grad()

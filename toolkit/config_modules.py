@@ -20,6 +20,7 @@ else:
 class SaveConfig:
     def __init__(self, **kwargs):
         self.save_every: int = kwargs.get('save_every', 1000)
+        self.start_saving_after: int = kwargs.get('start_saving_after', 800)
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.max_step_saves_to_keep: int = kwargs.get('max_step_saves_to_keep', 5)
         self.save_format: SaveFormat = kwargs.get('save_format', 'safetensors')
@@ -318,6 +319,8 @@ LossTarget = Literal['noise', 'source', 'unaugmented', 'differential_noise']
 class TrainConfig:
     def __init__(self, **kwargs):
         self.enable_ti = kwargs.get('enable_ti', False)
+        self.enable_ttb = kwargs.get('enable_ti', False)
+        self.early_stopping_num_epochs = kwargs.get('early_stopping_num_epochs', 30)
         self.noise_scheduler = kwargs.get('noise_scheduler', 'ddpm')
         self.content_or_style: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
         self.content_or_style_reg: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
