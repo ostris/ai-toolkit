@@ -349,7 +349,10 @@ class ToolkitModuleMixin:
         if not self.can_merge_in:
             return
         # get up/down weight
-        up_weight = self.lora_up.weight.clone().float()
+        if self.full_rank:
+            up_weight = None
+        else:
+            up_weight = self.lora_up.weight.clone().float()
         down_weight = self.lora_down.weight.clone().float()
 
         # extract weight from org_module
@@ -374,7 +377,9 @@ class ToolkitModuleMixin:
             scale = scale * self.scalar
 
         # merge weight
-        if len(weight.size()) == 2:
+        if self.full_rank:
+            weight = weight + multiplier * down_weight * scale
+        elif len(weight.size()) == 2:
             # linear
             weight = weight + multiplier * (up_weight @ down_weight) * scale
         elif down_weight.size()[2:4] == (1, 1):
