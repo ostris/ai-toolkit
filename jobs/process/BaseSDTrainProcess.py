@@ -2422,6 +2422,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                         
                         # print(f"\n\nNew epoch begins now\n\n")
+                        loss_dict["epoch_loss"] = epoch_loss_dict["epoch_loss"] ## so that it can reflect in tensorboard logs
                         epoch_loss_dict["epoch_loss"] = 0.0
                         print(f"\n\nEpoch loss dict is reset to epoch loss = 0.0\n\n")
                         # new_epoch = False
