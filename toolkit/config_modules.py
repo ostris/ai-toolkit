@@ -32,7 +32,7 @@ class SaveConfig:
 
 class LoggingConfig:
     def __init__(self, **kwargs):
-        self.log_every: int = kwargs.get('log_every', 100)
+        self.log_every: int = kwargs.get('log_every', 1)
         self.verbose: bool = kwargs.get('verbose', False)
         self.use_wandb: bool = kwargs.get('use_wandb', False)
         self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
