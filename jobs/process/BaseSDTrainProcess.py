@@ -2192,11 +2192,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # TRAIN LOOP
         ###################################################################
 
-
+        # import pdb; pdb.set_trace()
         start_step_num = self.step_num
         did_first_flush = False
         flush_next = False
-        new_epoch = False
+        # new_epoch = False
+        end_epoch = False
         epoch_loss_dict = {"epoch_loss": 0.0}
         last_saved = 0 ## if there is no change overall loss in last_saved number of epochs, we end the training loop!!! 😔
         print(f"\n\nInitialised epoch loss dict with epoch loss = 0.0\n\n")
@@ -2254,6 +2255,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         try:
                             with self.timer('get_batch'):
                                 batch = next(dataloader_iterator)
+                                if (self.step_num + 1) % len(dataloader.dataset.datasets[0].batch_indices) == 0:
+                                    end_epoch = True
+                                    print(f"This is the last iteration of epoch-{self.epoch_num}")
                         except StopIteration:
                             with self.timer('reset_batch'):
                                 # hit the end of an epoch, reset
@@ -2262,7 +2266,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 dataloader_iterator = iter(dataloader)
                                 trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
-                                new_epoch = True ##
+                                print(f"\n\nEpoch-{self.epoch_num} will now begin\n\n")
+
+                                # new_epoch = True ##
                                 # print(f"\n\nNew epoch begins now\n\n")
                                 # epoch_loss_dict["epoch_loss"] = 0.0
                                 # print(f"\n\nEpoch loss dict is reset to epoch loss = 0.0\n\n")
@@ -2386,7 +2392,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                     # if is_save_step:
                     # if start_saving_after and new_epoch:
-                    if new_epoch:
+                    if end_epoch:
                         self.accelerator
                         # print above the progress bar
                         if self.progress_bar is not None:
@@ -2414,10 +2420,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         #     self.end_training_loop(unet, noise_scheduler, optimizer, tokenizer, text_encoder)
 
                         
-                        print(f"\n\nNew epoch begins now\n\n")
+                        # print(f"\n\nNew epoch begins now\n\n")
                         epoch_loss_dict["epoch_loss"] = 0.0
                         print(f"\n\nEpoch loss dict is reset to epoch loss = 0.0\n\n")
-                        new_epoch = False
+                        # new_epoch = False
+                        end_epoch = False
                         # epoch_loss_dict["epoch_loss"] = 0.0
                         self.ensure_params_requires_grad()
                         # clear any grads
