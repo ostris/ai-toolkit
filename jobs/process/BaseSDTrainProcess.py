@@ -2255,7 +2255,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         try:
                             with self.timer('get_batch'):
                                 batch = next(dataloader_iterator)
-                                if (self.step_num + 1) % len(dataloader.dataset.datasets[0].batch_indices) == 0:
+                                num_steps_in_epoch = sum([len(dataloader.dataset.datasets[j].batch_indices) for j in range(len(dataloader.dataset.datasets))])
+                                if (self.step_num + 1) % num_steps_in_epoch == 0:
                                     end_epoch = True
                                     print(f"This is the last iteration of epoch-{self.epoch_num}")
                         except StopIteration:
