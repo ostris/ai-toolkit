@@ -1,4 +1,4 @@
-from .chroma import ChromaModel
+from .chroma import ChromaModel, ChromaRadianceModel
 from .hidream import HidreamModel, HidreamE1Model
 from .f_light import FLiteModel
 from .omnigen2 import OmniGen2Model
@@ -9,6 +9,7 @@ from .qwen_image import QwenImageModel, QwenImageEditModel
 AI_TOOLKIT_MODELS = [
     # put a list of models here
     ChromaModel,
+    ChromaRadianceModel,
     HidreamModel,
     HidreamE1Model,
     FLiteModel,
