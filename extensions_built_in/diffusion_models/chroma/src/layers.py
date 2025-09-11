@@ -7,6 +7,7 @@ from torch import Tensor, nn
 import torch.nn.functional as F
 
 from .math import attention, rope
+from functools import lru_cache
 
 
 class EmbedND(nn.Module):
@@ -88,7 +89,7 @@ class RMSNorm(torch.nn.Module):
         #     return self._forward(x)
 
 
-def distribute_modulations(tensor: torch.Tensor):
+def distribute_modulations(tensor: torch.Tensor, depth_single_blocks, depth_double_blocks):
     """
     Distributes slices of the tensor into the block_dict as ModulationOut objects.
 
@@ -102,25 +103,25 @@ def distribute_modulations(tensor: torch.Tensor):
     # HARD CODED VALUES! lookup table for the generated vectors
     # TODO: move this into chroma config!
     # Add 38 single mod blocks
-    for i in range(38):
+    for i in range(depth_single_blocks):
         key = f"single_blocks.{i}.modulation.lin"
         block_dict[key] = None
 
     # Add 19 image double blocks
-    for i in range(19):
+    for i in range(depth_double_blocks):
         key = f"double_blocks.{i}.img_mod.lin"
         block_dict[key] = None
 
     # Add 19 text double blocks
-    for i in range(19):
+    for i in range(depth_double_blocks):
         key = f"double_blocks.{i}.txt_mod.lin"
         block_dict[key] = None
 
     # Add the final layer
     block_dict["final_layer.adaLN_modulation.1"] = None
     # 6.2b version
-    block_dict["lite_double_blocks.4.img_mod.lin"] = None
-    block_dict["lite_double_blocks.4.txt_mod.lin"] = None
+    # block_dict["lite_double_blocks.4.img_mod.lin"] = None
+    # block_dict["lite_double_blocks.4.txt_mod.lin"] = None
 
     idx = 0  # Index to keep track of the vector slices
 
@@ -172,6 +173,219 @@ def distribute_modulations(tensor: torch.Tensor):
 
     return block_dict
 
+
+
+class NerfEmbedder(nn.Module):
+    """
+    An embedder module that combines input features with a 2D positional
+    encoding that mimics the Discrete Cosine Transform (DCT).
+
+    This module takes an input tensor of shape (B, P^2, C), where P is the
+    patch size, and enriches it with positional information before projecting
+    it to a new hidden size.
+    """
+    def __init__(self, in_channels, hidden_size_input, max_freqs):
+        """
+        Initializes the NerfEmbedder.
+
+        Args:
+            in_channels (int): The number of channels in the input tensor.
+            hidden_size_input (int): The desired dimension of the output embedding.
+            max_freqs (int): The number of frequency components to use for both
+                             the x and y dimensions of the positional encoding.
+                             The total number of positional features will be max_freqs^2.
+        """
+        super().__init__()
+        self.max_freqs = max_freqs
+        self.hidden_size_input = hidden_size_input
+        
+        # A linear layer to project the concatenated input features and
+        # positional encodings to the final output dimension.
+        self.embedder = nn.Sequential(
+            nn.Linear(in_channels + max_freqs**2, hidden_size_input)
+        )
+
+    @lru_cache(maxsize=4)
+    def fetch_pos(self, patch_size, device, dtype):
+        """
+        Generates and caches 2D DCT-like positional embeddings for a given patch size.
+
+        The LRU cache is a performance optimization that avoids recomputing the
+        same positional grid on every forward pass.
+
+        Args:
+            patch_size (int): The side length of the square input patch.
+            device: The torch device to create the tensors on.
+            dtype: The torch dtype for the tensors.
+
+        Returns:
+            A tensor of shape (1, patch_size^2, max_freqs^2) containing the
+            positional embeddings.
+        """
+        # Create normalized 1D coordinate grids from 0 to 1.
+        pos_x = torch.linspace(0, 1, patch_size, device=device, dtype=dtype)
+        pos_y = torch.linspace(0, 1, patch_size, device=device, dtype=dtype)
+        
+        # Create a 2D meshgrid of coordinates.
+        pos_y, pos_x = torch.meshgrid(pos_y, pos_x, indexing="ij")
+        
+        # Reshape positions to be broadcastable with frequencies.
+        # Shape becomes (patch_size^2, 1, 1).
+        pos_x = pos_x.reshape(-1, 1, 1)
+        pos_y = pos_y.reshape(-1, 1, 1)
+        
+        # Create a 1D tensor of frequency values from 0 to max_freqs-1.
+        freqs = torch.linspace(0, self.max_freqs - 1, self.max_freqs, dtype=dtype, device=device)
+        
+        # Reshape frequencies to be broadcastable for creating 2D basis functions.
+        # freqs_x shape: (1, max_freqs, 1)
+        # freqs_y shape: (1, 1, max_freqs)
+        freqs_x = freqs[None, :, None]
+        freqs_y = freqs[None, None, :]
+        
+        # A custom weighting coefficient, not part of standard DCT.
+        # This seems to down-weight the contribution of higher-frequency interactions.
+        coeffs = (1 + freqs_x * freqs_y) ** -1
+        
+        # Calculate the 1D cosine basis functions for x and y coordinates.
+        # This is the core of the DCT formulation.
+        dct_x = torch.cos(pos_x * freqs_x * torch.pi)
+        dct_y = torch.cos(pos_y * freqs_y * torch.pi)
+        
+        # Combine the 1D basis functions to create 2D basis functions by element-wise
+        # multiplication, and apply the custom coefficients. Broadcasting handles the
+        # combination of all (pos_x, freqs_x) with all (pos_y, freqs_y).
+        # The result is flattened into a feature vector for each position.
+        dct = (dct_x * dct_y * coeffs).view(1, -1, self.max_freqs ** 2)
+        
+        return dct
+
+    def forward(self, inputs):
+        """
+        Forward pass for the embedder.
+
+        Args:
+            inputs (Tensor): The input tensor of shape (B, P^2, C).
+
+        Returns:
+            Tensor: The output tensor of shape (B, P^2, hidden_size_input).
+        """
+        # Get the batch size, number of pixels, and number of channels.
+        B, P2, C = inputs.shape
+        # Store the original dtype to cast back to at the end.
+        original_dtype = inputs.dtype
+        # Force all operations within this module to run in fp32.
+        with torch.autocast("cuda", enabled=False):
+            # Infer the patch side length from the number of pixels (P^2).
+            patch_size = int(P2 ** 0.5)
+
+            inputs = inputs.float()
+            # Fetch the pre-computed or cached positional embeddings.
+            dct = self.fetch_pos(patch_size, inputs.device, torch.float32)
+            
+            # Repeat the positional embeddings for each item in the batch.
+            dct = dct.repeat(B, 1, 1)
+            
+            # Concatenate the original input features with the positional embeddings
+            # along the feature dimension.
+            inputs = torch.cat([inputs, dct], dim=-1)
+            
+            # Project the combined tensor to the target hidden size.
+            inputs = self.embedder.float()(inputs)
+        
+        return inputs.to(original_dtype)
+
+
+
+class NerfGLUBlock(nn.Module):
+    """
+    A NerfBlock using a Gated Linear Unit (GLU) like MLP.
+    """
+    def __init__(self, hidden_size_s, hidden_size_x, mlp_ratio, use_compiled):
+        super().__init__()
+        # The total number of parameters for the MLP is increased to accommodate
+        # the gate, value, and output projection matrices.
+        # We now need to generate parameters for 3 matrices.
+        total_params = 3 * hidden_size_x**2 * mlp_ratio
+        self.param_generator = nn.Linear(hidden_size_s, total_params)
+        self.norm = RMSNorm(hidden_size_x, use_compiled)
+        self.mlp_ratio = mlp_ratio
+        # nn.init.zeros_(self.param_generator.weight)
+        # nn.init.zeros_(self.param_generator.bias)
+
+
+    def forward(self, x, s):
+        batch_size, num_x, hidden_size_x = x.shape
+        mlp_params = self.param_generator(s)
+
+        # Split the generated parameters into three parts for the gate, value, and output projection.
+        fc1_gate_params, fc1_value_params, fc2_params = mlp_params.chunk(3, dim=-1)
+
+        # Reshape the parameters into matrices for batch matrix multiplication.
+        fc1_gate = fc1_gate_params.view(batch_size, hidden_size_x, hidden_size_x * self.mlp_ratio)
+        fc1_value = fc1_value_params.view(batch_size, hidden_size_x, hidden_size_x * self.mlp_ratio)
+        fc2 = fc2_params.view(batch_size, hidden_size_x * self.mlp_ratio, hidden_size_x)
+
+        # Normalize the generated weight matrices as in the original implementation.
+        fc1_gate = torch.nn.functional.normalize(fc1_gate, dim=-2)
+        fc1_value = torch.nn.functional.normalize(fc1_value, dim=-2)
+        fc2 = torch.nn.functional.normalize(fc2, dim=-2)
+
+        res_x = x
+        x = self.norm(x)
+
+        # Apply the final output projection.
+        x = torch.bmm(torch.nn.functional.silu(torch.bmm(x, fc1_gate)) * torch.bmm(x, fc1_value), fc2)
+        
+        x = x + res_x
+        return x
+
+
+class NerfFinalLayer(nn.Module):
+    def __init__(self, hidden_size, out_channels, use_compiled):
+        super().__init__()
+        self.norm = RMSNorm(hidden_size, use_compiled=use_compiled)
+        self.linear = nn.Linear(hidden_size, out_channels)
+        nn.init.zeros_(self.linear.weight)
+        nn.init.zeros_(self.linear.bias)
+
+    def forward(self, x):
+        x = self.norm(x)
+        x = self.linear(x)
+        return x
+
+
+class NerfFinalLayerConv(nn.Module):
+    def __init__(self, hidden_size, out_channels, use_compiled):
+        super().__init__()
+        self.norm = RMSNorm(hidden_size, use_compiled=use_compiled)
+
+        # replace nn.Linear with nn.Conv2d since linear is just pointwise conv
+        self.conv = nn.Conv2d(
+            in_channels=hidden_size,
+            out_channels=out_channels,
+            kernel_size=3,
+            padding=1
+        )
+        nn.init.zeros_(self.conv.weight)
+        nn.init.zeros_(self.conv.bias)
+
+    def forward(self, x):
+        # shape: [N, C, H, W] !
+        # RMSNorm normalizes over the last dimension, but our channel dim (C) is at dim=1.
+        # So, we permute the dimensions to make the channel dimension the last one.
+        x_permuted = x.permute(0, 2, 3, 1)  # Shape becomes [N, H, W, C]
+
+        # Apply normalization on the feature/channel dimension
+        x_norm = self.norm(x_permuted)
+
+        # Permute back to the original dimension order for the convolution
+        x_norm_permuted = x_norm.permute(0, 3, 1, 2) # Shape becomes [N, C, H, W]
+
+        # Apply the 3x3 convolution
+        x = self.conv(x_norm_permuted)
+        return x
+    
 
 class Approximator(nn.Module):
     def __init__(self, in_dim: int, out_dim: int, hidden_dim: int, n_layers=4):

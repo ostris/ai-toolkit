@@ -15,6 +15,9 @@ export const defaultDatasetConfig: DatasetConfig = {
   controls: [],
   shrink_video_to_frames: true,
   num_frames: 1,
+  do_i2v: true,
+  flip_x: false,
+  flip_y: false,
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -65,22 +68,27 @@ export const defaultJobConfig: JobConfig = {
             weight_decay: 1e-4,
           },
           unload_text_encoder: false,
+          cache_text_embeddings: false,
           lr: 0.0001,
           ema_config: {
             use_ema: false,
             ema_decay: 0.99,
           },
           skip_first_sample: false,
+          force_first_sample: false,
           disable_sampling: false,
           dtype: 'bf16',
           diff_output_preservation: false,
           diff_output_preservation_multiplier: 1.0,
           diff_output_preservation_class: 'person',
+          switch_boundary_every: 1,
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
           quantize: true,
+          qtype: 'qfloat8',
           quantize_te: true,
+          qtype_te: 'qfloat8',
           arch: 'flex1',
           low_vram: false,
           model_kwargs: {},

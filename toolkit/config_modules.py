@@ -4,6 +4,7 @@ from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
+import torchaudio
 
 from toolkit.prompt_utils import PromptEmbeds
 
@@ -156,6 +157,9 @@ class NetworkConfig:
         elif linear is not None:
             self.rank: int = linear
             self.linear: int = linear
+        else:
+            self.rank: int = 4
+            self.linear: int = 4
         self.conv: int = kwargs.get('conv', None)
         self.alpha: float = kwargs.get('alpha', 1.0)
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
@@ -185,6 +189,9 @@ class NetworkConfig:
             self.conv_alpha = 9999999999
         # -1 automatically finds the largest factor
         self.lokr_factor = kwargs.get('lokr_factor', -1)
+        
+        # for multi stage models
+        self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']
@@ -332,7 +339,7 @@ class TrainConfig:
         self.lr_scheduler = kwargs.get('lr_scheduler', 'constant')
         self.lr_scheduler_params = kwargs.get('lr_scheduler_params', {})
         self.min_denoising_steps: int = kwargs.get('min_denoising_steps', 0)
-        self.max_denoising_steps: int = kwargs.get('max_denoising_steps', 1000)
+        self.max_denoising_steps: int = kwargs.get('max_denoising_steps', 999)
         self.batch_size: int = kwargs.get('batch_size', 1)
         self.orig_batch_size: int = self.batch_size
         self.dtype: str = kwargs.get('dtype', 'fp32')
@@ -462,7 +469,7 @@ class TrainConfig:
 
         ema_config: Union[Dict, None] = kwargs.get('ema_config', None)
         # if it is set explicitly to false, leave it false. 
-        if ema_config is not None and ema_config.get('use_ema', None) is not None:
+        if ema_config is not None and ema_config.get('use_ema', False):
             ema_config['use_ema'] = True
             print(f"Using EMA")
         else:
@@ -482,6 +489,8 @@ class TrainConfig:
         # will cache a blank prompt or the trigger word, and unload the text encoder to cpu
         # will make training faster and use less vram
         self.unload_text_encoder = kwargs.get('unload_text_encoder', False)
+        # will toggle all datasets to cache text embeddings
+        self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
         # for swapping which parameters are trained during training
         self.do_paramiter_swapping = kwargs.get('do_paramiter_swapping', False)
         # 0.1 is 10% of the parameters active at a time lower is less vram, higher is more
@@ -510,6 +519,9 @@ class TrainConfig:
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
+        
+        # for multi stage models, how often to switch the boundary
+        self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
@@ -598,6 +610,16 @@ class ModelConfig:
         # only setup for some models but will prevent having to download the te for
         # 20 different model variants
         self.extras_name_or_path = kwargs.get("extras_name_or_path", self.name_or_path)
+        
+        # path to an accuracy recovery adapter, either local or remote
+        self.accuracy_recovery_adapter = kwargs.get("accuracy_recovery_adapter", None)
+        
+        # parse ARA from qtype
+        if self.qtype is not None and "|" in self.qtype:
+            self.qtype, self.accuracy_recovery_adapter = self.qtype.split('|')
+
+        # compile the model with torch compile
+        self.compile = kwargs.get("compile", False)
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
@@ -795,11 +817,14 @@ class DatasetConfig:
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
         if self.control_path == '':
             self.control_path = None
+        
+        # color for transparent reigon of control images with transparency
+        self.control_transparent_color: List[int] = kwargs.get('control_transparent_color', [0, 0, 0])
         # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
         # be the part conditioned to be inpainted. The alpha 1 (visible) section will be the part that is ignored
         self.inpaint_path: Union[str,List[str]] = kwargs.get('inpaint_path', None)
         # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
-        self.full_size_control_images: bool = kwargs.get('full_size_control_images', False)
+        self.full_size_control_images: bool = kwargs.get('full_size_control_images', True)
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
                                          None)  # focus mask (black and white. White has higher loss than black)
@@ -816,6 +841,7 @@ class DatasetConfig:
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
         self.cache_clip_vision_to_disk: bool = kwargs.get('cache_clip_vision_to_disk', False)
+        self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
 
         self.standardize_images: bool = kwargs.get('standardize_images', False)
 
@@ -879,6 +905,8 @@ class DatasetConfig:
         
         # if true, will use a fask method to get image sizes. This can result in errors. Do not use unless you know what you are doing
         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
+        
+        self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
@@ -1052,6 +1080,15 @@ class GenerateImageConfig:
                 )
             else:
                 raise ValueError(f"Unsupported video format {self.output_ext}")
+        elif self.output_ext in ['wav', 'mp3']:
+            # save audio file
+            torchaudio.save(
+                self.get_image_path(count, max_count), 
+                image[0].to('cpu'),
+                sample_rate=48000, 
+                format=None, 
+                backend=None
+            )
         else:
             # TODO save image gen header info for A1111 and us, our seeds probably wont match
             image.save(self.get_image_path(count, max_count))
@@ -1186,6 +1223,7 @@ def validate_configs(
     train_config: TrainConfig,
     model_config: ModelConfig,
     save_config: SaveConfig,
+    dataset_configs: List[DatasetConfig]
 ):
     if model_config.is_flux:
         if save_config.save_format != 'diffusers':
@@ -1197,3 +1235,23 @@ def validate_configs(
     if train_config.bypass_guidance_embedding and train_config.do_guidance_loss:
         raise ValueError("Cannot bypass guidance embedding and do guidance loss at the same time. "
                          "Please set bypass_guidance_embedding to False or do_guidance_loss to False.")
+
+    # see if any datasets are caching text embeddings
+    is_caching_text_embeddings = any(dataset.cache_text_embeddings for dataset in dataset_configs)
+    if is_caching_text_embeddings:
+        
+        # check if they are doing differential output preservation
+        if train_config.diff_output_preservation:
+            raise ValueError("Cannot use differential output preservation with caching text embeddings. Please set diff_output_preservation to False.")
+    
+        # make sure they are all cached
+        for dataset in dataset_configs:
+            if not dataset.cache_text_embeddings:
+                raise ValueError("All datasets must have cache_text_embeddings set to True when caching text embeddings is enabled.")
+    
+    # qwen image edit cannot cache text embeddings
+    if model_config.arch == 'qwen_image_edit':
+        if train_config.unload_text_encoder:
+            raise ValueError("Cannot cache unload text encoder with qwen_image_edit model. Control images are encoded with text embeddings. You can cache the text embeddings though")
+
+    

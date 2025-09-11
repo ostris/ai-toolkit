@@ -1,13 +1,14 @@
 'use client';
 import { useMemo } from 'react';
-import { modelArchs, ModelArch, groupedModelOptions } from './options';
+import { modelArchs, ModelArch, groupedModelOptions, quantizationOptions, defaultQtype } from './options';
 import { defaultDatasetConfig } from './jobConfig';
-import { JobConfig } from '@/types';
+import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
+import {FlipHorizontal2, FlipVertical2} from "lucide-react"
 
 type Props = {
   jobConfig: JobConfig;
@@ -40,11 +41,73 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
 
+  const numTopCards = useMemo(() => {
+    let count = 4; // job settings, model config, target config, save config
+    if (modelArch?.additionalSections?.includes('model.multistage')) {
+      count += 1; // add multistage card
+    }
+    if (!modelArch?.disableSections?.includes('model.quantize')) {
+      count += 1; // add quantization card
+    }
+    return count;
+    
+  }, [modelArch]);
+
+  let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
+
+  if (numTopCards == 5) {
+    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6';
+  }
+  if (numTopCards == 6) {
+    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6 gap-6';
+  }
+
+  const transformerQuantizationOptions: GroupedSelectOption[] | SelectOption[] = useMemo(() => {
+    const hasARA = modelArch?.accuracyRecoveryAdapters && Object.keys(modelArch.accuracyRecoveryAdapters).length > 0;
+    if (!hasARA) {
+      return quantizationOptions;
+    }
+    let newQuantizationOptions = [
+      {
+        label: 'Standard',
+        options: [quantizationOptions[0], quantizationOptions[1]],
+      },
+    ];
+
+    // add ARAs if they exist for the model
+    let ARAs: SelectOption[] = [];
+    if (modelArch.accuracyRecoveryAdapters) {
+      for (const [label, value] of Object.entries(modelArch.accuracyRecoveryAdapters)) {
+         ARAs.push({ value, label });
+      }
+    }
+    if (ARAs.length > 0) {
+      newQuantizationOptions.push({
+        label: 'Accuracy Recovery Adapters',
+        options: ARAs,
+      });
+    }
+
+    let additionalQuantizationOptions: SelectOption[] = [];
+    // add the quantization options if they are not already included
+    for (let i = 2; i < quantizationOptions.length; i++) {
+      const option = quantizationOptions[i];
+      additionalQuantizationOptions.push(option);
+    }
+    if (additionalQuantizationOptions.length > 0) {
+      newQuantizationOptions.push({
+        label: 'Additional Quantization Options',
+        options: additionalQuantizationOptions,
+      });
+    }
+    return newQuantizationOptions;
+  }, [modelArch]);
+
   return (
     <>
       <form onSubmit={handleSubmit} className="space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <Card title="Job Settings">
+        <div className={topBarClass}>
+          <Card title="Job">
             <TextInput
               label="Training Name"
               value={jobConfig.config.name}
@@ -77,7 +140,7 @@ export default function SimpleJob({
           </Card>
 
           {/* Model Configuration Section */}
-          <Card title="Model Configuration">
+          <Card title="Model">
             <SelectInput
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
@@ -86,13 +149,19 @@ export default function SimpleJob({
                 if (!currentArch || currentArch.name === value) {
                   return;
                 }
+                // update the defaults when a model is selected
+                const newArch = modelArchs.find(model => model.name === value);
+
+                // update vram setting
+                if (!newArch?.additionalSections?.includes('model.low_vram')) {
+                  setJobConfig(false, 'config.process[0].model.low_vram');
+                }
 
                 // revert defaults from previous model
                 for (const key in currentArch.defaults) {
                   setJobConfig(currentArch.defaults[key][1], key);
                 }
-                // update the defaults when a model is selected
-                const newArch = modelArchs.find(model => model.name === value);
+
                 if (newArch?.defaults) {
                   for (const key in newArch.defaults) {
                     setJobConfig(newArch.defaults[key][0], key);
@@ -144,24 +213,74 @@ export default function SimpleJob({
               placeholder=""
               required
             />
-            {modelArch?.disableSections?.includes('model.quantize') ? null : (
-              <FormGroup label="Quantize">
-                <div className="grid grid-cols-2 gap-2">
-                  <Checkbox
-                    label="Transformer"
-                    checked={jobConfig.config.process[0].model.quantize}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize')}
-                  />
-                  <Checkbox
-                    label="Text Encoder"
-                    checked={jobConfig.config.process[0].model.quantize_te}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.quantize_te')}
-                  />
-                </div>
+            {modelArch?.additionalSections?.includes('model.low_vram') && (
+              <FormGroup label="Options">
+                <Checkbox
+                  label="Low VRAM"
+                  checked={jobConfig.config.process[0].model.low_vram}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
+                />
               </FormGroup>
             )}
           </Card>
-          <Card title="Target Configuration">
+          {modelArch?.disableSections?.includes('model.quantize') ? null : (
+            <Card title="Quantization">
+              <SelectInput
+                label="Transformer"
+                value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
+                onChange={value => {
+                  if (value === '') {
+                    setJobConfig(false, 'config.process[0].model.quantize');
+                    value = defaultQtype;
+                  } else {
+                    setJobConfig(true, 'config.process[0].model.quantize');
+                  }
+                  setJobConfig(value, 'config.process[0].model.qtype');
+                }}
+                options={transformerQuantizationOptions}
+              />
+              <SelectInput
+                label="Text Encoder"
+                value={jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''}
+                onChange={value => {
+                  if (value === '') {
+                    setJobConfig(false, 'config.process[0].model.quantize_te');
+                    value = defaultQtype;
+                  } else {
+                    setJobConfig(true, 'config.process[0].model.quantize_te');
+                  }
+                  setJobConfig(value, 'config.process[0].model.qtype_te');
+                }}
+                options={quantizationOptions}
+              />
+            </Card>
+          )}
+          {modelArch?.additionalSections?.includes('model.multistage') && (
+            <Card title="Multistage">
+              <FormGroup label="Stages to Train" docKey={'model.multistage'}>
+                <Checkbox
+                  label="High Noise"
+                  checked={jobConfig.config.process[0].model.model_kwargs?.train_high_noise || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.train_high_noise')}
+                />
+                <Checkbox
+                  label="Low Noise"
+                  checked={jobConfig.config.process[0].model.model_kwargs?.train_low_noise || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.train_low_noise')}
+                />
+              </FormGroup>
+              <NumberInput
+                  label="Switch Every"
+                  value={jobConfig.config.process[0].train.switch_boundary_every}
+                  onChange={value => setJobConfig(value, 'config.process[0].train.switch_boundary_every')}
+                  placeholder="eg. 1"
+                  docKey={'train.switch_boundary_every'}
+                  min={1}
+                  required
+                />
+            </Card>
+          )}
+          <Card title="Target">
             <SelectInput
               label="Target Type"
               value={jobConfig.config.process[0].network?.type ?? 'lora'}
@@ -217,7 +336,7 @@ export default function SimpleJob({
               </>
             )}
           </Card>
-          <Card title="Save Configuration">
+          <Card title="Save">
             <SelectInput
               label="Data Type"
               value={jobConfig.config.process[0].save.dtype}
@@ -247,7 +366,7 @@ export default function SimpleJob({
           </Card>
         </div>
         <div>
-          <Card title="Training Configuration">
+          <Card title="Training">
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
               <div>
                 <NumberInput
@@ -352,22 +471,40 @@ export default function SimpleJob({
                     onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
                   />
                 </FormGroup>
-                <NumberInput
-                  label="EMA Decay"
-                  className="pt-2"
-                  value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
-                  placeholder="eg. 0.99"
-                  min={0}
-                />
-                <FormGroup label="Unload Text Encoder" className="pt-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <Checkbox
-                      label="Unload TE"
-                      checked={jobConfig.config.process[0].train.unload_text_encoder || false}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.unload_text_encoder')}
-                    />
-                  </div>
+                {jobConfig.config.process[0].train.ema_config?.use_ema && (
+                  <NumberInput
+                    label="EMA Decay"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
+                    placeholder="eg. 0.99"
+                    min={0}
+                  />
+                )}
+
+                <FormGroup label="Text Encoder Optimizations" className="pt-2">
+                  <Checkbox
+                    label="Unload TE"
+                    checked={jobConfig.config.process[0].train.unload_text_encoder || false}
+                    docKey={'train.unload_text_encoder'}
+                    onChange={value => {
+                      setJobConfig(value, 'config.process[0].train.unload_text_encoder');
+                      if (value) {
+                        setJobConfig(false, 'config.process[0].train.cache_text_embeddings');
+                      }
+                    }}
+                  />
+                  <Checkbox
+                    label="Cache Text Embeddings"
+                    checked={jobConfig.config.process[0].train.cache_text_embeddings || false}
+                    docKey={'train.cache_text_embeddings'}
+                    onChange={value => {
+                      setJobConfig(value, 'config.process[0].train.cache_text_embeddings');
+                      if (value) {
+                        setJobConfig(false, 'config.process[0].train.unload_text_encoder');
+                      }
+                    }}
+                  />
                 </FormGroup>
               </div>
               <div>
@@ -379,21 +516,27 @@ export default function SimpleJob({
                     onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
                   />
                 </FormGroup>
-                <NumberInput
-                  label="DOP Loss Multiplier"
-                  className="pt-2"
-                  value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
-                  placeholder="eg. 1.0"
-                  min={0}
-                />
-                <TextInput
-                  label="DOP Preservation Class"
-                  className="pt-2"
-                  value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
-                  placeholder="eg. woman"
-                />
+                {jobConfig.config.process[0].train.diff_output_preservation && (
+                  <>
+                    <NumberInput
+                      label="DOP Loss Multiplier"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.diff_output_preservation_multiplier as number}
+                      onChange={value =>
+                        setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')
+                      }
+                      placeholder="eg. 1.0"
+                      min={0}
+                    />
+                    <TextInput
+                      label="DOP Preservation Class"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
+                      placeholder="eg. woman"
+                    />
+                  </>
+                )}
               </div>
             </div>
           </Card>
@@ -487,6 +630,26 @@ export default function SimpleJob({
                           checked={dataset.is_reg || false}
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].is_reg`)}
                         />
+                        {modelArch?.additionalSections?.includes('datasets.do_i2v') && (
+                          <Checkbox
+                            label="Do I2V"
+                            checked={dataset.do_i2v || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].do_i2v`)}
+                            docKey="datasets.do_i2v"
+                          />
+                        )}
+                      </FormGroup>
+                      <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
+                        <Checkbox
+                          label={<>Flip X <FlipHorizontal2 className="inline-block w-4 h-4 ml-1" /></>}
+                          checked={dataset.flip_x || false}
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_x`)}
+                        />
+                        <Checkbox
+                          label={<>Flip Y <FlipVertical2 className="inline-block w-4 h-4 ml-1" /></>}
+                          checked={dataset.flip_y || false}
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_y`)}
+                        />
                       </FormGroup>
                     </div>
                     <div>
@@ -535,7 +698,7 @@ export default function SimpleJob({
           </Card>
         </div>
         <div>
-          <Card title="Sample Configuration">
+          <Card title="Sample">
             <div
               className={
                 isVideoModel
@@ -646,7 +809,28 @@ export default function SimpleJob({
                       label="Skip First Sample"
                       className="pt-4"
                       checked={jobConfig.config.process[0].train.skip_first_sample || false}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.skip_first_sample')}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].train.skip_first_sample');
+                        // cannot do both, so disable the other
+                        if (value){
+                          setJobConfig(false, 'config.process[0].train.force_first_sample');
+                        }
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Checkbox
+                      label="Force First Sample"
+                      className="pt-1"
+                      checked={jobConfig.config.process[0].train.force_first_sample || false}
+                      docKey={'train.force_first_sample'}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].train.force_first_sample');
+                        // cannot do both, so disable the other
+                        if (value){
+                          setJobConfig(false, 'config.process[0].train.skip_first_sample');
+                        }
+                      }}
                     />
                   </div>
                   <div>
@@ -654,7 +838,13 @@ export default function SimpleJob({
                       label="Disable Sampling"
                       className="pt-1"
                       checked={jobConfig.config.process[0].train.disable_sampling || false}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.disable_sampling')}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].train.disable_sampling');
+                        // cannot do both, so disable the other
+                        if (value){
+                          setJobConfig(false, 'config.process[0].train.force_first_sample');
+                        }
+                      }}
                     />
                   </div>
                 </FormGroup>

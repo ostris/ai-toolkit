@@ -49,7 +49,7 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusionXLImg2ImgPipeline, LCMScheduler, Transformer2DModel, AutoencoderTiny, ControlNetModel, \
     StableDiffusionXLControlNetPipeline, StableDiffusionControlNetPipeline, StableDiffusion3Pipeline, \
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
-    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Text2ImgPipeline, \
+    FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Pipeline, \
     FluxControlPipeline, Lumina2Transformer2DModel
 import diffusers
 from diffusers import \
@@ -208,6 +208,17 @@ class StableDiffusion:
         self._status_update_hooks = []
         # todo update this based on the model
         self.is_transformer = False
+        
+        self.sample_prompts_cache = None
+        
+        self.is_multistage = False
+        # a list of multistage boundaries starting with train step 1000 to first idx
+        self.multistage_boundaries: List[float] = [0.0]
+        # a list of trainable multistage boundaries
+        self.trainable_multistage_boundaries: List[int] = [0]
+        
+        # set true for models that encode control image into text embeddings
+        self.encode_control_in_text_embeddings = False
         
     # properties for old arch for backwards compatibility
     @property
@@ -886,7 +897,7 @@ class StableDiffusion:
                 flush()
 
             self.print_and_status_update("Making pipe")
-            pipe: Lumina2Text2ImgPipeline = Lumina2Text2ImgPipeline(
+            pipe: Lumina2Pipeline = Lumina2Pipeline(
                 scheduler=scheduler,
                 text_encoder=None,
                 tokenizer=tokenizer,
@@ -1134,6 +1145,8 @@ class StableDiffusion:
             # the network to drastically speed up inference
             unique_network_weights = set([x.network_multiplier for x in image_configs])
             if len(unique_network_weights) == 1 and network.can_merge_in:
+                # make sure it is on device before merging. 
+                self.unet.to(self.device_torch)
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
                 network.merge_in(merge_weight=merge_multiplier)
@@ -1256,7 +1269,7 @@ class StableDiffusion:
                     
                 pipeline.watermark = None
             elif self.is_lumina2:
-                pipeline = Lumina2Text2ImgPipeline(
+                pipeline = Lumina2Pipeline(
                     vae=self.vae,
                     transformer=self.unet,
                     text_encoder=self.text_encoder,
@@ -1426,18 +1439,22 @@ class StableDiffusion:
                             quad_count=4
                         )
 
-                    # encode the prompt ourselves so we can do fun stuff with embeddings
-                    if isinstance(self.adapter, CustomAdapter):
-                        self.adapter.is_unconditional_run = False
-                    conditional_embeds = self.encode_prompt(gen_config.prompt, gen_config.prompt_2, force_all=True)
+                    if self.sample_prompts_cache is not None:
+                        conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
+                        unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
+                    else: 
+                        # encode the prompt ourselves so we can do fun stuff with embeddings
+                        if isinstance(self.adapter, CustomAdapter):
+                            self.adapter.is_unconditional_run = False
+                        conditional_embeds = self.encode_prompt(gen_config.prompt, gen_config.prompt_2, force_all=True)
 
-                    if isinstance(self.adapter, CustomAdapter):
-                        self.adapter.is_unconditional_run = True
-                    unconditional_embeds = self.encode_prompt(
-                        gen_config.negative_prompt, gen_config.negative_prompt_2, force_all=True
-                    )
-                    if isinstance(self.adapter, CustomAdapter):
-                        self.adapter.is_unconditional_run = False
+                        if isinstance(self.adapter, CustomAdapter):
+                            self.adapter.is_unconditional_run = True
+                        unconditional_embeds = self.encode_prompt(
+                            gen_config.negative_prompt, gen_config.negative_prompt_2, force_all=True
+                        )
+                        if isinstance(self.adapter, CustomAdapter):
+                            self.adapter.is_unconditional_run = False
 
                     # allow any manipulations to take place to embeddings
                     gen_config.post_process_embeddings(
@@ -1580,7 +1597,7 @@ class StableDiffusion:
                                 **extra
                             ).images[0]
                     elif self.is_lumina2:
-                        pipeline: Lumina2Text2ImgPipeline = pipeline
+                        pipeline: Lumina2Pipeline = pipeline
 
                         img = pipeline(
                             prompt_embeds=conditional_embeds.text_embeds,
@@ -2344,6 +2361,7 @@ class StableDiffusion:
             long_prompts=False,
             max_length=None,
             dropout_prob=0.0,
+            control_images=None,
     ) -> PromptEmbeds:
         # sd1.5 embeddings are (bs, 77, 768)
         prompt = prompt
@@ -3020,6 +3038,8 @@ class StableDiffusion:
             active_modules = ['vae']
         if device_state_preset in ['cache_clip']:
             active_modules = ['clip']
+        if device_state_preset in ['cache_text_encoder']:
+            active_modules = ['text_encoder']
         if device_state_preset in ['unload']:
             active_modules = []
         if device_state_preset in ['generate']:
@@ -3115,3 +3135,6 @@ class StableDiffusion:
         if self.is_v2:
             return 'sd_2.1'
         return 'sd_1.5'
+
+    def get_model_to_train(self):
+        return self.unet

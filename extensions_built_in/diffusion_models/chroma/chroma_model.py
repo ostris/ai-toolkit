@@ -15,7 +15,7 @@ from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype
 from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
-from .pipeline import ChromaPipeline
+from .pipeline import ChromaPipeline, prepare_latent_image_ids
 from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
@@ -128,6 +128,12 @@ class ChromaModel(BaseModel):
             model_path = huggingface_hub.hf_hub_download(
                 repo_id='lodestones/Chroma',
                 filename=f"chroma-unlocked-v{version}.safetensors",
+            )
+        elif model_path.startswith("lodestones/Chroma1-"):
+            # will have a file in the repo that is Chroma1-whatever.safetensors
+            model_path = huggingface_hub.hf_hub_download(
+                repo_id=model_path,
+                filename=f"{model_path.split('/')[-1]}.safetensors",
             )
         else:
             # check if the model path is a local file
@@ -318,12 +324,19 @@ class ChromaModel(BaseModel):
                 ph=2,
                 pw=2
             )
+            
+            img_ids = prepare_latent_image_ids(
+                bs, 
+                h, 
+                w,
+                patch_size=2
+            ).to(device=self.device_torch)
 
-            img_ids = torch.zeros(h // 2, w // 2, 3)
-            img_ids[..., 1] = img_ids[..., 1] + torch.arange(h // 2)[:, None]
-            img_ids[..., 2] = img_ids[..., 2] + torch.arange(w // 2)[None, :]
-            img_ids = repeat(img_ids, "h w c -> b (h w) c",
-                             b=bs).to(self.device_torch)
+            # img_ids = torch.zeros(h // 2, w // 2, 3)
+            # img_ids[..., 1] = img_ids[..., 1] + torch.arange(h // 2)[:, None]
+            # img_ids[..., 2] = img_ids[..., 2] + torch.arange(w // 2)[None, :]
+            # img_ids = repeat(img_ids, "h w c -> b (h w) c",
+            #                  b=bs).to(self.device_torch)
 
             txt_ids = torch.zeros(
                 bs, text_embeddings.text_embeds.shape[1], 3).to(self.device_torch)

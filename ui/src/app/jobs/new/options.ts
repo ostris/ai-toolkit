@@ -1,10 +1,16 @@
-import { GroupedSelectOption } from "@/types";
+import { GroupedSelectOption, SelectOption } from '@/types';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
 type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
-type AdditionalSections = 'datasets.control_path' | 'sample.ctrl_img' | 'datasets.num_frames';
-type ModelGroup = 'image' | 'video';
+type AdditionalSections =
+  | 'datasets.control_path'
+  | 'datasets.do_i2v'
+  | 'sample.ctrl_img'
+  | 'datasets.num_frames'
+  | 'model.multistage'
+  | 'model.low_vram';
+type ModelGroup = 'image' | 'instruction' | 'video';
 
 export interface ModelArch {
   name: string;
@@ -15,12 +21,10 @@ export interface ModelArch {
   defaults?: { [key: string]: any };
   disableSections?: DisableableSections[];
   additionalSections?: AdditionalSections[];
+  accuracyRecoveryAdapters?: { [key: string]: string };
 }
 
 const defaultNameOrPath = '';
-
-
-
 
 export const modelArchs: ModelArch[] = [
   {
@@ -40,7 +44,7 @@ export const modelArchs: ModelArch[] = [
   {
     name: 'flux_kontext',
     label: 'FLUX.1-Kontext-dev',
-    group: 'image',
+    group: 'instruction',
     defaults: {
       // default updates when [selected, unselected] in the UI
       'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.1-Kontext-dev', defaultNameOrPath],
@@ -102,7 +106,7 @@ export const modelArchs: ModelArch[] = [
     group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['lodestones/Chroma', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['lodestones/Chroma1-Base', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
@@ -123,10 +127,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [41, 1],
-      'config.process[0].sample.fps': [15, 1],
+      'config.process[0].sample.fps': [16, 1],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'wan21_i2v:14b480p',
@@ -141,11 +145,11 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [41, 1],
-      'config.process[0].sample.fps': [15, 1],
+      'config.process[0].sample.fps': [16, 1],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'wan21_i2v:14b',
@@ -160,11 +164,11 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [41, 1],
-      'config.process[0].sample.fps': [15, 1],
+      'config.process[0].sample.fps': [16, 1],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
   },
   {
     name: 'wan21:14b',
@@ -179,10 +183,93 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [41, 1],
-      'config.process[0].sample.fps': [15, 1],
+      'config.process[0].sample.fps': [16, 1],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram'],
+  },
+  {
+    name: 'wan22_14b:t2v',
+    label: 'Wan 2.2 (14B)',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['ai-toolkit/Wan2.2-T2V-A14B-Diffusers-bf16', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [41, 1],
+      'config.process[0].sample.fps': [16, 1],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].model.model_kwargs': [
+        {
+          train_high_noise: true,
+          train_low_noise: true,
+        },
+        {},
+      ],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage'],
+    accuracyRecoveryAdapters: {
+      // '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint3.safetensors',
+      '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint4.safetensors',
+    },
+  },
+  {
+    name: 'wan22_14b_i2v',
+    label: 'Wan 2.2 I2V (14B)',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['ai-toolkit/Wan2.2-I2V-A14B-Diffusers-bf16', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [41, 1],
+      'config.process[0].sample.fps': [16, 1],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].model.model_kwargs': [
+        {
+          train_high_noise: true,
+          train_low_noise: true,
+        },
+        {},
+      ],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'model.multistage'],
+    accuracyRecoveryAdapters: {
+      '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_i2v_torchao_uint4.safetensors',
+    },
+  },
+  {
+    name: 'wan22_5b',
+    label: 'Wan 2.2 TI2V (5B)',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Wan-AI/Wan2.2-TI2V-5B-Diffusers', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [121, 1],
+      'config.process[0].sample.fps': [24, 1],
+      'config.process[0].sample.width': [768, 1024],
+      'config.process[0].sample.height': [768, 1024],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.do_i2v'],
   },
   {
     name: 'lumina2',
@@ -197,6 +284,48 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
     disableSections: ['network.conv'],
+  },
+  {
+    name: 'qwen_image',
+    label: 'Qwen-Image',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors',
+    },
+  },
+  {
+    name: 'qwen_image_edit',
+    label: 'Qwen-Image-Edit',
+    group: 'instruction',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_torchao_uint3.safetensors',
+    },
   },
   {
     name: 'hidream',
@@ -214,6 +343,25 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
     },
     disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram'],
+  },
+  {
+    name: 'hidream_e1',
+    label: 'HiDream E1',
+    group: 'instruction',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-E1-1', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.lr': [0.0001, 0.0001],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['ff_i.experts', 'ff_i.gate'], []],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram'],
   },
   {
     name: 'sdxl',
@@ -262,9 +410,8 @@ export const modelArchs: ModelArch[] = [
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
-  return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+  return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
 }) as any;
-
 
 export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc, arch) => {
   const group = acc.find(g => g.label === arch.group);
@@ -278,3 +425,17 @@ export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc
   }
   return acc;
 }, [] as GroupedSelectOption[]);
+
+export const quantizationOptions: SelectOption[] = [
+  { value: '', label: '- NONE -' },
+  { value: 'qfloat8', label: 'float8 (default)' },
+  { value: 'uint8', label: '8 bit' },
+  { value: 'uint7', label: '7 bit' },
+  { value: 'uint6', label: '6 bit' },
+  { value: 'uint5', label: '5 bit' },
+  { value: 'uint4', label: '4 bit' },
+  { value: 'uint3', label: '3 bit' },
+  { value: 'uint2', label: '2 bit' },
+];
+
+export const defaultQtype = 'qfloat8';

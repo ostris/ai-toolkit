@@ -13,8 +13,8 @@ from toolkit import image_utils
 from toolkit.basic import get_quick_signature_string
 from toolkit.dataloader_mixins import CaptionProcessingDTOMixin, ImageProcessingDTOMixin, LatentCachingFileItemDTOMixin, \
     ControlFileItemDTOMixin, ArgBreakMixin, PoiFileItemDTOMixin, MaskFileItemDTOMixin, AugmentationFileItemDTOMixin, \
-    UnconditionalFileItemDTOMixin, ClipImageFileItemDTOMixin, InpaintControlFileItemDTOMixin
-
+    UnconditionalFileItemDTOMixin, ClipImageFileItemDTOMixin, InpaintControlFileItemDTOMixin, TextEmbeddingFileItemDTOMixin
+from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 
 if TYPE_CHECKING:
     from toolkit.config_modules import DatasetConfig
@@ -32,6 +32,7 @@ def print_once(msg):
 
 class FileItemDTO(
     LatentCachingFileItemDTOMixin,
+    TextEmbeddingFileItemDTOMixin,
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
     ControlFileItemDTOMixin,
@@ -49,6 +50,7 @@ class FileItemDTO(
         self.is_video = self.dataset_config.num_frames > 1
         size_database = kwargs.get('size_database', {})
         dataset_root =  kwargs.get('dataset_root', None)
+        self.encode_control_in_text_embeddings = kwargs.get('encode_control_in_text_embeddings', False)
         if dataset_root is not None:
             # remove dataset root from path
             file_key = self.path.replace(dataset_root, '')
@@ -124,6 +126,7 @@ class FileItemDTO(
     def cleanup(self):
         self.tensor = None
         self.cleanup_latent()
+        self.cleanup_text_embedding()
         self.cleanup_control()
         self.cleanup_inpaint()
         self.cleanup_clip_image()
@@ -136,6 +139,7 @@ class DataLoaderBatchDTO:
         try:
             self.file_items: List['FileItemDTO'] = kwargs.get('file_items', None)
             is_latents_cached = self.file_items[0].is_latent_cached
+            is_text_embedding_cached = self.file_items[0].is_text_embedding_cached
             self.tensor: Union[torch.Tensor, None] = None
             self.latents: Union[torch.Tensor, None] = None
             self.control_tensor: Union[torch.Tensor, None] = None
@@ -156,6 +160,7 @@ class DataLoaderBatchDTO:
             if is_latents_cached:
                 self.latents = torch.cat([x.get_latent().unsqueeze(0) for x in self.file_items])
             self.control_tensor: Union[torch.Tensor, None] = None
+            self.prompt_embeds: Union[PromptEmbeds, None] = None
             # if self.file_items[0].control_tensor is not None:
             # if any have a control tensor, we concatenate them
             if any([x.control_tensor is not None for x in self.file_items]):
@@ -268,6 +273,22 @@ class DataLoaderBatchDTO:
                         self.clip_image_embeds_unconditional.append(x.clip_image_embeds_unconditional)
                     else:
                         raise Exception("clip_image_embeds_unconditional is None for some file items")
+            
+            if any([x.prompt_embeds is not None for x in self.file_items]):
+                # find one to use as a base
+                base_prompt_embeds = None
+                for x in self.file_items:
+                    if x.prompt_embeds is not None:
+                        base_prompt_embeds = x.prompt_embeds
+                        break
+                prompt_embeds_list = []
+                for x in self.file_items:
+                    if x.prompt_embeds is None:
+                        prompt_embeds_list.append(base_prompt_embeds)
+                    else:
+                        prompt_embeds_list.append(x.prompt_embeds)
+                self.prompt_embeds = concat_prompt_embeds(prompt_embeds_list)
+                    
 
         except Exception as e:
             print(e)
@@ -301,3 +322,10 @@ class DataLoaderBatchDTO:
         del self.control_tensor
         for file_item in self.file_items:
             file_item.cleanup()
+    
+    @property
+    def dataset_config(self) -> 'DatasetConfig':
+        if len(self.file_items) > 0:
+            return self.file_items[0].dataset_config
+        else:
+            return None
