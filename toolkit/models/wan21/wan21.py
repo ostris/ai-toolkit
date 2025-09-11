@@ -42,6 +42,8 @@ from diffusers.pipelines.wan.pipeline_wan import XLA_AVAILABLE
 from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from typing import Any, Callable, Dict, List, Optional, Union
 from toolkit.models.wan21.wan_lora_convert import convert_to_diffusers, convert_to_original
+from toolkit.util.quantize import quantize_model
+from toolkit.models.loaders.umt5 import get_umt5_encoder
 
 # for generation only?
 scheduler_configUniPC = {
@@ -89,12 +91,18 @@ class AggressiveWanUnloadPipeline(WanPipeline):
         transformer: WanTransformer3DModel,
         vae: AutoencoderKLWan,
         scheduler: FlowMatchEulerDiscreteScheduler,
+        transformer_2: Optional[WanTransformer3DModel] = None,
+        boundary_ratio: Optional[float] = None,
+        expand_timesteps: bool = False,  # Wan2.2 ti2v
         device: torch.device = torch.device("cuda"),
     ):
         super().__init__(
             tokenizer=tokenizer,
             text_encoder=text_encoder,
             transformer=transformer,
+            transformer_2=transformer_2,
+            boundary_ratio=boundary_ratio,
+            expand_timesteps=expand_timesteps,
             vae=vae,
             scheduler=scheduler,
         )
@@ -300,6 +308,11 @@ class AggressiveWanUnloadPipeline(WanPipeline):
 
 class Wan21(BaseModel):
     arch = 'wan21'
+    _wan_generation_scheduler_config = scheduler_configUniPC
+    _wan_expand_timesteps = False
+    _wan_vae_path = None
+    
+    _comfy_te_file = ['text_encoders/umt5_xxl_fp16.safetensors', 'text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors']
     def __init__(
             self,
             device,
@@ -326,27 +339,10 @@ class Wan21(BaseModel):
     def get_train_scheduler():
         scheduler = CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
         return scheduler
-
-    def load_model(self):
-        dtype = self.torch_dtype
-        model_path = self.model_config.name_or_path
-
-        self.print_and_status_update("Loading Wan2.1 model")
-        subfolder = 'transformer'
-        transformer_path = model_path
-        if os.path.exists(transformer_path):
-            subfolder = None
-            transformer_path = os.path.join(transformer_path, 'transformer')
-        
-        te_path = self.model_config.extras_name_or_path    
-        if os.path.exists(os.path.join(model_path, 'text_encoder')):
-            te_path = model_path
-        
-        vae_path = self.model_config.extras_name_or_path
-        if os.path.exists(os.path.join(model_path, 'vae')):
-            vae_path = model_path
-
+    
+    def load_wan_transformer(self, transformer_path, subfolder=None):
         self.print_and_status_update("Loading transformer")
+        dtype = self.torch_dtype
         transformer = WanTransformer3DModel.from_pretrained(
             transformer_path,
             subfolder=subfolder,
@@ -371,56 +367,53 @@ class Wan21(BaseModel):
                 "Loading LoRA is not supported for Wan2.1 models currently")
 
         flush()
-
+        
         if self.model_config.quantize:
-            print("Quantizing Transformer")
-            quantization_args = self.model_config.quantize_kwargs
-            if 'exclude' not in quantization_args:
-                quantization_args['exclude'] = []
-            # patch the state dict method
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
-            self.print_and_status_update("Quantizing transformer")
-            if self.model_config.low_vram:
-                print("Quantizing blocks")
-                orig_exclude = copy.deepcopy(quantization_args['exclude'])
-                # quantize each block
-                idx = 0
-                for block in tqdm(transformer.blocks):
-                    block.to(self.device_torch)
-                    quantize(block, weights=quantization_type,
-                             **quantization_args)
-                    freeze(block)
-                    idx += 1
-                    flush()
+            self.print_and_status_update("Quantizing Transformer")
+            quantize_model(self, transformer)
+            flush()
+        
+        if self.model_config.low_vram:
+            self.print_and_status_update("Moving transformer to CPU")
+            transformer.to('cpu')
 
-                print("Quantizing the rest")
-                low_vram_exclude = copy.deepcopy(quantization_args['exclude'])
-                low_vram_exclude.append('blocks.*')
-                quantization_args['exclude'] = low_vram_exclude
-                # quantize the rest
-                transformer.to(self.device_torch)
-                quantize(transformer, weights=quantization_type,
-                         **quantization_args)
+        return transformer
 
-                quantization_args['exclude'] = orig_exclude
-            else:
-                # do it in one go
-                quantize(transformer, weights=quantization_type,
-                         **quantization_args)
-            freeze(transformer)
-            # move it to the cpu for now
-            transformer.to("cpu")
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
+    def load_model(self):
+        dtype = self.torch_dtype
+        model_path = self.model_config.name_or_path
+
+        self.print_and_status_update("Loading Wan model")
+        subfolder = 'transformer'
+        transformer_path = model_path
+        if os.path.exists(transformer_path):
+            subfolder = None
+            transformer_path = os.path.join(transformer_path, 'transformer')
+        
+        te_path = "ai-toolkit/umt5_xxl_encoder"   
+        if os.path.exists(os.path.join(model_path, 'text_encoder')):
+            te_path = model_path
+        
+        vae_path = self.model_config.extras_name_or_path
+        if os.path.exists(os.path.join(model_path, 'vae')):
+            vae_path = model_path
+
+        transformer = self.load_wan_transformer(
+            transformer_path,
+            subfolder=subfolder,
+        )
 
         flush()
 
         self.print_and_status_update("Loading UMT5EncoderModel")
-        tokenizer = AutoTokenizer.from_pretrained(
-            te_path, subfolder="tokenizer", torch_dtype=dtype)
-        text_encoder = UMT5EncoderModel.from_pretrained(
-            te_path, subfolder="text_encoder", torch_dtype=dtype).to(dtype=dtype)
+        
+        tokenizer, text_encoder = get_umt5_encoder(
+            model_path=te_path,
+            tokenizer_subfolder="tokenizer",
+            encoder_subfolder="text_encoder",
+            torch_dtype=dtype,
+            comfy_files=self._comfy_te_file
+        )
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
@@ -439,8 +432,14 @@ class Wan21(BaseModel):
         scheduler = Wan21.get_train_scheduler()
         self.print_and_status_update("Loading VAE")
         # todo, example does float 32? check if quality suffers
-        vae = AutoencoderKLWan.from_pretrained(
-            vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
+        
+        if self._wan_vae_path is not None:
+            # load the vae from individual repo
+            vae = AutoencoderKLWan.from_pretrained(
+                self._wan_vae_path, torch_dtype=dtype).to(dtype=dtype)
+        else:
+            vae = AutoencoderKLWan.from_pretrained(
+                vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
         flush()
 
         self.print_and_status_update("Making pipe")
@@ -474,22 +473,26 @@ class Wan21(BaseModel):
         self.tokenizer = tokenizer
 
     def get_generation_pipeline(self):
-        scheduler = UniPCMultistepScheduler(**scheduler_configUniPC)
+        scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
         if self.model_config.low_vram:
             pipeline = AggressiveWanUnloadPipeline(
                 vae=self.vae,
                 transformer=self.model,
+                transformer_2=self.model,
                 text_encoder=self.text_encoder,
                 tokenizer=self.tokenizer,
                 scheduler=scheduler,
+                expand_timesteps=self._wan_expand_timesteps,
                 device=self.device_torch
             )
         else:
             pipeline = WanPipeline(
                 vae=self.vae,
                 transformer=self.unet,
+                transformer_2=self.unet,
                 text_encoder=self.text_encoder,
                 tokenizer=self.tokenizer,
+                expand_timesteps=self._wan_expand_timesteps,
                 scheduler=scheduler,
             )
 
@@ -667,3 +670,6 @@ class Wan21(BaseModel):
     
     def get_base_model_version(self):
         return "wan_2.1"
+    
+    def get_transformer_block_names(self):
+        return ['blocks']

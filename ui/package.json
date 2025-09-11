@@ -15,6 +15,7 @@
     "@headlessui/react": "^2.2.0",
     "@monaco-editor/react": "^4.7.0",
     "@prisma/client": "^6.3.1",
+    "archiver": "^7.0.1",
     "axios": "^1.7.9",
     "classnames": "^2.5.1",
     "lucide-react": "^0.475.0",
@@ -28,9 +29,11 @@
     "react-icons": "^5.5.0",
     "react-select": "^5.10.1",
     "sqlite3": "^5.1.7",
+    "uuid": "^11.1.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
+    "@types/archiver": "^6.0.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

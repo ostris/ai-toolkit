@@ -16,9 +16,10 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from tqdm import tqdm
 import albumentations as A
 
+from toolkit import image_utils
 from toolkit.buckets import get_bucket_for_image_size, BucketResolution
 from toolkit.config_modules import DatasetConfig, preprocess_dataset_raw_config
-from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin
+from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingMixin, Augments, CLIPCachingMixin, ControlCachingMixin, TextEmbeddingCachingMixin
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
@@ -100,8 +101,13 @@ class ImageDataset(Dataset, CaptionMixin):
         new_file_list = []
         bad_count = 0
         for file in tqdm(self.file_list):
-            img = Image.open(file)
-            if int(min(img.size) * self.scale) >= self.resolution:
+            try:
+                w, h = image_utils.get_image_size(file)
+            except image_utils.UnknownImageFormat:
+                img = exif_transpose(Image.open(file))
+                w, h = img.size
+            # img = Image.open(file)
+            if int(min([w, h]) * self.scale) >= self.resolution:
                 new_file_list.append(file)
             else:
                 bad_count += 1
@@ -372,7 +378,7 @@ class PairedImageDataset(Dataset):
         return img, prompt, (self.neg_weight, self.pos_weight)
 
 
-class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin, BucketsMixin, CaptionMixin, Dataset):
+class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin, TextEmbeddingCachingMixin, BucketsMixin, CaptionMixin, Dataset):
 
     def __init__(
             self,
@@ -491,6 +497,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
+                    encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
                 )
                 self.file_list.append(file_item)
             except Exception as e:
@@ -552,6 +559,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 self.cache_latents_all_latents()
             if self.is_caching_clip_vision_to_disk:
                 self.cache_clip_vision_to_disk()
+            if self.is_caching_text_embeddings:
+                self.cache_text_embeddings()
             if self.is_generating_controls:
                 # always do this last
                 self.setup_controls()

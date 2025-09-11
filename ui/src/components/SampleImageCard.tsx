@@ -48,7 +48,6 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const handleLoad = (): void => {
     setLoaded(true);
   };
-  console.log('imgurl',imageUrl.toLowerCase().slice(-4))
 
   return (
     <div className={`flex flex-col ${className}`}>

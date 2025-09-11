@@ -48,11 +48,13 @@ class AggressiveWanI2VUnloadPipeline(WanImageToVideoPipeline):
         self,
         tokenizer: AutoTokenizer,
         text_encoder: UMT5EncoderModel,
-        image_encoder: CLIPVisionModel,
-        image_processor: CLIPImageProcessor,
         transformer: WanTransformer3DModel,
         vae: AutoencoderKLWan,
         scheduler: FlowMatchEulerDiscreteScheduler,
+        image_processor: CLIPImageProcessor = None,
+        image_encoder: CLIPVisionModel = None,
+        transformer_2: WanTransformer3DModel = None,
+        boundary_ratio: Optional[float] = None,
         device: torch.device = torch.device("cuda"),
     ):
         super().__init__(
@@ -63,6 +65,8 @@ class AggressiveWanI2VUnloadPipeline(WanImageToVideoPipeline):
             transformer=transformer,
             scheduler=scheduler,
             image_processor=image_processor,
+            transformer_2=transformer_2,
+            boundary_ratio=boundary_ratio,
         )
         self._exec_device = device
         

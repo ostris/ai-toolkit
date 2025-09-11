@@ -5,6 +5,10 @@ CONFIG_ROOT = os.path.join(TOOLKIT_ROOT, 'config')
 KEYMAPS_ROOT = os.path.join(TOOLKIT_ROOT, "toolkit", "keymaps")
 ORIG_CONFIGS_ROOT = os.path.join(TOOLKIT_ROOT, "toolkit", "orig_configs")
 DIFFUSERS_CONFIGS_ROOT = os.path.join(TOOLKIT_ROOT, "toolkit", "diffusers_configs")
+COMFY_PATH = os.getenv("COMFY_PATH", None)
+COMFY_MODELS_PATH = None
+if COMFY_PATH:
+    COMFY_MODELS_PATH = os.path.join(COMFY_PATH, "models")
 
 # check if ENV variable is set
 if 'MODELS_PATH' in os.environ:

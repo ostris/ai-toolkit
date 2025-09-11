@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settings';
 
 export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
   const { imagePath } = await params;
@@ -13,8 +13,9 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     // Get allowed directories
     const datasetRoot = await getDatasetsRoot();
     const trainingRoot = await getTrainingFolder();
+    const dataRoot = await getDataRoot();
 
-    const allowedDirs = [datasetRoot, trainingRoot];
+    const allowedDirs = [datasetRoot, trainingRoot, dataRoot];
 
     // Security check: Ensure path is in allowed directory
     const isAllowed = allowedDirs.some(allowedDir => filepath.startsWith(allowedDir)) && !filepath.includes('..');

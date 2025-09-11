@@ -86,6 +86,9 @@ export interface DatasetConfig {
   control_path: string | null;
   num_frames: number;
   shrink_video_to_frames: boolean;
+  do_i2v: boolean;
+  flip_x: boolean;
+  flip_y: boolean;
 }
 
 export interface EMAConfig {
@@ -109,14 +112,17 @@ export interface TrainConfig {
   ema_config?: EMAConfig;
   dtype: string;
   unload_text_encoder: boolean;
+  cache_text_embeddings: boolean;
   optimizer_params: {
     weight_decay: number;
   };
   skip_first_sample: boolean;
+  force_first_sample: boolean;
   disable_sampling: boolean;
   diff_output_preservation: boolean;
   diff_output_preservation_multiplier: number;
   diff_output_preservation_class: string;
+  switch_boundary_every: number;
 }
 
 export interface QuantizeKwargsConfig {
@@ -127,10 +133,26 @@ export interface ModelConfig {
   name_or_path: string;
   quantize: boolean;
   quantize_te: boolean;
+  qtype: string;
+  qtype_te: string;
   quantize_kwargs?: QuantizeKwargsConfig;
   arch: string;
   low_vram: boolean;
   model_kwargs: { [key: string]: any };
+}
+
+export interface SampleItem {
+  prompt: string;
+  width?: number
+  height?: number;
+  neg?: string;
+  seed?: number;
+  guidance_scale?: number;
+  sample_steps?: number;
+  fps?: number;
+  num_frames?: number;
+  ctrl_img?: string | null;
+  ctrl_idx?: number;
 }
 
 export interface SampleConfig {
@@ -138,7 +160,8 @@ export interface SampleConfig {
   sample_every: number;
   width: number;
   height: number;
-  prompts: string[];
+  prompts?: string[];
+  samples: SampleItem[];
   neg: string;
   seed: number;
   walk_seed: boolean;

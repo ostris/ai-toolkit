@@ -22,19 +22,21 @@ export async function POST(request: NextRequest) {
     const uploadDir = join(datasetsPath, datasetName);
     await mkdir(uploadDir, { recursive: true });
 
-    const savedFiles = await Promise.all(
-      files.map(async (file: any) => {
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
+    const savedFiles: string[] = [];
+    
+    // Process files sequentially to avoid overwhelming the system
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i] as any;
+      const bytes = await file.arrayBuffer();
+      const buffer = Buffer.from(bytes);
 
-        // Clean filename and ensure it's unique
-        const fileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-        const filePath = join(uploadDir, fileName);
+      // Clean filename and ensure it's unique
+      const fileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const filePath = join(uploadDir, fileName);
 
-        await writeFile(filePath, buffer);
-        return fileName;
-      }),
-    );
+      await writeFile(filePath, buffer);
+      savedFiles.push(fileName);
+    }
 
     return NextResponse.json({
       message: 'Files uploaded successfully',
