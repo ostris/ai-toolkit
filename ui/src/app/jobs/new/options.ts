@@ -56,6 +56,10 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['network.conv'],
     additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
+    accuracyRecoveryAdapters: {
+      // 3-bit ARA for Flux Kontext transformer quantization
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/flux1_dev_kontext_torchao_uint3.safetensors',
+    },
   },
   {
     name: 'flex1',
