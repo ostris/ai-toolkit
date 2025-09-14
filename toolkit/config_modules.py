@@ -157,6 +157,9 @@ class NetworkConfig:
         elif linear is not None:
             self.rank: int = linear
             self.linear: int = linear
+        else:
+            self.rank: int = 4
+            self.linear: int = 4
         self.conv: int = kwargs.get('conv', None)
         self.alpha: float = kwargs.get('alpha', 1.0)
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)

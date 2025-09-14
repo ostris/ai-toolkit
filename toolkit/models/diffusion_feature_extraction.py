@@ -531,9 +531,9 @@ class DiffusionFeatureExtractor4(nn.Module):
             stepped_latents = torch.cat(stepped_chunks, dim=0)
             
         latents = stepped_latents.to(self.vae.device, dtype=self.vae.dtype)
-        
-        scaling_factor = self.vae.config['scaling_factor'] if 'scaling_factor' in self.vae.config else 1.0
-        shift_factor = self.vae.config['shift_factor'] if 'shift_factor' in self.vae.config else 0.0
+
+        scaling_factor = self.vae.config.scaling_factor if hasattr(self.vae.config, 'scaling_factor') else 1.0
+        shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, 'shift_factor') else 0.0
         latents = (latents / scaling_factor) + shift_factor
         if is_video:
             # if video, we need to unsqueeze the latents to match the vae input shape
