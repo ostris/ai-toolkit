@@ -1,4 +1,4 @@
-import { JobConfig, DatasetConfig } from '@/types';
+import { JobConfig, DatasetConfig, SliderConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
@@ -20,13 +20,22 @@ export const defaultDatasetConfig: DatasetConfig = {
   flip_y: false,
 };
 
+export const defaultSliderConfig: SliderConfig = {
+  guidance_strength: 3.0,
+  anchor_strength: 1.0,
+  positive_prompt: 'person who is happy',
+  negative_prompt: 'person who is sad',
+  target_class: 'person',
+  anchor_class: "",
+};
+
 export const defaultJobConfig: JobConfig = {
   job: 'extension',
   config: {
     name: 'my_first_lora_v1',
     process: [
       {
-        type: 'ui_trainer',
+        type: 'diffusion_trainer',
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
         device: 'cuda',
@@ -100,7 +109,7 @@ export const defaultJobConfig: JobConfig = {
           height: 1024,
           samples: [
             {
-              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background'
+              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background',
             },
             {
               prompt: 'a woman holding a coffee cup, in a beanie, sitting at a cafe',
@@ -109,7 +118,8 @@ export const defaultJobConfig: JobConfig = {
               prompt: 'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
             },
             {
-              prompt: 'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
+              prompt:
+                'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
             },
             {
               prompt: 'a bear building a log cabin in the snow covered mountains',
@@ -121,13 +131,15 @@ export const defaultJobConfig: JobConfig = {
               prompt: 'hipster man with a beard, building a chair, in a wood shop',
             },
             {
-              prompt: 'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
+              prompt:
+                'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
             },
             {
               prompt: "a man holding a sign that says, 'this is a sign'",
             },
             {
-              prompt: 'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
+              prompt:
+                'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
             },
           ],
           neg: '',

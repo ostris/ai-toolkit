@@ -57,6 +57,13 @@ class SampleItem:
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
         self.network_multiplier: float = kwargs.get('network_multiplier', sample_config.network_multiplier)
+        # convert to a number if it is a string
+        if isinstance(self.network_multiplier, str):
+            try:
+                self.network_multiplier = float(self.network_multiplier)
+            except:
+                print(f"Invalid network_multiplier {self.network_multiplier}, defaulting to 1.0")
+                self.network_multiplier = 1.0
         
 
 class SampleConfig:
