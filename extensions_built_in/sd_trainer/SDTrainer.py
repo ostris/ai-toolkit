@@ -1154,6 +1154,11 @@ class SDTrainer(BaseSDTrainProcess):
                     has_clip_image_embeds = True  # we are caching embeds, handle that differently
                     has_clip_image = False
 
+            # do prior pred if prior regularization batch
+            do_reg_prior = False
+            if any([batch.file_items[idx].prior_reg for idx in range(len(batch.file_items))]):
+                do_reg_prior = True
+
             if self.adapter is not None and isinstance(self.adapter, IPAdapter) and not has_clip_image and has_adapter_img:
                 raise ValueError(
                     "IPAdapter control image is now 'clip_image_path' instead of 'control_path'. Please update your dataset config ")
@@ -1647,11 +1652,6 @@ class SDTrainer(BaseSDTrainProcess):
                         self.adapter.set_reference_images(None)
 
                 prior_pred = None
-
-                do_reg_prior = False
-                # if is_reg and (self.network is not None or self.adapter is not None):
-                #     # we are doing a reg image and we have a network or adapter
-                #     do_reg_prior = True
 
                 do_inverted_masked_prior = False
                 if self.train_config.inverted_mask_prior and batch.mask_tensor is not None:
