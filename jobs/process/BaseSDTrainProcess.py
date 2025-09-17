@@ -1996,58 +1996,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ### HOOK ###
         self.hook_before_train_loop()
 
-        if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
-            print_acc("Generating first sample from first sample config")
-            self.sample(0, is_first=True)
-
-        # sample first
-        if self.train_config.skip_first_sample or self.train_config.disable_sampling:
-            print_acc("Skipping first sample due to config setting")
-        elif self.step_num <= 1 or self.train_config.force_first_sample:
-            print_acc("Generating baseline samples before training")
-            self.sample(self.step_num)
-        
-        if self.accelerator.is_local_main_process:
-            self.progress_bar = ToolkitProgressBar(
-                total=self.train_config.steps,
-                desc=self.job.name,
-                leave=True,
-                initial=self.step_num,
-                iterable=range(0, self.train_config.steps),
-            )
-            self.progress_bar.pause()
-        else:
-            self.progress_bar = None
-
-        if self.data_loader is not None:
-            dataloader = self.data_loader
-            dataloader_iterator = iter(dataloader)
-        else:
-            dataloader = None
-            dataloader_iterator = None
-
-        if self.data_loader_reg is not None:
-            dataloader_reg = self.data_loader_reg
-            dataloader_iterator_reg = iter(dataloader_reg)
-        else:
-            dataloader_reg = None
-            dataloader_iterator_reg = None
-
-        # zero any gradients
-        optimizer.zero_grad()
-
-        self.lr_scheduler.step(self.step_num)
-
-        self.sd.set_device_state(self.train_device_state_preset)
-        flush()
-        # self.step_num = 0
-
-        # print_acc(f"Compiling Model")
-        # torch.compile(self.sd.unet, dynamic=True)
-
-        # make sure all params require grad
-        self.ensure_params_requires_grad(force=True)
-
         # Initialize Oxen experiment tracking if enabled
         if self.oxen_config.enabled and OXEN_AVAILABLE and self.oxen_experiment is None:
             if self.accelerator.is_main_process:
@@ -2103,6 +2051,58 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         scheme=details.get('scheme', 'https'),
                     )
                     self.oxen_experiment.update_from_broadcast(details)
+
+        if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
+            print_acc("Generating first sample from first sample config")
+            self.sample(0, is_first=True)
+
+        # sample first
+        if self.train_config.skip_first_sample or self.train_config.disable_sampling:
+            print_acc("Skipping first sample due to config setting")
+        elif self.step_num <= 1 or self.train_config.force_first_sample:
+            print_acc("Generating baseline samples before training")
+            self.sample(self.step_num)
+        
+        if self.accelerator.is_local_main_process:
+            self.progress_bar = ToolkitProgressBar(
+                total=self.train_config.steps,
+                desc=self.job.name,
+                leave=True,
+                initial=self.step_num,
+                iterable=range(0, self.train_config.steps),
+            )
+            self.progress_bar.pause()
+        else:
+            self.progress_bar = None
+
+        if self.data_loader is not None:
+            dataloader = self.data_loader
+            dataloader_iterator = iter(dataloader)
+        else:
+            dataloader = None
+            dataloader_iterator = None
+
+        if self.data_loader_reg is not None:
+            dataloader_reg = self.data_loader_reg
+            dataloader_iterator_reg = iter(dataloader_reg)
+        else:
+            dataloader_reg = None
+            dataloader_iterator_reg = None
+
+        # zero any gradients
+        optimizer.zero_grad()
+
+        self.lr_scheduler.step(self.step_num)
+
+        self.sd.set_device_state(self.train_device_state_preset)
+        flush()
+        # self.step_num = 0
+
+        # print_acc(f"Compiling Model")
+        # torch.compile(self.sd.unet, dynamic=True)
+
+        # make sure all params require grad
+        self.ensure_params_requires_grad(force=True)
 
         ###################################################################
         # TRAIN LOOP
