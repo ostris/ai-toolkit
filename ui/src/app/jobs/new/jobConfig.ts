@@ -176,5 +176,10 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     jobConfig.config.process[0].sample.samples = newSamples;
     delete jobConfig.config.process[0].sample.prompts;
   }
+
+  // upgrade job from ui_trainer to diffusion_trainer
+  if (jobConfig?.config?.process && jobConfig.config.process[0]?.type === 'ui_trainer') {
+    jobConfig.config.process[0].type = 'diffusion_trainer';
+  }
   return jobConfig;
 };
