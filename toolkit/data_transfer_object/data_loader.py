@@ -121,6 +121,7 @@ class FileItemDTO(
 
         self.network_weight: float = self.dataset_config.network_weight
         self.is_reg = self.dataset_config.is_reg
+        self.prior_reg = self.dataset_config.prior_reg
         self.tensor: Union[torch.Tensor, None] = None
 
     def cleanup(self):
