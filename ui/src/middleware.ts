@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // if route starts with these, approve
-const publicRoutes = ['/api/img/', '/api/files/'];
+const publicRoutes = ['/aitoolkit/api/img/', '/aitoolkit/api/files/'];
 
 export function middleware(request: NextRequest) {
   // check env var for AI_TOOLKIT_AUTH, if not set, approve all requests
@@ -23,7 +23,7 @@ export function middleware(request: NextRequest) {
 
   // Check if the route should be protected
   // This will apply to all API routes that start with /api/
-  if (request.nextUrl.pathname.startsWith('/api/')) {
+  if (request.nextUrl.pathname.startsWith('/aitoolkit/api/')) {
     if (!token || token !== tokenToUse) {
       // Return a JSON response with 401 Unauthorized
       return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
@@ -44,6 +44,6 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     // Apply to all API routes
-    '/api/:path*',
+    '/aitoolkit/api/:path*',
   ],
 };
