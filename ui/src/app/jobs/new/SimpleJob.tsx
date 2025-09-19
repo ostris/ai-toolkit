@@ -1066,7 +1066,7 @@ export default function SimpleJob({
                           className="h-14 w-14 mt-2 ml-4 border border-gray-500 flex items-center justify-center rounded cursor-pointer hover:bg-gray-700 transition-colors"
                           style={{
                             backgroundImage: sample.ctrl_img
-                              ? `url(${`/api/img/${encodeURIComponent(sample.ctrl_img)}`})`
+                              ? `url(${`/aitoolkit/api/img/${encodeURIComponent(sample.ctrl_img)}`})`
                               : 'none',
                             backgroundSize: 'cover',
                             backgroundPosition: 'center',

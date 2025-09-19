@@ -33,7 +33,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     if (isGettingCaption.current || isCaptionLoaded) return;
     isGettingCaption.current = true;
     apiClient
-      .post(`/api/caption/get`, { imgPath: imageUrl })
+      .post(`/aitoolkit/api/caption/get`, { imgPath: imageUrl })
       .then(res => res.data)
       .then(data => {
         console.log('Caption fetched:', data);
@@ -134,7 +134,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             <>
               {isItAVideo ? (
                 <video
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  src={`/aitoolkit/api/img/${encodeURIComponent(imageUrl)}`}
                   className={`w-full h-full object-contain`}
                   autoPlay={false}
                   loop
@@ -143,7 +143,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                 />
               ) : (
                 <img
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  src={`/aitoolkit/api/img/${encodeURIComponent(imageUrl)}`}
                   alt={alt}
                   onLoad={handleLoad}
                   className={`w-full h-full object-contain transition-opacity duration-300 ${

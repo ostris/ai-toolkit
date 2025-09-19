@@ -10,7 +10,7 @@ export default function useSampleImages(jobID: string, reloadInterval: null | nu
   const refreshSampleImages = () => {
     setStatus('loading');
     apiClient
-      .get(`/api/jobs/${jobID}/samples`)
+      .get(`/aitoolkit/api/jobs/${jobID}/samples`)
       .then(res => res.data)
       .then(data => {
         console.log('Fetched sample images:', data);

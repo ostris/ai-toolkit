@@ -175,7 +175,7 @@ export default function SampleImageModal() {
             <div className="flex justify-center items-center">
               {imageModal?.imgPath && (
                 <img
-                  src={`/api/img/${encodeURIComponent(imageModal.imgPath)}`}
+                  src={`/aitoolkit/api/img/${encodeURIComponent(imageModal.imgPath)}`}
                   alt="Sample Image"
                   className="max-w-full max-h-[calc(95vh-2rem)] object-contain"
                 />

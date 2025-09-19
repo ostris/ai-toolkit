@@ -63,7 +63,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
             <>
               {isVideo(imageUrl) ? (
                 <video
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  src={`/aitoolkit/api/img/${encodeURIComponent(imageUrl)}`}
                   className={`w-full h-full object-cover`}
                   autoPlay={false}
                   loop
@@ -72,7 +72,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                 />
               ) : (
                 <img
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  src={`/aitoolkit/api/img/${encodeURIComponent(imageUrl)}`}
                   alt={alt}
                   onLoad={handleLoad}
                   className={`w-full h-full object-cover transition-opacity duration-300 ${

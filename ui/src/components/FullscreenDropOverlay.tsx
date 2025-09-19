@@ -91,7 +91,7 @@ export default function FullscreenDropOverlay({
       formData.append('datasetName', datasetName || '');
 
       try {
-        await apiClient.post(`/api/datasets/upload`, formData, {
+        await apiClient.post(`/aitoolkit/api/datasets/upload`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           onUploadProgress: pe => {
             const percent = Math.round(((pe.loaded || 0) * 100) / (pe.total || pe.loaded || 1));

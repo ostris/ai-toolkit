@@ -20,7 +20,7 @@ export default function useFilesList(jobID: string, reloadInterval: null | numbe
     }
     setStatus(loadStatus);
     apiClient
-      .get(`/api/jobs/${jobID}/files`)
+      .get(`/aitoolkit/api/jobs/${jobID}/files`)
       .then(res => res.data)
       .then(data => {
         console.log('Fetched files:', data);

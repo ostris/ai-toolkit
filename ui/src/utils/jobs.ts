@@ -5,7 +5,7 @@ import { apiClient } from '@/utils/api';
 export const startJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
-      .get(`/api/jobs/${jobID}/start`)
+      .get(`/aitoolkit/api/jobs/${jobID}/start`)
       .then(res => res.data)
       .then(data => {
         console.log('Job started:', data);
@@ -21,7 +21,7 @@ export const startJob = (jobID: string) => {
 export const stopJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
-      .get(`/api/jobs/${jobID}/stop`)
+      .get(`/aitoolkit/api/jobs/${jobID}/stop`)
       .then(res => res.data)
       .then(data => {
         console.log('Job stopped:', data);
@@ -37,7 +37,7 @@ export const stopJob = (jobID: string) => {
 export const deleteJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
-      .get(`/api/jobs/${jobID}/delete`)
+      .get(`/aitoolkit/api/jobs/${jobID}/delete`)
       .then(res => res.data)
       .then(data => {
         console.log('Job deleted:', data);

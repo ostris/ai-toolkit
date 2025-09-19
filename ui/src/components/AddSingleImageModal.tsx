@@ -49,7 +49,7 @@ export default function AddSingleImageModal() {
       });
 
       try {
-        const resp = await apiClient.post(`/api/img/upload`, formData, {
+        const resp = await apiClient.post(`/aitoolkit/api/img/upload`, formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },

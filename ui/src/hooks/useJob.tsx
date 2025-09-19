@@ -11,7 +11,7 @@ export default function useJob(jobID: string, reloadInterval: null | number = nu
   const refreshJob = () => {
     setStatus('loading');
     apiClient
-      .get(`/api/jobs?id=${jobID}`)
+      .get(`/aitoolkit/api/jobs?id=${jobID}`)
       .then(res => res.data)
       .then(data => {
         console.log('Job:', data);

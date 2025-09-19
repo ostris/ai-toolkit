@@ -57,7 +57,7 @@ export default function TrainingForm() {
   useEffect(() => {
     if (runId) {
       apiClient
-        .get(`/api/jobs?id=${runId}`)
+        .get(`/aitoolkit/api/jobs?id=${runId}`)
         .then(res => res.data)
         .then(data => {
           console.log('Training:', data);

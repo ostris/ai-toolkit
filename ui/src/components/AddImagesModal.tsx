@@ -50,7 +50,7 @@ export default function AddImagesModal() {
       formData.append('datasetName', addImagesModalInfo?.datasetName || '');
 
       try {
-        await apiClient.post(`/api/datasets/upload`, formData, {
+        await apiClient.post(`/aitoolkit/api/datasets/upload`, formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },

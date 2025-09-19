@@ -26,7 +26,7 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
     }
     setStatus(loadStatus);
     apiClient
-      .get(`/api/jobs/${jobID}/log`)
+      .get(`/aitoolkit/api/jobs/${jobID}/log`)
       .then(res => res.data)
       .then(data => {
         if (data.log) {
