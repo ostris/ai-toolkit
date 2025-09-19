@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+interface JobWhereClause {
+  status?: string;
+}
 
 const prisma = new PrismaClient();
 
@@ -15,9 +18,9 @@ export async function GET(request: Request) {
       });
       return NextResponse.json(job);
     }
-    let where = {};
+    let where: JobWhereClause = {};
     if (status) {
-      where['status'] = status;
+      where.status = status;
     }
 
     const jobs = await prisma.job.findMany({
