@@ -18,7 +18,7 @@ export default function useSettings() {
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
     apiClient
-      .get('/api/settings')
+      .get('/aitoolkit/api/settings')
       .then(res => res.data)
       .then(data => {
         console.log('Settings:', data);

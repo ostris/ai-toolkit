@@ -19,7 +19,7 @@ const GpuMonitor: React.FC = () => {
       setLoading(true);
       isFetchingGpuRef.current = true;
       apiClient
-        .get('/api/gpu')
+        .get('/aitoolkit/api/gpu')
         .then(res => res.data)
         .then(data => {
           setGpuData(data);

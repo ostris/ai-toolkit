@@ -14,7 +14,7 @@ export default function Settings() {
     setStatus('saving');
 
     apiClient
-      .post('/api/settings', settings)
+      .post('/aitoolkit/api/settings', settings)
       .then(() => {
         setStatus('success');
       })

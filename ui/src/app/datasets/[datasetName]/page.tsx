@@ -20,7 +20,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setStatus('loading');
     console.log('Fetching images for dataset:', dbName);
     apiClient
-      .post('/api/datasets/listImages', { datasetName: dbName })
+      .post('/aitoolkit/api/datasets/listImages', { datasetName: dbName })
       .then((res: any) => {
         const data = res.data;
         console.log('Images:', data.images);

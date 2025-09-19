@@ -11,7 +11,7 @@ export default function useJobsList(onlyActive = false) {
   const refreshJobs = () => {
     setStatus('loading');
     apiClient
-      .get('/api/jobs')
+      .get('/aitoolkit/api/jobs')
       .then(res => res.data)
       .then(data => {
         console.log('Jobs:', data);

@@ -50,7 +50,7 @@ export default function AuthWrapper({ authRequired, children }: AuthWrapperProps
     setIsLoading(true);
     setError('');
     try {
-      const response = await apiClient.get('/api/auth');
+      const response = await apiClient.get('/aitoolkit/api/auth');
       if (response.data.isAuthenticated) {
         setIsAuthorized(true);
       } else {

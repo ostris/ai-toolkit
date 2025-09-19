@@ -21,7 +21,7 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
     setIsZipping(true);
 
     try {
-      const res = await apiClient.post('/api/zip', {
+      const res = await apiClient.post('/aitoolkit/api/zip', {
         zipTarget: 'samples',
         jobName: job?.name,
       });

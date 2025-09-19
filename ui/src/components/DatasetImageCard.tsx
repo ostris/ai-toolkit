@@ -54,7 +54,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     const trimmedCaption = caption.trim();
     if (trimmedCaption === savedCaption) return;
     apiClient
-      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
+      .post('/aitoolkit/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
       .then(res => res.data)
       .then(data => {
         console.log('Caption saved:', data);
@@ -170,7 +170,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   confirmText: 'Delete',
                   onConfirm: () => {
                     apiClient
-                      .post('/api/img/delete', { imgPath: imageUrl })
+                      .post('/aitoolkit/api/img/delete', { imgPath: imageUrl })
                       .then(() => {
                         console.log('Image deleted:', imageUrl);
                         onDelete();

@@ -10,7 +10,7 @@ export default function useDatasetList() {
   const refreshDatasets = () => {
     setStatus('loading');
     apiClient
-      .get('/api/datasets/list')
+      .get('/aitoolkit/api/datasets/list')
       .then(res => res.data)
       .then(data => {
         console.log('Datasets:', data);

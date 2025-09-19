@@ -87,7 +87,7 @@ export default function TrainingForm() {
     setStatus('saving');
 
     apiClient
-      .post('/api/jobs', {
+      .post('/aitoolkit/api/jobs', {
         id: runId,
         name: jobConfig.config.name,
         gpu_ids: gpuIDs,

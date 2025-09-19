@@ -58,7 +58,7 @@ export default function Datasets() {
       confirmText: 'Delete',
       onConfirm: () => {
         apiClient
-          .post('/api/datasets/delete', { name: datasetName })
+          .post('/aitoolkit/api/datasets/delete', { name: datasetName })
           .then(() => {
             console.log('Dataset deleted:', datasetName);
             refreshDatasets();
@@ -73,7 +73,7 @@ export default function Datasets() {
   const handleCreateDataset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const data = await apiClient.post('/api/datasets/create', { name: newDatasetName }).then(res => res.data);
+      const data = await apiClient.post('/aitoolkit/api/datasets/create', { name: newDatasetName }).then(res => res.data);
       console.log('New dataset created:', data);
       refreshDatasets();
       setNewDatasetName('');
@@ -96,7 +96,7 @@ export default function Datasets() {
           return;
         }
         try {
-          const data = await apiClient.post('/api/datasets/create', { name }).then(res => res.data);
+          const data = await apiClient.post('/aitoolkit/api/datasets/create', { name }).then(res => res.data);
           console.log('New dataset created:', data);
           if (data.name) {
             router.push(`/datasets/${data.name}`);
