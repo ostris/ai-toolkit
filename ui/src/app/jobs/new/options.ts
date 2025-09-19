@@ -1,8 +1,16 @@
-import { GroupedSelectOption, SelectOption } from '@/types';
+import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
+import { defaultSliderConfig } from './jobConfig';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
-type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
+type DisableableSections =
+  | 'model.quantize'
+  | 'train.timestep_type'
+  | 'network.conv'
+  | 'trigger_word'
+  | 'train.diff_output_preservation'
+  | 'slider';
+
 type AdditionalSections =
   | 'datasets.control_path'
   | 'datasets.do_i2v'
@@ -439,3 +447,33 @@ export const quantizationOptions: SelectOption[] = [
 ];
 
 export const defaultQtype = 'qfloat8';
+
+interface JobTypeOption extends SelectOption {
+  disableSections?: DisableableSections[];
+  processSections?: string[];
+  onActivate?: (config: JobConfig) => JobConfig;
+  onDeactivate?: (config: JobConfig) => JobConfig;
+}
+
+export const jobTypeOptions: JobTypeOption[] = [
+  {
+    value: 'diffusion_trainer',
+    label: 'LoRA Trainer',
+    disableSections: ['slider'],
+  },
+  {
+    value: 'concept_slider',
+    label: 'Concept Slider',
+    disableSections: ['trigger_word', 'train.diff_output_preservation'],
+    onActivate: (config: JobConfig) => {
+      // add default slider config
+      config.config.process[0].slider = { ...defaultSliderConfig };
+      return config;
+    },
+    onDeactivate: (config: JobConfig) => {
+      // remove slider config
+      delete config.config.process[0].slider;
+      return config;
+    },
+  },
+];

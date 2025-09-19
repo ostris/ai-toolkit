@@ -108,7 +108,7 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
 
         // We have to ensure certain things are always set
         try {
-          parsed.config.process[0].type = 'ui_trainer';
+          // parsed.config.process[0].type = 'ui_trainer';
           parsed.config.process[0].sqlite_db_path = './aitk_db.db';
           parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
           parsed.config.process[0].device = 'cuda';

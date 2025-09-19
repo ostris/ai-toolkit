@@ -143,7 +143,7 @@ export interface ModelConfig {
 
 export interface SampleItem {
   prompt: string;
-  width?: number
+  width?: number;
   height?: number;
   neg?: string;
   seed?: number;
@@ -153,6 +153,7 @@ export interface SampleItem {
   num_frames?: number;
   ctrl_img?: string | null;
   ctrl_idx?: number;
+  network_multiplier?: number;
 }
 
 export interface SampleConfig {
@@ -171,14 +172,24 @@ export interface SampleConfig {
   fps: number;
 }
 
+export interface SliderConfig {
+  guidance_strength?: number;
+  anchor_strength?: number;
+  positive_prompt?: string;
+  negative_prompt?: string;
+  target_class?: string;
+  anchor_class?: string | null;
+}
+
 export interface ProcessConfig {
-  type: 'ui_trainer';
+  type: string;
   sqlite_db_path?: string;
   training_folder: string;
   performance_log_every: number;
   trigger_word: string | null;
   device: string;
   network?: NetworkConfig;
+  slider?: SliderConfig;
   save: SaveConfig;
   datasets: DatasetConfig[];
   train: TrainConfig;
