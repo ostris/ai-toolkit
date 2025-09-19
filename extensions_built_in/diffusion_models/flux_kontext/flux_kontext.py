@@ -17,7 +17,7 @@ from toolkit.dequantize import patch_dequantization_on_save
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.mask import generate_random_mask, random_dialate_mask
-from toolkit.util.quantize import quantize, get_qtype
+from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTokenizer
 from einops import rearrange, repeat
 import random
@@ -102,11 +102,8 @@ class FluxKontextModel(BaseModel):
         if self.model_config.quantize:
             # patch the state dict method
             patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
             self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type,
-                     **self.model_config.quantize_kwargs)
-            freeze(transformer)
+            quantize_model(self, transformer)
             transformer.to(self.device_torch)
         else:
             transformer.to(self.device_torch, dtype=dtype)
@@ -418,3 +415,6 @@ class FluxKontextModel(BaseModel):
 
     def get_base_model_version(self):
         return "flux.1_kontext"
+    
+    def get_transformer_block_names(self) -> List[str]:
+        return ['transformer_blocks']
