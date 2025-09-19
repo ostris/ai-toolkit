@@ -6,6 +6,7 @@ const prisma = new PrismaClient();
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
+  const status = searchParams.get('status');
 
   try {
     if (id) {
@@ -14,8 +15,13 @@ export async function GET(request: Request) {
       });
       return NextResponse.json(job);
     }
+    let where = {};
+    if (status) {
+      where['status'] = status;
+    }
 
     const jobs = await prisma.job.findMany({
+      where: where,
       orderBy: { created_at: 'desc' },
     });
     return NextResponse.json({ jobs: jobs });
