@@ -16,6 +16,7 @@ const inter = Inter({ subsets: ['latin'] });
 export const metadata: Metadata = {
   title: 'Ostris - AI Toolkit',
   description: 'A toolkit for building AI things.',
+  manifest: `${BASE_PATH}/manifest.json`,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
