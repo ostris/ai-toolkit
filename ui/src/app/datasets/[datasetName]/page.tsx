@@ -107,6 +107,128 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     message: string;
   } | null>(null);
 
+  // Saved captioning settings
+  const [savedSettings, setSavedSettings] = useState<{
+    [key: string]: {
+      captionType: string;
+      captionLength: string;
+      extraOptions: string[];
+      temperature: number;
+      topP: number;
+      maxTokens: number;
+    };
+  }>({});
+  const [currentSettingName, setCurrentSettingName] = useState('');
+
+  // Load saved settings from localStorage on component mount
+  useEffect(() => {
+    const saved = localStorage.getItem('captionSettings');
+    if (saved) {
+      try {
+        setSavedSettings(JSON.parse(saved));
+      } catch (error) {
+        console.error('Failed to load saved caption settings:', error);
+      }
+    } else {
+      // Add some default presets if none exist
+      const defaultPresets = {
+        'Quick Descriptive': {
+          captionType: 'Descriptive',
+          captionLength: 'short',
+          extraOptions: [],
+          temperature: 0.6,
+          topP: 0.9,
+          maxTokens: 256,
+        },
+        'Detailed Analysis': {
+          captionType: 'Descriptive',
+          captionLength: 'long',
+          extraOptions: ['Include information about lighting.', 'Include information about camera angle.'],
+          temperature: 0.7,
+          topP: 0.9,
+          maxTokens: 512,
+        },
+        'Art Critic': {
+          captionType: 'Art Critic',
+          captionLength: 'medium-length',
+          extraOptions: ['Include information about lighting.', 'Include information about camera angle.'],
+          temperature: 0.8,
+          topP: 0.95,
+          maxTokens: 400,
+        },
+        'Stable Diffusion': {
+          captionType: 'Stable Diffusion Prompt',
+          captionLength: 'short',
+          extraOptions: ['Your response will be used by a text-to-image model, so avoid useless meta phrases like "This image shows…", "You are looking at...", etc.'],
+          temperature: 0.7,
+          topP: 0.9,
+          maxTokens: 200,
+        },
+      };
+      setSavedSettings(defaultPresets);
+      localStorage.setItem('captionSettings', JSON.stringify(defaultPresets));
+    }
+  }, []);
+
+  // Save current settings
+  const saveCurrentSettings = (name: string) => {
+    if (!name.trim()) return;
+
+    const settings = {
+      captionType: captionStyle,
+      captionLength: captionLength,
+      extraOptions: extraOptions,
+      temperature: temperature,
+      topP: topP,
+      maxTokens: maxTokens,
+    };
+
+    const newSavedSettings = { ...savedSettings, [name]: settings };
+    setSavedSettings(newSavedSettings);
+    localStorage.setItem('captionSettings', JSON.stringify(newSavedSettings));
+    setCurrentSettingName(name);
+  };
+
+  // Load settings by name
+  const loadSettings = (name: string) => {
+    const settings = savedSettings[name];
+    if (settings) {
+      setCaptionStyle(settings.captionType);
+      setCaptionLength(settings.captionLength);
+      setExtraOptions(settings.extraOptions);
+      setTemperature(settings.temperature);
+      setTopP(settings.topP);
+      setMaxTokens(settings.maxTokens);
+      setCurrentSettingName(name);
+    }
+  };
+
+  // Handle settings dropdown/input change
+  const handleSettingsChange = (value: string) => {
+    setCurrentSettingName(value);
+    if (savedSettings[value]) {
+      loadSettings(value);
+    }
+  };
+
+  // Delete a saved setting
+  const deleteSetting = (name: string) => {
+    const newSavedSettings = { ...savedSettings };
+    delete newSavedSettings[name];
+    setSavedSettings(newSavedSettings);
+    localStorage.setItem('captionSettings', JSON.stringify(newSavedSettings));
+    if (currentSettingName === name) {
+      setCurrentSettingName('');
+    }
+  };
+
+  // Clear current setting name when manually changing options
+  const clearCurrentSetting = () => {
+    if (currentSettingName && savedSettings[currentSettingName]) {
+      setCurrentSettingName('');
+    }
+  };
+
   // Advanced captioning options
   const [captionLength, setCaptionLength] = useState('long');
   const [personName, setPersonName] = useState('');
@@ -229,6 +351,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setIsCaptioning(true);
     setCaptionStatus(null); // Clear previous status
     setCaptionProgress({ total: imgList.length, completed: 0 });
+
+    // Save current settings if a name is provided and it's not already saved
+    if (currentSettingName.trim() && !savedSettings[currentSettingName]) {
+      saveCurrentSettings(currentSettingName);
+    }
 
     try {
       // Process images one by one for real-time progress updates
@@ -637,6 +764,67 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
                 {captionServiceAvailable === true && (
                   <>
+                    {/* Saved Settings */}
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Caption Settings Preset
+                      </label>
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <input
+                            list="caption-settings"
+                            value={currentSettingName}
+                            onChange={(e) => handleSettingsChange(e.target.value)}
+                            placeholder="Select existing preset or type new name to save..."
+                            disabled={isCaptioning || !captionServiceAvailable}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
+                          />
+                          <datalist id="caption-settings">
+                            {Object.keys(savedSettings).map(name => (
+                              <option key={name} value={name} />
+                            ))}
+                          </datalist>
+                        </div>
+                        {currentSettingName.trim() && !savedSettings[currentSettingName] && (
+                          <Button
+                            onClick={() => saveCurrentSettings(currentSettingName)}
+                            disabled={isCaptioning || !captionServiceAvailable}
+                            className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-md font-medium transition-colors text-sm whitespace-nowrap"
+                          >
+                            Save Preset
+                          </Button>
+                        )}
+                      </div>
+                      {Object.keys(savedSettings).length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            Saved presets:
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {Object.keys(savedSettings).map(name => (
+                              <div key={name} className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 rounded-md px-2 py-1">
+                                <button
+                                  onClick={() => handleSettingsChange(name)}
+                                  disabled={isCaptioning || !captionServiceAvailable}
+                                  className="text-xs text-gray-700 dark:text-gray-300 hover:text-purple-600 dark:hover:text-purple-400 disabled:cursor-not-allowed"
+                                >
+                                  {name}
+                                </button>
+                                <button
+                                  onClick={() => deleteSetting(name)}
+                                  disabled={isCaptioning || !captionServiceAvailable}
+                                  className="text-xs text-red-500 hover:text-red-700 disabled:cursor-not-allowed ml-1"
+                                  title="Delete preset"
+                                >
+                                  <LuX className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Caption Type Selection */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
@@ -645,7 +833,10 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                         </label>
                         <select
                           value={captionStyle}
-                          onChange={(e) => setCaptionStyle(e.target.value)}
+                          onChange={(e) => {
+                            setCaptionStyle(e.target.value);
+                            clearCurrentSetting();
+                          }}
                           disabled={isCaptioning || !captionServiceAvailable}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
                         >
@@ -663,7 +854,10 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                         </label>
                         <select
                           value={captionLength}
-                          onChange={(e) => setCaptionLength(e.target.value)}
+                          onChange={(e) => {
+                            setCaptionLength(e.target.value);
+                            clearCurrentSetting();
+                          }}
                           disabled={isCaptioning || !captionServiceAvailable}
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
                         >
