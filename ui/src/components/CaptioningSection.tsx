@@ -45,6 +45,8 @@ const CAPTION_LENGTHS = [
   '260'
 ];
 
+const NAME_OPTION = "If there is a person/character in the image you must refer to them as {name}.";
+
 const EXTRA_OPTIONS = [
   NAME_OPTION,
   "Do NOT include information about people/characters that cannot be changed (like ethnicity, gender, etc), but do still include changeable attributes (like hair style).",
