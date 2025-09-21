@@ -15,6 +15,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const usableParams = use(params as any) as { datasetName: string };
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [renameText, setRenameText] = useState(datasetName);
+  const [isRenaming, setIsRenaming] = useState(false);
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
@@ -29,14 +31,44 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         setImgList(data.images);
         setStatus('success');
       })
-      .catch(error => {
+      .catch((error: any) => {
         console.error('Error fetching images:', error);
         setStatus('error');
       });
   };
+
+  const handleRename = async () => {
+    if (!renameText.trim()) {
+      alert('Please enter a valid name');
+      return;
+    }
+
+    setIsRenaming(true);
+    try {
+      const response = await apiClient.post('/api/datasets/rename', {
+        datasetName: datasetName,
+        newBaseName: renameText.trim()
+      });
+
+      if (response.data.success) {
+        console.log('Rename successful:', response.data);
+        // Refresh the image list to show the renamed files
+        refreshImageList(datasetName);
+        alert(`Successfully renamed ${response.data.totalRenamed} files`);
+      } else {
+        alert('Rename failed: ' + (response.data.error || 'Unknown error'));
+      }
+    } catch (error: any) {
+      console.error('Rename error:', error);
+      alert('Failed to rename files: ' + (error.response?.data?.error || error.message));
+    } finally {
+      setIsRenaming(false);
+    }
+  };
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
+      setRenameText(datasetName);
     }
   }, [datasetName]);
 
@@ -114,6 +146,34 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       </TopBar>
       <MainContent>
         {PageInfoContent}
+
+        {/* Renaming Section - Only visible when files are successfully uploaded */}
+        {status === 'success' && imgList.length > 0 && (
+          <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+            <h2 className="text-lg font-semibold mb-3 text-gray-900 dark:text-gray-100">Renaming</h2>
+            <div className="flex gap-3 items-center">
+              <input
+                type="text"
+                value={renameText}
+                onChange={(e) => setRenameText(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Enter base name for files"
+                disabled={isRenaming}
+              />
+              <Button
+                onClick={handleRename}
+                disabled={isRenaming || !renameText.trim()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-md font-medium transition-colors"
+              >
+                {isRenaming ? 'Renaming...' : 'Rename'}
+              </Button>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">
+              All media files (images and videos) will be renamed to "{renameText}001.ext", "{renameText}002.ext", etc. (keeping original extensions)
+            </p>
+          </div>
+        )}
+
         {status === 'success' && imgList.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {imgList.map(img => (
