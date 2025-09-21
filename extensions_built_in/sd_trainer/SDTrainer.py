@@ -577,7 +577,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version == 3 or self.dfe.version == 4:
+            elif self.dfe.version in [3, 4, 5]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
