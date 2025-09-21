@@ -52,6 +52,98 @@ DEFAULT_PROMPTS = {
     "booru": "Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text."
 }
 
+# JoyCaption prompt templates
+CAPTION_TYPE_MAP = {
+    "Descriptive": [
+        "Write a detailed description for this image.",
+        "Write a detailed description for this image in {word_count} words or less.",
+        "Write a {length} detailed description for this image.",
+    ],
+    "Descriptive (Casual)": [
+        "Write a descriptive caption for this image in a casual tone.",
+        "Write a descriptive caption for this image in a casual tone within {word_count} words.",
+        "Write a {length} descriptive caption for this image in a casual tone.",
+    ],
+    "Straightforward": [
+        "Write a straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with \"This image is…\" or similar phrasing.",
+        "Write a straightforward caption for this image within {word_count} words. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with \"This image is…\" or similar phrasing.",
+        "Write a {length} straightforward caption for this image. Begin with the main subject and medium. Mention pivotal elements—people, objects, scenery—using confident, definite language. Focus on concrete details like color, shape, texture, and spatial relationships. Show how elements interact. Omit mood and speculative wording. If text is present, quote it exactly. Note any watermarks, signatures, or compression artifacts. Never mention what's absent, resolution, or unobservable details. Vary your sentence structure and keep the description concise, without starting with \"This image is…\" or similar phrasing.",
+    ],
+    "Stable Diffusion Prompt": [
+        "Output a stable diffusion prompt that is indistinguishable from a real stable diffusion prompt.",
+        "Output a stable diffusion prompt that is indistinguishable from a real stable diffusion prompt. {word_count} words or less.",
+        "Output a {length} stable diffusion prompt that is indistinguishable from a real stable diffusion prompt.",
+    ],
+    "MidJourney": [
+        "Write a MidJourney prompt for this image.",
+        "Write a MidJourney prompt for this image within {word_count} words.",
+        "Write a {length} MidJourney prompt for this image.",
+    ],
+    "Danbooru tag list": [
+        "Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text.",
+        "Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text. {word_count} words or less.",
+        "Generate only comma-separated Danbooru tags (lowercase_underscores). Strict order: `artist:`, `copyright:`, `character:`, `meta:`, then general tags. Include counts (1girl), appearance, clothing, accessories, pose, expression, actions, background. Use precise Danbooru syntax. No extra text. {length} length.",
+    ],
+    "e621 tag list": [
+        "Write a comma-separated list of e621 tags in alphabetical order for this image. Start with the artist, copyright, character, species, meta, and lore tags (if any), prefixed by 'artist:', 'copyright:', 'character:', 'species:', 'meta:', and 'lore:'. Then all the general tags.",
+        "Write a comma-separated list of e621 tags in alphabetical order for this image. Start with the artist, copyright, character, species, meta, and lore tags (if any), prefixed by 'artist:', 'copyright:', 'character:', 'species:', 'meta:', and 'lore:'. Then all the general tags. Keep it under {word_count} words.",
+        "Write a {length} comma-separated list of e621 tags in alphabetical order for this image. Start with the artist, copyright, character, species, meta, and lore tags (if any), prefixed by 'artist:', 'copyright:', 'character:', 'species:', 'meta:', and 'lore:'. Then all the general tags.",
+    ],
+    "Rule34 tag list": [
+        "Write a comma-separated list of rule34 tags in alphabetical order for this image. Start with the artist, copyright, character, and meta tags (if any), prefixed by 'artist:', 'copyright:', 'character:', and 'meta:'. Then all the general tags.",
+        "Write a comma-separated list of rule34 tags in alphabetical order for this image. Start with the artist, copyright, character, and meta tags (if any), prefixed by 'artist:', 'copyright:', 'character:', and 'meta:'. Then all the general tags. Keep it under {word_count} words.",
+        "Write a {length} comma-separated list of rule34 tags in alphabetical order for this image. Start with the artist, copyright, character, and meta tags (if any), prefixed by 'artist:', 'copyright:', 'character:', and 'meta:'. Then all the general tags.",
+    ],
+    "Booru-like tag list": [
+        "Write a list of Booru-like tags for this image.",
+        "Write a list of Booru-like tags for this image within {word_count} words.",
+        "Write a {length} list of Booru-like tags for this image.",
+    ],
+    "Art Critic": [
+        "Analyze this image like an art critic would with information about its composition, style, symbolism, the use of color, light, any artistic movement it might belong to, etc.",
+        "Analyze this image like an art critic would with information about its composition, style, symbolism, the use of color, light, any artistic movement it might belong to, etc. Keep it within {word_count} words.",
+        "Analyze this image like an art critic would with information about its composition, style, symbolism, the use of color, light, any artistic movement it might belong to, etc. Keep it {length}.",
+    ],
+    "Product Listing": [
+        "Write a caption for this image as though it were a product listing.",
+        "Write a caption for this image as though it were a product listing. Keep it under {word_count} words.",
+        "Write a {length} caption for this image as though it were a product listing.",
+    ],
+    "Social Media Post": [
+        "Write a caption for this image as if it were being used for a social media post.",
+        "Write a caption for this image as if it were being used for a social media post. Limit the caption to {word_count} words.",
+        "Write a {length} caption for this image as if it were being used for a social media post.",
+    ],
+}
+
+NAME_OPTION = "If there is a person/character in the image you must refer to them as {name}."
+
+def build_prompt(caption_type, caption_length, extra_options, name_input):
+    """Build the prompt based on JoyCaption's prompt building logic"""
+
+    # Choose the right template row in CAPTION_TYPE_MAP
+    if caption_length == "any":
+        map_idx = 0
+    elif isinstance(caption_length, str) and caption_length.isdigit():
+        map_idx = 1  # numeric-word-count template
+    else:
+        map_idx = 2  # length descriptor template
+
+    # Get the base prompt
+    templates = CAPTION_TYPE_MAP.get(caption_type, CAPTION_TYPE_MAP["Descriptive"])
+    prompt = templates[map_idx]
+
+    # Add extra options
+    if extra_options:
+        prompt += " " + " ".join(extra_options)
+
+    # Format the prompt
+    return prompt.format(
+        name=name_input or "{NAME}",
+        length=caption_length,
+        word_count=caption_length,
+    )
+
 class ProgressCapture:
     """Capture tqdm progress from transformers downloads"""
     def __init__(self):
@@ -311,16 +403,28 @@ def caption_image():
         if not os.path.exists(image_path):
             return jsonify({'error': f'Image file not found: {image_path}'}), 404
         
-        # Get prompt (use default if not provided)
-        prompt_style = data.get('style', 'descriptive')
+        # Get prompt - support both old style and new JoyCaption parameters
         custom_prompt = data.get('prompt')
-        
+
         if custom_prompt:
             prompt = custom_prompt
-        elif prompt_style in DEFAULT_PROMPTS:
-            prompt = DEFAULT_PROMPTS[prompt_style]
         else:
-            return jsonify({'error': f'Unknown prompt style: {prompt_style}'}), 400
+            # Check for JoyCaption parameters
+            caption_type = data.get('caption_type')
+            caption_length = data.get('caption_length', 'long')
+            extra_options = data.get('extra_options', [])
+            name_input = data.get('name_input', '')
+
+            if caption_type and caption_type in CAPTION_TYPE_MAP:
+                # Use JoyCaption prompt building
+                prompt = build_prompt(caption_type, caption_length, extra_options, name_input)
+            else:
+                # Fall back to old style
+                prompt_style = data.get('style', 'descriptive')
+                if prompt_style in DEFAULT_PROMPTS:
+                    prompt = DEFAULT_PROMPTS[prompt_style]
+                else:
+                    return jsonify({'error': f'Unknown prompt style: {prompt_style}'}), 400
         
         # Generation parameters
         gen_params = {
@@ -364,16 +468,28 @@ def batch_caption():
         if not isinstance(image_paths, list):
             return jsonify({'error': 'image_paths must be a list'}), 400
         
-        # Get prompt settings
-        prompt_style = data.get('style', 'descriptive')
+        # Get prompt - support both old style and new JoyCaption parameters
         custom_prompt = data.get('prompt')
-        
+
         if custom_prompt:
             prompt = custom_prompt
-        elif prompt_style in DEFAULT_PROMPTS:
-            prompt = DEFAULT_PROMPTS[prompt_style]
         else:
-            return jsonify({'error': f'Unknown prompt style: {prompt_style}'}), 400
+            # Check for JoyCaption parameters
+            caption_type = data.get('caption_type')
+            caption_length = data.get('caption_length', 'long')
+            extra_options = data.get('extra_options', [])
+            name_input = data.get('name_input', '')
+
+            if caption_type and caption_type in CAPTION_TYPE_MAP:
+                # Use JoyCaption prompt building
+                prompt = build_prompt(caption_type, caption_length, extra_options, name_input)
+            else:
+                # Fall back to old style
+                prompt_style = data.get('style', 'descriptive')
+                if prompt_style in DEFAULT_PROMPTS:
+                    prompt = DEFAULT_PROMPTS[prompt_style]
+                else:
+                    return jsonify({'error': f'Unknown prompt style: {prompt_style}'}), 400
         
         # Generation parameters
         gen_params = {
@@ -441,7 +557,8 @@ def get_available_prompts():
     """Get available prompt styles"""
     return jsonify({
         'prompts': DEFAULT_PROMPTS,
-        'styles': list(DEFAULT_PROMPTS.keys())
+        'styles': list(DEFAULT_PROMPTS.keys()),
+        'joycaption_types': list(CAPTION_TYPE_MAP.keys())
     })
 
 if __name__ == '__main__':

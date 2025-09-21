@@ -10,6 +10,64 @@ import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 
+// JoyCaption constants
+const CAPTION_TYPES = [
+  'Descriptive',
+  'Descriptive (Casual)',
+  'Straightforward',
+  'Stable Diffusion Prompt',
+  'MidJourney',
+  'Danbooru tag list',
+  'e621 tag list',
+  'Rule34 tag list',
+  'Booru-like tag list',
+  'Art Critic',
+  'Product Listing',
+  'Social Media Post'
+];
+
+const CAPTION_LENGTHS = [
+  'any',
+  'very short',
+  'short',
+  'medium-length',
+  'long',
+  'very long',
+  ...Array.from({ length: 25 }, (_, i) => String((i + 2) * 10)) // 20, 30, 40, ..., 260
+];
+
+const NAME_OPTION = "If there is a person/character in the image you must refer to them as {name}.";
+
+const EXTRA_OPTIONS = [
+  NAME_OPTION,
+  "Do NOT include information about people/characters that cannot be changed (like ethnicity, gender, etc), but do still include changeable attributes (like hair style).",
+  "Include information about lighting.",
+  "Include information about camera angle.",
+  "Include information about whether there is a watermark or not.",
+  "Include information about whether there are JPEG artifacts or not.",
+  "If it is a photo you MUST include information about what camera was likely used and details such as aperture, shutter speed, ISO, etc.",
+  "Do NOT include anything sexual; keep it PG.",
+  "Do NOT mention the image's resolution.",
+  "You MUST include information about the subjective aesthetic quality of the image from low to very high.",
+  "Include information on the image's composition style, such as leading lines, rule of thirds, or symmetry.",
+  "Do NOT mention any text that is in the image.",
+  "Specify the depth of field and whether the background is in focus or blurred.",
+  "If applicable, mention the likely use of artificial or natural lighting sources.",
+  "Do NOT use any ambiguous language.",
+  "Include whether the image is sfw, suggestive, or nsfw.",
+  "ONLY describe the most important elements of the image.",
+  "If it is a work of art, do not include the artist's name or the title of the work.",
+  "Identify the image orientation (portrait, landscape, or square) and aspect ratio if obvious.",
+  "Use vulgar slang and profanity, such as (but not limited to) \"fucking,\" \"slut,\" \"cock,\" etc.",
+  "Do NOT use polite euphemisms—lean into blunt, casual phrasing.",
+  "Include information about the ages of any people/characters when applicable.",
+  "Mention whether the image depicts an extreme close-up, close-up, medium close-up, medium shot, cowboy shot, medium wide shot, wide shot, or extreme wide shot.",
+  "Do not mention the mood/feeling/etc of the image.",
+  "Explicitly specify the vantage height (eye-level, low-angle worm's-eye, bird's-eye, drone, rooftop, etc.).",
+  "If there is a watermark, you must mention it.",
+  "Your response will be used by a text-to-image model, so avoid useless meta phrases like \"This image shows…\", \"You are looking at...\", etc."
+];
+
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
   const usableParams = use(params as any) as { datasetName: string };
@@ -19,7 +77,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [isRenaming, setIsRenaming] = useState(false);
 
   // Captioning state
-  const [captionStyle, setCaptionStyle] = useState('descriptive');
+  const [captionStyle, setCaptionStyle] = useState('Descriptive');
   const [customPrompt, setCustomPrompt] = useState('');
   const [isCaptioning, setIsCaptioning] = useState(false);
   const [captionProgress, setCaptionProgress] = useState<{
@@ -38,6 +96,24 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     progress: number;
     current_file?: string;
   } | null>(null);
+
+  // Status messages
+  const [renameStatus, setRenameStatus] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+  const [captionStatus, setCaptionStatus] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  // Advanced captioning options
+  const [captionLength, setCaptionLength] = useState('long');
+  const [personName, setPersonName] = useState('');
+  const [extraOptions, setExtraOptions] = useState<string[]>([]);
+  const [temperature, setTemperature] = useState(0.6);
+  const [topP, setTopP] = useState(0.9);
+  const [maxTokens, setMaxTokens] = useState(512);
 
   // Collapsible sections state
   const [isRenamingExpanded, setIsRenamingExpanded] = useState(false);
@@ -151,28 +227,101 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
 
     setIsCaptioning(true);
+    setCaptionStatus(null); // Clear previous status
     setCaptionProgress({ total: imgList.length, completed: 0 });
 
     try {
-      const response = await apiClient.post('/api/datasets/caption', {
-        datasetName: datasetName,
-        style: captionStyle,
-        prompt: customPrompt.trim() || undefined,
-        overwriteExisting: overwriteExisting,
-        saveToFile: true,
+      // Process images one by one for real-time progress updates
+      const results = [];
+      let successful = 0;
+      let failed = 0;
+      let totalTime = 0;
+
+      for (let i = 0; i < imgList.length; i++) {
+        const img = imgList[i];
+        setCaptionProgress({
+          total: imgList.length,
+          completed: i,
+          current: `Processing ${img.img_path.split('/').pop()}...` // Show just the filename
+        });
+
+        try {
+          const response = await apiClient.post('/api/datasets/caption', {
+            datasetName: datasetName,
+            imagePaths: [img.img_path], // Process single image
+            // Legacy style parameter for backward compatibility
+            style: captionStyle,
+            prompt: customPrompt.trim() || undefined,
+            // New JoyCaption parameters
+            captionType: captionStyle,
+            captionLength: captionLength,
+            extraOptions: extraOptions,
+            nameInput: personName.trim() || undefined,
+            // Generation parameters
+            temperature: temperature,
+            topP: topP,
+            maxNewTokens: maxTokens,
+            // Options
+            overwriteExisting: overwriteExisting,
+            saveToFile: true,
+          });
+
+          if (response.data.success && response.data.results && response.data.results.length > 0) {
+            const result = response.data.results[0];
+            results.push(result);
+            if (result.success) {
+              successful++;
+              totalTime += result.generationTime || 0;
+            } else {
+              failed++;
+            }
+          } else {
+            failed++;
+            results.push({
+              imagePath: img.img_path,
+              success: false,
+              error: response.data.error || 'Unknown error'
+            });
+          }
+        } catch (imageError: any) {
+          console.error(`Error processing ${img.img_path}:`, imageError);
+          failed++;
+          results.push({
+            imagePath: img.img_path,
+            success: false,
+            error: imageError.response?.data?.error || imageError.message || 'Unknown error'
+          });
+        }
+      }
+
+      // Update final progress
+      setCaptionProgress({
+        total: imgList.length,
+        completed: imgList.length,
+        current: 'Captioning completed!'
       });
 
-      if (response.data.success) {
-        const stats = response.data.statistics;
-        alert(`Captioning completed!\nSuccessful: ${stats.successful}\nFailed: ${stats.failed}\nTotal time: ${stats.totalTime.toFixed(1)}s`);
-        // Refresh the image list to show any changes
-        refreshImageList(datasetName);
+      // Show final status
+      if (successful > 0 || failed === 0) {
+        setCaptionStatus({
+          type: 'success',
+          message: `Captioning completed! Successful: ${successful}, Failed: ${failed}, Total time: ${totalTime.toFixed(1)}s`
+        });
       } else {
-        alert('Captioning failed: ' + (response.data.error || 'Unknown error'));
+        setCaptionStatus({
+          type: 'error',
+          message: `Captioning failed! Successful: ${successful}, Failed: ${failed}`
+        });
       }
+
+      // Refresh the image list to show any changes
+      refreshImageList(datasetName);
     } catch (error: any) {
       console.error('Caption error:', error);
-      alert('Failed to caption images: ' + (error.response?.data?.error || error.message));
+      setCaptionStatus({
+        type: 'error',
+        message: 'Failed to caption images: ' + (error.message || 'Unknown error')
+      });
     } finally {
       setIsCaptioning(false);
       setCaptionProgress(null);
@@ -205,6 +354,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     }
 
     setIsRenaming(true);
+    setRenameStatus(null); // Clear previous status
     try {
       const response = await apiClient.post('/api/datasets/rename', {
         datasetName: datasetName,
@@ -213,15 +363,24 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
       if (response.data.success) {
         console.log('Rename successful:', response.data);
+        setRenameStatus({
+          type: 'success',
+          message: `Successfully renamed ${response.data.totalRenamed} files!`
+        });
         // Refresh the image list to show the renamed files
         refreshImageList(datasetName);
-        alert(`Successfully renamed ${response.data.totalRenamed} files`);
       } else {
-        alert('Rename failed: ' + (response.data.error || 'Unknown error'));
+        setRenameStatus({
+          type: 'error',
+          message: 'Rename failed: ' + (response.data.error || 'Unknown error')
+        });
       }
     } catch (error: any) {
       console.error('Rename error:', error);
-      alert('Failed to rename files: ' + (error.response?.data?.error || error.message));
+      setRenameStatus({
+        type: 'error',
+        message: 'Failed to rename files: ' + (error.response?.data?.error || error.message)
+      });
     } finally {
       setIsRenaming(false);
     }
@@ -348,6 +507,28 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 </p>
               </div>
             )}
+
+            {/* Rename Status Message */}
+            {renameStatus && (
+              <div className={`mt-4 p-3 rounded-md flex items-center gap-2 ${
+                renameStatus.type === 'success'
+                  ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+              }`}>
+                {renameStatus.type === 'success' ? (
+                  <LuCheck className="w-5 h-5 flex-shrink-0" />
+                ) : (
+                  <LuX className="w-5 h-5 flex-shrink-0" />
+                )}
+                <span className="text-sm font-medium flex-1">{renameStatus.message}</span>
+                <button
+                  onClick={() => setRenameStatus(null)}
+                  className="text-current hover:opacity-70 transition-opacity"
+                >
+                  <LuX className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -456,34 +637,89 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
                 {captionServiceAvailable === true && (
                   <>
-                    {/* Caption Style Selection */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        Caption Style
-                      </label>
-                      <select
-                        value={captionStyle}
-                        onChange={(e) => setCaptionStyle(e.target.value)}
-                        disabled={isCaptioning || !captionServiceAvailable}
-                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
-                      >
-                        {availableStyles.length > 0 ? (
-                          availableStyles.map(style => (
-                            <option key={style} value={style}>
-                              {style.charAt(0).toUpperCase() + style.slice(1).replace('_', ' ')}
+                    {/* Caption Type Selection */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Caption Type
+                        </label>
+                        <select
+                          value={captionStyle}
+                          onChange={(e) => setCaptionStyle(e.target.value)}
+                          disabled={isCaptioning || !captionServiceAvailable}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
+                        >
+                          {CAPTION_TYPES.map(type => (
+                            <option key={type} value={type}>
+                              {type}
                             </option>
-                          ))
-                        ) : (
-                          <>
-                            <option value="descriptive">Descriptive</option>
-                            <option value="casual">Casual</option>
-                            <option value="detailed">Detailed</option>
-                            <option value="straightforward">Straightforward</option>
-                            <option value="stable_diffusion">Stable Diffusion</option>
-                            <option value="booru">Booru Tags</option>
-                          </>
-                        )}
-                      </select>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Caption Length
+                        </label>
+                        <select
+                          value={captionLength}
+                          onChange={(e) => setCaptionLength(e.target.value)}
+                          disabled={isCaptioning || !captionServiceAvailable}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
+                        >
+                          {CAPTION_LENGTHS.map(length => (
+                            <option key={length} value={length}>
+                              {length}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Person Name Input - Show only when name option is selected */}
+                    {extraOptions.includes(NAME_OPTION) && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Person / Character Name
+                        </label>
+                        <input
+                          type="text"
+                          value={personName}
+                          onChange={(e) => setPersonName(e.target.value)}
+                          disabled={isCaptioning || !captionServiceAvailable}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:cursor-not-allowed"
+                          placeholder="Enter the name to use for people/characters in the image"
+                        />
+                      </div>
+                    )}
+
+                    {/* Extra Options */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                        Extra Options
+                      </label>
+                      <div className="max-h-48 overflow-y-auto border border-gray-300 dark:border-gray-600 rounded-md p-3 bg-white dark:bg-gray-700">
+                        <div className="space-y-2">
+                          {EXTRA_OPTIONS.map((option, index) => (
+                            <label key={index} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={extraOptions.includes(option)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setExtraOptions([...extraOptions, option]);
+                                  } else {
+                                    setExtraOptions(extraOptions.filter(o => o !== option));
+                                  }
+                                }}
+                                disabled={isCaptioning || !captionServiceAvailable}
+                                className="mt-0.5 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 disabled:cursor-not-allowed"
+                              />
+                              <span className="leading-tight">{option}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                     </div>
 
                     {/* Custom Prompt */}
@@ -499,6 +735,71 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                         rows={3}
                         placeholder="Enter a custom prompt to override the selected style..."
                       />
+                    </div>
+
+                    {/* Generation Settings */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+                        Generation Settings
+                      </label>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                            Temperature ({temperature})
+                          </label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.05"
+                            value={temperature}
+                            onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                            disabled={isCaptioning || !captionServiceAvailable}
+                            className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
+                          />
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Higher = more random
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                            Top-p ({topP})
+                          </label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            value={topP}
+                            onChange={(e) => setTopP(parseFloat(e.target.value))}
+                            disabled={isCaptioning || !captionServiceAvailable}
+                            className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
+                          />
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Nucleus sampling
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                            Max Tokens ({maxTokens})
+                          </label>
+                          <input
+                            type="range"
+                            min="1"
+                            max="2048"
+                            step="1"
+                            value={maxTokens}
+                            onChange={(e) => setMaxTokens(parseInt(e.target.value))}
+                            disabled={isCaptioning || !captionServiceAvailable}
+                            className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
+                          />
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Maximum length
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Options */}
@@ -572,6 +873,28 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   Auto-captioning uses JoyCaption to generate descriptive captions for your images.
                   Captions will be saved as .txt files alongside each image.
                 </p>
+              </div>
+            )}
+
+            {/* Caption Status Message */}
+            {captionStatus && (
+              <div className={`mt-4 p-3 rounded-md flex items-center gap-2 ${
+                captionStatus.type === 'success'
+                  ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+              }`}>
+                {captionStatus.type === 'success' ? (
+                  <LuCheck className="w-5 h-5 flex-shrink-0" />
+                ) : (
+                  <LuX className="w-5 h-5 flex-shrink-0" />
+                )}
+                <span className="text-sm font-medium flex-1">{captionStatus.message}</span>
+                <button
+                  onClick={() => setCaptionStatus(null)}
+                  className="text-current hover:opacity-70 transition-opacity"
+                >
+                  <LuX className="w-4 h-4" />
+                </button>
               </div>
             )}
           </div>

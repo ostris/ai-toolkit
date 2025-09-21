@@ -11,6 +11,12 @@ interface CaptionRequest {
   imagePaths?: string[];
   style?: string;
   prompt?: string;
+  // JoyCaption parameters
+  captionType?: string;
+  captionLength?: string;
+  extraOptions?: string[];
+  nameInput?: string;
+  // Generation parameters
   maxNewTokens?: number;
   temperature?: number;
   topP?: number;
@@ -49,16 +55,34 @@ async function checkCaptionService(): Promise<boolean> {
 
 async function captionSingleImage(
   imagePath: string,
-  style: string,
-  prompt?: string,
-  generationParams?: any
+  captionParams: {
+    style?: string;
+    prompt?: string;
+    captionType?: string;
+    captionLength?: string;
+    extraOptions?: string[];
+    nameInput?: string;
+    maxNewTokens?: number;
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+    doSample?: boolean;
+  }
 ): Promise<CaptionResult> {
   try {
     const requestBody = {
       image_path: imagePath,
-      style,
-      prompt,
-      ...generationParams,
+      style: captionParams.style,
+      prompt: captionParams.prompt,
+      caption_type: captionParams.captionType,
+      caption_length: captionParams.captionLength,
+      extra_options: captionParams.extraOptions,
+      name_input: captionParams.nameInput,
+      max_new_tokens: captionParams.maxNewTokens,
+      temperature: captionParams.temperature,
+      top_p: captionParams.topP,
+      top_k: captionParams.topK,
+      do_sample: captionParams.doSample,
     };
 
     const response = await fetch(`${CAPTION_SERVICE_URL}/caption`, {
@@ -94,16 +118,34 @@ async function captionSingleImage(
 
 async function captionBatchImages(
   imagePaths: string[],
-  style: string,
-  prompt?: string,
-  generationParams?: any
+  captionParams: {
+    style?: string;
+    prompt?: string;
+    captionType?: string;
+    captionLength?: string;
+    extraOptions?: string[];
+    nameInput?: string;
+    maxNewTokens?: number;
+    temperature?: number;
+    topP?: number;
+    topK?: number;
+    doSample?: boolean;
+  }
 ): Promise<CaptionResult[]> {
   try {
     const requestBody = {
       image_paths: imagePaths,
-      style,
-      prompt,
-      ...generationParams,
+      style: captionParams.style,
+      prompt: captionParams.prompt,
+      caption_type: captionParams.captionType,
+      caption_length: captionParams.captionLength,
+      extra_options: captionParams.extraOptions,
+      name_input: captionParams.nameInput,
+      max_new_tokens: captionParams.maxNewTokens,
+      temperature: captionParams.temperature,
+      top_p: captionParams.topP,
+      top_k: captionParams.topK,
+      do_sample: captionParams.doSample,
     };
 
     const response = await fetch(`${CAPTION_SERVICE_URL}/batch_caption`, {
@@ -218,35 +260,36 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Prepare generation parameters
-    const generationParams = {
-      max_new_tokens: body.maxNewTokens || 256,
+    // Prepare caption parameters
+    const captionParams = {
+      style: body.style || 'descriptive',
+      prompt: body.prompt,
+      captionType: body.captionType,
+      captionLength: body.captionLength,
+      extraOptions: body.extraOptions,
+      nameInput: body.nameInput,
+      maxNewTokens: body.maxNewTokens || 256,
       temperature: body.temperature || 0.6,
-      top_p: body.topP || 0.9,
-      top_k: body.topK,
-      do_sample: body.doSample !== false,
+      topP: body.topP || 0.9,
+      topK: body.topK,
+      doSample: body.doSample !== false,
     };
 
     // Generate captions
     let results: CaptionResult[];
-    const style = body.style || 'descriptive';
-    
+
     if (imagePaths.length === 1) {
       // Single image
       const result = await captionSingleImage(
         imagePaths[0],
-        style,
-        body.prompt,
-        generationParams
+        captionParams
       );
       results = [result];
     } else {
       // Batch processing
       results = await captionBatchImages(
         imagePaths,
-        style,
-        body.prompt,
-        generationParams
+        captionParams
       );
     }
 
@@ -278,9 +321,19 @@ export async function POST(request: NextRequest) {
         averageTime: successful > 0 ? totalTime / successful : 0,
       },
       settings: {
-        style,
+        style: captionParams.style,
         prompt: body.prompt,
-        generationParams,
+        captionType: captionParams.captionType,
+        captionLength: captionParams.captionLength,
+        extraOptions: captionParams.extraOptions,
+        nameInput: captionParams.nameInput,
+        generationParams: {
+          maxNewTokens: captionParams.maxNewTokens,
+          temperature: captionParams.temperature,
+          topP: captionParams.topP,
+          topK: captionParams.topK,
+          doSample: captionParams.doSample,
+        },
         saveToFile: body.saveToFile !== false,
         overwriteExisting: body.overwriteExisting || false,
       },
