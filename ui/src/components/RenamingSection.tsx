@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { LuEdit, LuChevronDown, LuChevronRight, LuCheck, LuX } from 'react-icons/lu';
+import { LuPencil, LuChevronDown, LuChevronRight, LuCheck, LuX } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { apiClient } from '@/utils/api';
 
@@ -76,7 +76,7 @@ export default function RenamingSection({
         ) : (
           <LuChevronRight className="w-5 h-5 text-gray-500" />
         )}
-        <LuEdit className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+        <LuPencil className="w-5 h-5 text-blue-600 dark:text-blue-400" />
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Renaming</h2>
       </button>
 
