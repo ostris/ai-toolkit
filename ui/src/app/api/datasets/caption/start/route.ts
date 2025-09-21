@@ -4,6 +4,10 @@ import path from 'path';
 
 export async function POST(request: NextRequest) {
   try {
+    // Parse request body to get GPU selection
+    const body = await request.json().catch(() => ({}));
+    const selectedGpu = body.gpu !== undefined ? body.gpu : 0; // Default to GPU 0
+
     // Get the correct path - we're in ui/ directory, need to go up one level
     const projectRoot = path.resolve(process.cwd(), '..');
     const scriptPath = path.join(projectRoot, 'captioning_service', 'start_service.sh');
@@ -29,6 +33,7 @@ export async function POST(request: NextRequest) {
         ...process.env,
         CAPTION_HOST: '127.0.0.1',
         CAPTION_PORT: '5000',
+        CUDA_VISIBLE_DEVICES: selectedGpu.toString(),
       }
     });
 

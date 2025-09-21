@@ -250,11 +250,15 @@ def load_model(model_name: str = "fancyfeast/llama-joycaption-beta-one-hf-llava"
         progress_thread.start()
 
         # The actual model loading - this will download ~10GB+ of files if not cached
-        # Force to use GPU 1 to avoid conflicts with training jobs on GPU 0
+        # When CUDA_VISIBLE_DEVICES is set, the visible GPU becomes GPU 0 in the process
+        import os
+        original_gpu = os.environ.get('CUDA_VISIBLE_DEVICES', '0')
+        logging.info(f"Loading model (CUDA_VISIBLE_DEVICES={original_gpu}, using device 0 in process)")
+
         llava_model = LlavaForConditionalGeneration.from_pretrained(
             model_name,
             torch_dtype=torch.bfloat16,
-            device_map={"": 1}  # Force to GPU 1
+            device_map={"": 0}  # Always use 0 since CUDA_VISIBLE_DEVICES restricts to one GPU
         )
 
         loading_progress['message'] = 'Finalizing model setup...'
@@ -559,6 +563,25 @@ def get_available_prompts():
         'prompts': DEFAULT_PROMPTS,
         'styles': list(DEFAULT_PROMPTS.keys()),
         'joycaption_types': list(CAPTION_TYPE_MAP.keys())
+    })
+
+@app.route('/shutdown', methods=['POST'])
+def shutdown_server():
+    """Shutdown the server gracefully"""
+    logging.info("Shutdown request received")
+
+    def shutdown():
+        import os
+        import signal
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    # Schedule shutdown after response is sent
+    import threading
+    threading.Timer(1.0, shutdown).start()
+
+    return jsonify({
+        'status': 'shutting_down',
+        'message': 'Server is shutting down...'
     })
 
 if __name__ == '__main__':

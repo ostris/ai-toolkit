@@ -46,8 +46,10 @@ export default function RenamingSection({
           type: 'success',
           message: `Successfully renamed ${response.data.totalRenamed} files!`
         });
-        // Notify parent component to refresh
-        onRenameComplete();
+        // Delay the refresh to allow the success message to be visible
+        setTimeout(() => {
+          onRenameComplete();
+        }, 2000); // Show success message for 2 seconds before refreshing
       } else {
         setRenameStatus({
           type: 'error',

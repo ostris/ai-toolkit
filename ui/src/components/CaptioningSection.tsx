@@ -101,10 +101,19 @@ export default function CaptioningSection({
   const [captionServiceAvailable, setCaptionServiceAvailable] = useState<boolean | null>(null);
   const [isStartingService, setIsStartingService] = useState(false);
   const [isServiceLoading, setIsServiceLoading] = useState(false);
+  const [isStoppingService, setIsStoppingService] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState<{
     progress: number;
     message: string;
   } | null>(null);
+
+  // GPU selection state
+  const [availableGpus, setAvailableGpus] = useState<any[]>([]);
+  const [selectedGpu, setSelectedGpu] = useState<number>(() => {
+    // Load from localStorage or default to GPU 0
+    const saved = localStorage.getItem('selectedGpu');
+    return saved ? parseInt(saved) : 0;
+  });
 
   // Captioning state
   const [isCaptioning, setIsCaptioning] = useState(false);
@@ -199,6 +208,7 @@ export default function CaptioningSection({
   // Check caption service availability on component mount
   useEffect(() => {
     checkCaptionService();
+    fetchAvailableGpus();
   }, []);
 
   const checkCaptionService = async () => {
@@ -208,6 +218,22 @@ export default function CaptioningSection({
     } catch (error) {
       setCaptionServiceAvailable(false);
     }
+  };
+
+  const fetchAvailableGpus = async () => {
+    try {
+      const response = await apiClient.get('/api/gpu');
+      if (response.data.hasNvidiaSmi && response.data.gpus) {
+        setAvailableGpus(response.data.gpus);
+      }
+    } catch (error) {
+      console.error('Failed to fetch GPU information:', error);
+    }
+  };
+
+  const handleGpuSelection = (gpu: number) => {
+    setSelectedGpu(gpu);
+    localStorage.setItem('selectedGpu', gpu.toString());
   };
 
   // Save current settings
@@ -275,7 +301,9 @@ export default function CaptioningSection({
     setLoadingProgress(null);
 
     try {
-      const response = await apiClient.post('/api/datasets/caption/start');
+      const response = await apiClient.post('/api/datasets/caption/start', {
+        gpu: selectedGpu
+      });
       if (response.data.success) {
         setIsServiceLoading(true);
         pollProgress();
@@ -300,17 +328,20 @@ export default function CaptioningSection({
         const response = await apiClient.get('/api/datasets/caption/progress');
         const data = response.data;
 
-        if (data.ready) {
+        // The progress data is nested inside response.data.progress
+        const progressData = data.progress || {};
+
+        if (progressData.status === "ready") {
           setLoadingProgress(null);
           setIsServiceLoading(false);
           setCaptionServiceAvailable(true);
           return;
         }
 
-        if (data.progress !== undefined) {
+        if (progressData.progress !== undefined) {
           setLoadingProgress({
-            progress: data.progress,
-            message: data.message || 'Loading model...'
+            progress: progressData.progress,
+            message: progressData.message || 'Loading model...'
           });
         }
 
@@ -338,9 +369,49 @@ export default function CaptioningSection({
     poll();
   };
 
+  const stopCaptionService = async () => {
+    setIsStoppingService(true);
+    try {
+      const response = await apiClient.post('/api/datasets/caption/stop');
+      if (response.data.success) {
+        setCaptionServiceAvailable(false);
+        setLoadingProgress(null);
+        setCaptionStatus({
+          type: 'success',
+          message: 'Caption service stopped successfully'
+        });
+      } else {
+        setCaptionStatus({
+          type: 'error',
+          message: 'Failed to stop caption service: ' + (response.data.error || 'Unknown error')
+        });
+      }
+    } catch (error: any) {
+      console.error('Error stopping caption service:', error);
+      setCaptionStatus({
+        type: 'error',
+        message: 'Failed to stop caption service: ' + (error.response?.data?.error || error.message)
+      });
+    } finally {
+      setIsStoppingService(false);
+    }
+  };
+
   const handleCaption = async () => {
     if (imgList.length === 0) {
-      alert('No images to caption');
+      setCaptionStatus({
+        type: 'error',
+        message: 'No images to caption'
+      });
+      return;
+    }
+
+    // Check if person name is required but not provided
+    if (extraOptions.includes(NAME_OPTION) && !personName.trim()) {
+      setCaptionStatus({
+        type: 'error',
+        message: 'Person/Character name is required when the name option is selected. Please enter a name or uncheck the name option.'
+      });
       return;
     }
 
@@ -412,10 +483,26 @@ export default function CaptioningSection({
         } catch (imageError: any) {
           console.error(`Error processing ${img.img_path}:`, imageError);
           failed++;
+
+          // Extract error message from API response
+          const errorMessage = imageError.response?.data?.error || imageError.message || 'Unknown error';
+
+          // Check for specific error cases and provide helpful messages
+          if (errorMessage.includes('already have captions')) {
+            // This is the common case - show a helpful message
+            setCaptionStatus({
+              type: 'error',
+              message: 'All selected images already have captions. Check "Overwrite existing captions" to regenerate them, or select different images.'
+            });
+            setCaptionProgress(null);
+            setIsCaptioning(false);
+            return; // Stop processing
+          }
+
           results.push({
             imagePath: img.img_path,
             success: false,
-            error: imageError.response?.data?.error || imageError.message || 'Unknown error'
+            error: errorMessage
           });
         }
       }
@@ -444,10 +531,27 @@ export default function CaptioningSection({
       onCaptionComplete();
     } catch (error: any) {
       console.error('Caption error:', error);
-      setCaptionStatus({
-        type: 'error',
-        message: 'Failed to caption images: ' + (error.message || 'Unknown error')
-      });
+
+      // Extract error message from API response
+      const errorMessage = error.response?.data?.error || error.message || 'Unknown error';
+
+      // Check for specific error cases and provide helpful messages
+      if (errorMessage.includes('already have captions')) {
+        setCaptionStatus({
+          type: 'error',
+          message: 'All selected images already have captions. Check "Overwrite existing captions" to regenerate them.'
+        });
+      } else if (errorMessage.includes('Caption service is not available')) {
+        setCaptionStatus({
+          type: 'error',
+          message: 'Caption service is not available. Please start the captioning service first.'
+        });
+      } else {
+        setCaptionStatus({
+          type: 'error',
+          message: 'Failed to caption images: ' + errorMessage
+        });
+      }
     } finally {
       setIsCaptioning(false);
       setCaptionProgress(null);
@@ -483,15 +587,36 @@ export default function CaptioningSection({
 
           {captionServiceAvailable === false && !isStartingService && !isServiceLoading && (
             <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-              <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-2">
+              <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
                 The captioning service is not available. Would you like to start it automatically?
               </p>
+
+              {/* GPU Selection */}
+              {availableGpus.length > 1 && (
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-1">
+                    Select GPU:
+                  </label>
+                  <select
+                    value={selectedGpu}
+                    onChange={(e) => handleGpuSelection(parseInt(e.target.value))}
+                    className="w-full px-3 py-2 text-sm border border-yellow-300 dark:border-yellow-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {availableGpus.map((gpu) => (
+                      <option key={gpu.index} value={gpu.index}>
+                        GPU {gpu.index}: {gpu.name} ({gpu.memory.free}MB free / {gpu.memory.total}MB total)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <Button
                 onClick={startCaptionService}
                 disabled={isStartingService || isServiceLoading}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-md font-medium transition-colors text-sm"
               >
-                Start Captioning Service
+                Start Captioning Service{availableGpus.length > 1 ? ` on GPU ${selectedGpu}` : ''}
               </Button>
             </div>
           )}
@@ -528,6 +653,21 @@ export default function CaptioningSection({
 
           {captionServiceAvailable === true && (
             <>
+              {/* Service Running Status */}
+              <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md mb-4">
+                <div className="flex items-center gap-2">
+                  <LuCheck className="w-4 h-4 text-green-600" />
+                  <p className="text-sm text-green-800 dark:text-green-200">
+                    Captioning service is running{availableGpus.length > 1 ? ` on GPU ${selectedGpu}` : ''}
+                    {availableGpus.length > 1 && availableGpus[selectedGpu] && (
+                      <span className="ml-1 text-green-600 dark:text-green-300">
+                        ({availableGpus[selectedGpu].name})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
               {/* Saved Settings */}
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -804,6 +944,16 @@ export default function CaptioningSection({
                     className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md font-medium transition-colors text-sm"
                   >
                     Retry Connection
+                  </Button>
+                )}
+
+                {captionServiceAvailable === true && !isCaptioning && (
+                  <Button
+                    onClick={stopCaptionService}
+                    disabled={isStoppingService}
+                    className="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-md font-medium transition-colors text-sm"
+                  >
+                    {isStoppingService ? 'Stopping...' : 'Stop Service'}
                   </Button>
                 )}
               </div>
