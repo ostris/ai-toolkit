@@ -190,7 +190,7 @@ class DataLoaderBatchDTO:
                 # find one to use as a base
                 base_control_tensor2 = None
                 for x in self.file_items:
-                    if x.control_tensor2 is not None
+                    if x.control_tensor2 is not None:
                         base_control_tensor2 = x.control_tensor2
                         break
                 control_tensors2 = []
