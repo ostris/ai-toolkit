@@ -1,0 +1,93 @@
+---
+job: "extension"
+config:
+  name: "my_first_qwen_image_edit_plus2509_lora_v3"
+  process:
+    - type: "sd_trainer"
+      training_folder: "/home/ubuntu/ai-toolkit/output"
+      device: "cuda:0"
+      network:
+        type: "lora"
+        linear: 4
+        linear_alpha: 4
+      save:
+        dtype: "float16"
+        save_every: 500
+        max_step_saves_to_keep: 12
+      datasets:
+        - folder_path: "/home/ubuntu/ai-toolkit/datasets/end"
+          control_path: "/home/ubuntu/ai-toolkit/datasets/start"
+          control_path2: "/home/ubuntu/ai-toolkit/datasets/reference"
+          full_size_control_images: true
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          buckets: true
+          cache_latents_to_disk: true
+          keep_native_size: true
+          random_scale: false
+          random_crop: false
+          square_crop: false
+          scale: 0.1
+      train:
+        batch_size: 1
+        unload_text_encoder: false
+        cache_text_embeddings: true
+        steps: 3000
+        gradient_accumulation: 1
+        timestep_type: "weighted"
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: false
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 0.0001
+        dtype: "bf16"
+      model:
+        name_or_path: "Qwen/Qwen-Image-Edit-2509"
+        arch: "qwen_image_edit_plus2509"
+        quantize: true
+        qtype: "qfloat8"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: true
+      sample:
+        sampler: "flowmatch"
+        sample_every: 500
+        width: 1024
+        height: 1024
+        samples:
+          - prompt: "Swap the furniture inside the red bounding box of the Image 1 by the reference furniture of the Image 2"
+            ctrl_img: "/home/ubuntu/ai-toolkit/datasets/start_full/94a31bd5-b0ce-42bc-a12e-a76a676c1314_2_to_1.png"
+            ctrl_img2: "/home/ubuntu/ai-toolkit/datasets/reference_full/94a31bd5-b0ce-42bc-a12e-a76a676c1314_2_to_1.png"
+            width: 1024
+            height: 535
+          # - prompt: "Swap the furniture inside the red bounding box of the Image 1 by the reference furniture of the Image 2"
+          #   width: 796
+          #   height: 1024
+          #   ctrl_img: "/home/ubuntu/ai-toolkit/datasets/start_full/95dabfac-acf1-43cb-a85a-aa795bc52739_1_to_2.png"
+          #   ctrl_img2: "/home/ubuntu/ai-toolkit/datasets/reference_full/95dabfac-acf1-43cb-a85a-aa795bc52739_1_to_2.png"
+          # - prompt: "Swap the furniture inside the red bounding box of the Image 1 by the reference furniture of the Image 2"
+          #   width: 961
+          #   height: 1024
+          #   ctrl_img: "/home/ubuntu/ai-toolkit/datasets/start_full/a3912256-a57f-4254-89df-fd06cdfe1c3c_2_to_1.png"
+          #   ctrl_img2: "/home/ubuntu/ai-toolkit/datasets/reference_full/a3912256-a57f-4254-89df-fd06cdfe1c3c_2_to_1.png"
+          # - prompt: "Swap the furniture inside the red bounding box of the Image 1 by the reference furniture of the Image 2"
+          #   width: 1024
+          #   height: 1024
+          #   ctrl_img: "/home/ubuntu/ai-toolkit/datasets/start_full/a71024fc-89bc-4f57-a1da-50a4b0c4ef3b_2_to_1.png"
+          #   ctrl_img2: "/home/ubuntu/ai-toolkit/datasets/reference_full/a71024fc-89bc-4f57-a1da-50a4b0c4ef3b_2_to_1.png"
+          # - prompt: "Swap the furniture inside the red bounding box of the Image 1 by the reference furniture of the Image 2"
+          #   width: 1024
+          #   height: 489
+          #   ctrl_img: "/home/ubuntu/ai-toolkit/datasets/start_full/a8ddc0e8-be33-4717-9bec-1a99b35593c3_1_to_2.png"
+          #   ctrl_img2: "/home/ubuntu/ai-toolkit/datasets/reference_full/a8ddc0e8-be33-4717-9bec-1a99b35593c3_1_to_2.png"
+        neg: ""
+        seed: 42
+        walk_seed: false
+        guidance_scale: 3
+        sample_steps: 25
+      sqlite_db_path: "./aitk_db.db"
+      performance_log_every: 10
+meta:
+  name: "[name]"
+  version: "1.0"
