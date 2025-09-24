@@ -1,6 +1,6 @@
 import os
 import time
-from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
+from typing import List, Optional, Literal, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
@@ -55,6 +55,8 @@ class SampleItem:
         self.fps: int = kwargs.get('fps', sample_config.fps)
         self.num_frames: int = kwargs.get('num_frames', sample_config.num_frames)
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
+        self.ctrl_img2: Optional[str] = kwargs.get('ctrl_img2', None)
+        self.ctrl_img3: Optional[str] = kwargs.get('ctrl_img3', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
         self.network_multiplier: float = kwargs.get('network_multiplier', sample_config.network_multiplier)
         # convert to a number if it is a string
@@ -478,7 +480,7 @@ class TrainConfig:
         # if it is set explicitly to false, leave it false. 
         if ema_config is not None and ema_config.get('use_ema', False):
             ema_config['use_ema'] = True
-            print(f"Using EMA")
+            print("Using EMA")
         else:
             ema_config = {'use_ema': False}
 
@@ -531,7 +533,25 @@ class TrainConfig:
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal[
+    "sd1",
+    "sd2",
+    "sd3",
+    "sdxl",
+    "pixart",
+    "pixart_sigma",
+    "auraflow",
+    "flux",
+    "flex1",
+    "flex2",
+    "lumina2",
+    "vega",
+    "ssd",
+    "wan21",
+    "qwen_image",
+    "qwen_image_edit",
+    "qwen_image_edit_plus2509",
+]
 
 
 class ModelConfig:
@@ -547,6 +567,9 @@ class ModelConfig:
         self.is_v3: bool = kwargs.get('is_v3', False)
         self.is_flux: bool = kwargs.get('is_flux', False)
         self.is_lumina2: bool = kwargs.get('is_lumina2', False)
+        self.is_qwen_image: bool = kwargs.get('is_qwen_image', False)
+        self.is_qwen_image_edit: bool = kwargs.get('is_qwen_image_edit', False)
+        self.is_qwen_image_edit_plus2509: bool = kwargs.get('is_qwen_image_edit_plus2509', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
         self.use_flux_cfg = kwargs.get('use_flux_cfg', False)
@@ -659,6 +682,12 @@ class ModelConfig:
                 self.is_flux = True
             elif self.arch == 'lumina2':
                 self.is_lumina2 = True
+            elif self.arch == 'qwen_image':
+                self.is_qwen_image = True
+            elif self.arch == 'qwen_image_edit':
+                self.is_qwen_image_edit = True
+            elif self.arch == 'qwen_image_edit_plus2509':
+                self.is_qwen_image_edit_plus2509 = True
             elif self.arch == 'vega':
                 self.is_vega = True
             elif self.arch == 'ssd':
@@ -766,7 +795,7 @@ class SliderConfig:
         self.targets: List[SliderTargetConfig] = []
         targets = [SliderTargetConfig(**target) for target in targets]
         # do permutations if shuffle is true
-        print(f"Building slider targets")
+        print("Building slider targets")
         for target in targets:
             if target.shuffle:
                 target_permutations = get_slider_target_permutations(target, max_permutations=8)
@@ -809,6 +838,7 @@ class DatasetConfig:
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
+        self.keep_native_size: bool = kwargs.get('keep_native_size', False)
         self.scale: float = kwargs.get('scale', 1.0)
         self.buckets: bool = kwargs.get('buckets', True)
         self.bucket_tolerance: int = kwargs.get('bucket_tolerance', 64)
@@ -825,6 +855,12 @@ class DatasetConfig:
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
         if self.control_path == '':
             self.control_path = None
+        self.control_path2: Union[str,List[str]] = kwargs.get('control_path2', None)
+        if self.control_path2 == '':
+            self.control_path2 = None
+        self.control_path3: Union[str,List[str]] = kwargs.get('control_path3', None)
+        if self.control_path3 == '':
+            self.control_path3 = None
         
         # color for transparent reigon of control images with transparency
         self.control_transparent_color: List[int] = kwargs.get('control_transparent_color', [0, 0, 0])
@@ -861,7 +897,7 @@ class DatasetConfig:
         has_augmentations = self.augmentations is not None and len(self.augmentations) > 0
 
         if (len(self.augments) > 0 or has_augmentations) and (self.cache_latents or self.cache_latents_to_disk):
-            print(f"WARNING: Augments are not supported with caching latents. Setting cache_latents to False")
+            print("WARNING: Augments are not supported with caching latents. Setting cache_latents to False")
             self.cache_latents = False
             self.cache_latents_to_disk = False
 
@@ -916,6 +952,14 @@ class DatasetConfig:
         
         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
 
+        if self.keep_native_size:
+            if self.square_crop:
+                raise ValueError("keep_native_size and square_crop cannot be used together")
+            if self.random_crop:
+                raise ValueError("keep_native_size and random_crop cannot be used together")
+            if self.random_scale:
+                raise ValueError("keep_native_size and random_scale cannot be used together")
+
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
     """
@@ -966,6 +1010,8 @@ class GenerateImageConfig:
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
             ctrl_img: Optional[str] = None,  # control image for controlnet
+            ctrl_img2: Optional[str] = None,  # second control image for controlnet
+            ctrl_img3: Optional[str] = None,  # third control image for controlnet
             num_frames: int = 1,
             fps: int = 15,
             ctrl_idx: int = 0
@@ -1000,6 +1046,8 @@ class GenerateImageConfig:
         self.num_frames = num_frames
         self.fps = fps
         self.ctrl_img = ctrl_img
+        self.ctrl_img2 = ctrl_img2
+        self.ctrl_img3 = ctrl_img3
         self.ctrl_idx = ctrl_idx
         
 
@@ -1209,6 +1257,10 @@ class GenerateImageConfig:
                         self.fps = int(content)
                     elif flag == 'ctrl_img':
                         self.ctrl_img = content
+                    elif flag == 'ctrl_img2':
+                        self.ctrl_img2 = content
+                    elif flag == 'ctrl_img3':
+                        self.ctrl_img3 = content
                     elif flag == 'ctrl_idx':
                         self.ctrl_idx = int(content)
 
@@ -1258,7 +1310,7 @@ def validate_configs(
                 raise ValueError("All datasets must have cache_text_embeddings set to True when caching text embeddings is enabled.")
     
     # qwen image edit cannot cache text embeddings
-    if model_config.arch == 'qwen_image_edit':
+    if model_config.arch == 'qwen_image_edit' or model_config.arch == 'qwen_image_edit_plus2509':
         if train_config.unload_text_encoder:
             raise ValueError("Cannot cache unload text encoder with qwen_image_edit model. Control images are encoded with text embeddings. You can cache the text embeddings though")
 

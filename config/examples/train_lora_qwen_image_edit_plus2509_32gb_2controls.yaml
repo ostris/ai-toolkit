@@ -2,7 +2,7 @@
 job: extension
 config:
   # this name will be the folder and filename name
-  name: "my_first_qwen_image_edit_lora_v1"
+  name: "my_first_qwen_image_edit_plus_20lora_v1"
   process:
     - type: 'sd_trainer'
       # root folder to save training sessions/samples/weights
@@ -30,6 +30,8 @@ config:
         # "C:\\path\\to\\images\\folder"
         - folder_path: "/path/to/images/folder"
           control_path: "/path/to/control/images/folder"
+          control_path2: "/path/to/control/images/folder2"
+          # control_path3: "/path/to/control/images/folder3"
           caption_ext: "txt"
           # default_caption: "a person" # if caching text embeddings, if you don't have captions, this will get cached
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
@@ -55,13 +57,15 @@ config:
         dtype: bf16
       model:
         # huggingface model name or path
-        name_or_path: "Qwen/Qwen-Image-Edit"
-        arch: "qwen_image_edit"
+        name_or_path: "Qwen/Qwen-Image-Edit-2509"
+        arch: "qwen_image_edit_plus2509"
         quantize: true
         # qtype_te: "qfloat8" # Default float8 qquantization
         # to use the ARA use the | pipe to point to hf path, or a local path if you have one.
         # 3bit is required for 32GB
-        qtype: "uint3|qwen_image_edit_torchao_uint3.safetensors"
+        #! TODO: Quantize and add this to hf
+        # qtype: "uint3|qwen_image_edit_torchao_uint3.safetensors"
+        qtype: "qfloat8"
         quantize_te: true
         low_vram: true
       sample:
@@ -72,24 +76,36 @@ config:
         samples:
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
+            # ctrl_img3: "/path/to/control3/image.jpg"
+          - prompt: "do the thing to it"
+            ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
+          - prompt: "do the thing to it"
+            ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
+          - prompt: "do the thing to it"
+            ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
+          - prompt: "do the thing to it"
+            ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
           - prompt: "do the thing to it"
             ctrl_img: "/path/to/control/image.jpg"
-          - prompt: "do the thing to it"
-            ctrl_img: "/path/to/control/image.jpg"
-          - prompt: "do the thing to it"
-            ctrl_img: "/path/to/control/image.jpg"
-          - prompt: "do the thing to it"
-            ctrl_img: "/path/to/control/image.jpg"
+            ctrl_img2: "/path/to/control2/image.jpg"
         neg: ""
         seed: 42
         walk_seed: true

@@ -129,24 +129,48 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt=prompt, # it will autoparse the prompt
                     negative_prompt=sample_item.neg,
                     output_path=output_path,
-                    ctrl_img=sample_item.ctrl_img
+                    ctrl_img=sample_item.ctrl_img,
+                    ctrl_img2=getattr(sample_item, "ctrl_img2", None),
+                    ctrl_img3=getattr(sample_item, "ctrl_img3", None),
                 )
                 # see if we need to encode the control images
-                if self.sd.encode_control_in_text_embeddings and gen_img_config.ctrl_img is not None:
-                    ctrl_img = Image.open(gen_img_config.ctrl_img).convert("RGB")
-                    # convert to 0 to 1 tensor
-                    ctrl_img = (
-                        TF.to_tensor(ctrl_img)
-                        .unsqueeze(0)
-                        .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
-                    )
+                if self.sd.encode_control_in_text_embeddings and (
+                    gen_img_config.ctrl_img is not None or
+                    gen_img_config.ctrl_img2 is not None or
+                    gen_img_config.ctrl_img3 is not None
+                ):
+                    control_images = []
+                    if gen_img_config.ctrl_img is not None:
+                        ci1 = Image.open(gen_img_config.ctrl_img).convert("RGB")
+                        ci1 = (
+                            TF.to_tensor(ci1)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        control_images.append(ci1)
+                    if getattr(gen_img_config, 'ctrl_img2', None) is not None:
+                        ci2 = Image.open(gen_img_config.ctrl_img2).convert("RGB")
+                        ci2 = (
+                            TF.to_tensor(ci2)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        control_images.append(ci2)
+                    if getattr(gen_img_config, 'ctrl_img3', None) is not None:
+                        ci3 = Image.open(gen_img_config.ctrl_img3).convert("RGB")
+                        ci3 = (
+                            TF.to_tensor(ci3)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        control_images.append(ci3)
                     positive = self.sd.encode_prompt(
                         gen_img_config.prompt,
-                        control_images=ctrl_img
+                        control_images=control_images if len(control_images) > 1 else (control_images[0] if len(control_images) == 1 else None)
                     ).to('cpu')
                     negative = self.sd.encode_prompt(
                         gen_img_config.negative_prompt,
-                        control_images=ctrl_img
+                        control_images=control_images if len(control_images) > 1 else (control_images[0] if len(control_images) == 1 else None)
                     ).to('cpu')
                 else:
                     positive = self.sd.encode_prompt(gen_img_config.prompt).to('cpu')
@@ -1007,14 +1031,24 @@ class SDTrainer(BaseSDTrainProcess):
                     embeds_to_use = batch.prompt_embeds.clone().to(self.device_torch, dtype=dtype)
                 else:
                     prompt_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.encode_control_in_text_embeddings and (
+                        batch.control_tensor is not None or batch.control_tensor2 is not None or batch.control_tensor3 is not None
+                    ):
+                        control_images_list = []
+                        if batch.control_tensor is not None:
+                            control_images_list.append(batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype))
+                        if batch.control_tensor2 is not None:
+                            control_images_list.append(batch.control_tensor2.to(self.sd.device_torch, dtype=self.sd.torch_dtype))
+                        if batch.control_tensor3 is not None:
+                            control_images_list.append(batch.control_tensor3.to(self.sd.device_torch, dtype=self.sd.torch_dtype))
+                        prompt_kwargs['control_images'] = control_images_list if len(control_images_list) > 1 else control_images_list[0]
                     embeds_to_use = self.sd.encode_prompt(
                         prompt_list,
-                        long_prompts=self.do_long_prompts).to(
-                        self.device_torch,
-                        dtype=dtype,
+                        long_prompts=self.do_long_prompts,
                         **prompt_kwargs
+                    ).to(
+                        self.device_torch,
+                        dtype=dtype
                     ).detach()
 
             # dont use network on this
@@ -1388,8 +1422,17 @@ class SDTrainer(BaseSDTrainProcess):
                 with self.timer('encode_prompt'):
                     unconditional_embeds = None
                     prompt_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.encode_control_in_text_embeddings and (
+                        batch.control_tensor is not None or batch.control_tensor2 is not None or batch.control_tensor3 is not None
+                    ):
+                        control_images_list = []
+                        if batch.control_tensor is not None:
+                            control_images_list.append(batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype))
+                        if batch.control_tensor2 is not None:
+                            control_images_list.append(batch.control_tensor2.to(self.sd.device_torch, dtype=self.sd.torch_dtype))
+                        if batch.control_tensor3 is not None:
+                            control_images_list.append(batch.control_tensor3.to(self.sd.device_torch, dtype=self.sd.torch_dtype))
+                        prompt_kwargs['control_images'] = control_images_list if len(control_images_list) > 1 else control_images_list[0]
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:

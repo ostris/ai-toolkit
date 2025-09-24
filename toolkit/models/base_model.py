@@ -503,13 +503,37 @@ class BaseModel:
                     else:
                         ctrl_img = None
                         # load the control image if out model uses it in text encoding
-                        if gen_config.ctrl_img is not None and self.encode_control_in_text_embeddings:
-                            ctrl_img = Image.open(gen_config.ctrl_img).convert("RGB")
-                            # convert to 0 to 1 tensor
+                        if self.encode_control_in_text_embeddings:
+                            control_images = []
+                            if gen_config.ctrl_img is not None:
+                                ctr_img = Image.open(gen_config.ctrl_img).convert("RGB")
+                                # convert to 0 to 1 tensor
+                                ctrl_img_tensor = (
+                                    TF.to_tensor(ctr_img)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                control_images.append(ctrl_img_tensor)
+                            if gen_config.ctrl_img2 is not None:
+                                ctr_img2 = Image.open(gen_config.ctrl_img2).convert("RGB")
+                                ctrl_img2_tensor = (
+                                    TF.to_tensor(ctr_img2)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                control_images.append(ctrl_img2_tensor)
+                            if gen_config.ctrl_img3 is not None:
+                                ctr_img3 = Image.open(gen_config.ctrl_img3).convert("RGB")
+                                ctrl_img3_tensor = (
+                                    TF.to_tensor(ctr_img3)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                control_images.append(ctrl_img3_tensor)
                             ctrl_img = (
-                                TF.to_tensor(ctrl_img)
-                                .unsqueeze(0)
-                                .to(self.device_torch, dtype=self.torch_dtype)
+                                control_images
+                                if len(control_images) > 1
+                                else (control_images[0] if control_images else None)
                             )
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):

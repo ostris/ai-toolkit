@@ -144,6 +144,8 @@ class DataLoaderBatchDTO:
             self.tensor: Union[torch.Tensor, None] = None
             self.latents: Union[torch.Tensor, None] = None
             self.control_tensor: Union[torch.Tensor, None] = None
+            self.control_tensor2: Union[torch.Tensor, None] = None
+            self.control_tensor3: Union[torch.Tensor, None] = None
             self.clip_image_tensor: Union[torch.Tensor, None] = None
             self.mask_tensor: Union[torch.Tensor, None] = None
             self.unaugmented_tensor: Union[torch.Tensor, None] = None
@@ -161,6 +163,8 @@ class DataLoaderBatchDTO:
             if is_latents_cached:
                 self.latents = torch.cat([x.get_latent().unsqueeze(0) for x in self.file_items])
             self.control_tensor: Union[torch.Tensor, None] = None
+            self.control_tensor2: Union[torch.Tensor, None] = None
+            self.control_tensor3: Union[torch.Tensor, None] = None
             self.prompt_embeds: Union[PromptEmbeds, None] = None
             # if self.file_items[0].control_tensor is not None:
             # if any have a control tensor, we concatenate them
@@ -177,7 +181,45 @@ class DataLoaderBatchDTO:
                         control_tensors.append(torch.zeros_like(base_control_tensor))
                     else:
                         control_tensors.append(x.control_tensor)
-                self.control_tensor = torch.cat([x.unsqueeze(0) for x in control_tensors])
+                self.control_tensor = torch.cat(
+                    [x.unsqueeze(0) for x in control_tensors]
+                )
+
+            # Handle control_tensor2
+            if any([x.control_tensor2 is not None for x in self.file_items]):
+                # find one to use as a base
+                base_control_tensor2 = None
+                for x in self.file_items:
+                    if x.control_tensor2 is not None:
+                        base_control_tensor2 = x.control_tensor2
+                        break
+                control_tensors2 = []
+                for x in self.file_items:
+                    if x.control_tensor2 is None:
+                        control_tensors2.append(torch.zeros_like(base_control_tensor2))
+                    else:
+                        control_tensors2.append(x.control_tensor2)
+                self.control_tensor2 = torch.cat(
+                    [x.unsqueeze(0) for x in control_tensors2]
+                )
+
+            # Handle control_tensor3
+            if any([x.control_tensor3 is not None for x in self.file_items]):
+                # find one to use as a base
+                base_control_tensor3 = None
+                for x in self.file_items:
+                    if x.control_tensor3 is not None:
+                        base_control_tensor3 = x.control_tensor3
+                        break
+                control_tensors3 = []
+                for x in self.file_items:
+                    if x.control_tensor3 is None:
+                        control_tensors3.append(torch.zeros_like(base_control_tensor3))
+                    else:
+                        control_tensors3.append(x.control_tensor3)
+                self.control_tensor3 = torch.cat(
+                    [x.unsqueeze(0) for x in control_tensors3]
+                )
                 
             self.inpaint_tensor: Union[torch.Tensor, None] = None
             if any([x.inpaint_tensor is not None for x in self.file_items]):

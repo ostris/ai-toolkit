@@ -221,6 +221,45 @@ class BucketsMixin:
             if file_item.has_point_of_interest:
                 # Attempt to process the poi if we can. It wont process if the image is smaller than the resolution
                 did_process_poi = file_item.setup_poi_bucket()
+
+            if config.keep_native_size and self.batch_size == 1:
+                #! TODO: Currently always enforce divisibility by 32 for Qwen: 16 VAE * 2 patch
+                if True:
+                    # rescale using config.scale
+                    width = int(width * config.scale)
+                    height = int(height * config.scale)
+                    # bucket_tolerance is 32 for Qwen (it's for the VAE latents)
+                    sc = bucket_tolerance  # already set from sd.get_bucket_divisibility()
+                    new_w = width - (width % sc)
+                    new_h = height - (height % sc)
+                    # guard against degenerate case
+                    if new_w <= 0 or new_h <= 0:
+                        new_w = max(sc, (width // sc) * sc)
+                        new_h = max(sc, (height // sc) * sc)
+                    # center-crop minimally to divisibility
+                    dx = max(0, (width - new_w) // 2)
+                    dy = max(0, (height - new_h) // 2)
+
+                    file_item.scale_to_width = width
+                    file_item.scale_to_height = height
+                    file_item.crop_width = new_w
+                    file_item.crop_height = new_h
+                    file_item.crop_x = dx
+                    file_item.crop_y = dy
+                else:
+                    file_item.scale_to_width = width
+                    file_item.scale_to_height = height
+                    file_item.crop_width = width
+                    file_item.crop_height = height
+                    file_item.crop_x = 0
+                    file_item.crop_y = 0
+
+                bucket_key = f"{width}x{height}"
+                if bucket_key not in self.buckets:
+                    self.buckets[bucket_key] = Bucket(width, height)
+                self.buckets[bucket_key].file_list_idx.append(idx)
+                continue
+            
             if self.dataset_config.square_crop:
                 # we scale first so smallest size matches resolution
                 scale_factor_x = resolution / width
@@ -847,9 +886,19 @@ class ControlFileItemDTOMixin:
     def __init__(self: 'FileItemDTO', *args, **kwargs):
         if hasattr(super(), '__init__'):
             super().__init__(*args, **kwargs)
+        
         self.has_control_image = False
         self.control_path: Union[str, List[str], None] = None
         self.control_tensor: Union[torch.Tensor, None] = None
+
+        self.has_control_image2 = False
+        self.control_path2: Union[str, List[str], None] = None
+        self.control_tensor2: Union[torch.Tensor, None] = None
+
+        self.has_control_image3 = False
+        self.control_path3: Union[str, List[str], None] = None
+        self.control_tensor3: Union[torch.Tensor, None] = None
+
         dataset_config: 'DatasetConfig' = kwargs.get('dataset_config', None)
         self.full_size_control_images = False
         if dataset_config.control_path is not None:
@@ -876,76 +925,129 @@ class ControlFileItemDTOMixin:
                 # only do one
                 self.control_path = self.control_path[0]
 
-    def load_control_image(self: 'FileItemDTO'):
-        control_tensors = []
-        control_path_list = self.control_path
-        if not isinstance(self.control_path, list):
-            control_path_list = [self.control_path]
-        
-        for control_path in control_path_list:
-            try:
-                img = Image.open(control_path)
-                img = exif_transpose(img)
+        if dataset_config.control_path2 is not None:
+            control_path_list = dataset_config.control_path2
+            if not isinstance(control_path_list, list):
+                control_path_list = [control_path_list]
+            self.full_size_control_images = dataset_config.full_size_control_images
+            # we are using control images
+            img_path = kwargs.get('path', None)
+            file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
 
-                if img.mode in ("RGBA", "LA"):
-                    # Create a background with the specified transparent color
-                    transparent_color = tuple(self.dataset_config.control_transparent_color)
-                    background = Image.new("RGB", img.size, transparent_color)
-                    # Paste the image on top using its alpha channel as mask
-                    background.paste(img, mask=img.getchannel("A"))
-                    img = background
-                else:
-                    # Already no alpha channel
-                    img = img.convert("RGB")
-            except Exception as e:
-                print_acc(f"Error: {e}")
-                print_acc(f"Error loading image: {control_path}")
+            found_control_images = []
+            for control_path in control_path_list:
+                for ext in img_ext_list:
+                    if os.path.exists(os.path.join(control_path, file_name_no_ext + ext)):
+                        found_control_images.append(os.path.join(control_path, file_name_no_ext + ext))
+                        self.has_control_image2 = True
+                        break
+            self.control_path2 = found_control_images
+            if len(self.control_path2) == 0:
+                self.control_path2 = None
+            elif len(self.control_path2) == 1:
+                # only do one
+                self.control_path2 = self.control_path2[0]
 
-            if not self.full_size_control_images:
-                # we just scale them to 512x512:
-                w, h = img.size
-                img = img.resize((512, 512), Image.BICUBIC)
-
-            else:
-                w, h = img.size
-                if w > h and self.scale_to_width < self.scale_to_height:
-                    # throw error, they should match
-                    raise ValueError(
-                        f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
-                elif h > w and self.scale_to_height < self.scale_to_width:
-                    # throw error, they should match
-                    raise ValueError(
-                        f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
-
-                if self.flip_x:
-                    # do a flip
-                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if self.flip_y:
-                    # do a flip
-                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
-
-                if self.dataset_config.buckets:
-                    # scale and crop based on file item
-                    img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
-                    # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
-                    # crop
-                    img = img.crop((
-                        self.crop_x,
-                        self.crop_y,
-                        self.crop_x + self.crop_width,
-                        self.crop_y + self.crop_height
-                    ))
-                else:
-                    raise Exception("Control images not supported for non-bucket datasets")
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-            ])
-            if self.aug_replay_spatial_transforms:
-                tensor = self.augment_spatial_control(img, transform=transform)
-            else:
-                tensor = transform(img)
-            control_tensors.append(tensor)
+        if dataset_config.control_path3 is not None:
+            control_path_list = dataset_config.control_path3
+            if not isinstance(control_path_list, list):
+                control_path_list = [control_path_list]
+            self.full_size_control_images = dataset_config.full_size_control_images
+            # we are using control images
+            img_path = kwargs.get('path', None)
+            file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
             
+            found_control_images = []
+            for control_path in control_path_list:
+                for ext in img_ext_list:
+                    if os.path.exists(os.path.join(control_path, file_name_no_ext + ext)):
+                        found_control_images.append(os.path.join(control_path, file_name_no_ext + ext))
+                        self.has_control_image3 = True
+
+    def load_control_image(self: 'FileItemDTO'):
+        # Load primary control image
+        control_tensors = []
+        if self.control_path is not None:
+            control_path_list = self.control_path
+            if not isinstance(self.control_path, list):
+                control_path_list = [self.control_path]
+
+            for control_path in control_path_list:
+                try:
+                    img = Image.open(control_path)
+                    img = exif_transpose(img)
+
+                    if img.mode in ("RGBA", "LA"):
+                        # Create a background with the specified transparent color
+                        transparent_color = tuple(
+                            self.dataset_config.control_transparent_color
+                        )
+                        background = Image.new("RGB", img.size, transparent_color)
+                        # Paste the image on top using its alpha channel as mask
+                        background.paste(img, mask=img.getchannel("A"))
+                        img = background
+                    else:
+                        # Already no alpha channel
+                        img = img.convert("RGB")
+                except Exception as e:
+                    print_acc(f"Error: {e}")
+                    print_acc(f"Error loading image: {control_path}")
+
+                if not self.full_size_control_images:
+                    # we just scale them to 512x512:
+                    w, h = img.size
+                    img = img.resize((512, 512), Image.BICUBIC)
+
+                else:
+                    w, h = img.size
+                    if w > h and self.scale_to_width < self.scale_to_height:
+                        # throw error, they should match
+                        raise ValueError(
+                            f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}"
+                        )
+                    elif h > w and self.scale_to_height < self.scale_to_width:
+                        # throw error, they should match
+                        raise ValueError(
+                            f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}"
+                        )
+
+                    if self.flip_x:
+                        # do a flip
+                        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                    if self.flip_y:
+                        # do a flip
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                    if self.dataset_config.buckets:
+                        # scale and crop based on file item
+                        img = img.resize(
+                            (self.scale_to_width, self.scale_to_height), Image.BICUBIC
+                        )
+                        # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
+                        # crop
+                        img = img.crop(
+                            (
+                                self.crop_x,
+                                self.crop_y,
+                                self.crop_x + self.crop_width,
+                                self.crop_y + self.crop_height,
+                            )
+                        )
+                    else:
+                        raise Exception(
+                            "Control images not supported for non-bucket datasets"
+                        )
+                transform = transforms.Compose(
+                    [
+                        transforms.ToTensor(),
+                    ]
+                )
+                if self.aug_replay_spatial_transforms:
+                    tensor = self.augment_spatial_control(img, transform=transform)
+                else:
+                    tensor = transform(img)
+                control_tensors.append(tensor)
+
         if len(control_tensors) == 0:
             self.control_tensor = None
         elif len(control_tensors) == 1:
@@ -953,8 +1055,160 @@ class ControlFileItemDTOMixin:
         else:
             self.control_tensor = torch.stack(control_tensors, dim=0)
 
+        # Load second control image
+        if self.has_control_image2 and self.control_path2 is not None:
+            control_path2_list = self.control_path2
+            if not isinstance(self.control_path2, list):
+                control_path2_list = [self.control_path2]
+
+            control_tensors2 = []
+            for control_path in control_path2_list:
+                try:
+                    img = Image.open(control_path)
+                    img = exif_transpose(img)
+
+                    if img.mode in ("RGBA", "LA"):
+                        transparent_color = tuple(
+                            self.dataset_config.control_transparent_color
+                        )
+                        background = Image.new("RGB", img.size, transparent_color)
+                        background.paste(img, mask=img.getchannel("A"))
+                        img = background
+                    else:
+                        img = img.convert("RGB")
+                except Exception as e:
+                    print_acc(f"Error: {e}")
+                    print_acc(f"Error loading image: {control_path}")
+
+                if not self.full_size_control_images:
+                    w, h = img.size
+                    img = img.resize((512, 512), Image.BICUBIC)
+                else:
+                    w, h = img.size
+                    if w > h and self.scale_to_width < self.scale_to_height:
+                        raise ValueError(
+                            f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}"
+                        )
+                    elif h > w and self.scale_to_height < self.scale_to_width:
+                        raise ValueError(
+                            f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}"
+                        )
+
+                    if self.flip_x:
+                        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                    if self.flip_y:
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                    if self.dataset_config.buckets:
+                        img = img.resize(
+                            (self.scale_to_width, self.scale_to_height), Image.BICUBIC
+                        )
+                        img = img.crop(
+                            (
+                                self.crop_x,
+                                self.crop_y,
+                                self.crop_x + self.crop_width,
+                                self.crop_y + self.crop_height,
+                            )
+                        )
+                    else:
+                        raise Exception(
+                            "Control images not supported for non-bucket datasets"
+                        )
+
+                transform = transforms.Compose([transforms.ToTensor()])
+                if self.aug_replay_spatial_transforms:
+                    tensor = self.augment_spatial_control(img, transform=transform)
+                else:
+                    tensor = transform(img)
+                control_tensors2.append(tensor)
+
+            if len(control_tensors2) == 0:
+                self.control_tensor2 = None
+            elif len(control_tensors2) == 1:
+                self.control_tensor2 = control_tensors2[0]
+            else:
+                self.control_tensor2 = torch.stack(control_tensors2, dim=0)
+
+        # Load third control image
+        if self.has_control_image3 and self.control_path3 is not None:
+            control_path3_list = self.control_path3
+            if not isinstance(self.control_path3, list):
+                control_path3_list = [self.control_path3]
+
+            control_tensors3 = []
+            for control_path in control_path3_list:
+                try:
+                    img = Image.open(control_path)
+                    img = exif_transpose(img)
+
+                    if img.mode in ("RGBA", "LA"):
+                        transparent_color = tuple(
+                            self.dataset_config.control_transparent_color
+                        )
+                        background = Image.new("RGB", img.size, transparent_color)
+                        background.paste(img, mask=img.getchannel("A"))
+                        img = background
+                    else:
+                        img = img.convert("RGB")
+                except Exception as e:
+                    print_acc(f"Error: {e}")
+                    print_acc(f"Error loading image: {control_path}")
+
+                if not self.full_size_control_images:
+                    w, h = img.size
+                    img = img.resize((512, 512), Image.BICUBIC)
+                else:
+                    w, h = img.size
+                    if w > h and self.scale_to_width < self.scale_to_height:
+                        raise ValueError(
+                            f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}"
+                        )
+                    elif h > w and self.scale_to_height < self.scale_to_width:
+                        raise ValueError(
+                            f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}"
+                        )
+
+                    if self.flip_x:
+                        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                    if self.flip_y:
+                        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                    if self.dataset_config.buckets:
+                        img = img.resize(
+                            (self.scale_to_width, self.scale_to_height), Image.BICUBIC
+                        )
+                        img = img.crop(
+                            (
+                                self.crop_x,
+                                self.crop_y,
+                                self.crop_x + self.crop_width,
+                                self.crop_y + self.crop_height,
+                            )
+                        )
+                    else:
+                        raise Exception(
+                            "Control images not supported for non-bucket datasets"
+                        )
+
+                transform = transforms.Compose([transforms.ToTensor()])
+                if self.aug_replay_spatial_transforms:
+                    tensor = self.augment_spatial_control(img, transform=transform)
+                else:
+                    tensor = transform(img)
+                control_tensors3.append(tensor)
+
+            if len(control_tensors3) == 0:
+                self.control_tensor3 = None
+            elif len(control_tensors3) == 1:
+                self.control_tensor3 = control_tensors3[0]
+            else:
+                self.control_tensor3 = torch.stack(control_tensors3, dim=0)
+
     def cleanup_control(self: 'FileItemDTO'):
         self.control_tensor = None
+        self.control_tensor2 = None
+        self.control_tensor3 = None
 
 
 class ClipImageFileItemDTOMixin:
@@ -1819,9 +2073,14 @@ class TextEmbeddingFileItemDTOMixin:
             ("text_embedding_space_version", self.text_embedding_space_version),
             ("text_embedding_version", self.text_embedding_version),
         ])
-        # if we have a control image, cache the path
-        if self.encode_control_in_text_embeddings and self.control_path is not None:
-            item["control_path"] = self.control_path
+        # if we have control images, cache the paths
+        if self.encode_control_in_text_embeddings:
+            if self.control_path is not None:
+                item["control_path"] = self.control_path
+            if hasattr(self, "control_path2") and self.control_path2 is not None:
+                item["control_path2"] = self.control_path2
+            if hasattr(self, "control_path3") and self.control_path3 is not None:
+                item["control_path3"] = self.control_path3
         return item
 
     def get_text_embedding_path(self: 'FileItemDTO', recalculate=False):
@@ -1882,19 +2141,64 @@ class TextEmbeddingCachingMixin:
                         did_move = True
                         
                     if file_item.encode_control_in_text_embeddings:
-                        if file_item.control_path is None:
-                            raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
-                        # load the control image and feed it into the text encoder
-                        ctrl_img = Image.open(file_item.control_path).convert("RGB")
-                        # convert to 0 to 1 tensor
-                        ctrl_img = (
-                            TF.to_tensor(ctrl_img)
-                            .unsqueeze(0)
-                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        # Collect all control images for multi-image support
+                        control_images = []
+
+                        if file_item.control_path is not None:
+                            ctrl_img = Image.open(file_item.control_path).convert("RGB")
+                            ctrl_img_tensor = (
+                                TF.to_tensor(ctrl_img)
+                                .unsqueeze(0)
+                                .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            )
+                            control_images.append(ctrl_img_tensor)
+
+                        if (
+                            hasattr(file_item, "control_path2")
+                            and file_item.control_path2 is not None
+                        ):
+                            ctrl_img2 = Image.open(file_item.control_path2).convert(
+                                "RGB"
+                            )
+                            ctrl_img2_tensor = (
+                                TF.to_tensor(ctrl_img2)
+                                .unsqueeze(0)
+                                .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            )
+                            control_images.append(ctrl_img2_tensor)
+
+                        if (
+                            hasattr(file_item, "control_path3")
+                            and file_item.control_path3 is not None
+                        ):
+                            ctrl_img3 = Image.open(file_item.control_path3).convert(
+                                "RGB"
+                            )
+                            ctrl_img3_tensor = (
+                                TF.to_tensor(ctrl_img3)
+                                .unsqueeze(0)
+                                .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            )
+                            control_images.append(ctrl_img3_tensor)
+
+                        if not control_images:
+                            raise Exception(
+                                f"Could not find any control images for {file_item.path} which is needed for this model"
+                            )
+
+                        # Use list for multiple images or single image for backward compatibility
+                        ctrl_input = (
+                            control_images
+                            if len(control_images) > 1
+                            else control_images[0]
                         )
-                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(
+                            file_item.caption, control_images=ctrl_input
+                        )
                     else:
-                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
+                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(
+                            file_item.caption
+                        )
                     # save it
                     prompt_embeds.save(text_embedding_path)
                     del prompt_embeds
