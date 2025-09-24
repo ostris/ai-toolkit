@@ -55,6 +55,8 @@ class SampleItem:
         self.fps: int = kwargs.get('fps', sample_config.fps)
         self.num_frames: int = kwargs.get('num_frames', sample_config.num_frames)
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
+        self.ctrl_img2: Optional[str] = kwargs.get('ctrl_img2', None)
+        self.ctrl_img3: Optional[str] = kwargs.get('ctrl_img3', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
         self.network_multiplier: float = kwargs.get('network_multiplier', sample_config.network_multiplier)
         # convert to a number if it is a string
@@ -836,6 +838,7 @@ class DatasetConfig:
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
+        self.keep_native_size: bool = kwargs.get('keep_native_size', False)
         self.scale: float = kwargs.get('scale', 1.0)
         self.buckets: bool = kwargs.get('buckets', True)
         self.bucket_tolerance: int = kwargs.get('bucket_tolerance', 64)
@@ -948,6 +951,14 @@ class DatasetConfig:
         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
         
         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
+
+        if self.keep_native_size:
+            if self.square_crop:
+                raise ValueError("keep_native_size and square_crop cannot be used together")
+            if self.random_crop:
+                raise ValueError("keep_native_size and random_crop cannot be used together")
+            if self.random_scale:
+                raise ValueError("keep_native_size and random_scale cannot be used together")
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
