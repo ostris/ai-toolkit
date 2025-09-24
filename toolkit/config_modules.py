@@ -56,6 +56,11 @@ class SampleItem:
         self.num_frames: int = kwargs.get('num_frames', sample_config.num_frames)
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
+        # for multi control image models
+        self.ctrl_img_1: Optional[str] = kwargs.get('ctrl_img_1', self.ctrl_img)
+        self.ctrl_img_2: Optional[str] = kwargs.get('ctrl_img_2', None)
+        self.ctrl_img_3: Optional[str] = kwargs.get('ctrl_img_3', None)
+        
         self.network_multiplier: float = kwargs.get('network_multiplier', sample_config.network_multiplier)
         # convert to a number if it is a string
         if isinstance(self.network_multiplier, str):
@@ -966,6 +971,9 @@ class GenerateImageConfig:
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
             ctrl_img: Optional[str] = None,  # control image for controlnet
+            ctrl_img_1: Optional[str] = None,  # first control image for multi control model
+            ctrl_img_2: Optional[str] = None,  # second control image for multi control model
+            ctrl_img_3: Optional[str] = None,  # third control image for multi control model
             num_frames: int = 1,
             fps: int = 15,
             ctrl_idx: int = 0
@@ -1002,6 +1010,12 @@ class GenerateImageConfig:
         self.ctrl_img = ctrl_img
         self.ctrl_idx = ctrl_idx
         
+        if ctrl_img_1 is None and ctrl_img is not None:
+            ctrl_img_1 = ctrl_img
+        
+        self.ctrl_img_1 = ctrl_img_1
+        self.ctrl_img_2 = ctrl_img_2
+        self.ctrl_img_3 = ctrl_img_3
 
         # prompt string will override any settings above
         self._process_prompt_string()

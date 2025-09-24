@@ -219,6 +219,10 @@ class StableDiffusion:
         
         # set true for models that encode control image into text embeddings
         self.encode_control_in_text_embeddings = False
+        # control images will come in as a list for encoding some things if true
+        self.has_multiple_control_images = False
+        # do not resize control images
+        self.use_raw_control_images = False
         
     # properties for old arch for backwards compatibility
     @property
