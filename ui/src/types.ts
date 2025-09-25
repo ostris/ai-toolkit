@@ -83,12 +83,15 @@ export interface DatasetConfig {
   cache_latents_to_disk?: boolean;
   resolution: number[];
   controls: string[];
-  control_path: string | null;
+  control_path?: string | null;
   num_frames: number;
   shrink_video_to_frames: boolean;
   do_i2v: boolean;
   flip_x: boolean;
   flip_y: boolean;
+  control_path_1?: string | null;
+  control_path_2?: string | null;
+  control_path_3?: string | null;
 }
 
 export interface EMAConfig {
@@ -155,6 +158,9 @@ export interface SampleItem {
   ctrl_img?: string | null;
   ctrl_idx?: number;
   network_multiplier?: number;
+  ctrl_img_1?: string | null;
+  ctrl_img_2?: string | null;
+  ctrl_img_3?: string | null;
 }
 
 export interface SampleConfig {
