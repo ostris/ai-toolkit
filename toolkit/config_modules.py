@@ -831,6 +831,21 @@ class DatasetConfig:
         if self.control_path == '':
             self.control_path = None
         
+        # handle multi control inputs from the ui. It is just easier to handle it here for a cleaner ui experience
+        control_path_1 = kwargs.get('control_path_1', None)
+        control_path_2 = kwargs.get('control_path_2', None)
+        control_path_3 = kwargs.get('control_path_3', None)
+        
+        if any([control_path_1, control_path_2, control_path_3]):
+            control_paths = []
+            if control_path_1:
+                control_paths.append(control_path_1)
+            if control_path_2:
+                control_paths.append(control_path_2)
+            if control_path_3:
+                control_paths.append(control_path_3)
+            self.control_path = control_paths
+        
         # color for transparent reigon of control images with transparency
         self.control_transparent_color: List[int] = kwargs.get('control_transparent_color', [0, 0, 0])
         # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
