@@ -123,6 +123,7 @@ export interface TrainConfig {
   diff_output_preservation_multiplier: number;
   diff_output_preservation_class: string;
   switch_boundary_every: number;
+  loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
 }
 
 export interface QuantizeKwargsConfig {

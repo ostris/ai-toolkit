@@ -524,13 +524,15 @@ export default function SimpleJob({
                   ]}
                 />
                 <SelectInput
-                  label="Noise Scheduler"
+                  label="Loss Type"
                   className="pt-2"
-                  value={jobConfig.config.process[0].train.noise_scheduler}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.noise_scheduler')}
+                  value={jobConfig.config.process[0].train.loss_type}
+                  onChange={value => setJobConfig(value, 'config.process[0].train.loss_type')}
                   options={[
-                    { value: 'flowmatch', label: 'FlowMatch' },
-                    { value: 'ddpm', label: 'DDPM' },
+                    { value: 'mse', label: 'Mean Squared Error' },
+                    { value: 'mae', label: 'Mean Absolute Error' },
+                    { value: 'wavelet', label: 'Wavelet' },
+                    { value: 'stepped', label: 'Stepped Recovery' },
                   ]}
                 />
               </div>

@@ -630,7 +630,7 @@ class DiffusionFeatureExtractor5(DiffusionFeatureExtractor4):
             stepped_chunks.append(stepped)
 
             # ---- Inverse-Gaussian recovery at the target timestep ----
-            t_01 = (scheduler.sigmas[target_idx] / 1000).to(stepped.device).to(stepped.dtype)
+            t_01 = (scheduler.sigmas[target_idx]).to(stepped.device).to(stepped.dtype)
             original_samples = (stepped - t_01 * noise_i) / (1.0 - t_01)
             x0_pred_chunks.append(original_samples)
 
