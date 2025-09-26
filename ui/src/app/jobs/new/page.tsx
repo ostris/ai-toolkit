@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { defaultJobConfig, defaultDatasetConfig, migrateJobConfig } from './jobConfig';
+import { jobTypeOptions } from './options';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
@@ -139,6 +140,38 @@ export default function TrainingForm() {
                 value={`${gpuIDs}`}
                 onChange={value => setGpuIDs(value)}
                 options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              />
+            </div>
+            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+          </>
+        )}
+        {!showAdvancedView && (
+          <>
+            <div>
+              <SelectInput
+                value={`${jobConfig?.config.process[0].type}`}
+                onChange={value => {
+                  // undo current job type changes
+                  const currentOption = jobTypeOptions.find(
+                    option => option.value === jobConfig?.config.process[0].type,
+                  );
+                  if (currentOption && currentOption.onDeactivate) {
+                    setJobConfig(currentOption.onDeactivate(objectCopy(jobConfig)));
+                  }
+                  const option = jobTypeOptions.find(option => option.value === value);
+                  if (option) {
+                    if (option.onActivate) {
+                      setJobConfig(option.onActivate(objectCopy(jobConfig)));
+                    }
+                    jobTypeOptions.forEach(opt => {
+                      if (opt.value !== option.value && opt.onDeactivate) {
+                        setJobConfig(opt.onDeactivate(objectCopy(jobConfig)));
+                      }
+                    });
+                  }
+                  setJobConfig(value, 'config.process[0].type');
+                }}
+                options={jobTypeOptions}
               />
             </div>
             <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>

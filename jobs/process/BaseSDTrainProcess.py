@@ -156,6 +156,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:
                 dataset = DatasetConfig(**raw_dataset)
+                # handle trigger word per dataset
+                if dataset.trigger_word is None and self.trigger_word is not None:
+                    dataset.trigger_word = self.trigger_word
                 is_caching = dataset.cache_latents or dataset.cache_latents_to_disk
                 if not is_caching:
                     self.is_latents_cached = False
@@ -345,6 +348,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 fps=sample_item.fps,
                 ctrl_img=sample_item.ctrl_img,
                 ctrl_idx=sample_item.ctrl_idx,
+                ctrl_img_1=sample_item.ctrl_img_1,
+                ctrl_img_2=sample_item.ctrl_img_2,
+                ctrl_img_3=sample_item.ctrl_img_3,
                 **extra_args
             ))
 
