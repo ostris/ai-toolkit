@@ -18,10 +18,14 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   }
 
   const trainingFolder = await getTrainingFolder();
-  const jobFolder = path.join(trainingFolder, job.name);
+  const resolvedTrainingFolder = path.resolve(trainingFolder);
+  const jobFolder = path.resolve(resolvedTrainingFolder, job.name);
+  if (!(jobFolder + path.sep).startsWith(resolvedTrainingFolder + path.sep)) {
+    return NextResponse.json({ error: 'Invalid job folder' }, { status: 400 });
+  }
 
   if (!fs.existsSync(jobFolder)) {
-    return NextResponse.json({ files: [] });
+    return NextResponse.json({ files: [], baseCheckpoint: null });
   }
 
   // find all safetensors files in the job folder
@@ -44,5 +48,16 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     };
   });
 
-  return NextResponse.json({ files: fileObjects });
+  // Base checkpoint marker support
+  let baseCheckpoint: string | null = null;
+  const markerPath = path.join(jobFolder, '.base_checkpoint');
+  if (fs.existsSync(markerPath)) {
+    try {
+      baseCheckpoint = path.basename(fs.readFileSync(markerPath, { encoding: 'utf-8' }).trim());
+    } catch (_) {
+      baseCheckpoint = null;
+    }
+  }
+
+  return NextResponse.json({ files: fileObjects, baseCheckpoint });
 }

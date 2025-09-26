@@ -10,6 +10,7 @@ interface FileObject {
 
 export default function useFilesList(jobID: string, reloadInterval: null | number = null) {
   const [files, setFiles] = useState<FileObject[]>([]);
+  const [baseCheckpoint, setBaseCheckpoint] = useState<string | null>(null);
   const didInitialLoadRef = useRef(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'refreshing'>('idle');
 
@@ -27,6 +28,7 @@ export default function useFilesList(jobID: string, reloadInterval: null | numbe
         if (data.files) {
           setFiles(data.files);
         }
+        setBaseCheckpoint(data.baseCheckpoint ?? null);
         setStatus('success');
         didInitialLoadRef.current = true;
       })
@@ -50,5 +52,5 @@ export default function useFilesList(jobID: string, reloadInterval: null | numbe
     }
   }, [jobID]);
 
-  return { files, setFiles, status, refreshFiles };
+  return { files, setFiles, status, refreshFiles, baseCheckpoint };
 }
