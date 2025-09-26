@@ -247,6 +247,9 @@ class QwenImageEditPlusModel(QwenImageModel):
                             control_img, size=(c_height, c_width), mode="bilinear"
                         )
                         
+                        # scale to -1 to 1
+                        control_img = control_img * 2 - 1
+                        
                         control_latent = self.encode_images(
                             control_img,
                             device=self.device_torch,
