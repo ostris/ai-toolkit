@@ -662,6 +662,8 @@ class ModelConfig:
                 self.is_auraflow = True
             elif self.arch == 'flux':
                 self.is_flux = True
+            elif self.arch == 'flux_kontext':
+                self.is_flux = True
             elif self.arch == 'lumina2':
                 self.is_lumina2 = True
             elif self.arch == 'vega':
