@@ -348,6 +348,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 fps=sample_item.fps,
                 ctrl_img=sample_item.ctrl_img,
                 ctrl_idx=sample_item.ctrl_idx,
+                ctrl_img_1=sample_item.ctrl_img_1,
+                ctrl_img_2=sample_item.ctrl_img_2,
+                ctrl_img_3=sample_item.ctrl_img_3,
                 **extra_args
             ))
 

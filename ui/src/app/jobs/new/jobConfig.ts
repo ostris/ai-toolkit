@@ -2,7 +2,6 @@ import { JobConfig, DatasetConfig, SliderConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
-  control_path: null,
   mask_path: null,
   mask_min_value: 0.1,
   default_caption: '',
@@ -91,6 +90,7 @@ export const defaultJobConfig: JobConfig = {
           diff_output_preservation_multiplier: 1.0,
           diff_output_preservation_class: 'person',
           switch_boundary_every: 1,
+          loss_type: 'mse',
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',

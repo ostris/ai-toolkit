@@ -56,7 +56,23 @@ const docs: { [key: string]: ConfigDoc } = {
     description: (
       <>
         The control dataset needs to have files that match the filenames of your training dataset. They should be
+        matching file pairs. These images are fed as control/input images during training. The control images will be 
+        resized to match the training images.
+      </>
+    ),
+  },
+  'datasets.multi_control_paths': {
+    title: 'Multi Control Dataset',
+    description: (
+      <>
+        The control dataset needs to have files that match the filenames of your training dataset. They should be
         matching file pairs. These images are fed as control/input images during training.
+        <br />
+        <br />
+        For multi control datasets, the controls will all be applied in the order they are listed. If the model does not
+        require the images to be the same aspect ratios, such as with Qwen/Qwen-Image-Edit-2509, then the control images
+        do not need to match the aspect size or aspect ratio of the target image and they will be automatically resized to 
+        the ideal resolutions for the model / target images.
       </>
     ),
   },
