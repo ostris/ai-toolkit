@@ -290,11 +290,11 @@ class QwenImageEditPlusModel(QwenImageModel):
             )
 
         noise_pred = self.transformer(
-            hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
-            timestep=timestep / 1000,
+            hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype).detach(),
+            timestep=(timestep / 1000).detach(),
             guidance=None,
-            encoder_hidden_states=enc_hs,
-            encoder_hidden_states_mask=prompt_embeds_mask,
+            encoder_hidden_states=enc_hs.detach(),
+            encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
             txt_seq_lens=txt_seq_lens,
             return_dict=False,
