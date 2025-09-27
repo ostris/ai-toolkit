@@ -377,6 +377,9 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/hidream_i1_full_torchao_uint3.safetensors',
+    },
   },
   {
     name: 'hidream_e1',
