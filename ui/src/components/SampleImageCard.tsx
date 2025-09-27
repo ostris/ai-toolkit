@@ -1,5 +1,4 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { sampleImageModalState } from '@/components/SampleImageModal';
 import { isVideo } from '@/utils/basic';
 
 interface SampleImageCardProps {
@@ -10,6 +9,7 @@ interface SampleImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onClick?: () => void;
 }
 
 const SampleImageCard: React.FC<SampleImageCardProps> = ({
@@ -19,6 +19,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   sampleImages,
   children,
   className = '',
+  onClick = () => {},
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -56,7 +57,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
         ref={cardRef}
         className="relative w-full cursor-pointer"
         style={{ paddingBottom: '100%' }} // Make it square
-        onClick={() => sampleImageModalState.set({ imgPath: imageUrl, numSamples, sampleImages })}
+        onClick={onClick}
       >
         <div className="absolute inset-0 rounded-t-lg shadow-md">
           {isVisible && (

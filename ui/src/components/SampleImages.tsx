@@ -8,6 +8,7 @@ import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
+import SampleImageViewer from './SampleImageViewer';
 
 interface SampleImagesMenuProps {
   job?: Job | null;
@@ -66,15 +67,14 @@ interface SampleImagesProps {
 
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
+  const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
-      if (sampleConfig.prompts) {
-        return sampleConfig.prompts.length;
-      } else {
-        return sampleConfig.samples.length;
-      }
+      const numPrompts = sampleConfig.prompts ? sampleConfig.prompts.length : 0;
+      const numSamples = sampleConfig.samples.length;
+      return Math.max(numPrompts, numSamples, 1);
     }
     return 10;
   }, [job]);
@@ -223,6 +223,14 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
   }, [numSamples]);
 
+  const sampleConfig = useMemo(() => {
+    if (job?.job_config) {
+      const jobConfig = JSON.parse(job.job_config) as JobConfig;
+      return jobConfig.config.process[0].sample;
+    }
+    return null;
+  }, [job]);
+
   return (
     <div>
       <div className="pb-4">
@@ -236,11 +244,19 @@ export default function SampleImages({ job }: SampleImagesProps) {
                 numSamples={numSamples}
                 sampleImages={sampleImages}
                 alt="Sample Image"
+                onClick={() => setSelectedSamplePath(sample)}
               />
             ))}
           </div>
         )}
       </div>
+      <SampleImageViewer
+        imgPath={selectedSamplePath}
+        numSamples={numSamples}
+        sampleImages={sampleImages}
+        onChange={setPath => setSelectedSamplePath(setPath)}
+        sampleConfig={sampleConfig}
+      />
     </div>
   );
 }
