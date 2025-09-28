@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef } from 'react';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
@@ -68,6 +68,7 @@ interface SampleImagesProps {
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
@@ -232,7 +233,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
   }, [job]);
 
   return (
-    <div>
+    <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
         {PageInfoContent}
         {sampleImages && (
@@ -245,6 +246,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
                 sampleImages={sampleImages}
                 alt="Sample Image"
                 onClick={() => setSelectedSamplePath(sample)}
+                observerRoot={containerRef.current}
               />
             ))}
           </div>
