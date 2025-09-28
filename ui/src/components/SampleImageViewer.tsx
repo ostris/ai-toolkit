@@ -123,6 +123,15 @@ export default function SampleImageViewer({ imgPath, numSamples, sampleImages, s
     return controlImageArr;
   }, [sampleItem, imgPath]);
 
+  const seed = useMemo(() => {
+    if (!sampleItem) return '?';
+    if (sampleItem.seed !== undefined) return sampleItem.seed;
+    if (sampleConfig?.walk_seed) {
+      return sampleConfig.seed + imgInfo.promptIdx;
+    }
+    return sampleConfig?.seed ?? '?';
+  }, [sampleItem, sampleConfig]);
+
   // keyboard events while open
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -205,6 +214,9 @@ export default function SampleImageViewer({ imgPath, numSamples, sampleImages, s
                 </div>
                 <div>
                   <span className="text-gray-400">Sample #:</span> {imgInfo.promptIdx + 1}
+                </div>
+                <div>
+                  <span className="text-gray-400">Seed:</span> {seed}
                 </div>
               </div>
             </div>
