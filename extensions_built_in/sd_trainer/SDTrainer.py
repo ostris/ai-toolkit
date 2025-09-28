@@ -108,6 +108,51 @@ class SDTrainer(BaseSDTrainProcess):
         else:
             raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
 
+    def _has_control_images(self, batch: 'DataLoaderBatchDTO') -> bool:
+        return (
+            batch.control_tensor is not None
+            or (batch.control_tensor_list is not None and len(batch.control_tensor_list) > 0)
+        )
+
+    def _prepare_control_images(self, batch: 'DataLoaderBatchDTO'):
+        if not self.sd.encode_control_in_text_embeddings:
+            return None
+
+        if batch.control_tensor_list is not None and len(batch.control_tensor_list) > 0:
+            control_lists = batch.control_tensor_list
+            # filter out any empty entries just in case
+            non_empty_lists = [ctrls for ctrls in control_lists if len(ctrls) > 0]
+            if len(non_empty_lists) == 0:
+                return None
+
+            max_controls = max(len(ctrls) for ctrls in non_empty_lists)
+            control_images = []
+            for ctrl_idx in range(max_controls):
+                batch_tensors = []
+                for ctrls in control_lists:
+                    if len(ctrls) == 0:
+                        raise ValueError("Expected at least one control image per sample")
+                    src_idx = ctrl_idx if ctrl_idx < len(ctrls) else 0
+                    tensor = ctrls[src_idx]
+                    if tensor.dim() == 3:
+                        tensor = tensor.unsqueeze(0)
+                    elif tensor.dim() != 4:
+                        raise ValueError("Unexpected control tensor shape")
+                    batch_tensors.append(tensor)
+                if len(batch_tensors) == 0:
+                    continue
+                stacked = torch.cat(batch_tensors, dim=0).to(
+                    self.sd.device_torch, dtype=self.sd.torch_dtype
+                )
+                control_images.append(stacked)
+
+            return control_images if len(control_images) > 0 else None
+
+        if batch.control_tensor is not None:
+            return batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+
+        return None
+
 
     def before_model_load(self):
         pass
@@ -1059,8 +1104,9 @@ class SDTrainer(BaseSDTrainProcess):
                     embeds_to_use = batch.prompt_embeds.clone().to(self.device_torch, dtype=dtype)
                 else:
                     prompt_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    control_images = self._prepare_control_images(batch)
+                    if control_images is not None:
+                        prompt_kwargs['control_images'] = control_images
                     embeds_to_use = self.sd.encode_prompt(
                         prompt_list,
                         long_prompts=self.do_long_prompts).to(
@@ -1200,7 +1246,7 @@ class SDTrainer(BaseSDTrainProcess):
             if self.train_config.single_item_batching:
                 network_weight_list = network_weight_list + network_weight_list
 
-            has_adapter_img = batch.control_tensor is not None
+            has_adapter_img = self._has_control_images(batch)
             has_clip_image = batch.clip_image_tensor is not None
             has_clip_image_embeds = batch.clip_image_embeds is not None
             # force it to be true if doing regs as we handle those differently
@@ -1243,17 +1289,23 @@ class SDTrainer(BaseSDTrainProcess):
             sigmas = None
             if has_adapter_img and (self.adapter or self.assistant_adapter):
                 with self.timer('get_adapter_images'):
-                    # todo move this to data loader
-                    if batch.control_tensor is not None:
-                        adapter_images = batch.control_tensor.to(self.device_torch, dtype=dtype).detach()
-                        # match in channels
-                        if self.assistant_adapter is not None:
-                            in_channels = self.assistant_adapter.config.in_channels
-                            if adapter_images.shape[1] != in_channels:
-                                # we need to match the channels
-                                adapter_images = adapter_images[:, :in_channels, :, :]
-                    else:
+                    control_images_for_adapter = self._prepare_control_images(batch)
+                    if control_images_for_adapter is None:
                         raise NotImplementedError("Adapter images now must be loaded with dataloader")
+
+                    if isinstance(control_images_for_adapter, list):
+                        if len(control_images_for_adapter) == 0:
+                            raise NotImplementedError("Adapter images now must be loaded with dataloader")
+                        adapter_images = control_images_for_adapter[0]
+                    else:
+                        adapter_images = control_images_for_adapter
+
+                    adapter_images = adapter_images.detach()
+                    # match in channels
+                    if self.assistant_adapter is not None:
+                        in_channels = self.assistant_adapter.config.in_channels
+                        if adapter_images.shape[1] != in_channels:
+                            adapter_images = adapter_images[:, :in_channels, :, :]
 
             clip_images = None
             if has_clip_image:
@@ -1439,9 +1491,10 @@ class SDTrainer(BaseSDTrainProcess):
 
                 with self.timer('encode_prompt'):
                     unconditional_embeds = None
+                    control_images = self._prepare_control_images(batch)
                     prompt_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if control_images is not None:
+                        prompt_kwargs['control_images'] = control_images
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
