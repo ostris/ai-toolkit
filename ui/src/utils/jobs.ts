@@ -50,6 +50,22 @@ export const deleteJob = (jobID: string) => {
   });
 };
 
+export const markJobAsStopped = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/mark_stopped`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job marked as stopped:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error marking job as stopped:', error);
+        reject(error);
+      });
+  });
+};
+
 export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
