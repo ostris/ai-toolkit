@@ -163,6 +163,7 @@ class QwenImageEditPlusModel(QwenImageModel):
             self.pipeline.text_encoder.to(self.device_torch)
 
         if control_images is not None and len(control_images) > 0:
+            print(f"len(control_images) {len(control_images)}")
             for i in range(len(control_images)):
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
