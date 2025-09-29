@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
@@ -8,6 +8,7 @@ import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
+import { FaCaretDown } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
 
 interface SampleImagesMenuProps {
@@ -69,6 +70,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const didFirstScroll = useRef(false);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
@@ -79,6 +81,12 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
     return 10;
   }, [job]);
+
+  const scrollToBottom = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'instant' });
+    }
+  };
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -232,6 +240,16 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return null;
   }, [job]);
 
+  // scroll to bottom on first load of samples
+  useEffect(() => {
+    if (status === 'success' && sampleImages.length > 0 && !didFirstScroll.current) {
+      didFirstScroll.current = true;
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
+  }, [status, sampleImages.length]);
+
   return (
     <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
@@ -259,6 +277,13 @@ export default function SampleImages({ job }: SampleImagesProps) {
         onChange={setPath => setSelectedSamplePath(setPath)}
         sampleConfig={sampleConfig}
       />
+      <div
+        className="fixed bottom-5 right-5 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        onClick={scrollToBottom}
+        title="Scroll to Bottom"
+      >
+        <FaCaretDown className="text-gray-500 dark:text-gray-400" />
+      </div>
     </div>
   );
 }
