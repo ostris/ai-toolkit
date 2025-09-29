@@ -173,6 +173,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:
                 dataset = DatasetConfig(**raw_dataset)
+                # handle trigger word per dataset
+                if dataset.trigger_word is None and self.trigger_word is not None:
+                    dataset.trigger_word = self.trigger_word
                 is_caching = dataset.cache_latents or dataset.cache_latents_to_disk
                 if not is_caching:
                     self.is_latents_cached = False
@@ -280,6 +283,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         self.current_boundary_index = 0
         self.steps_this_boundary = 0
+        self.num_consecutive_oom = 0
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -362,6 +366,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 fps=sample_item.fps,
                 ctrl_img=sample_item.ctrl_img,
                 ctrl_idx=sample_item.ctrl_idx,
+                ctrl_img_1=sample_item.ctrl_img_1,
+                ctrl_img_2=sample_item.ctrl_img_2,
+                ctrl_img_3=sample_item.ctrl_img_3,
                 **extra_args
             ))
 
@@ -1612,6 +1619,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # if it has it
                     if hasattr(te, 'enable_xformers_memory_efficient_attention'):
                         te.enable_xformers_memory_efficient_attention()
+        
+        if self.train_config.attention_backend != 'native':
+            if hasattr(vae, 'set_attention_backend'):
+                vae.set_attention_backend(self.train_config.attention_backend)
+            if hasattr(unet, 'set_attention_backend'):
+                unet.set_attention_backend(self.train_config.attention_backend)
+            if isinstance(text_encoder, list):
+                for te in text_encoder:
+                    if hasattr(te, 'set_attention_backend'):
+                        te.set_attention_backend(self.train_config.attention_backend)
+            else:
+                if hasattr(text_encoder, 'set_attention_backend'):
+                    text_encoder.set_attention_backend(self.train_config.attention_backend)
         if self.train_config.sdp:
             torch.backends.cuda.enable_math_sdp(True)
             torch.backends.cuda.enable_flash_sdp(True)
@@ -1949,15 +1969,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for group in optimizer.param_groups:
                 previous_lrs.append(group['lr'])
 
-            try:
-                print_acc(f"Loading optimizer state from {optimizer_state_file_path}")
-                optimizer_state_dict = torch.load(optimizer_state_file_path, weights_only=True)
-                optimizer.load_state_dict(optimizer_state_dict)
-                del optimizer_state_dict
-                flush()
-            except Exception as e:
-                print_acc(f"Failed to load optimizer state from {optimizer_state_file_path}")
-                print_acc(e)
+            load_optimizer = True
+            if self.network is not None:
+                if self.network.did_change_weights:
+                    # do not load optimizer if the network changed, it will result in
+                    # a double state that will oom.
+                    load_optimizer = False
+
+            if load_optimizer:
+                try:
+                    print_acc(f"Loading optimizer state from {optimizer_state_file_path}")
+                    optimizer_state_dict = torch.load(optimizer_state_file_path, weights_only=True)
+                    optimizer.load_state_dict(optimizer_state_dict)
+                    del optimizer_state_dict
+                    flush()
+                except Exception as e:
+                    print_acc(f"Failed to load optimizer state from {optimizer_state_file_path}")
+                    print_acc(e)
 
             # update the optimizer LR from the params
             print_acc(f"Updating optimizer LR from params")
@@ -2204,17 +2232,31 @@ class BaseSDTrainProcess(BaseTrainProcess):
             ### HOOK ###
             if self.torch_profiler is not None:
                 self.torch_profiler.start()
-            with self.accelerator.accumulate(self.modules_being_trained):
-                try:
+            did_oom = False
+            try:
+                with self.accelerator.accumulate(self.modules_being_trained):
                     loss_dict = self.hook_train_loop(batch_list)
-                except Exception as e:
-                    traceback.print_exc()
-                    #print batch info
-                    print("Batch Items:")
-                    for batch in batch_list:
-                        for item in batch.file_items:
-                            print(f" - {item.path}")
-                    raise e
+            except torch.cuda.OutOfMemoryError:
+                did_oom = True
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    did_oom = True
+                else:
+                    raise  # not an OOM; surface real errors
+            if did_oom:
+                self.num_consecutive_oom += 1
+                if self.num_consecutive_oom > 3:
+                    raise RuntimeError("OOM during training step 3 times in a row, aborting training")
+                optimizer.zero_grad(set_to_none=True)
+                flush()
+                torch.cuda.ipc_collect()
+                # skip this step and keep going
+                print_acc("")
+                print_acc("################################################")
+                print_acc(f"# OOM during training step, skipping batch {self.num_consecutive_oom}/3 #")
+                print_acc("################################################")
+                print_acc("")
+            self.num_consecutive_oom = 0
             if self.torch_profiler is not None:
                 torch.cuda.synchronize()  # Make sure all CUDA ops are done
                 self.torch_profiler.stop()
@@ -2262,6 +2304,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.step_num != self.start_step:
                     if is_sample_step or is_save_step:
                         self.accelerator.wait_for_everyone()
+                        
+                    if is_save_step:
+                        self.accelerator
+                        # print above the progress bar
+                        if self.progress_bar is not None:
+                            self.progress_bar.pause()
+                        print_acc(f"\nSaving at step {self.step_num}")
+                        self.save(self.step_num)
+                        self.ensure_params_requires_grad()
+                        # clear any grads
+                        optimizer.zero_grad()
+                        flush()
+                        flush_next = True
+                        if self.progress_bar is not None:
+                            self.progress_bar.unpause()
+                            
                     if is_sample_step:
                         if self.progress_bar is not None:
                             self.progress_bar.pause()

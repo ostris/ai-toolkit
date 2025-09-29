@@ -4,6 +4,7 @@ from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
+import torchaudio
 
 from toolkit.prompt_utils import PromptEmbeds
 
@@ -65,7 +66,19 @@ class SampleItem:
         self.num_frames: int = kwargs.get('num_frames', sample_config.num_frames)
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
+        # for multi control image models
+        self.ctrl_img_1: Optional[str] = kwargs.get('ctrl_img_1', self.ctrl_img)
+        self.ctrl_img_2: Optional[str] = kwargs.get('ctrl_img_2', None)
+        self.ctrl_img_3: Optional[str] = kwargs.get('ctrl_img_3', None)
+        
         self.network_multiplier: float = kwargs.get('network_multiplier', sample_config.network_multiplier)
+        # convert to a number if it is a string
+        if isinstance(self.network_multiplier, str):
+            try:
+                self.network_multiplier = float(self.network_multiplier)
+            except:
+                print(f"Invalid network_multiplier {self.network_multiplier}, defaulting to 1.0")
+                self.network_multiplier = 1.0
         
 
 class SampleConfig:
@@ -166,6 +179,9 @@ class NetworkConfig:
         elif linear is not None:
             self.rank: int = linear
             self.linear: int = linear
+        else:
+            self.rank: int = 4
+            self.linear: int = 4
         self.conv: int = kwargs.get('conv', None)
         self.alpha: float = kwargs.get('alpha', 1.0)
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
@@ -351,6 +367,8 @@ class TrainConfig:
         self.dtype: str = kwargs.get('dtype', 'fp32')
         self.xformers = kwargs.get('xformers', False)
         self.sdp = kwargs.get('sdp', False)
+        # see https://huggingface.co/docs/diffusers/main/optimization/attention_backends#available-backends for options
+        self.attention_backend: str = kwargs.get('attention_backend', 'native')  # native, flash, _flash_3_hub, _flash_3, 
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', False)
         self.train_refiner = kwargs.get('train_refiner', True)
@@ -812,6 +830,7 @@ class DatasetConfig:
         self.buckets: bool = kwargs.get('buckets', True)
         self.bucket_tolerance: int = kwargs.get('bucket_tolerance', 64)
         self.is_reg: bool = kwargs.get('is_reg', False)
+        self.prior_reg: bool = kwargs.get('prior_reg', False)
         self.network_weight: float = float(kwargs.get('network_weight', 1.0))
         self.token_dropout_rate: float = float(kwargs.get('token_dropout_rate', 0.0))
         self.shuffle_tokens: bool = kwargs.get('shuffle_tokens', False)
@@ -823,11 +842,29 @@ class DatasetConfig:
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
         if self.control_path == '':
             self.control_path = None
+        
+        # handle multi control inputs from the ui. It is just easier to handle it here for a cleaner ui experience
+        control_path_1 = kwargs.get('control_path_1', None)
+        control_path_2 = kwargs.get('control_path_2', None)
+        control_path_3 = kwargs.get('control_path_3', None)
+        
+        if any([control_path_1, control_path_2, control_path_3]):
+            control_paths = []
+            if control_path_1:
+                control_paths.append(control_path_1)
+            if control_path_2:
+                control_paths.append(control_path_2)
+            if control_path_3:
+                control_paths.append(control_path_3)
+            self.control_path = control_paths
+        
+        # color for transparent reigon of control images with transparency
+        self.control_transparent_color: List[int] = kwargs.get('control_transparent_color', [0, 0, 0])
         # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
         # be the part conditioned to be inpainted. The alpha 1 (visible) section will be the part that is ignored
         self.inpaint_path: Union[str,List[str]] = kwargs.get('inpaint_path', None)
         # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
-        self.full_size_control_images: bool = kwargs.get('full_size_control_images', False)
+        self.full_size_control_images: bool = kwargs.get('full_size_control_images', True)
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
                                          None)  # focus mask (black and white. White has higher loss than black)
@@ -961,6 +998,9 @@ class GenerateImageConfig:
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
             ctrl_img: Optional[str] = None,  # control image for controlnet
+            ctrl_img_1: Optional[str] = None,  # first control image for multi control model
+            ctrl_img_2: Optional[str] = None,  # second control image for multi control model
+            ctrl_img_3: Optional[str] = None,  # third control image for multi control model
             num_frames: int = 1,
             fps: int = 15,
             ctrl_idx: int = 0
@@ -997,6 +1037,12 @@ class GenerateImageConfig:
         self.ctrl_img = ctrl_img
         self.ctrl_idx = ctrl_idx
         
+        if ctrl_img_1 is None and ctrl_img is not None:
+            ctrl_img_1 = ctrl_img
+        
+        self.ctrl_img_1 = ctrl_img_1
+        self.ctrl_img_2 = ctrl_img_2
+        self.ctrl_img_3 = ctrl_img_3
 
         # prompt string will override any settings above
         self._process_prompt_string()
@@ -1083,6 +1129,15 @@ class GenerateImageConfig:
                 )
             else:
                 raise ValueError(f"Unsupported video format {self.output_ext}")
+        elif self.output_ext in ['wav', 'mp3']:
+            # save audio file
+            torchaudio.save(
+                self.get_image_path(count, max_count), 
+                image[0].to('cpu'),
+                sample_rate=48000, 
+                format=None, 
+                backend=None
+            )
         else:
             # TODO save image gen header info for A1111 and us, our seeds probably wont match
             image.save(self.get_image_path(count, max_count))

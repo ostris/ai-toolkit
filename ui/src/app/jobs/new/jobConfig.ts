@@ -1,8 +1,7 @@
-import { JobConfig, DatasetConfig } from '@/types';
+import { JobConfig, DatasetConfig, SliderConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
-  control_path: null,
   mask_path: null,
   mask_min_value: 0.1,
   default_caption: '',
@@ -16,6 +15,17 @@ export const defaultDatasetConfig: DatasetConfig = {
   shrink_video_to_frames: true,
   num_frames: 1,
   do_i2v: true,
+  flip_x: false,
+  flip_y: false,
+};
+
+export const defaultSliderConfig: SliderConfig = {
+  guidance_strength: 3.0,
+  anchor_strength: 1.0,
+  positive_prompt: 'person who is happy',
+  negative_prompt: 'person who is sad',
+  target_class: 'person',
+  anchor_class: "",
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -24,7 +34,7 @@ export const defaultJobConfig: JobConfig = {
     name: 'my_first_lora_v1',
     process: [
       {
-        type: 'ui_trainer',
+        type: 'diffusion_trainer',
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
         device: 'cuda',
@@ -73,12 +83,14 @@ export const defaultJobConfig: JobConfig = {
             ema_decay: 0.99,
           },
           skip_first_sample: false,
+          force_first_sample: false,
           disable_sampling: false,
           dtype: 'bf16',
           diff_output_preservation: false,
           diff_output_preservation_multiplier: 1.0,
           diff_output_preservation_class: 'person',
           switch_boundary_every: 1,
+          loss_type: 'mse',
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
@@ -97,7 +109,7 @@ export const defaultJobConfig: JobConfig = {
           height: 1024,
           samples: [
             {
-              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background'
+              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background',
             },
             {
               prompt: 'a woman holding a coffee cup, in a beanie, sitting at a cafe',
@@ -106,7 +118,8 @@ export const defaultJobConfig: JobConfig = {
               prompt: 'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
             },
             {
-              prompt: 'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
+              prompt:
+                'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
             },
             {
               prompt: 'a bear building a log cabin in the snow covered mountains',
@@ -118,13 +131,15 @@ export const defaultJobConfig: JobConfig = {
               prompt: 'hipster man with a beard, building a chair, in a wood shop',
             },
             {
-              prompt: 'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
+              prompt:
+                'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
             },
             {
               prompt: "a man holding a sign that says, 'this is a sign'",
             },
             {
-              prompt: 'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
+              prompt:
+                'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
             },
           ],
           neg: '',
@@ -160,6 +175,11 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     }
     jobConfig.config.process[0].sample.samples = newSamples;
     delete jobConfig.config.process[0].sample.prompts;
+  }
+
+  // upgrade job from ui_trainer to diffusion_trainer
+  if (jobConfig?.config?.process && jobConfig.config.process[0]?.type === 'ui_trainer') {
+    jobConfig.config.process[0].type = 'diffusion_trainer';
   }
   return jobConfig;
 };

@@ -19,9 +19,10 @@ from .pipeline import ChromaPipeline, prepare_latent_image_ids
 from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
-from .src.model import Chroma, chroma_params
+from .src.radiance import Chroma, chroma_params
 from safetensors.torch import load_file, save_file
 from toolkit.metadata import get_meta_for_safetensors
+from toolkit.models.FakeVAE import FakeVAE
 import huggingface_hub
 
 if TYPE_CHECKING:
@@ -62,8 +63,8 @@ class FakeCLIP(torch.nn.Module):
         return torch.zeros(1, 1, 1).to(self.device)
 
 
-class ChromaModel(BaseModel):
-    arch = "chroma"
+class ChromaRadianceModel(BaseModel):
+    arch = "chroma_radiance"
 
     def __init__(
             self,
@@ -135,6 +136,7 @@ class ChromaModel(BaseModel):
                 repo_id=model_path,
                 filename=f"{model_path.split('/')[-1]}.safetensors",
             )
+        
         else:
             # check if the model path is a local file
             if os.path.exists(model_path):
@@ -148,7 +150,10 @@ class ChromaModel(BaseModel):
 
         self.print_and_status_update("Loading transformer")
         
-        chroma_state_dict = load_file(model_path, 'cpu')
+        if model_path.endswith('.pth') or model_path.endswith('.pt'):
+            chroma_state_dict = torch.load(model_path, map_location='cpu', weights_only=True)
+        else:
+            chroma_state_dict = load_file(model_path, 'cpu')
         
         # determine number of double and single blocks
         double_blocks = 0
@@ -216,14 +221,15 @@ class ChromaModel(BaseModel):
         tokenizer = FakeCLIP()
         text_encoder.to(self.device_torch, dtype=dtype)
 
-        self.noise_scheduler = ChromaModel.get_train_scheduler()
-        
+        self.noise_scheduler = ChromaRadianceModel.get_train_scheduler()
+
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            extras_path,
-            subfolder="vae",
-            torch_dtype=dtype
-        )
+        # vae = AutoencoderKL.from_pretrained(
+        #     extras_path,
+        #     subfolder="vae",
+        #     torch_dtype=dtype
+        # )
+        vae = FakeVAE()
         vae = vae.to(self.device_torch, dtype=dtype)
 
         self.print_and_status_update("Making pipe")
@@ -236,6 +242,7 @@ class ChromaModel(BaseModel):
             tokenizer_2=tokenizer_2,
             vae=vae,
             transformer=None,
+            is_radiance=True,
         )
         # for quantization, it works best to do these after making the pipe
         pipe.text_encoder_2 = text_encoder_2
@@ -268,7 +275,7 @@ class ChromaModel(BaseModel):
         self.print_and_status_update("Model Loaded")
 
     def get_generation_pipeline(self):
-        scheduler = ChromaModel.get_train_scheduler()
+        scheduler = ChromaRadianceModel.get_train_scheduler()
         pipeline = ChromaPipeline(
             scheduler=scheduler,
             text_encoder=unwrap_model(self.text_encoder[0]),
@@ -276,7 +283,8 @@ class ChromaModel(BaseModel):
             text_encoder_2=unwrap_model(self.text_encoder[1]),
             tokenizer_2=self.tokenizer[1],
             vae=unwrap_model(self.vae),
-            transformer=unwrap_model(self.transformer)
+            transformer=unwrap_model(self.transformer),
+            is_radiance=True,
         )
 
         # pipeline = pipeline.to(self.device_torch)
@@ -318,36 +326,21 @@ class ChromaModel(BaseModel):
     ):
         with torch.no_grad():
             bs, c, h, w = latent_model_input.shape
-            latent_model_input_packed = rearrange(
-                latent_model_input,
-                "b c (h ph) (w pw) -> b (h w) (c ph pw)",
-                ph=2,
-                pw=2
-            )
             
             img_ids = prepare_latent_image_ids(
-                bs, 
-                h, 
-                w,
-                patch_size=2
-            ).to(device=self.device_torch)
-
-            # img_ids = torch.zeros(h // 2, w // 2, 3)
-            # img_ids[..., 1] = img_ids[..., 1] + torch.arange(h // 2)[:, None]
-            # img_ids[..., 2] = img_ids[..., 2] + torch.arange(w // 2)[None, :]
-            # img_ids = repeat(img_ids, "h w c -> b (h w) c",
-            #                  b=bs).to(self.device_torch)
+                bs, h, w, patch_size=16
+            ).to(self.device_torch)
 
             txt_ids = torch.zeros(
                 bs, text_embeddings.text_embeds.shape[1], 3).to(self.device_torch)
 
         guidance = torch.full([1], 0, device=self.device_torch, dtype=torch.float32)
-        guidance = guidance.expand(latent_model_input_packed.shape[0])
+        guidance = guidance.expand(bs)
 
         cast_dtype = self.unet.dtype
 
         noise_pred = self.unet(
-            img=latent_model_input_packed.to(
+            img=latent_model_input.to(
                 self.device_torch, cast_dtype
             ),
             img_ids=img_ids,
@@ -364,16 +357,6 @@ class ChromaModel(BaseModel):
 
         if isinstance(noise_pred, QTensor):
             noise_pred = noise_pred.dequantize()
-
-        noise_pred = rearrange(
-            noise_pred,
-            "b (h w) (c ph pw) -> b c (h ph) (w pw)",
-            h=latent_model_input.shape[2] // 2,
-            w=latent_model_input.shape[3] // 2,
-            ph=2,
-            pw=2,
-            c=self.vae.config.latent_channels
-        )
         
         return noise_pred
     
@@ -417,11 +400,10 @@ class ChromaModel(BaseModel):
     
     def get_model_has_grad(self):
         # return from a weight if it has grad
-        return self.model.final_layer.linear.weight.requires_grad
-
+        return False
     def get_te_has_grad(self):
         # return from a weight if it has grad
-        return self.text_encoder[1].encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+        return False
     
     def save_model(self, output_path, meta, save_dtype):
         if not output_path.endswith(".safetensors"):
@@ -460,4 +442,4 @@ class ChromaModel(BaseModel):
         return new_sd
     
     def get_base_model_version(self):
-        return "chroma"
+        return "chroma_radiance"

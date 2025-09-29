@@ -68,8 +68,8 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
 TextInput.displayName = 'TextInput';
 
 export interface NumberInputProps extends InputProps {
-  value: number;
-  onChange: (value: number) => void;
+  value: number | null;
+  onChange: (value: number | null) => void;
   min?: number;
   max?: number;
 }
@@ -201,7 +201,7 @@ export const SelectInput = (props: SelectInputProps) => {
 };
 
 export interface CheckboxProps {
-  label?: string;
+  label?: string | React.ReactNode;
   checked: boolean;
   onChange: (checked: boolean) => void;
   className?: string;

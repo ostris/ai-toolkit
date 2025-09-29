@@ -1,1 +1,2 @@
 from .chroma_model import ChromaModel
+from .chroma_radiance_model import ChromaRadianceModel

@@ -1,12 +1,23 @@
-import { GroupedSelectOption, SelectOption } from '@/types';
+import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
+import { defaultSliderConfig } from './jobConfig';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
-type DisableableSections = 'model.quantize' | 'train.timestep_type' | 'network.conv';
+type DisableableSections =
+  | 'model.quantize'
+  | 'train.timestep_type'
+  | 'network.conv'
+  | 'trigger_word'
+  | 'train.diff_output_preservation'
+  | 'train.unload_text_encoder'
+  | 'slider';
+
 type AdditionalSections =
   | 'datasets.control_path'
+  | 'datasets.multi_control_paths'
   | 'datasets.do_i2v'
   | 'sample.ctrl_img'
+  | 'sample.multi_ctrl_imgs'
   | 'datasets.num_frames'
   | 'model.multistage'
   | 'model.low_vram';
@@ -328,6 +339,28 @@ export const modelArchs: ModelArch[] = [
     },
   },
   {
+    name: 'qwen_image_edit_plus',
+    label: 'Qwen-Image-Edit-2509',
+    group: 'instruction',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit-2509', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    disableSections: ['network.conv', 'train.unload_text_encoder'],
+    additionalSections: ['datasets.multi_control_paths', 'sample.multi_ctrl_imgs', 'model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors',
+    },
+  },
+  {
     name: 'hidream',
     label: 'HiDream',
     group: 'image',
@@ -344,6 +377,9 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram'],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/hidream_i1_full_torchao_uint3.safetensors',
+    },
   },
   {
     name: 'hidream_e1',
@@ -439,3 +475,33 @@ export const quantizationOptions: SelectOption[] = [
 ];
 
 export const defaultQtype = 'qfloat8';
+
+interface JobTypeOption extends SelectOption {
+  disableSections?: DisableableSections[];
+  processSections?: string[];
+  onActivate?: (config: JobConfig) => JobConfig;
+  onDeactivate?: (config: JobConfig) => JobConfig;
+}
+
+export const jobTypeOptions: JobTypeOption[] = [
+  {
+    value: 'diffusion_trainer',
+    label: 'LoRA Trainer',
+    disableSections: ['slider'],
+  },
+  {
+    value: 'concept_slider',
+    label: 'Concept Slider',
+    disableSections: ['trigger_word', 'train.diff_output_preservation'],
+    onActivate: (config: JobConfig) => {
+      // add default slider config
+      config.config.process[0].slider = { ...defaultSliderConfig };
+      return config;
+    },
+    onDeactivate: (config: JobConfig) => {
+      // remove slider config
+      delete config.config.process[0].slider;
+      return config;
+    },
+  },
+];

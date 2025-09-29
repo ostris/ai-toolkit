@@ -34,7 +34,7 @@ from diffusers import EMAModel
 import math
 from toolkit.train_tools import precondition_model_outputs_flow_match
 from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
-from toolkit.util.wavelet_loss import wavelet_loss
+from toolkit.util.losses import wavelet_loss, stepped_loss
 import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
 from PIL import Image
@@ -129,17 +129,64 @@ class SDTrainer(BaseSDTrainProcess):
                     prompt=prompt, # it will autoparse the prompt
                     negative_prompt=sample_item.neg,
                     output_path=output_path,
-                    ctrl_img=sample_item.ctrl_img
+                    ctrl_img=sample_item.ctrl_img,
+                    ctrl_img_1=sample_item.ctrl_img_1,
+                    ctrl_img_2=sample_item.ctrl_img_2,
+                    ctrl_img_3=sample_item.ctrl_img_3,
                 )
+                
+                has_control_images = False
+                if gen_img_config.ctrl_img is not None or gen_img_config.ctrl_img_1 is not None or gen_img_config.ctrl_img_2 is not None or gen_img_config.ctrl_img_3 is not None:
+                    has_control_images = True
                 # see if we need to encode the control images
-                if self.sd.encode_control_in_text_embeddings and gen_img_config.ctrl_img is not None:
-                    ctrl_img = Image.open(gen_img_config.ctrl_img).convert("RGB")
-                    # convert to 0 to 1 tensor
-                    ctrl_img = (
-                        TF.to_tensor(ctrl_img)
-                        .unsqueeze(0)
-                        .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
-                    )
+                if self.sd.encode_control_in_text_embeddings and has_control_images:
+                    
+                    ctrl_img_list = []
+                    
+                    if gen_img_config.ctrl_img is not None:
+                        ctrl_img = Image.open(gen_img_config.ctrl_img).convert("RGB")
+                        # convert to 0 to 1 tensor
+                        ctrl_img = (
+                            TF.to_tensor(ctrl_img)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        ctrl_img_list.append(ctrl_img)
+                    
+                    if gen_img_config.ctrl_img_1 is not None:
+                        ctrl_img_1 = Image.open(gen_img_config.ctrl_img_1).convert("RGB")
+                        # convert to 0 to 1 tensor
+                        ctrl_img_1 = (
+                            TF.to_tensor(ctrl_img_1)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        ctrl_img_list.append(ctrl_img_1)
+                    if gen_img_config.ctrl_img_2 is not None:
+                        ctrl_img_2 = Image.open(gen_img_config.ctrl_img_2).convert("RGB")
+                        # convert to 0 to 1 tensor
+                        ctrl_img_2 = (
+                            TF.to_tensor(ctrl_img_2)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        ctrl_img_list.append(ctrl_img_2)
+                    if gen_img_config.ctrl_img_3 is not None:
+                        ctrl_img_3 = Image.open(gen_img_config.ctrl_img_3).convert("RGB")
+                        # convert to 0 to 1 tensor
+                        ctrl_img_3 = (
+                            TF.to_tensor(ctrl_img_3)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        ctrl_img_list.append(ctrl_img_3)
+                    
+                    if self.sd.has_multiple_control_images:
+                        ctrl_img = ctrl_img_list
+                    else:
+                        ctrl_img = ctrl_img_list[0] if len(ctrl_img_list) > 0 else None
+                    
+                    
                     positive = self.sd.encode_prompt(
                         gen_img_config.prompt,
                         control_images=ctrl_img
@@ -202,6 +249,9 @@ class SDTrainer(BaseSDTrainProcess):
             if self.sd.encode_control_in_text_embeddings:
                 # just do a blank image for unconditionals
                 control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
+                if self.sd.has_multiple_control_images:
+                    control_image = [control_image]
+                
                 kwargs['control_images'] = control_image
             self.unconditional_embeds = self.sd.encode_prompt(
                 [self.train_config.unconditional_prompt],
@@ -272,6 +322,8 @@ class SDTrainer(BaseSDTrainProcess):
                 if self.sd.encode_control_in_text_embeddings:
                     # just do a blank image for unconditionals
                     control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.has_multiple_control_images:
+                        control_image = [control_image]
                     encode_kwargs['control_images'] = control_image
                 self.cached_blank_embeds = self.sd.encode_prompt("", **encode_kwargs)
                 if self.trigger_word is not None:
@@ -305,8 +357,11 @@ class SDTrainer(BaseSDTrainProcess):
                 
             # enable gradient checkpointing on the vae
             if vae is not None and self.train_config.gradient_checkpointing:
-                vae.enable_gradient_checkpointing()
-                vae.train()
+                try:
+                    vae.enable_gradient_checkpointing()
+                    vae.train()
+                except:
+                    pass
 
 
     def process_output_for_turbo(self, pred, noisy_latents, timesteps, noise, batch):
@@ -574,7 +629,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version == 3 or self.dfe.version == 4:
+            elif self.dfe.version in [3, 4, 5]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
@@ -676,6 +731,10 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
             elif self.train_config.loss_type == "wavelet":
                 loss = wavelet_loss(pred, batch.latents, noise)
+            elif self.train_config.loss_type == "stepped":
+                loss = stepped_loss(pred, batch.latents, noise, noisy_latents, timesteps, self.sd.noise_scheduler)
+                # the way this loss works, it is low, increase it to match predictable LR effects
+                loss = loss * 10.0
             else:
                 loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
                 
@@ -1150,6 +1209,11 @@ class SDTrainer(BaseSDTrainProcess):
                 if self._clip_image_embeds_unconditional is not None:
                     has_clip_image_embeds = True  # we are caching embeds, handle that differently
                     has_clip_image = False
+
+            # do prior pred if prior regularization batch
+            do_reg_prior = False
+            if any([batch.file_items[idx].prior_reg for idx in range(len(batch.file_items))]):
+                do_reg_prior = True
 
             if self.adapter is not None and isinstance(self.adapter, IPAdapter) and not has_clip_image and has_adapter_img:
                 raise ValueError(
@@ -1644,11 +1708,6 @@ class SDTrainer(BaseSDTrainProcess):
                         self.adapter.set_reference_images(None)
 
                 prior_pred = None
-
-                do_reg_prior = False
-                # if is_reg and (self.network is not None or self.adapter is not None):
-                #     # we are doing a reg image and we have a network or adapter
-                #     do_reg_prior = True
 
                 do_inverted_masked_prior = False
                 if self.train_config.inverted_mask_prior and batch.mask_tensor is not None:
