@@ -50,6 +50,7 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       '.svg': 'image/svg+xml',
       '.bmp': 'image/bmp',
       '.safetensors': 'application/octet-stream',
+      '.zip': 'application/zip',
       // Videos
       '.mp4': 'video/mp4',
       '.avi': 'video/x-msvideo',

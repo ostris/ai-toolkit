@@ -56,7 +56,23 @@ const docs: { [key: string]: ConfigDoc } = {
     description: (
       <>
         The control dataset needs to have files that match the filenames of your training dataset. They should be
+        matching file pairs. These images are fed as control/input images during training. The control images will be 
+        resized to match the training images.
+      </>
+    ),
+  },
+  'datasets.multi_control_paths': {
+    title: 'Multi Control Dataset',
+    description: (
+      <>
+        The control dataset needs to have files that match the filenames of your training dataset. They should be
         matching file pairs. These images are fed as control/input images during training.
+        <br />
+        <br />
+        For multi control datasets, the controls will all be applied in the order they are listed. If the model does not
+        require the images to be the same aspect ratios, such as with Qwen/Qwen-Image-Edit-2509, then the control images
+        do not need to match the aspect size or aspect ratio of the target image and they will be automatically resized to 
+        the ideal resolutions for the model / target images.
       </>
     ),
   },
@@ -87,6 +103,20 @@ const docs: { [key: string]: ConfigDoc } = {
         For video models that can handle both I2V (Image to Video) and T2V (Text to Video), this option sets this
         dataset to be trained as an I2V dataset. This means that the first frame will be extracted from the video and
         used as the start image for the video. If this option is not set, the dataset will be treated as a T2V dataset.
+      </>
+    ),
+  },
+  'datasets.flip': {
+    title: 'Flip X and Flip Y',
+    description: (
+      <>
+        You can augment your dataset on the fly by flipping the x (horizontal) and/or y (vertical) axis. Flipping a single axis will effectively double your dataset.
+        It will result it training on normal images, and the flipped versions of the images. This can be very helpful, but keep in mind it can also
+        be destructive. There is no reason to train people upside down, and flipping a face can confuse the model as a person's right side does not
+        look identical to their left side. For text, obviously flipping text is not a good idea.
+        <br />
+        <br />
+        Control images for a dataset will also be flipped to match the images, so they will always match on the pixel level.
       </>
     ),
   },
@@ -138,6 +168,17 @@ const docs: { [key: string]: ConfigDoc } = {
         <br />
         The swap happens at the batch level, meaning it will swap between a gradient accumulation steps. To train both
         stages in a single step, set them to switch every 1 step and set gradient accumulation to 2.
+      </>
+    ),
+  },
+  'train.force_first_sample': {
+    title: 'Force First Sample',
+    description: (
+      <>
+        This option will force the trainer to generate samples when it starts. The trainer will normally only generate a first sample
+        when nothing has been trained yet, but will not do a first sample when resuming from an existing checkpoint. This option
+        forces a first sample every time the trainer is started. This can be useful if you have changed sample prompts and want to see
+        the new prompts right away.
       </>
     ),
   },

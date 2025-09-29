@@ -287,45 +287,12 @@ You will instantiate a UI that will let you upload your images, caption them, tr
 
 
 ## Training in RunPod
-Example RunPod template: **runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04**
-> You need a minimum of 24GB VRAM, pick a GPU by your preference.
+If you would like to use Runpod, but have not signed up yet, please consider using [my Runpod affiliate link](https://runpod.io?ref=h0y9jyr2) to help support this project.
 
-#### Example config ($0.5/hr):
-- 1x A40 (48 GB VRAM)
-- 19 vCPU 100 GB RAM
 
-#### Custom overrides (you need some storage to clone FLUX.1, store datasets, store trained models and samples):
-- ~120 GB Disk
-- ~120 GB Pod Volume
-- Start Jupyter Notebook
+I maintain an official Runpod Pod template here which can be accessed [here](https://console.runpod.io/deploy?template=0fqzfjy6f3&ref=h0y9jyr2).
 
-### 1. Setup
-```
-git clone https://github.com/ostris/ai-toolkit.git
-cd ai-toolkit
-git submodule update --init --recursive
-python -m venv venv
-source venv/bin/activate
-pip install torch
-pip install -r requirements.txt
-pip install --upgrade accelerate transformers diffusers huggingface_hub #Optional, run it if you run into issues
-```
-### 2. Upload your dataset
-- Create a new folder in the root, name it `dataset` or whatever you like.
-- Drag and drop your .jpg, .jpeg, or .png images and .txt files inside the newly created dataset folder.
-
-### 3. Login into Hugging Face with an Access Token
-- Get a READ token from [here](https://huggingface.co/settings/tokens) and request access to Flux.1-dev model from [here](https://huggingface.co/black-forest-labs/FLUX.1-dev).
-- Run ```huggingface-cli login``` and paste your token.
-
-### 4. Training
-- Copy an example config file located at ```config/examples``` to the config folder and rename it to ```whatever_you_want.yml```.
-- Edit the config following the comments in the file.
-- Change ```folder_path: "/path/to/images/folder"``` to your dataset path like ```folder_path: "/workspace/ai-toolkit/your-dataset"```.
-- Run the file: ```python run.py config/whatever_you_want.yml```.
-
-### Screenshot from RunPod
-<img width="1728" alt="RunPod Training Screenshot" src="https://github.com/user-attachments/assets/53a1b8ef-92fa-4481-81a7-bde45a14a7b5">
+I have also created a short video showing how to get started using AI Toolkit with Runpod [here](https://youtu.be/HBNeS-F6Zz8).
 
 ## Training in Modal
 

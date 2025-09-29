@@ -1,27 +1,47 @@
 'use client';
 
-import { useMemo, useState, use } from 'react';
+import { useState, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
-import { startJob, stopJob } from '@/utils/jobs';
-import SampleImages from '@/components/SampleImages';
+import SampleImages, {SampleImagesMenu} from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
-import { JobConfig } from '@/types';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
+import JobConfigViewer from '@/components/JobConfigViewer';
+import { Job } from '@prisma/client';
 
-type PageKey = 'overview' | 'samples';
+type PageKey = 'overview' | 'samples' | 'config';
 
 interface Page {
   name: string;
   value: PageKey;
+  component: React.ComponentType<{ job: Job }>;
+  menuItem?: React.ComponentType<{ job?: Job | null }> | null;
+  mainCss?: string;
 }
 
 const pages: Page[] = [
-  { name: 'Overview', value: 'overview' },
-  { name: 'Samples', value: 'samples' },
+  {
+    name: 'Overview',
+    value: 'overview',
+    component: JobOverview,
+    mainCss: 'pt-24',
+  },
+  {
+    name: 'Samples',
+    value: 'samples',
+    component: SampleImages,
+    menuItem: SampleImagesMenu,
+    mainCss: 'pt-24',
+  },
+  {
+    name: 'Config File',
+    value: 'config',
+    component: JobConfigViewer,
+    mainCss: 'pt-[80px] px-0 pb-0',
+  },
 ];
 
 export default function JobPage({ params }: { params: { jobID: string } }) {
@@ -29,6 +49,8 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
+
+  const page = pages.find(p => p.value === pageKey);
 
   return (
     <>
@@ -54,13 +76,15 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           />
         )}
       </TopBar>
-      <MainContent className="pt-24">
+      <MainContent className={pages.find(page => page.value === pageKey)?.mainCss}>
         {status === 'loading' && job == null && <p>Loading...</p>}
         {status === 'error' && job == null && <p>Error fetching job</p>}
         {job && (
           <>
-            {pageKey === 'overview' && <JobOverview job={job} />}
-            {pageKey === 'samples' && <SampleImages job={job} />}
+            {pages.map(page => {
+              const Component = page.component;
+              return page.value === pageKey ? <Component key={page.value} job={job} /> : null;
+            })}
           </>
         )}
       </MainContent>
@@ -74,6 +98,15 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             {page.name}
           </Button>
         ))}
+        {
+          page?.menuItem && (
+            <>
+            <div className='flex-grow'>
+            </div>
+              <page.menuItem job={job} />
+            </>
+          )
+        }
       </div>
     </>
   );

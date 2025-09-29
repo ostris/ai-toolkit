@@ -12,6 +12,10 @@ from .layers import (
     timestep_embedding,
     Approximator,
     distribute_modulations,
+    NerfEmbedder,
+    NerfFinalLayer,
+    NerfFinalLayerConv,
+    NerfGLUBlock
 )
 
 
@@ -31,11 +35,16 @@ class ChromaParams:
     approximator_in_dim: int
     approximator_depth: int
     approximator_hidden_size: int
+    patch_size: int
+    nerf_hidden_size: int
+    nerf_mlp_ratio: int
+    nerf_depth: int
+    nerf_max_freqs: int
     _use_compiled: bool
 
 
 chroma_params = ChromaParams(
-    in_channels=64,
+    in_channels=3,
     context_in_dim=4096,
     hidden_size=3072,
     mlp_ratio=4.0,
@@ -49,6 +58,11 @@ chroma_params = ChromaParams(
     approximator_in_dim=64,
     approximator_depth=5,
     approximator_hidden_size=5120,
+    patch_size=16,
+    nerf_hidden_size=64,
+    nerf_mlp_ratio=4,
+    nerf_depth=4,
+    nerf_max_freqs=8,
     _use_compiled=False,
 )
 
@@ -111,8 +125,17 @@ class Chroma(nn.Module):
         self.pe_embedder = EmbedND(
             dim=pe_dim, theta=params.theta, axes_dim=params.axes_dim
         )
-        self.img_in = nn.Linear(self.in_channels, self.hidden_size, bias=True)
-
+        # self.img_in = nn.Linear(self.in_channels, self.hidden_size, bias=True)
+        # patchify ops
+        self.img_in_patch = nn.Conv2d(
+            params.in_channels,
+            params.hidden_size,
+            kernel_size=params.patch_size,
+            stride=params.patch_size,
+            bias=True
+        )
+        nn.init.zeros_(self.img_in_patch.weight)
+        nn.init.zeros_(self.img_in_patch.bias)
         # TODO: need proper mapping for this approximator output!
         # currently the mapping is hardcoded in distribute_modulations function
         self.distilled_guidance_layer = Approximator(
@@ -148,13 +171,38 @@ class Chroma(nn.Module):
             ]
         )
 
-        self.final_layer = LastLayer(
-            self.hidden_size,
-            1,
-            self.out_channels,
-            use_compiled=params._use_compiled,
+        # self.final_layer = LastLayer(
+        #     self.hidden_size,
+        #     1,
+        #     self.out_channels,
+        #     use_compiled=params._use_compiled,
+        # )
+
+        # pixel channel concat with DCT 
+        self.nerf_image_embedder = NerfEmbedder(
+            in_channels=params.in_channels,
+            hidden_size_input=params.nerf_hidden_size,
+            max_freqs=params.nerf_max_freqs
         )
 
+        self.nerf_blocks = nn.ModuleList([
+            NerfGLUBlock(
+                hidden_size_s=params.hidden_size,
+                hidden_size_x=params.nerf_hidden_size,
+                mlp_ratio=params.nerf_mlp_ratio,
+                use_compiled=params._use_compiled
+            ) for _ in range(params.nerf_depth)
+        ])
+        # self.nerf_final_layer = NerfFinalLayer(
+        #     params.nerf_hidden_size,
+        #     out_channels=params.in_channels,
+        #     use_compiled=params._use_compiled
+        # )
+        self.nerf_final_layer_conv = NerfFinalLayerConv(
+            params.nerf_hidden_size,
+            out_channels=params.in_channels,
+            use_compiled=params._use_compiled
+        )
         # TODO: move this hardcoded value to config
         # single layer has 3 modulation vectors
         # double layer has 6 modulation vectors for each expert
@@ -169,7 +217,7 @@ class Chroma(nn.Module):
             persistent=False,
         )
         self.approximator_in_dim = params.approximator_in_dim
-    
+
     @property
     def device(self):
         # Get the device of the module (assumes all parameters are on the same device)
@@ -189,11 +237,24 @@ class Chroma(nn.Module):
         guidance: Tensor,
         attn_padding: int = 1,
     ) -> Tensor:
-        if img.ndim != 3 or txt.ndim != 3:
-            raise ValueError("Input img and txt tensors must have 3 dimensions.")
+        if img.ndim != 4:
+            raise ValueError("Input img tensor must be in [B, C, H, W] format.")
+        if txt.ndim != 3:
+            raise ValueError("Input txt tensors must have 3 dimensions.")
+        B, C, H, W = img.shape
 
-        # running on sequences img
-        img = self.img_in(img)
+        # gemini gogogo idk how to unfold and pack the patch properly :P
+        # Store the raw pixel values of each patch for the NeRF head later.
+        # unfold creates patches: [B, C * P * P, NumPatches]
+        nerf_pixels = nn.functional.unfold(img, kernel_size=self.params.patch_size, stride=self.params.patch_size)
+        nerf_pixels = nerf_pixels.transpose(1, 2) # -> [B, NumPatches, C * P * P]
+        
+        # partchify ops
+        img = self.img_in_patch(img) # -> [B, Hidden, H/P, W/P]
+        num_patches = img.shape[2] * img.shape[3]
+        # flatten into a sequence for the transformer.
+        img = img.flatten(2).transpose(1, 2) # -> [B, NumPatches, Hidden]
+
         txt = self.txt_in(txt)
 
         # TODO:
@@ -203,11 +264,11 @@ class Chroma(nn.Module):
         # alternatively doing forward pass for every block manually is doable but slow
         # custom backward probably be better
         with torch.no_grad():
-            distill_timestep = timestep_embedding(timesteps, 16)
+            distill_timestep = timestep_embedding(timesteps, self.approximator_in_dim//4)
             # TODO: need to add toggle to omit this from schnell but that's not a priority
-            distil_guidance = timestep_embedding(guidance, 16)
+            distil_guidance = timestep_embedding(guidance, self.approximator_in_dim//4)
             # get all modulation index
-            modulation_index = timestep_embedding(self.mod_index, 32)
+            modulation_index = timestep_embedding(self.mod_index, self.approximator_in_dim//2)
             # we need to broadcast the modulation index here so each batch has all of the index
             modulation_index = modulation_index.unsqueeze(0).repeat(img.shape[0], 1, 1)
             # and we need to broadcast timestep and guidance along too
@@ -256,6 +317,7 @@ class Chroma(nn.Module):
             txt_mod = mod_vectors_dict[f"double_blocks.{i}.txt_mod.lin"]
             double_mod = [img_mod, txt_mod]
 
+            # just in case in different GPU for simple pipeline parallel
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 img.requires_grad_(True)
                 img, txt = ckpt.checkpoint(
@@ -275,8 +337,44 @@ class Chroma(nn.Module):
             else:
                 img = block(img, pe=pe, distill_vec=single_mod, mask=txt_img_mask)
         img = img[:, txt.shape[1] :, ...]
-        final_mod = mod_vectors_dict["final_layer.adaLN_modulation.1"]
-        img = self.final_layer(
-            img, distill_vec=final_mod
-        )  # (N, T, patch_size ** 2 * out_channels)
-        return img
+
+        # final_mod = mod_vectors_dict["final_layer.adaLN_modulation.1"]
+        # img = self.final_layer(
+        #     img, distill_vec=final_mod
+        # )  # (N, T, patch_size ** 2 * out_channels)
+
+        # aliasing
+        nerf_hidden = img
+        # reshape for per-patch processing
+        nerf_hidden = nerf_hidden.reshape(B * num_patches, self.params.hidden_size)
+        nerf_pixels = nerf_pixels.reshape(B * num_patches, C, self.params.patch_size**2).transpose(1, 2)
+
+        # get DCT-encoded pixel embeddings [pixel-dct]
+        img_dct = self.nerf_image_embedder(nerf_pixels)
+
+        # pass through the dynamic MLP blocks (the NeRF)
+        for i, block in enumerate(self.nerf_blocks):
+            if self.training:
+                img_dct = ckpt.checkpoint(block, img_dct, nerf_hidden)
+            else:
+                img_dct = block(img_dct, nerf_hidden)
+
+        # final projection to get the output pixel values
+        # img_dct = self.nerf_final_layer(img_dct) # -> [B*NumPatches, P*P, C]
+        img_dct = self.nerf_final_layer_conv.norm(img_dct)
+        
+        # gemini gogogo idk how to fold this properly :P
+        # Reassemble the patches into the final image.
+        img_dct = img_dct.transpose(1, 2) # -> [B*NumPatches, C, P*P]
+        # Reshape to combine with batch dimension for fold
+        img_dct = img_dct.reshape(B, num_patches, -1) # -> [B, NumPatches, C*P*P]
+        img_dct = img_dct.transpose(1, 2) # -> [B, C*P*P, NumPatches]
+        img_dct = nn.functional.fold(
+            img_dct,
+            output_size=(H, W),
+            kernel_size=self.params.patch_size,
+            stride=self.params.patch_size
+        ) # [B, Hidden, H, W]
+        img_dct = self.nerf_final_layer_conv.conv(img_dct)
+
+        return img_dct
