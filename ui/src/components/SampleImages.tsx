@@ -8,7 +8,7 @@ import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
-import { FaCaretDown } from 'react-icons/fa';
+import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
 
 interface SampleImagesMenuProps {
@@ -85,6 +85,12 @@ export default function SampleImages({ job }: SampleImagesProps) {
   const scrollToBottom = () => {
     if (containerRef.current) {
       containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'instant' });
+    }
+  };
+
+  const scrollToTop = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: 0, behavior: 'instant' });
     }
   };
 
@@ -276,9 +282,17 @@ export default function SampleImages({ job }: SampleImagesProps) {
         sampleImages={sampleImages}
         onChange={setPath => setSelectedSamplePath(setPath)}
         sampleConfig={sampleConfig}
+        refreshSampleImages={refreshSampleImages}
       />
       <div
-        className="fixed bottom-5 right-5 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        onClick={scrollToTop}
+        title="Scroll to Top"
+      >
+        <FaCaretUp className="text-gray-500 dark:text-gray-400" />
+      </div>
+      <div
+        className="fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToBottom}
         title="Scroll to Bottom"
       >

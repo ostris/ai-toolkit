@@ -3,6 +3,10 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
 import { SampleConfig, SampleItem } from '@/types';
+import { Cog } from 'lucide-react';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
+import { openConfirm } from './ConfirmModal';
+import { apiClient } from '@/utils/api';
 
 interface Props {
   imgPath: string | null; // current image path
@@ -10,9 +14,17 @@ interface Props {
   sampleImages: string[]; // all sample images
   sampleConfig: SampleConfig | null;
   onChange: (nextPath: string | null) => void; // parent setter
+  refreshSampleImages?: () => void;
 }
 
-export default function SampleImageViewer({ imgPath, numSamples, sampleImages, sampleConfig, onChange }: Props) {
+export default function SampleImageViewer({
+  imgPath,
+  numSamples,
+  sampleImages,
+  sampleConfig,
+  onChange,
+  refreshSampleImages,
+}: Props) {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
 
@@ -219,6 +231,48 @@ export default function SampleImageViewer({ imgPath, numSamples, sampleImages, s
                   <span className="text-gray-400">Seed:</span> {seed}
                 </div>
               </div>
+            </div>
+            <div className="absolute top-2 right-2 bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100">
+              <Menu>
+                <MenuButton>
+                  <Cog />
+                </MenuButton>
+                <MenuItems
+                  anchor="bottom end"
+                  className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-4 py-2 mt-1 z-50"
+                >
+                  <MenuItem>
+                    <div
+                      className="cursor-pointer"
+                      onClick={() => {
+                        let message = `Are you sure you want to delete this sample? This action cannot be undone.`;
+                        openConfirm({
+                          title: 'Delete Sample',
+                          message: message,
+                          type: 'warning',
+                          confirmText: 'Delete',
+                          onConfirm: () => {
+                            apiClient
+                              .post('/api/img/delete', { imgPath: imgPath })
+                              .then(() => {
+                                console.log('Image deleted:', imgPath);
+                                onChange(null);
+                                if (refreshSampleImages) {
+                                  refreshSampleImages();
+                                }
+                              })
+                              .catch(error => {
+                                console.error('Error deleting image:', error);
+                              });
+                          },
+                        });
+                      }}
+                    >
+                      Delete Sample
+                    </div>
+                  </MenuItem>
+                </MenuItems>
+              </Menu>
             </div>
           </DialogPanel>
         </div>

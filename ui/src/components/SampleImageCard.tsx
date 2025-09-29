@@ -68,10 +68,6 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
     }
   }, [isVisible, imageUrl]);
 
-  useEffect(() => {
-    console.log('SampleImageCard isVisible', isVisible, imageUrl);
-  }, [isVisible, imageUrl]);
-
   const handleLoad = () => setLoaded(true);
 
   return (
