@@ -101,22 +101,27 @@ class QwenImageEditPlusModel(QwenImageModel):
 
         control_img_list = []
         if gen_config.ctrl_img is not None:
+            print(f"gen_config.ctrl_img {gen_config.ctrl_img}")
             control_img = Image.open(gen_config.ctrl_img)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         elif gen_config.ctrl_img_1 is not None:
+            print(f"gen_config.ctrl_img_1 {gen_config.ctrl_img_1}")
             control_img = Image.open(gen_config.ctrl_img_1)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         
         if gen_config.ctrl_img_2 is not None:
+            print(f"gen_config.ctrl_img_2 {gen_config.ctrl_img_2}")
             control_img = Image.open(gen_config.ctrl_img_2)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         if gen_config.ctrl_img_3 is not None:
+            print(f"gen_config.ctrl_img_3 {gen_config.ctrl_img_3}")
             control_img = Image.open(gen_config.ctrl_img_3)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
+        print(f"control_img_list {control_img_list}")
 
         # flush for low vram if we are doing that
         # flush_between_steps = self.model_config.low_vram
@@ -162,7 +167,7 @@ class QwenImageEditPlusModel(QwenImageModel):
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
 
-        print(f"control_images {len(control_images)}")
+        print(f"control_images {control_images}")
         if control_images is not None and len(control_images) > 0:
             for i in range(len(control_images)):
                 print(f"start control_images[i].shape {control_images[i].shape}")

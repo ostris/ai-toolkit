@@ -346,7 +346,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if sample_item.seed is not None:
                 current_seed = sample_item.seed
 
-            print_acc(f"sample_item {sample_item}")
+            print_acc(f"sample_item.ctrl_img {sample_item.ctrl_img}")
+            print_acc(f"sample_item.ctrl_idx {sample_item.ctrl_idx}")
+            print_acc(f"sample_item.ctrl_img_1 {sample_item.ctrl_img_1}")
+            print_acc(f"sample_item.ctrl_img_2 {sample_item.ctrl_img_2}")
+            print_acc(f"sample_item.ctrl_img_3 {sample_item.ctrl_img_3}")
 
             gen_img_config_list.append(GenerateImageConfig(
                 prompt=prompt,  # it will autoparse the prompt
