@@ -174,17 +174,16 @@ class QwenImageEditPlusModel(QwenImageModel):
                 print(f"before control_images[i].shape {control_images[i].shape}")
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 # if it is only 3 dim, add batch dim
-                print(f"len(control_images[i].shape) {len(control_images[i].shape)}")
-                print(f"control_images[i].shape == 3: {len(control_images[i].shape) == 3}")
-                if len(control_images[i].shape) == 3:
-                    print("Adding batch dimension...")
-                    original_tensor = control_images[i]
-                    print(f"Original tensor shape: {original_tensor.shape}")
-                    # Use view to add batch dimension in place
-                    control_images[i] = original_tensor.view(1, *original_tensor.shape)
-                    print(f"Tensor shape after view: {control_images[i].shape}")
-                else:
-                    print("Skipping batch dimension addition")
+                x = control_images[i]
+                if not torch.is_tensor(x):
+                    x = torch.as_tensor(x)
+                print(f"x.ndim {x.ndim}")
+                print(f"x.shape {x.shape}")
+                if x.ndim == 3:                      # [C,H,W]
+                    x = x.unsqueeze(0)               # -> [1,C,H,W]
+                print(f"x.ndim {x.ndim}")
+                print(f"x.shape {x.shape}")
+                control_images[i] = x
                 print(f"after control_images[i].shape {control_images[i].shape}")
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 print(f"ratio {ratio}")
