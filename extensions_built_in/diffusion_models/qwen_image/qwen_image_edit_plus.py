@@ -186,8 +186,10 @@ class QwenImageEditPlusModel(QwenImageModel):
                 if x.ndim == 3:                      # [C,H,W]
                     x = x.unsqueeze(0)               # -> [1,C,H,W]
                 print(f"x.ndim {x.ndim}")
-                control_images[i] = x
+                # Ensure we're assigning the modified tensor back to the list
+                control_images[i] = x.clone()
                 print(f"after control_images[{i}].shape {control_images[i].shape}")
+                print(f"after control_images[{i}].ndim {control_images[i].ndim}")
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 print(f"ratio {ratio}")
                 width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
