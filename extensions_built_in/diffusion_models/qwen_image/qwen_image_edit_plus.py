@@ -170,6 +170,8 @@ class QwenImageEditPlusModel(QwenImageModel):
         # print(f"control_images {control_images}")
         if control_images is not None and len(control_images) > 0:
             print(f"len(control_images) {len(control_images)}")
+            print(f"type(control_images) {type(control_images)}")
+            print(f"type(control_images[0]) {type(control_images[0])}")
             for i in range(len(control_images)):
                 print(f"before control_images[i].shape {control_images[i].shape}")
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
