@@ -210,9 +210,8 @@ class QwenImageEditPlusModel(QwenImageModel):
             
             img_h2, img_w2 = height // 2, width // 2
             
-            img_shapes = [
-                [(1, img_h2, img_w2)]
-            ] * batch_size
+            # build distinct instances per batch item, per mamad8
+            img_shapes = [(1, img_h2, img_w2) for _ in range(batch_size)]
             
             # pack controls
             if batch is None:
