@@ -175,7 +175,7 @@ class QwenImageEditPlusModel(QwenImageModel):
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 # if it is only 3 dim, add batch dim
                 if len(control_images[i].shape) == 3:
-                    control_images[i] = control_images[i].unsqueeze(0)
+                    control_images[i] = control_images[i].unsqueeze(0).clone()
                 print(f"after control_images[i].shape {control_images[i].shape}")
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 print(f"ratio {ratio}")
