@@ -174,8 +174,13 @@ class QwenImageEditPlusModel(QwenImageModel):
                 print(f"before control_images[i].shape {control_images[i].shape}")
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 # if it is only 3 dim, add batch dim
+                print(f"len(control_images[i].shape) {len(control_images[i].shape)}")
+                print(f"control_images[i].shape == 3: {len(control_images[i].shape) == 3}")
                 if len(control_images[i].shape) == 3:
+                    print("Adding batch dimension...")
                     control_images[i] = control_images[i].unsqueeze(0).clone()
+                else:
+                    print("Skipping batch dimension addition")
                 print(f"after control_images[i].shape {control_images[i].shape}")
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 print(f"ratio {ratio}")
