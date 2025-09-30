@@ -165,6 +165,8 @@ class QwenImageEditPlusModel(QwenImageModel):
         if control_images is not None and len(control_images) > 0:
             print(f"len(control_images) {len(control_images)}")
             for i in range(len(control_images)):
+                print(f"start control_images[i].shape {control_images[i].shape}")
+
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
@@ -173,9 +175,13 @@ class QwenImageEditPlusModel(QwenImageModel):
                 width = round(width / 32) * 32
                 height = round(height / 32) * 32
 
+                print(f"width {width} height {height}")
+
                 control_images[i] = F.interpolate(
                     control_images[i], size=(height, width), mode="bilinear"
                 )
+
+                print(f"end control_images[i].shape {control_images[i].shape}")
 
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
