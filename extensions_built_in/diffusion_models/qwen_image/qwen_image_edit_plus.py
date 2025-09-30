@@ -99,7 +99,6 @@ class QwenImageEditPlusModel(QwenImageModel):
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
-        print(f"generate_single_image gen_config {gen_config}")
         control_img_list = []
         if gen_config.ctrl_img is not None:
             control_img = Image.open(gen_config.ctrl_img)
@@ -155,59 +154,35 @@ class QwenImageEditPlusModel(QwenImageModel):
     def condition_noisy_latents(
         self, latents: torch.Tensor, batch: "DataLoaderBatchDTO"
     ):
-        with torch.no_grad():
-            control_tensor = batch.control_tensor
-            if control_tensor is not None:
-                self.vae.to(self.device_torch)
-                # we are not packed here, so we just need to pass them so we can pack them later
-                control_tensor = control_tensor * 2 - 1
-                control_tensor = control_tensor.to(
-                    self.vae_device_torch, dtype=self.torch_dtype
-                )
-
-                # if it is not the size of batch.tensor, (bs,ch,h,w) then we need to resize it
-                if batch.tensor is not None:
-                    target_h, target_w = batch.tensor.shape[2], batch.tensor.shape[3]
-                else:
-                    # When caching latents, batch.tensor is None. We get the size from the file_items instead.
-                    target_h = batch.file_items[0].crop_height
-                    target_w = batch.file_items[0].crop_width
-
-                if (
-                    control_tensor.shape[2] != target_h
-                    or control_tensor.shape[3] != target_w
-                ):
-                    control_tensor = F.interpolate(
-                        control_tensor, size=(target_h, target_w), mode="bilinear"
-                    )
-
-                control_latent = self.encode_images(control_tensor).to(
-                    latents.device, latents.dtype
-                )
-                latents = torch.cat((latents, control_latent), dim=1)
-
+        # we get the control image from the batch
         return latents.detach()
 
     def get_prompt_embeds(self, prompt: str, control_images=None) -> PromptEmbeds:
+        # todo handle not caching text encoder
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
 
-        print(f"get_prompt_embeds control_images {control_images}")
-        if control_images is not None:
-            # control images are 0 - 1 scale, shape (bs, ch, height, width)
-            # images are always run through at 1MP, based on diffusers inference code.
-            target_area = 1024 * 1024
-            ratio = control_images.shape[2] / control_images.shape[3]
-            width = math.sqrt(target_area * ratio)
-            height = width / ratio
+        print(f"control_images {len(control_images)}")
+        if control_images is not None and len(control_images) > 0:
+            for i in range(len(control_images)):
+                print(f"start control_images[i].shape {control_images[i].shape}")
+                # control images are 0 - 1 scale, shape (bs, ch, height, width)
+                ratio = control_images[i].shape[2] / control_images[i].shape[3]
+                width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
+                height = width / ratio
 
-            width = round(width / 32) * 32
-            height = round(height / 32) * 32
+                width = round(width / 32) * 32
+                height = round(height / 32) * 32
 
-            control_images = F.interpolate(
-                control_images, size=(height, width), mode="bilinear"
-            )
+                print(f"width {width} height {height}")
 
+                control_images[i] = F.interpolate(
+                    control_images[i], size=(height, width), mode="bilinear"
+                )
+
+                print(f"end control_images[i].shape {control_images[i].shape}")
+
+        print(f"control_images {control_images}")
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
             image=control_images,
