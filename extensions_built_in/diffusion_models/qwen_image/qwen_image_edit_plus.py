@@ -183,10 +183,12 @@ class QwenImageEditPlusModel(QwenImageModel):
 
                 print(f"end control_images[i].shape {control_images[i].shape}")
 
-        control_image = control_images[0]
+        if control_images is not None and len(control_images) > 0:
+            control_images = control_images[0]
+
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
-            image=control_image,
+            image=control_images,
             device=self.device_torch,
             num_images_per_prompt=1,
         )
