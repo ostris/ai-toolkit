@@ -172,12 +172,12 @@ class QwenImageEditPlusModel(QwenImageModel):
             print(f"len(control_images) {len(control_images)}")
             print(f"type(control_images) {type(control_images)}")
             
-            # control_images is a list of tensors, so we need to work with each tensor
-            for i in range(len(control_images)):
-                print(f"before control_images[{i}].shape {control_images[i].shape}")
-                # control images are 0 - 1 scale, shape (bs, ch, height, width)
-                # if it is only 3 dim, add batch dim
-                x = control_images[i]
+            # Create a new list of control images with proper batch dimensions
+            new_control_images = []
+            for i, x in enumerate(control_images):
+                print(f"before control_images[{i}].shape {x.shape}")
+                
+                # Ensure we have a tensor
                 if not torch.is_tensor(x):
                     x = torch.as_tensor(x)
 
@@ -186,11 +186,13 @@ class QwenImageEditPlusModel(QwenImageModel):
                 if x.ndim == 3:                      # [C,H,W]
                     x = x.unsqueeze(0)               # -> [1,C,H,W]
                 print(f"x.ndim {x.ndim}")
-                # Ensure we're assigning the modified tensor back to the list
-                control_images[i] = x.clone()
-                print(f"after control_images[{i}].shape {control_images[i].shape}")
-                print(f"after control_images[{i}].ndim {control_images[i].ndim}")
-                ratio = control_images[i].shape[2] / control_images[i].shape[3]
+                
+                # Add to new list
+                new_control_images.append(x)
+                print(f"after new_control_images[{i}].shape {x.shape}")
+                print(f"after new_control_images[{i}].ndim {x.ndim}")
+                
+                ratio = x.shape[2] / x.shape[3]
                 print(f"ratio {ratio}")
                 width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
                 height = width / ratio
@@ -200,11 +202,15 @@ class QwenImageEditPlusModel(QwenImageModel):
 
                 print(f"width {width} height {height}")
 
-                control_images[i] = F.interpolate(
-                    control_images[i], size=(height, width), mode="bilinear"
+                # Interpolate and update the tensor in the new list
+                new_control_images[i] = F.interpolate(
+                    x, size=(height, width), mode="bilinear"
                 )
 
-                print(f"end control_images[i].shape {control_images[i].shape}")
+                print(f"end new_control_images[{i}].shape {new_control_images[i].shape}")
+
+            # Replace the original list with the new one
+            control_images = new_control_images
 
         print(f"control_images {control_images}")
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
