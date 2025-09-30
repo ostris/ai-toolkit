@@ -171,22 +171,20 @@ class QwenImageEditPlusModel(QwenImageModel):
         if control_images is not None and len(control_images) > 0:
             print(f"len(control_images) {len(control_images)}")
             print(f"type(control_images) {type(control_images)}")
-            print(f"type(control_images[0]) {type(control_images[0])}")
+            print(f"control_images.shape {control_images.shape}")
+            
+            # control_images is a tensor, so we need to work with it as a tensor
+            if control_images.ndim == 3:  # [C,H,W]
+                print("Adding batch dimension to control_images tensor...")
+                control_images = control_images.unsqueeze(0)  # -> [1,C,H,W]
+                print(f"control_images.shape after unsqueeze: {control_images.shape}")
+            elif control_images.ndim == 4:  # [B,C,H,W]
+                print("control_images already has batch dimension")
+            else:
+                print(f"Unexpected control_images.ndim: {control_images.ndim}")
+            
             for i in range(len(control_images)):
-                print(f"before control_images[i].shape {control_images[i].shape}")
-                # control images are 0 - 1 scale, shape (bs, ch, height, width)
-                # if it is only 3 dim, add batch dim
-                x = control_images[i]
-                if not torch.is_tensor(x):
-                    x = torch.as_tensor(x)
-                print(f"x.ndim {x.ndim}")
-                print(f"x.shape {x.shape}")
-                if x.ndim == 3:                      # [C,H,W]
-                    x = x.unsqueeze(0)               # -> [1,C,H,W]
-                print(f"x.ndim {x.ndim}")
-                print(f"x.shape {x.shape}")
-                control_images[i] = x
-                print(f"after control_images[i].shape {control_images[i].shape}")
+                print(f"control_images[{i}].shape {control_images[i].shape}")
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 print(f"ratio {ratio}")
                 width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
