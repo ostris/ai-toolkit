@@ -171,10 +171,13 @@ class QwenImageEditPlusModel(QwenImageModel):
         if control_images is not None and len(control_images) > 0:
             print(f"len(control_images) {len(control_images)}")
             for i in range(len(control_images)):
-                print(f"start control_images[i].shape {control_images[i].shape}")
+                print(f"before control_images[i].shape {control_images[i].shape}")
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
-                # ratio = control_images[i].shape[2] / control_images[i].shape[3]
-                ratio = control_images[i].shape[1] / control_images[i].shape[2]
+                # if it is only 3 dim, add batch dim
+                if len(control_images[i].shape) == 3:
+                    control_images[i] = control_images[i].unsqueeze(0)
+                print(f"after control_images[i].shape {control_images[i].shape}")
+                ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 print(f"ratio {ratio}")
                 width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
                 height = width / ratio
