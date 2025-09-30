@@ -180,12 +180,9 @@ class QwenImageEditPlusModel(QwenImageModel):
                     print("Adding batch dimension...")
                     original_tensor = control_images[i]
                     print(f"Original tensor shape: {original_tensor.shape}")
-                    new_tensor = original_tensor.unsqueeze(0).clone()
-                    print(f"New tensor shape: {new_tensor.shape}")
-                    # Remove the old tensor and insert the new one
-                    control_images.pop(i)
-                    control_images.insert(i, new_tensor)
-                    print(f"List tensor shape after pop/insert: {control_images[i].shape}")
+                    # Use view to add batch dimension in place
+                    control_images[i] = original_tensor.view(1, *original_tensor.shape)
+                    print(f"Tensor shape after view: {control_images[i].shape}")
                 else:
                     print("Skipping batch dimension addition")
                 print(f"after control_images[i].shape {control_images[i].shape}")
