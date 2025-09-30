@@ -346,6 +346,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if sample_item.seed is not None:
                 current_seed = sample_item.seed
 
+            print_acc(f"sample_item {sample_item}")
+
             gen_img_config_list.append(GenerateImageConfig(
                 prompt=prompt,  # it will autoparse the prompt
                 width=sample_item.width,
