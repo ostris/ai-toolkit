@@ -178,7 +178,12 @@ class QwenImageEditPlusModel(QwenImageModel):
                 print(f"control_images[i].shape == 3: {len(control_images[i].shape) == 3}")
                 if len(control_images[i].shape) == 3:
                     print("Adding batch dimension...")
-                    control_images[i] = control_images[i].unsqueeze(0).clone()
+                    original_tensor = control_images[i]
+                    print(f"Original tensor shape: {original_tensor.shape}")
+                    new_tensor = original_tensor.unsqueeze(0).clone()
+                    print(f"New tensor shape: {new_tensor.shape}")
+                    control_images[i] = new_tensor
+                    print(f"List tensor shape after assignment: {control_images[i].shape}")
                 else:
                     print("Skipping batch dimension addition")
                 print(f"after control_images[i].shape {control_images[i].shape}")
