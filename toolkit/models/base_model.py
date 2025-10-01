@@ -41,6 +41,7 @@ from torchvision.transforms import functional as TF
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
+from toolkit.memory_management import MemoryManager
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -185,6 +186,8 @@ class BaseModel:
         self.has_multiple_control_images = False
         # do not resize control images
         self.use_raw_control_images = False
+        
+        self.memory_manager = MemoryManager(self)
 
     # properties for old arch for backwards compatibility
     @property

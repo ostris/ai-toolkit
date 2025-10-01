@@ -348,6 +348,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 ctrl_img_1=sample_item.ctrl_img_1,
                 ctrl_img_2=sample_item.ctrl_img_2,
                 ctrl_img_3=sample_item.ctrl_img_3,
+                do_cfg_norm=sample_config.do_cfg_norm,
                 **extra_args
             ))
 
