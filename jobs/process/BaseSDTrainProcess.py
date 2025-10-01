@@ -1915,7 +1915,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.step_num = self.train_config.start_step
             self.start_step = self.step_num
 
-        optimizer_type = self.train_config.optimizer.lower()
+        optimizer_type = self.train_config.optimizer
         
         # esure params require grad
         self.ensure_params_requires_grad(force=True)
