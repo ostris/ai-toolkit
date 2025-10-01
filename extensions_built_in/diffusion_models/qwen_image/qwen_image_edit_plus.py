@@ -167,25 +167,25 @@ class QwenImageEditPlusModel(QwenImageModel):
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
 
-        # print(f"control_images {control_images}")
+        print(f"get_prompt_embeds control_images {control_images}")
         if control_images is not None and len(control_images) > 0:
-            # print(f"len(control_images) {len(control_images)}")
-            # print(f"type(control_images) {type(control_images)}")
+            print(f"len(control_images) {len(control_images)}")
+            print(f"type(control_images) {type(control_images)}")
             
             # Create a new list of control images with proper batch dimensions
             new_control_images = []
             for i, x in enumerate(control_images):
-                # print(f"before control_images[{i}].shape {x.shape}")
+                print(f"before control_images[{i}].shape {x.shape}")
 
                 # Add batch dimension if needed
-                # print(f"x.ndim {x.ndim}")
+                print(f"x.ndim {x.ndim}")
                 if x.ndim == 3:                      # [C,H,W]
                     x = x.unsqueeze(0)               # -> [1,C,H,W]
-                # print(f"x.ndim {x.ndim}")
+                print(f"x.ndim {x.ndim}")
                 
                 # Add to new list
                 new_control_images.append(x)
-                # print(f"after new_control_images[{i}].shape {x.shape}")
+                print(f"after new_control_images[{i}].shape {x.shape}")
                 # print(f"after new_control_images[{i}].ndim {x.ndim}")
                 
                 ratio = x.shape[2] / x.shape[3]
@@ -196,14 +196,14 @@ class QwenImageEditPlusModel(QwenImageModel):
                 width = round(width / 32) * 32
                 height = round(height / 32) * 32
 
-                # print(f"width {width} height {height}")
+                print(f"width {width} height {height}")
 
                 # Interpolate and update the tensor in the new list
                 new_control_images[i] = F.interpolate(
                     x, size=(height, width), mode="bilinear"
                 )
 
-                # print(f"end new_control_images[{i}].shape {new_control_images[i].shape}")
+                print(f"end new_control_images[{i}].shape {new_control_images[i].shape}")
 
             # Replace the original list with the new one
             control_images = new_control_images
