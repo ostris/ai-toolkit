@@ -369,6 +369,12 @@ class ToolkitModuleMixin:
 
         orig_dtype = org_sd[weight_key].dtype
         weight = org_sd[weight_key].float()
+        
+        # Ensure all tensors are on the same device as the original weight
+        target_device = weight.device
+        if up_weight is not None:
+            up_weight = up_weight.to(target_device)
+        down_weight = down_weight.to(target_device)
 
         multiplier = merge_weight
         scale = self.scale
