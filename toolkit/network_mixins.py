@@ -381,6 +381,12 @@ class ToolkitModuleMixin:
         # handle trainable scaler method locon does
         if hasattr(self, 'scalar'):
             scale = scale * self.scalar
+        
+        # Ensure scale and multiplier are also on the correct device
+        if hasattr(scale, 'to'):
+            scale = scale.to(target_device)
+        if hasattr(multiplier, 'to'):
+            multiplier = multiplier.to(target_device)
 
         # merge weight
         if self.full_rank:

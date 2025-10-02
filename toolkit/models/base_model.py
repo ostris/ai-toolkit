@@ -1049,7 +1049,7 @@ class BaseModel:
         if prompt2 is not None and not isinstance(prompt2, list):
             prompt2 = [prompt2]
 
-        print(f"encode_prompt self.encode_control_in_text_embeddings {self.encode_control_in_text_embeddings} control_images {control_images}")
+        # print(f"encode_prompt self.encode_control_in_text_embeddings {self.encode_control_in_text_embeddings} control_images {control_images}")
         # if control_images in the signature, pass it. This keep from breaking plugins
         if self.encode_control_in_text_embeddings:
             return self.get_prompt_embeds(prompt, control_images=control_images)
