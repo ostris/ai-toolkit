@@ -511,7 +511,7 @@ class BaseModel:
                     else:
                         ctrl_img = None
                         # load the control images if our model uses them in text encoding
-                        print(f"generate_images self.encode_control_in_text_embeddings {self.encode_control_in_text_embeddings} gen_config.ctrl_img {gen_config.ctrl_img}")
+                        # print(f"generate_images self.encode_control_in_text_embeddings {self.encode_control_in_text_embeddings} gen_config.ctrl_img {gen_config.ctrl_img}")
                         if self.encode_control_in_text_embeddings:
                             # collect all control images into a list
                             control_images = []
@@ -538,7 +538,7 @@ class BaseModel:
 
                             # if we have control images, use them; otherwise set to None
                             ctrl_img = control_images if control_images else None
-                        print(f"generate_images ctrl_img {ctrl_img}")
+                        # print(f"generate_images ctrl_img {ctrl_img}")
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
