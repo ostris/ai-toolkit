@@ -424,7 +424,6 @@ class BaseModel:
 
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
                     gen_config = image_configs[i]
-                    print(f"generate_images gen_config {gen_config}")
 
                     extra = {}
                     validation_image = None

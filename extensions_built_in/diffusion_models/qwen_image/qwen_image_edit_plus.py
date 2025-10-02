@@ -121,7 +121,7 @@ class QwenImageEditPlusModel(QwenImageModel):
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         
-        print(f"generate_single_image control_img_list {control_img_list}")
+        # print(f"generate_single_image control_img_list {control_img_list}")
 
         # flush for low vram if we are doing that
         # flush_between_steps = self.model_config.low_vram
