@@ -80,6 +80,8 @@ class SampleItem:
                 print(f"Invalid network_multiplier {self.network_multiplier}, defaulting to 1.0")
                 self.network_multiplier = 1.0
         
+        # only for models that support it, (qwen image edit 2509 for now)
+        self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
 
 class SampleConfig:
     def __init__(self, **kwargs):
@@ -114,6 +116,8 @@ class SampleConfig:
         ]
         raw_samples = kwargs.get('samples', default_samples_kwargs)
         self.samples = [SampleItem(self, **item) for item in raw_samples]
+        # only for models that support it, (qwen image edit 2509 for now)
+        self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
         
     @property
     def prompts(self):
@@ -1003,7 +1007,8 @@ class GenerateImageConfig:
             ctrl_img_3: Optional[str] = None,  # third control image for multi control model
             num_frames: int = 1,
             fps: int = 15,
-            ctrl_idx: int = 0
+            ctrl_idx: int = 0,
+            do_cfg_norm: bool = False,
     ):
         self.width: int = width
         self.height: int = height
@@ -1073,6 +1078,8 @@ class GenerateImageConfig:
         self.width = max(64, self.width - self.width % 8)  # round to divisible by 8
 
         self.logger = logger
+        
+        self.do_cfg_norm: bool = do_cfg_norm
 
     def set_gen_time(self, gen_time: int = None):
         if gen_time is not None:

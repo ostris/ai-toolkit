@@ -192,10 +192,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.is_caching_text_embeddings = any(
             dataset.cache_text_embeddings for dataset in self.dataset_configs
         )
-        
-        # cannot train trigger word if caching text embeddings
-        if self.is_caching_text_embeddings and self.trigger_word is not None:
-            raise ValueError("Cannot train trigger word if caching text embeddings. Please remove the trigger word or disable text embedding caching.")
 
         self.embed_config = None
         embedding_raw = self.get_conf('embedding', None)
@@ -375,6 +371,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 ctrl_img_1=sample_item.ctrl_img_1,
                 ctrl_img_2=sample_item.ctrl_img_2,
                 ctrl_img_3=sample_item.ctrl_img_3,
+                do_cfg_norm=sample_config.do_cfg_norm,
                 **extra_args
             ))
 
