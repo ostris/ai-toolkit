@@ -138,9 +138,11 @@ class SDTrainer(BaseSDTrainProcess):
                 has_control_images = False
                 if gen_img_config.ctrl_img is not None or gen_img_config.ctrl_img_1 is not None or gen_img_config.ctrl_img_2 is not None or gen_img_config.ctrl_img_3 is not None:
                     has_control_images = True
+
+                print(f"cache_sample_prompts self.sd.encode_control_in_text_embeddings {self.sd.encode_control_in_text_embeddings} has_control_images {has_control_images}")
                 # see if we need to encode the control images
                 if self.sd.encode_control_in_text_embeddings and has_control_images:
-                    
+                    print(f"cache_sample_prompts {gen_img_config}")
                     ctrl_img_list = []
                     
                     if gen_img_config.ctrl_img is not None:
@@ -186,7 +188,7 @@ class SDTrainer(BaseSDTrainProcess):
                     else:
                         ctrl_img = ctrl_img_list[0] if len(ctrl_img_list) > 0 else None
                     
-                    
+                    print(f"cache_sample_prompts before encode_prompt ctrl_img {ctrl_img}")
                     positive = self.sd.encode_prompt(
                         gen_img_config.prompt,
                         control_images=ctrl_img
