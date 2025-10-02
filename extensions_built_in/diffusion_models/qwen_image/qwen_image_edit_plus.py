@@ -104,27 +104,22 @@ class QwenImageEditPlusModel(QwenImageModel):
 
         control_img_list = []
         if gen_config.ctrl_img is not None:
-            # print(f"gen_config.ctrl_img {gen_config.ctrl_img}")
             control_img = Image.open(gen_config.ctrl_img)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         elif gen_config.ctrl_img_1 is not None:
-            # print(f"gen_config.ctrl_img_1 {gen_config.ctrl_img_1}")
             control_img = Image.open(gen_config.ctrl_img_1)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
 
         if gen_config.ctrl_img_2 is not None:
-            # print(f"gen_config.ctrl_img_2 {gen_config.ctrl_img_2}")
             control_img = Image.open(gen_config.ctrl_img_2)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         if gen_config.ctrl_img_3 is not None:
-            # print(f"gen_config.ctrl_img_3 {gen_config.ctrl_img_3}")
             control_img = Image.open(gen_config.ctrl_img_3)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
-        # print(f"control_img_list {control_img_list}")
 
         # flush for low vram if we are doing that
         # flush_between_steps = self.model_config.low_vram
@@ -173,46 +168,22 @@ class QwenImageEditPlusModel(QwenImageModel):
 
         print(f"get_prompt_embeds control_images {control_images}")
         if control_images is not None and len(control_images) > 0:
-            print(f"len(control_images) {len(control_images)}")
-            print(f"type(control_images) {type(control_images)}")
-            
-            # Create a new list of control images with proper batch dimensions
-            new_control_images = []
-            for i, x in enumerate(control_images):
-                print(f"before control_images[{i}].shape {x.shape}")
-
-                # Add batch dimension if needed
-                print(f"x.ndim {x.ndim}")
-                if x.ndim == 3:                      # [C,H,W]
-                    x = x.unsqueeze(0)               # -> [1,C,H,W]
-                print(f"x.ndim {x.ndim}")
-                
-                # Add to new list
-                new_control_images.append(x)
-                print(f"after new_control_images[{i}].shape {x.shape}")
-                # print(f"after new_control_images[{i}].ndim {x.ndim}")
-                
-                ratio = x.shape[2] / x.shape[3]
-                # print(f"ratio {ratio}")
+            for i in range(len(control_images)):
+                print(f"get_prompt_embeds control_images[{i}].shape {control_images[i].shape}")
+                # control images are 0 - 1 scale, shape (bs, ch, height, width)
+                ratio = control_images[i].shape[2] / control_images[i].shape[3]
                 width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
                 height = width / ratio
 
                 width = round(width / 32) * 32
                 height = round(height / 32) * 32
+                print(f"get_prompt_embeds width {width} height {height}")
 
-                print(f"width {width} height {height}")
-
-                # Interpolate and update the tensor in the new list
-                new_control_images[i] = F.interpolate(
-                    x, size=(height, width), mode="bilinear"
+                control_images[i] = F.interpolate(
+                    control_images[i], size=(height, width), mode="bilinear"
                 )
 
-                print(f"end new_control_images[{i}].shape {new_control_images[i].shape}")
-
-            # Replace the original list with the new one
-            control_images = new_control_images
-
-        # print(f"control_images {control_images}")
+        print(f"get_prompt_embeds control_images {control_images}")
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
             image=control_images,
