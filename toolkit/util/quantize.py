@@ -301,14 +301,14 @@ def quantize_model(
             f" - quantizing {len(all_blocks)} transformer blocks"
         )
         for block in tqdm(all_blocks):
-            block.to(base_model.device_torch, dtype=base_model.torch_dtype)
+            block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)
-            block.to("cpu")
+            block.to("cpu", non_blocking=True)
 
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first
         base_model.print_and_status_update(" - quantizing extras")
-        model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
+        # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
         quantize(model_to_quantize, weights=quantization_type)
         freeze(model_to_quantize)
