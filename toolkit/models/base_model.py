@@ -506,15 +506,35 @@ class BaseModel:
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
                     else:
                         ctrl_img = None
-                        # load the control image if out model uses it in text encoding
-                        if gen_config.ctrl_img is not None and self.encode_control_in_text_embeddings:
-                            ctrl_img = Image.open(gen_config.ctrl_img).convert("RGB")
-                            # convert to 0 to 1 tensor
-                            ctrl_img = (
-                                TF.to_tensor(ctrl_img)
-                                .unsqueeze(0)
-                                .to(self.device_torch, dtype=self.torch_dtype)
-                            )
+                        # gather all control images if the model expects them in the text encoder pass
+                        if self.encode_control_in_text_embeddings:
+                            ctrl_img_tensors = []
+
+                            def _load_ctrl_image(path: Optional[str]):
+                                if path is None:
+                                    return None
+                                img = Image.open(path).convert("RGB")
+                                tensor = (
+                                    TF.to_tensor(img)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                return tensor
+
+                            for ctrl_path in [
+                                gen_config.ctrl_img,
+                                gen_config.ctrl_img_1,
+                                gen_config.ctrl_img_2,
+                                gen_config.ctrl_img_3,
+                            ]:
+                                tensor = _load_ctrl_image(ctrl_path)
+                                if tensor is not None:
+                                    ctrl_img_tensors.append(tensor)
+
+                            if self.has_multiple_control_images:
+                                ctrl_img = ctrl_img_tensors if len(ctrl_img_tensors) > 0 else None
+                            elif len(ctrl_img_tensors) > 0:
+                                ctrl_img = ctrl_img_tensors[0]
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
