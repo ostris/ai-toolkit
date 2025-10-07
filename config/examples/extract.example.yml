@@ -1,5 +1,4 @@
 ---
-# this is in yaml format. You can use json if you prefer
 # I like both but yaml is easier to read and write
 # plus it has comments which is nice for documentation
 job: extract # tells the runner what to do
