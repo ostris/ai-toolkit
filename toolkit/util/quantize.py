@@ -247,6 +247,7 @@ def quantize_model(
             transformer_only=network_config.transformer_only,
             is_transformer=base_model.is_transformer,
             base_model=base_model,
+            is_ara=True,
             **network_kwargs
         )
         network.apply_to(
