@@ -153,6 +153,7 @@ export interface ModelConfig {
   arch: string;
   low_vram: boolean;
   model_kwargs: { [key: string]: any };
+  auto_memory?: boolean;
 }
 
 export interface SampleItem {
@@ -231,7 +232,7 @@ export interface JobConfig {
 }
 
 export interface ConfigDoc {
-  title: string;
+  title: string | React.ReactNode;
   description: React.ReactNode;
 }
 

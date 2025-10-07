@@ -20,6 +20,7 @@ type AdditionalSections =
   | 'sample.multi_ctrl_imgs'
   | 'datasets.num_frames'
   | 'model.multistage'
+  | 'model.auto_memory'
   | 'model.low_vram';
 type ModelGroup = 'image' | 'instruction' | 'video';
 
@@ -312,7 +313,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram'],
+    additionalSections: ['model.low_vram', 'model.auto_memory'],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors',
     },
@@ -333,7 +334,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram', 'model.auto_memory'],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_torchao_uint3.safetensors',
     },
@@ -355,7 +356,12 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv', 'train.unload_text_encoder'],
-    additionalSections: ['datasets.multi_control_paths', 'sample.multi_ctrl_imgs', 'model.low_vram'],
+    additionalSections: [
+      'datasets.multi_control_paths',
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.auto_memory',
+    ],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors',
     },
@@ -465,7 +471,6 @@ export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc
 export const quantizationOptions: SelectOption[] = [
   { value: '', label: '- NONE -' },
   { value: 'qfloat8', label: 'float8 (default)' },
-  { value: 'uint8', label: '8 bit' },
   { value: 'uint7', label: '7 bit' },
   { value: 'uint6', label: '6 bit' },
   { value: 'uint5', label: '5 bit' },
