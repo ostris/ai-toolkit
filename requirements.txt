@@ -39,3 +39,5 @@ setuptools==69.5.1
 scipy==1.12.0
 av==16.0.1
 torchcodec
+fastapi
+uvicorn[standard]

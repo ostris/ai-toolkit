@@ -264,6 +264,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.current_boundary_index = 0
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
+        self._incremental_initialized = False
+        self._incremental_state = None
+        self._incremental_target_step = None
+        self._incremental_keep_state = False
+        self.pause_controller = None
+        self._training_aborted = False
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -708,6 +714,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def sample_step_hook(self, img_num, total_imgs):
         pass
     
+
+    def set_pause_controller(self, controller):
+        """Attach an step-budget controller used by the API server."""
+        self.pause_controller = controller
+
     def prepare_accelerator(self):
         # set some config
         self.accelerator.even_batches=False
@@ -2075,6 +2086,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         start_step_num = self.step_num
         did_first_flush = False
         flush_next = False
+        abort_requested = False
         for step in range(start_step_num, self.train_config.steps):
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
@@ -2086,6 +2098,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.train_config.do_cfg = True
                 self.train_config.cfg_scale = value_map(random.random(), 0, 1, 1.0, self.train_config.max_cfg_scale)
             self.step_num = step
+            if self.pause_controller is not None:
+                if self.pause_controller.wait_if_needed(self.epoch_num, self.step_num):
+                    abort_requested = True
+                    break
             # default to true so various things can turn it off
             self.is_grad_accumulation_step = True
             if self.train_config.free_u:
@@ -2243,7 +2259,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.step_num != self.start_step:
                     if is_sample_step or is_save_step:
                         self.accelerator.wait_for_everyone()
-                        
                     if is_save_step:
                         self.accelerator
                         # print above the progress bar
@@ -2339,25 +2354,51 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.grad_accumulation_step += 1
                 self.end_step_hook()
 
+                if self.pause_controller is not None:
+                    action = self.pause_controller.on_step_end(self.step_num, self.epoch_num)
+                    if action == "pause":
+                        if self.step_num < self.train_config.steps:
+                            if self.accelerator.is_main_process:
+                                self.save(self.step_num)
+                            self.accelerator.wait_for_everyone()
+                            wait_result = self.pause_controller.wait_for_resume()
+                            if wait_result == "abort":
+                                abort_requested = True
+                                break
+                            if wait_result == "complete":
+                                break
+                        else:
+                            action = "continue"
+                    if action == "abort":
+                        if self.accelerator.is_main_process:
+                            self.save(self.step_num)
+                        self.accelerator.wait_for_everyone()
+                        abort_requested = True
+                        break
+
 
         ###################################################################
         ##  END TRAIN LOOP
         ###################################################################
+        self._training_aborted = abort_requested
+        if self.pause_controller is not None:
+            self.pause_controller.notify_training_stopped(aborted=abort_requested, step=self.step_num, epoch=self.epoch_num)
         self.accelerator.wait_for_everyone()
         if self.progress_bar is not None:
             self.progress_bar.close()
         if self.train_config.free_u:
             self.sd.pipeline.disable_freeu()
-        if not self.train_config.disable_sampling:
+        if not self._training_aborted and not self.train_config.disable_sampling:
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
-            self.save()
+            if not self._training_aborted:
+                self.save()
             self.logger.finish()
         self.accelerator.end_training()
 
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process and not self._training_aborted:
             # push to hub
             if self.save_config.push_to_hub:
                 if("HF_TOKEN" not in os.environ):
