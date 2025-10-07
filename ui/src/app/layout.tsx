@@ -4,7 +4,6 @@ import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import ConfirmModal from '@/components/ConfirmModal';
-import SampleImageModal from '@/components/SampleImageModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
@@ -42,7 +41,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </ThemeProvider>
         <ConfirmModal />
         <DocModal />
-        <SampleImageModal />
         <AddSingleImageModal />
         <CheckpointUploadModal />
       </body>

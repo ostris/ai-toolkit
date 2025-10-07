@@ -21,6 +21,20 @@ export const handleModelArchChange = (
     setJobConfig(false, 'config.process[0].model.low_vram');
   }
 
+  // handle auto memory setting
+  if (!newArch?.additionalSections?.includes('model.auto_memory')) {
+    if ('auto_memory' in jobConfig.config.process[0].model) {
+      const newModel = objectCopy(jobConfig.config.process[0].model);
+      delete newModel.auto_memory;
+      setJobConfig(newModel, 'config.process[0].model');
+    }
+  } else {
+    // set to false if not set
+    if (!('auto_memory' in jobConfig.config.process[0].model)) {
+      setJobConfig(false, 'config.process[0].model.auto_memory');
+    }
+  }
+
   // revert defaults from previous model
   for (const key in currentArch.defaults) {
     setJobConfig(currentArch.defaults[key][1], key);

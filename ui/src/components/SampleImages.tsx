@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
@@ -8,6 +8,8 @@ import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
+import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
+import SampleImageViewer from './SampleImageViewer';
 
 interface SampleImagesMenuProps {
   job?: Job | null;
@@ -66,18 +68,31 @@ interface SampleImagesProps {
 
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
+  const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const didFirstScroll = useRef(false);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
-      if (sampleConfig.prompts) {
-        return sampleConfig.prompts.length;
-      } else {
-        return sampleConfig.samples.length;
-      }
+      const numPrompts = sampleConfig.prompts ? sampleConfig.prompts.length : 0;
+      const numSamples = sampleConfig.samples.length;
+      return Math.max(numPrompts, numSamples, 1);
     }
     return 10;
   }, [job]);
+
+  const scrollToBottom = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'instant' });
+    }
+  };
+
+  const scrollToTop = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -223,8 +238,26 @@ export default function SampleImages({ job }: SampleImagesProps) {
     }
   }, [numSamples]);
 
+  const sampleConfig = useMemo(() => {
+    if (job?.job_config) {
+      const jobConfig = JSON.parse(job.job_config) as JobConfig;
+      return jobConfig.config.process[0].sample;
+    }
+    return null;
+  }, [job]);
+
+  // scroll to bottom on first load of samples
+  useEffect(() => {
+    if (status === 'success' && sampleImages.length > 0 && !didFirstScroll.current) {
+      didFirstScroll.current = true;
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
+  }, [status, sampleImages.length]);
+
   return (
-    <div>
+    <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
         {PageInfoContent}
         {sampleImages && (
@@ -236,10 +269,34 @@ export default function SampleImages({ job }: SampleImagesProps) {
                 numSamples={numSamples}
                 sampleImages={sampleImages}
                 alt="Sample Image"
+                onClick={() => setSelectedSamplePath(sample)}
+                observerRoot={containerRef.current}
               />
             ))}
           </div>
         )}
+      </div>
+      <SampleImageViewer
+        imgPath={selectedSamplePath}
+        numSamples={numSamples}
+        sampleImages={sampleImages}
+        onChange={setPath => setSelectedSamplePath(setPath)}
+        sampleConfig={sampleConfig}
+        refreshSampleImages={refreshSampleImages}
+      />
+      <div
+        className="fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        onClick={scrollToTop}
+        title="Scroll to Top"
+      >
+        <FaCaretUp className="text-gray-500 dark:text-gray-400" />
+      </div>
+      <div
+        className="fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        onClick={scrollToBottom}
+        title="Scroll to Bottom"
+      >
+        <FaCaretDown className="text-gray-500 dark:text-gray-400" />
       </div>
     </div>
   );

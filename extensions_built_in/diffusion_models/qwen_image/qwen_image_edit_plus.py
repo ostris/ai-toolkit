@@ -30,8 +30,11 @@ if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
 try:
-    from diffusers import QwenImageEditPlusPipeline
-    from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import CONDITION_IMAGE_SIZE, VAE_IMAGE_SIZE
+    from .qwen_image_pipelines import QwenImageEditPlusCustomPipeline
+    from diffusers.pipelines.qwenimage.pipeline_qwenimage_edit_plus import (
+        CONDITION_IMAGE_SIZE,
+        VAE_IMAGE_SIZE,
+    )
 except ImportError:
     raise ImportError(
         "Diffusers is out of date. Update diffusers to the latest version by doing 'pip uninstall diffusers' and then 'pip install -r requirements.txt'"
@@ -41,7 +44,7 @@ except ImportError:
 class QwenImageEditPlusModel(QwenImageModel):
     arch = "qwen_image_edit_plus"
     _qwen_image_keep_visual = True
-    _qwen_pipeline = QwenImageEditPlusPipeline
+    _qwen_pipeline = QwenImageEditPlusCustomPipeline
 
     def __init__(
         self,
@@ -72,7 +75,7 @@ class QwenImageEditPlusModel(QwenImageModel):
     def get_generation_pipeline(self):
         scheduler = QwenImageModel.get_train_scheduler()
 
-        pipeline: QwenImageEditPlusPipeline = QwenImageEditPlusPipeline(
+        pipeline: QwenImageEditPlusCustomPipeline = QwenImageEditPlusCustomPipeline(
             scheduler=scheduler,
             text_encoder=unwrap_model(self.text_encoder[0]),
             tokenizer=self.tokenizer[0],
@@ -87,7 +90,7 @@ class QwenImageEditPlusModel(QwenImageModel):
 
     def generate_single_image(
         self,
-        pipeline: QwenImageEditPlusPipeline,
+        pipeline: QwenImageEditPlusCustomPipeline,
         gen_config: GenerateImageConfig,
         conditional_embeds: PromptEmbeds,
         unconditional_embeds: PromptEmbeds,
@@ -108,7 +111,7 @@ class QwenImageEditPlusModel(QwenImageModel):
             control_img = Image.open(gen_config.ctrl_img_1)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
-        
+
         if gen_config.ctrl_img_2 is not None:
             control_img = Image.open(gen_config.ctrl_img_2)
             control_img = control_img.convert("RGB")
@@ -147,6 +150,7 @@ class QwenImageEditPlusModel(QwenImageModel):
             latents=gen_config.latents,
             generator=generator,
             callback_on_step_end=callback_on_step_end,
+            do_cfg_norm=gen_config.do_cfg_norm,
             **extra,
         ).images[0]
         return img
@@ -205,26 +209,27 @@ class QwenImageEditPlusModel(QwenImageModel):
             latent_model_input = latent_model_input.reshape(
                 batch_size, (height // 2) * (width // 2), num_channels_latents * 4
             )
-            
+
             raw_packed_latents = latent_model_input
-            
+
             img_h2, img_w2 = height // 2, width // 2
-            
-            img_shapes = [
-                [(1, img_h2, img_w2)]
-            ] * batch_size
-            
+
+            # build distinct instances per batch item, per mamad8
+            img_shapes = [[(1, img_h2, img_w2)] for _ in range(batch_size)]
+
             # pack controls
             if batch is None:
                 raise ValueError("Batch is required for QwenImageEditPlusModel")
-            
+
             # split the latents into batch items so we can concat the controls
             packed_latents_list = torch.chunk(latent_model_input, batch_size, dim=0)
             packed_latents_with_controls_list = []
-            
+
             if batch.control_tensor_list is not None:
                 if len(batch.control_tensor_list) != batch_size:
-                    raise ValueError("Control tensor list length does not match batch size")
+                    raise ValueError(
+                        "Control tensor list length does not match batch size"
+                    )
                 b = 0
                 for control_tensor_list in batch.control_tensor_list:
                     # control tensor list is a list of tensors for this batch item
@@ -232,7 +237,9 @@ class QwenImageEditPlusModel(QwenImageModel):
                     # pack control
                     for control_img in control_tensor_list:
                         # control images are 0 - 1 scale, shape (1, ch, height, width)
-                        control_img = control_img.to(self.device_torch, dtype=self.torch_dtype)
+                        control_img = control_img.to(
+                            self.device_torch, dtype=self.torch_dtype
+                        )
                         # if it is only 3 dim, add batch dim
                         if len(control_img.shape) == 3:
                             control_img = control_img.unsqueeze(0)
@@ -246,35 +253,54 @@ class QwenImageEditPlusModel(QwenImageModel):
                         control_img = F.interpolate(
                             control_img, size=(c_height, c_width), mode="bilinear"
                         )
-                        
+
+                        # scale to -1 to 1
+                        control_img = control_img * 2 - 1
+
                         control_latent = self.encode_images(
                             control_img,
                             device=self.device_torch,
                             dtype=self.torch_dtype,
                         )
-                        
-                        clb, cl_num_channels_latents, cl_height, cl_width = control_latent.shape
-                        
+
+                        clb, cl_num_channels_latents, cl_height, cl_width = (
+                            control_latent.shape
+                        )
+
                         control = control_latent.view(
-                            1, cl_num_channels_latents, cl_height // 2, 2, cl_width // 2, 2
+                            1,
+                            cl_num_channels_latents,
+                            cl_height // 2,
+                            2,
+                            cl_width // 2,
+                            2,
                         )
                         control = control.permute(0, 2, 4, 1, 3, 5)
                         control = control.reshape(
-                            1, (cl_height // 2) * (cl_width // 2), num_channels_latents * 4
+                            1,
+                            (cl_height // 2) * (cl_width // 2),
+                            num_channels_latents * 4,
                         )
-                        
+
                         img_shapes[b].append((1, cl_height // 2, cl_width // 2))
                         controls.append(control)
-                    
+
                     # stack controls on dim 1
-                    control = torch.cat(controls, dim=1).to(packed_latents_list[b].device, dtype=packed_latents_list[b].dtype)
+                    control = torch.cat(controls, dim=1).to(
+                        packed_latents_list[b].device,
+                        dtype=packed_latents_list[b].dtype,
+                    )
                     # concat with latents
-                    packed_latents_with_control = torch.cat([packed_latents_list[b], control], dim=1)
-                    
-                    packed_latents_with_controls_list.append(packed_latents_with_control)
-                    
+                    packed_latents_with_control = torch.cat(
+                        [packed_latents_list[b], control], dim=1
+                    )
+
+                    packed_latents_with_controls_list.append(
+                        packed_latents_with_control
+                    )
+
                     b += 1
-                
+
                 latent_model_input = torch.cat(packed_latents_with_controls_list, dim=0)
 
             prompt_embeds_mask = text_embeddings.attention_mask.to(
@@ -287,11 +313,13 @@ class QwenImageEditPlusModel(QwenImageModel):
             )
 
         noise_pred = self.transformer(
-            hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
-            timestep=timestep / 1000,
+            hidden_states=latent_model_input.to(
+                self.device_torch, self.torch_dtype
+            ).detach(),
+            timestep=(timestep / 1000).detach(),
             guidance=None,
-            encoder_hidden_states=enc_hs,
-            encoder_hidden_states_mask=prompt_embeds_mask,
+            encoder_hidden_states=enc_hs.detach(),
+            encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
             txt_seq_lens=txt_seq_lens,
             return_dict=False,

@@ -1,6 +1,8 @@
 import { Job } from '@prisma/client';
 import useGPUInfo from '@/hooks/useGPUInfo';
+import useCPUInfo from '@/hooks/useCPUInfo';
 import GPUWidget from '@/components/GPUWidget';
+import CPUWidget from '@/components/CPUWidget';
 import FilesWidget from '@/components/FilesWidget';
 import { getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
@@ -19,6 +21,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
 
   const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
+  const { cpuInfo, isCPUInfoLoaded } = useCPUInfo(5000);
   const totalSteps = getTotalSteps(job);
   const progress = (job.step / totalSteps) * 100;
   const isStopping = job.stop && job.status === 'running';
@@ -155,7 +158,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
       {/* GPU Widget Panel */}
       <div className="col-span-1">
         <div  className="mb-4">
-          {isGPUInfoLoaded && gpuList.length > 0 ? <GPUWidget gpu={gpuList[0]} /> : null}
+          {isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}</div>
+        <div className="mt-4">{isGPUInfoLoaded && gpuList.length > 0 ? <GPUWidget gpu={gpuList[0]} /> : null}
         </div>
         <FilesWidget jobID={job.id} />
       </div>
