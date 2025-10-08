@@ -1,0 +1,64 @@
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
+
+LABEL authors="jaret"
+
+# Set noninteractive to avoid timezone prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ref https://en.wikipedia.org/wiki/CUDA
+ENV TORCH_CUDA_ARCH_LIST="8.0 8.6 8.9 9.0 10.0 12.0"
+
+# Install dependencies including those needed for the API server
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    git \
+    curl \
+    build-essential \
+    cmake \
+    wget \
+    python3.10 \
+    python3-pip \
+    python3-dev \
+    python3-setuptools \
+    python3-wheel \
+    python3-venv \
+    ffmpeg \
+    tmux \
+    htop \
+    nvtop \
+    python3-opencv \
+    openssh-client \
+    openssh-server \
+    openssl \
+    rsync \
+    unzip \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/ai-toolkit
+
+# Set aliases for python and pip
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# install pytorch before cache bust to avoid redownloading pytorch
+RUN pip install --pre --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# Copy the project files
+COPY . /app/ai-toolkit/
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --pre --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 --force && \
+    pip install setuptools==69.5.1 --no-cache-dir
+
+# Expose port for API server
+EXPOSE 8000
+
+WORKDIR /app/ai-toolkit
+
+# Start the API server
+CMD ["python", "-m", "uvicorn", "api_server.app:app", "--host", "0.0.0.0", "--port", "8000"]
