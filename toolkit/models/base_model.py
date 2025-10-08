@@ -41,7 +41,6 @@ from torchvision.transforms import functional as TF
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
-from toolkit.memory_management import MemoryManager
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -186,8 +185,6 @@ class BaseModel:
         self.has_multiple_control_images = False
         # do not resize control images
         self.use_raw_control_images = False
-        
-        self.memory_manager = MemoryManager(self)
 
     # properties for old arch for backwards compatibility
     @property
@@ -509,35 +506,55 @@ class BaseModel:
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
                     else:
                         ctrl_img = None
-                        # load the control images if our model uses them in text encoding
-                        print(f"generate_images self.encode_control_in_text_embeddings {self.encode_control_in_text_embeddings} gen_config.ctrl_img {gen_config.ctrl_img}")
-                        if self.encode_control_in_text_embeddings:
-                            # collect all control images into a list
-                            control_images = []
-
-                            # check for ctrl_img (legacy support)
+                        has_control_images = False
+                        if gen_config.ctrl_img is not None or gen_config.ctrl_img_1 is not None or gen_config.ctrl_img_2 is not None or gen_config.ctrl_img_3 is not None:
+                            has_control_images = True
+                        # load the control image if out model uses it in text encoding
+                        if has_control_images and self.encode_control_in_text_embeddings:
+                            ctrl_img_list = []
+                    
                             if gen_config.ctrl_img is not None:
                                 ctrl_img = Image.open(gen_config.ctrl_img).convert("RGB")
-                                control_images.append(
+                                # convert to 0 to 1 tensor
+                                ctrl_img = (
                                     TF.to_tensor(ctrl_img)
                                     .unsqueeze(0)
                                     .to(self.device_torch, dtype=self.torch_dtype)
                                 )
-
-                            # check for ctrl_img_1, ctrl_img_2, ctrl_img_3
-                            for ctrl_attr in ['ctrl_img_1', 'ctrl_img_2', 'ctrl_img_3']:
-                                ctrl_path = getattr(gen_config, ctrl_attr, None)
-                                if ctrl_path is not None:
-                                    ctrl_img = Image.open(ctrl_path).convert("RGB")
-                                    control_images.append(
-                                        TF.to_tensor(ctrl_img)
-                                        .unsqueeze(0)
-                                        .to(self.device_torch, dtype=self.torch_dtype)
-                                    )
-
-                            # if we have control images, use them; otherwise set to None
-                            ctrl_img = control_images if control_images else None
-                        print(f"generate_images encode_prompt ctrl_img {ctrl_img}")
+                                ctrl_img_list.append(ctrl_img)
+                            
+                            if gen_config.ctrl_img_1 is not None:
+                                ctrl_img_1 = Image.open(gen_config.ctrl_img_1).convert("RGB")
+                                # convert to 0 to 1 tensor
+                                ctrl_img_1 = (
+                                    TF.to_tensor(ctrl_img_1)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                ctrl_img_list.append(ctrl_img_1)
+                            if gen_config.ctrl_img_2 is not None:
+                                ctrl_img_2 = Image.open(gen_config.ctrl_img_2).convert("RGB")
+                                # convert to 0 to 1 tensor
+                                ctrl_img_2 = (
+                                    TF.to_tensor(ctrl_img_2)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                ctrl_img_list.append(ctrl_img_2)
+                            if gen_config.ctrl_img_3 is not None:
+                                ctrl_img_3 = Image.open(gen_config.ctrl_img_3).convert("RGB")
+                                # convert to 0 to 1 tensor
+                                ctrl_img_3 = (
+                                    TF.to_tensor(ctrl_img_3)
+                                    .unsqueeze(0)
+                                    .to(self.device_torch, dtype=self.torch_dtype)
+                                )
+                                ctrl_img_list.append(ctrl_img_3)
+                            
+                            if self.has_multiple_control_images:
+                                ctrl_img = ctrl_img_list
+                            else:
+                                ctrl_img = ctrl_img_list[0] if len(ctrl_img_list) > 0 else None
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
@@ -1047,8 +1064,6 @@ class BaseModel:
 
         if prompt2 is not None and not isinstance(prompt2, list):
             prompt2 = [prompt2]
-
-        # print(f"encode_prompt self.encode_control_in_text_embeddings {self.encode_control_in_text_embeddings} control_images {control_images}")
         # if control_images in the signature, pass it. This keep from breaking plugins
         if self.encode_control_in_text_embeddings:
             return self.get_prompt_embeds(prompt, control_images=control_images)

@@ -634,6 +634,15 @@ class ModelConfig:
         
         self.arch: ModelArch = kwargs.get("arch", None)
         
+        # auto memory management, only for some models
+        self.auto_memory = kwargs.get("auto_memory", False)
+        if self.auto_memory and self.qtype == "qfloat8":
+            print(f"Auto memory is not compatible with qfloat8, switching to float8 for model")
+            self.qtype = "float8"
+        if self.auto_memory and not self.qtype_te == "qfloat8":
+            print(f"Auto memory is not compatible with qfloat8, switching to float8 for te")
+            self.qtype_te = "float8"
+
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for
         # 20 different model variants
@@ -660,6 +669,7 @@ class ModelConfig:
         
         if self.arch == "flex1":
             self.arch = "flux"
+            
         
         # handle migrating to new model arch
         if self.arch is not None:

@@ -1,5 +1,6 @@
 import React from 'react';
 import { ConfigDoc } from '@/types';
+import { IoFlaskSharp } from 'react-icons/io5';
 
 const docs: { [key: string]: ConfigDoc } = {
   'config.name': {
@@ -56,7 +57,7 @@ const docs: { [key: string]: ConfigDoc } = {
     description: (
       <>
         The control dataset needs to have files that match the filenames of your training dataset. They should be
-        matching file pairs. These images are fed as control/input images during training. The control images will be 
+        matching file pairs. These images are fed as control/input images during training. The control images will be
         resized to match the training images.
       </>
     ),
@@ -71,8 +72,8 @@ const docs: { [key: string]: ConfigDoc } = {
         <br />
         For multi control datasets, the controls will all be applied in the order they are listed. If the model does not
         require the images to be the same aspect ratios, such as with Qwen/Qwen-Image-Edit-2509, then the control images
-        do not need to match the aspect size or aspect ratio of the target image and they will be automatically resized to 
-        the ideal resolutions for the model / target images.
+        do not need to match the aspect size or aspect ratio of the target image and they will be automatically resized
+        to the ideal resolutions for the model / target images.
       </>
     ),
   },
@@ -110,13 +111,15 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Flip X and Flip Y',
     description: (
       <>
-        You can augment your dataset on the fly by flipping the x (horizontal) and/or y (vertical) axis. Flipping a single axis will effectively double your dataset.
-        It will result it training on normal images, and the flipped versions of the images. This can be very helpful, but keep in mind it can also
-        be destructive. There is no reason to train people upside down, and flipping a face can confuse the model as a person's right side does not
+        You can augment your dataset on the fly by flipping the x (horizontal) and/or y (vertical) axis. Flipping a
+        single axis will effectively double your dataset. It will result it training on normal images, and the flipped
+        versions of the images. This can be very helpful, but keep in mind it can also be destructive. There is no
+        reason to train people upside down, and flipping a face can confuse the model as a person's right side does not
         look identical to their left side. For text, obviously flipping text is not a good idea.
         <br />
         <br />
-        Control images for a dataset will also be flipped to match the images, so they will always match on the pixel level.
+        Control images for a dataset will also be flipped to match the images, so they will always match on the pixel
+        level.
       </>
     ),
   },
@@ -148,8 +151,8 @@ const docs: { [key: string]: ConfigDoc } = {
         Some models have multi stage networks that are trained and used separately in the denoising process. Most
         common, is to have 2 stages. One for high noise and one for low noise. You can choose to train both stages at
         once or train them separately. If trained at the same time, The trainer will alternate between training each
-        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the
-        trainer will only train that stage and output a single LoRA.
+        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the trainer
+        will only train that stage and output a single LoRA.
       </>
     ),
   },
@@ -175,10 +178,36 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Force First Sample',
     description: (
       <>
-        This option will force the trainer to generate samples when it starts. The trainer will normally only generate a first sample
-        when nothing has been trained yet, but will not do a first sample when resuming from an existing checkpoint. This option
-        forces a first sample every time the trainer is started. This can be useful if you have changed sample prompts and want to see
-        the new prompts right away.
+        This option will force the trainer to generate samples when it starts. The trainer will normally only generate a
+        first sample when nothing has been trained yet, but will not do a first sample when resuming from an existing
+        checkpoint. This option forces a first sample every time the trainer is started. This can be useful if you have
+        changed sample prompts and want to see the new prompts right away.
+      </>
+    ),
+  },
+  'model.auto_memory': {
+    title: (
+      <>
+        Auto Memory{' '}
+        <span className="text-yellow-500">
+          ( <IoFlaskSharp className="inline text-yellow-500" name="Experimental" /> Experimental)
+        </span>
+      </>
+    ),
+    description: (
+      <>
+        This is an experimental feature based on{' '}
+        <a className="text-blue-500" href="https://github.com/lodestone-rock/RamTorch" target="_blank">
+          RamTorch
+        </a>
+        . This feature is early and will have many updates and changes, so be aware it may not work consistently from
+        one update to the next. It will also only work with certain models.
+        <br />
+        <br />
+        Auto Memory uses the CPU RAM instead of the GPU ram to hold most of the model weights. This allows training a
+        much larger model on a smaller GPU, assuming you have enough CPU RAM. This is slower than training on pure GPU
+        RAM, but CPU RAM is cheaper and upgradeable. You will still need GPU RAM to hold the optimizer states and LoRA weights, 
+        so a larger card is usually still needed.
       </>
     ),
   },

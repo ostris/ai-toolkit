@@ -18,6 +18,7 @@ import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleIm
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
+import { IoFlaskSharp } from 'react-icons/io5';
 
 type Props = {
   jobConfig: JobConfig;
@@ -212,6 +213,18 @@ export default function SimpleJob({
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
               </FormGroup>
+            )}
+            {modelArch?.additionalSections?.includes('model.auto_memory') && (
+              <Checkbox
+                label={
+                  <>
+                    Auto Memory <IoFlaskSharp className="inline text-yellow-500" name="Experimental" />{' '}
+                  </>
+                }
+                checked={jobConfig.config.process[0].model.auto_memory || false}
+                onChange={value => setJobConfig(value, 'config.process[0].model.auto_memory')}
+                docKey="model.auto_memory"
+              />
             )}
           </Card>
           {disableSections.includes('model.quantize') ? null : (
