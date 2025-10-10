@@ -185,10 +185,10 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
-  'model.auto_memory': {
+  'model.layer_offloading': {
     title: (
       <>
-        Auto Memory{' '}
+        Layer Offloading{' '}
         <span className="text-yellow-500">
           ( <IoFlaskSharp className="inline text-yellow-500" name="Experimental" /> Experimental)
         </span>
@@ -204,10 +204,14 @@ const docs: { [key: string]: ConfigDoc } = {
         one update to the next. It will also only work with certain models.
         <br />
         <br />
-        Auto Memory uses the CPU RAM instead of the GPU ram to hold most of the model weights. This allows training a
+        Layer Offloading uses the CPU RAM instead of the GPU ram to hold most of the model weights. This allows training a
         much larger model on a smaller GPU, assuming you have enough CPU RAM. This is slower than training on pure GPU
         RAM, but CPU RAM is cheaper and upgradeable. You will still need GPU RAM to hold the optimizer states and LoRA weights, 
         so a larger card is usually still needed.
+        <br />
+        <br />
+        You can also select the percentage of the layers to offload. It is generally best to offload as few as possible (close to 0%) 
+        for best performance, but you can offload more if you need the memory.
       </>
     ),
   },

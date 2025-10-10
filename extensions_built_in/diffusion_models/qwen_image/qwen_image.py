@@ -125,8 +125,12 @@ class QwenImageModel(BaseModel):
             quantize_model(self, transformer)
             flush()
 
-        if self.model_config.auto_memory:
-            MemoryManager.attach(transformer, self.device_torch)
+        if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
+            MemoryManager.attach(
+                transformer,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_transformer_percent
+            )
 
         if self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")
@@ -147,8 +151,12 @@ class QwenImageModel(BaseModel):
         if not self._qwen_image_keep_visual:
             text_encoder.model.visual = None
 
-        if self.model_config.auto_memory:
-            MemoryManager.attach(text_encoder, self.device_torch)
+        if self.model_config.layer_offloading and self.model_config.layer_offloading_text_encoder_percent > 0:
+            MemoryManager.attach(
+                text_encoder,
+                self.device_torch,
+                offload_percent=self.model_config.layer_offloading_text_encoder_percent
+            )
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
