@@ -214,6 +214,14 @@ export default function SimpleJob({
                 />
               </FormGroup>
             )}
+            {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
+                <Checkbox
+                  label="Match Target Res"
+                  docKey="model.qie.match_target_res"
+                  checked={jobConfig.config.process[0].model.model_kwargs.match_target_res}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
+                />
+            )}
             {modelArch?.additionalSections?.includes('model.layer_offloading') && (
               <>
                 <Checkbox

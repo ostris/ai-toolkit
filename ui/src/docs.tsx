@@ -204,14 +204,27 @@ const docs: { [key: string]: ConfigDoc } = {
         one update to the next. It will also only work with certain models.
         <br />
         <br />
-        Layer Offloading uses the CPU RAM instead of the GPU ram to hold most of the model weights. This allows training a
-        much larger model on a smaller GPU, assuming you have enough CPU RAM. This is slower than training on pure GPU
-        RAM, but CPU RAM is cheaper and upgradeable. You will still need GPU RAM to hold the optimizer states and LoRA weights, 
-        so a larger card is usually still needed.
+        Layer Offloading uses the CPU RAM instead of the GPU ram to hold most of the model weights. This allows training
+        a much larger model on a smaller GPU, assuming you have enough CPU RAM. This is slower than training on pure GPU
+        RAM, but CPU RAM is cheaper and upgradeable. You will still need GPU RAM to hold the optimizer states and LoRA
+        weights, so a larger card is usually still needed.
         <br />
         <br />
-        You can also select the percentage of the layers to offload. It is generally best to offload as few as possible (close to 0%) 
-        for best performance, but you can offload more if you need the memory.
+        You can also select the percentage of the layers to offload. It is generally best to offload as few as possible
+        (close to 0%) for best performance, but you can offload more if you need the memory.
+      </>
+    ),
+  },
+  'model.qie.match_target_res': {
+    title: 'Match Target Res',
+    description: (
+      <>
+        This setting will make the control images match the resolution of the target image. The official inference
+        example for Qwen-Image-Edit-2509 feeds the control image is at 1MP resolution, no matter what size you are
+        generating. Doing this makes training at lower res difficult because 1MP control images are fed in despite how
+        large your target image is. Match Target Res will match the resolution of your target to feed in the control
+        images allowing you to use less VRAM when training with smaller resolutions. You can still use different aspect
+        ratios, the image will just be resizes to match the amount of pixels in the target image.
       </>
     ),
   },

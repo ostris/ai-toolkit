@@ -21,7 +21,8 @@ type AdditionalSections =
   | 'datasets.num_frames'
   | 'model.multistage'
   | 'model.layer_offloading'
-  | 'model.low_vram';
+  | 'model.low_vram'
+  | 'model.qie.match_target_res';
 type ModelGroup = 'image' | 'instruction' | 'video';
 
 export interface ModelArch {
@@ -354,6 +355,12 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].model.model_kwargs': [
+        {
+          match_target_res: false,
+        },
+        {},
+      ],
     },
     disableSections: ['network.conv', 'train.unload_text_encoder'],
     additionalSections: [
@@ -361,6 +368,7 @@ export const modelArchs: ModelArch[] = [
       'sample.multi_ctrl_imgs',
       'model.low_vram',
       'model.layer_offloading',
+      'model.qie.match_target_res',
     ],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors',
