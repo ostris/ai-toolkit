@@ -636,12 +636,18 @@ class ModelConfig:
         
         # auto memory management, only for some models
         self.auto_memory = kwargs.get("auto_memory", False)
-        if self.auto_memory and self.qtype == "qfloat8":
-            print(f"Auto memory is not compatible with qfloat8, switching to float8 for model")
+        # auto memory is deprecated, use layer offloading instead
+        if self.auto_memory:
+            print("auto_memory is deprecated, use layer_offloading instead")
+        self.layer_offloading = kwargs.get("layer_offloading", self.auto_memory )
+        if self.layer_offloading and self.qtype == "qfloat8":
             self.qtype = "float8"
-        if self.auto_memory and not self.qtype_te == "qfloat8":
-            print(f"Auto memory is not compatible with qfloat8, switching to float8 for te")
+        if self.layer_offloading and not self.qtype_te == "qfloat8":
             self.qtype_te = "float8"
+        
+        # 0 is off and 1.0 is 100% of the layers
+        self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
+        self.layer_offloading_text_encoder_percent = kwargs.get("layer_offloading_text_encoder_percent", 1.0)
 
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for

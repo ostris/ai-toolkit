@@ -21,17 +21,21 @@ export const handleModelArchChange = (
     setJobConfig(false, 'config.process[0].model.low_vram');
   }
 
-  // handle auto memory setting
-  if (!newArch?.additionalSections?.includes('model.auto_memory')) {
-    if ('auto_memory' in jobConfig.config.process[0].model) {
+  // handle layer offloading setting
+  if (!newArch?.additionalSections?.includes('model.layer_offloading')) {
+    if ('layer_offloading' in jobConfig.config.process[0].model) {
       const newModel = objectCopy(jobConfig.config.process[0].model);
-      delete newModel.auto_memory;
+      delete newModel.layer_offloading;
+      delete newModel.layer_offloading_text_encoder_percent;
+      delete newModel.layer_offloading_transformer_percent;
       setJobConfig(newModel, 'config.process[0].model');
     }
   } else {
     // set to false if not set
-    if (!('auto_memory' in jobConfig.config.process[0].model)) {
-      setJobConfig(false, 'config.process[0].model.auto_memory');
+    if (!('layer_offloading' in jobConfig.config.process[0].model)) {
+      setJobConfig(false, 'config.process[0].model.layer_offloading');
+      setJobConfig(1.0, 'config.process[0].model.layer_offloading_text_encoder_percent');
+      setJobConfig(1.0, 'config.process[0].model.layer_offloading_transformer_percent');
     }
   }
 

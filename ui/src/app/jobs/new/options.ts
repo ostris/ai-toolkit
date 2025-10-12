@@ -20,8 +20,9 @@ type AdditionalSections =
   | 'sample.multi_ctrl_imgs'
   | 'datasets.num_frames'
   | 'model.multistage'
-  | 'model.auto_memory'
-  | 'model.low_vram';
+  | 'model.layer_offloading'
+  | 'model.low_vram'
+  | 'model.qie.match_target_res';
 type ModelGroup = 'image' | 'instruction' | 'video';
 
 export interface ModelArch {
@@ -313,7 +314,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.auto_memory'],
+    additionalSections: ['model.low_vram', 'model.layer_offloading'],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors',
     },
@@ -334,7 +335,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram', 'model.auto_memory'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram', 'model.layer_offloading'],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_torchao_uint3.safetensors',
     },
@@ -354,13 +355,20 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].model.model_kwargs': [
+        {
+          match_target_res: false,
+        },
+        {},
+      ],
     },
     disableSections: ['network.conv', 'train.unload_text_encoder'],
     additionalSections: [
       'datasets.multi_control_paths',
       'sample.multi_ctrl_imgs',
       'model.low_vram',
-      'model.auto_memory',
+      'model.layer_offloading',
+      'model.qie.match_target_res',
     ],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors',

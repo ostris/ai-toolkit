@@ -11,7 +11,7 @@ import {
 import { defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
-import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
+import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
@@ -214,17 +214,55 @@ export default function SimpleJob({
                 />
               </FormGroup>
             )}
-            {modelArch?.additionalSections?.includes('model.auto_memory') && (
-              <Checkbox
-                label={
-                  <>
-                    Auto Memory <IoFlaskSharp className="inline text-yellow-500" name="Experimental" />{' '}
-                  </>
-                }
-                checked={jobConfig.config.process[0].model.auto_memory || false}
-                onChange={value => setJobConfig(value, 'config.process[0].model.auto_memory')}
-                docKey="model.auto_memory"
-              />
+            {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
+                <Checkbox
+                  label="Match Target Res"
+                  docKey="model.qie.match_target_res"
+                  checked={jobConfig.config.process[0].model.model_kwargs.match_target_res}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
+                />
+            )}
+            {modelArch?.additionalSections?.includes('model.layer_offloading') && (
+              <>
+                <Checkbox
+                  label={
+                    <>
+                      Layer Offloading <IoFlaskSharp className="inline text-yellow-500" name="Experimental" />{' '}
+                    </>
+                  }
+                  checked={jobConfig.config.process[0].model.layer_offloading || false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.layer_offloading')}
+                  docKey="model.layer_offloading"
+                />
+                {jobConfig.config.process[0].model.layer_offloading && (
+                  <div className="pt-2">
+                    <SliderInput
+                      label="Transformer Offload %"
+                      value={Math.round(
+                        (jobConfig.config.process[0].model.layer_offloading_transformer_percent ?? 1) * 100,
+                      )}
+                      onChange={value =>
+                        setJobConfig(value * 0.01, 'config.process[0].model.layer_offloading_transformer_percent')
+                      }
+                      min={0}
+                      max={100}
+                      step={1}
+                    />
+                    <SliderInput
+                      label="Text Encoder Offload %"
+                      value={Math.round(
+                        (jobConfig.config.process[0].model.layer_offloading_text_encoder_percent ?? 1) * 100,
+                      )}
+                      onChange={value =>
+                        setJobConfig(value * 0.01, 'config.process[0].model.layer_offloading_text_encoder_percent')
+                      }
+                      min={0}
+                      max={100}
+                      step={1}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </Card>
           {disableSections.includes('model.quantize') ? null : (
