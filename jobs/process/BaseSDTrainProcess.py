@@ -1506,6 +1506,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
         BaseTrainProcess.run(self)
+        if self.model_config.low_vram and self.model_config.reserve_ram_for_spillover:
+            ram_reserve = torch.zeros((self.model_config.reserve_ram_for_spillover * 1024 * 1024 * 1024 // 4,), dtype=torch.float32, device='cpu')
         params = []
 
         ### HOOK ###
@@ -1749,6 +1751,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.network.force_to(self.device_torch, dtype=torch.float32)
                 # give network to sd so it can use it
                 self.sd.network = self.network
+
+                # Free reserved RAM for video memory spillover
+                if 'ram_reserve' in locals():
+                    del ram_reserve
+
                 self.network._update_torch_multiplier()
 
                 self.network.apply_to(
