@@ -25,7 +25,7 @@ export const defaultSliderConfig: SliderConfig = {
   positive_prompt: 'person who is happy',
   negative_prompt: 'person who is sad',
   target_class: 'person',
-  anchor_class: "",
+  anchor_class: '',
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -180,6 +180,12 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
   // upgrade job from ui_trainer to diffusion_trainer
   if (jobConfig?.config?.process && jobConfig.config.process[0]?.type === 'ui_trainer') {
     jobConfig.config.process[0].type = 'diffusion_trainer';
+  }
+
+  if ('auto_memory' in jobConfig.config.process[0].model) {
+    jobConfig.config.process[0].model.layer_offloading = (jobConfig.config.process[0].model.auto_memory ||
+      false) as boolean;
+    delete jobConfig.config.process[0].model.auto_memory;
   }
   return jobConfig;
 };

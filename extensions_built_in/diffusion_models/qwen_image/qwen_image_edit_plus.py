@@ -200,6 +200,11 @@ class QwenImageEditPlusModel(QwenImageModel):
     ):
         with torch.no_grad():
             batch_size, num_channels_latents, height, width = latent_model_input.shape
+            
+            control_image_res = VAE_IMAGE_SIZE
+            if self.model_config.model_kwargs.get("match_target_res", False):
+                # use the current target size to set the control image res
+                control_image_res = height * width * self.pipeline.vae_scale_factor
 
             # pack image tokens
             latent_model_input = latent_model_input.view(
@@ -244,7 +249,7 @@ class QwenImageEditPlusModel(QwenImageModel):
                         if len(control_img.shape) == 3:
                             control_img = control_img.unsqueeze(0)
                         ratio = control_img.shape[2] / control_img.shape[3]
-                        c_width = math.sqrt(VAE_IMAGE_SIZE * ratio)
+                        c_width = math.sqrt(control_image_res * ratio)
                         c_height = c_width / ratio
 
                         c_width = round(c_width / 32) * 32
