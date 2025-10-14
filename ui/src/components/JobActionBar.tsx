@@ -1,9 +1,10 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
 import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped } from '@/utils/jobs';
+import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 
 interface JobActionBarProps {
@@ -12,10 +13,18 @@ interface JobActionBarProps {
   afterDelete?: () => void;
   hideView?: boolean;
   className?: string;
+  autoStartQueue?: boolean;
 }
 
-export default function JobActionBar({ job, onRefresh, afterDelete, className, hideView }: JobActionBarProps) {
-  const { canStart, canStop, canDelete, canEdit } = getAvaliableJobActions(job);
+export default function JobActionBar({
+  job,
+  onRefresh,
+  afterDelete,
+  className,
+  hideView,
+  autoStartQueue = false,
+}: JobActionBarProps) {
+  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
 
   if (!afterDelete) afterDelete = onRefresh;
 
@@ -26,11 +35,27 @@ export default function JobActionBar({ job, onRefresh, afterDelete, className, h
           onClick={async () => {
             if (!canStart) return;
             await startJob(job.id);
+            // start the queue as well
+            if (autoStartQueue) {
+              await startQueue(job.gpu_ids);
+            }
             if (onRefresh) onRefresh();
           }}
           className={`ml-2 opacity-100`}
         >
           <Play />
+        </Button>
+      )}
+      {canRemoveFromQueue && (
+        <Button
+          onClick={async () => {
+            if (!canRemoveFromQueue) return;
+            await markJobAsStopped(job.id);
+            if (onRefresh) onRefresh();
+          }}
+          className={`ml-2 opacity-100`}
+        >
+          <X />
         </Button>
       )}
       {canStop && (

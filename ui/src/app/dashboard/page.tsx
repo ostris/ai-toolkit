@@ -18,7 +18,7 @@ export default function Dashboard() {
         <GpuMonitor />
         <div className="w-full mt-4">
           <div className="flex justify-between items-center mb-2">
-            <h1 className="text-md">Active Jobs</h1>
+            <h1 className="text-md">Queues</h1>
             <div className="text-xs text-gray-500">
               <Link href="/jobs">View All</Link>
             </div>

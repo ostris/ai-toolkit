@@ -246,3 +246,5 @@ export interface GroupedSelectOption {
   readonly label: string;
   readonly options: SelectOption[];
 }
+
+export type JobStatus = 'queued' | 'running' | 'stopping' | 'stopped' | 'completed' | 'error';

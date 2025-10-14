@@ -9,7 +9,7 @@ export default function Dashboard() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Training Jobs</h1>
+          <h1 className="text-lg">Training Queue</h1>
         </div>
         <div className="flex-1"></div>
         <div>
