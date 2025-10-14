@@ -165,6 +165,12 @@ class QwenImageEditPlusModel(QwenImageModel):
         # todo handle not caching text encoder
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
+            
+        if control_images is None:
+            raise ValueError("Missing control images for QwenImageEditPlusModel")
+        
+        if not isinstance(control_images, List):
+            control_images = [control_images]
 
         if control_images is not None and len(control_images) > 0:
             for i in range(len(control_images)):
@@ -200,6 +206,8 @@ class QwenImageEditPlusModel(QwenImageModel):
     ):
         with torch.no_grad():
             batch_size, num_channels_latents, height, width = latent_model_input.shape
+            if self.vae.device != self.device_torch:
+                self.vae.to(self.device_torch)
             
             control_image_res = VAE_IMAGE_SIZE
             if self.model_config.model_kwargs.get("match_target_res", False):
