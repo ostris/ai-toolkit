@@ -26,6 +26,7 @@ export default function TrainingForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const runId = searchParams.get('id');
+  const cloneId = searchParams.get('cloneId');
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
   const { settings, isSettingsLoaded } = useSettings();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
@@ -53,6 +54,23 @@ export default function TrainingForm() {
       }
     }
   }, [datasets, settings, isSettingsLoaded, datasetFetchStatus]);
+
+  // clone existing job
+  useEffect(() => {
+    if (cloneId) {
+      apiClient
+        .get(`/api/jobs?id=${cloneId}`)
+        .then(res => res.data)
+        .then(data => {
+          console.log('Clone Training:', data);
+          setGpuIDs(data.gpu_ids);
+          const newJobConfig = migrateJobConfig(JSON.parse(data.job_config));
+          newJobConfig.config.name = `${newJobConfig.config.name}_copy`;
+          setJobConfig(newJobConfig);
+        })
+        .catch(error => console.error('Error fetching training:', error));
+    }
+  }, [cloneId]);
 
   useEffect(() => {
     if (runId) {
