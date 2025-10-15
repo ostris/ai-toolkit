@@ -65,7 +65,9 @@ async function getGpuStats(isWindows: boolean) {
     'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits';
 
   // Execute command
-  const { stdout } = await execAsync(command);
+  const { stdout } = await execAsync(command, {
+    env: { ...process.env, CUDA_DEVICE_ORDER: 'PCI_BUS_ID' },
+  });
 
   // Parse CSV output
   const gpus = stdout
