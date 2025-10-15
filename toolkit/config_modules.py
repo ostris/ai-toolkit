@@ -159,7 +159,32 @@ class LoRMConfig:
         })
 
 
-NetworkType = Literal['lora', 'locon', 'lorm', 'lokr']
+NetworkType = Literal['lora', 'locon', 'lorm', 'lokr', 'dora']
+
+
+NETWORK_TYPE_LABELS = {
+    'lora': 'LoRA',
+    'dora': 'DoRA',
+    'locon': 'LoCon',
+    'lorm': 'LoRM',
+    'lokr': 'LoKR',
+    'lycoris': 'LyCORIS',
+    'fullrank': 'FullRank',
+}
+
+
+def get_network_type_label(network_type: str) -> str:
+    key = (network_type or '').lower()
+    if key in NETWORK_TYPE_LABELS:
+        return NETWORK_TYPE_LABELS[key]
+    if not network_type:
+        return 'LoRA'
+    # default to title case for unknown types (e.g., custom adapters)
+    return network_type.title()
+
+
+def get_known_network_type_labels() -> List[str]:
+    return list(NETWORK_TYPE_LABELS.values())
 
 
 class NetworkConfig:

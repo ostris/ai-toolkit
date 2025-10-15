@@ -8,7 +8,7 @@ import { getTrainingFolder } from '@/server/settings';
 const prisma = new PrismaClient();
 
 type InferredInfo = {
-  type: 'lora' | 'lokr' | 'unknown';
+  type: 'lora' | 'dora' | 'lokr' | 'unknown';
   linear?: number;
   linear_alpha?: number;
   lokr_factor?: number;
@@ -34,12 +34,14 @@ function inferFromHeader(headerObj: any): InferredInfo {
 
   // Determine network type
   const hasLokr = keys.some(k => k.includes('lokr_')) || keys.some(k => k.startsWith('lycoris_') && k.includes('lokr'));
+  const hasDoraMagnitude = keys.some(k => k.endsWith('.magnitude') || k.includes('.magnitude'));
   const isLora = keys.some(k => k.includes('lora_A') || k.includes('lora_down'));
   if (hasLokr) info.type = 'lokr';
+  else if (hasDoraMagnitude) info.type = 'dora';
   else if (isLora) info.type = 'lora';
 
   try {
-    if (info.type === 'lora') {
+    if (info.type === 'lora' || info.type === 'dora') {
       // Find a lora_A or lora_down.weight entry and use shape[0] as rank
       const loraKey = keys.find(k => k.includes('lora_A')) || keys.find(k => k.includes('lora_down'));
       if (loraKey) {
@@ -149,8 +151,8 @@ export async function POST(request: NextRequest, { params }: { params: { jobID: 
           proc.training_folder = proc.training_folder || trainingRoot;
           proc.network = proc.network || {};
 
-          if (inferred.type === 'lora') {
-            proc.network.type = 'lora';
+          if (inferred.type === 'lora' || inferred.type === 'dora') {
+            proc.network.type = inferred.type;
             if (typeof inferred.linear === 'number' && inferred.linear > 0) {
               proc.network.linear = inferred.linear;
               proc.network.linear_alpha = inferred.linear_alpha ?? inferred.linear;

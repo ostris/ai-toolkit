@@ -59,7 +59,7 @@ from tqdm import tqdm
 
 from toolkit.config_modules import SaveConfig, LoggingConfig, SampleConfig, NetworkConfig, TrainConfig, ModelConfig, \
     GenerateImageConfig, EmbeddingConfig, DatasetConfig, preprocess_dataset_raw_config, AdapterConfig, GuidanceConfig, validate_configs, \
-    DecoratorConfig
+    DecoratorConfig, get_network_type_label, get_known_network_type_labels
 from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
@@ -264,6 +264,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
 
+    def _get_network_label(self) -> Optional[str]:
+        if self.network_config is None or self.network_config.type is None:
+            return None
+        return get_network_type_label(self.network_config.type)
+
+    def _get_network_suffix(self) -> str:
+        label = self._get_network_label()
+        if label is None:
+            return '_LoRA'
+        return f"_{label}"
+
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
         return generate_image_config_list
@@ -385,6 +396,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         #     is_xl=self.model_config.is_xl,
         # )
         o_dict['ss_output_name'] = self.job.name
+
+        network_label = self._get_network_label()
+        if network_label is not None:
+            o_dict['ss_network_type'] = network_label
+            o_dict['ss_network_type_raw'] = self.network_config.type
 
         if self.trigger_word is not None:
             # just so auto1111 will pick it up
@@ -526,7 +542,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 lora_name = self.job.name
                 if self.named_lora:
                     # add _lora to name
-                    lora_name += '_LoRA'
+                    lora_name += self._get_network_suffix()
 
                 filename = f'{lora_name}{step_num}.safetensors'
                 file_path = os.path.join(self.save_root, filename)
@@ -804,8 +820,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if paths:
                 paths = [p for p in paths if os.path.exists(p)]
                 # remove false positives
-                if '_LoRA' not in name:
-                    paths = [p for p in paths if '_LoRA' not in p]
+                for label in get_known_network_type_labels():
+                    suffix = f"_{label}"
+                    if suffix not in name:
+                        paths = [p for p in paths if suffix not in p]
                 if '_refiner' not in name:
                     paths = [p for p in paths if '_refiner' not in p]
                 if '_t2i' not in name:
@@ -1831,7 +1849,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 lora_name = self.name
                 # need to adapt name so they are not mixed up
                 if self.named_lora:
-                    lora_name = f"{lora_name}_LoRA"
+                    lora_name = f"{lora_name}{self._get_network_suffix()}"
 
                 latest_save_path = self.get_latest_save_path(lora_name)
                 extra_weights = None

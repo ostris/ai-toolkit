@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING, Union, List
 
 from optimum.quanto import QBytesTensor, QTensor
 
+try:  # torchao optional dependency
+    from torchao.dtypes.affine_quantized_tensor import AffineQuantizedTensor
+except ImportError:  # pragma: no cover - torchao not always installed
+    AffineQuantizedTensor = None
+
 from toolkit.network_mixins import ToolkitModuleMixin, ExtractableModuleMixin
 
 if TYPE_CHECKING:
@@ -101,16 +106,33 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         self.org_module[0].forward = self.forward
         # del self.org_module
 
+    def _maybe_dequantize(self, tensor):
+        if tensor is None:
+            return None
+
+        # unwrap parameter containers
+        data = tensor.data if isinstance(tensor, torch.nn.Parameter) else tensor
+
+        # handle various quantized tensor wrappers
+        if AffineQuantizedTensor is not None and isinstance(data, AffineQuantizedTensor):
+            return data.dequantize().detach()
+        if isinstance(data, (QTensor, QBytesTensor)):
+            return data.dequantize().detach()
+        if hasattr(data, "dequantize") and callable(getattr(data, "dequantize")):
+            try:
+                return data.dequantize().detach()
+            except NotImplementedError:
+                pass
+
+        # already a regular tensor
+        return data.detach() if isinstance(data, torch.Tensor) else torch.as_tensor(data).detach()
+
     def get_orig_weight(self):
-        weight = self.org_module[0].weight
-        if isinstance(weight, QTensor) or isinstance(weight, QBytesTensor):
-            return weight.dequantize().data.detach()
-        else:
-            return weight.data.detach()
+        return self._maybe_dequantize(self.org_module[0].weight)
 
     def get_orig_bias(self):
         if hasattr(self.org_module[0], 'bias') and self.org_module[0].bias is not None:
-            return self.org_module[0].bias.data.detach()
+            return self._maybe_dequantize(self.org_module[0].bias)
         return None
 
     # def dora_forward(self, x, *args, **kwargs):

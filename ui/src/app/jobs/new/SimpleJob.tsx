@@ -103,6 +103,9 @@ export default function SimpleJob({
     trainingBarClass = 'grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6';
   }
 
+  const networkConfig = jobConfig.config.process[0].network;
+  const targetType = networkConfig?.type ?? 'lora';
+
   const transformerQuantizationOptions: GroupedSelectOption[] | SelectOption[] = useMemo(() => {
     const hasARA = modelArch?.accuracyRecoveryAdapters && Object.keys(modelArch.accuracyRecoveryAdapters).length > 0;
     if (!hasARA) {
@@ -325,14 +328,15 @@ export default function SimpleJob({
           <Card title="Target">
             <SelectInput
               label="Target Type"
-              value={jobConfig.config.process[0].network?.type ?? 'lora'}
+              value={targetType}
               onChange={value => setJobConfig(value, 'config.process[0].network.type')}
               options={[
                 { value: 'lora', label: 'LoRA' },
+                { value: 'dora', label: 'DoRA' },
                 { value: 'lokr', label: 'LoKr' },
               ]}
             />
-            {jobConfig.config.process[0].network?.type == 'lokr' && (
+            {targetType == 'lokr' && (
               <SelectInput
                 label="LoKr Factor"
                 value={`${jobConfig.config.process[0].network?.lokr_factor ?? -1}`}
@@ -346,11 +350,11 @@ export default function SimpleJob({
                 ]}
               />
             )}
-            {jobConfig.config.process[0].network?.type == 'lora' && (
+            {['lora', 'dora'].includes(targetType) && (
               <>
                 <NumberInput
                   label="Linear Rank"
-                  value={jobConfig.config.process[0].network.linear}
+                  value={networkConfig?.linear ?? 0}
                   onChange={value => {
                     console.log('onChange', value);
                     setJobConfig(value, 'config.process[0].network.linear');
@@ -361,10 +365,10 @@ export default function SimpleJob({
                   max={1024}
                   required
                 />
-                {disableSections.includes('network.conv') ? null : (
+                {targetType === 'lora' && !disableSections.includes('network.conv') ? (
                   <NumberInput
                     label="Conv Rank"
-                    value={jobConfig.config.process[0].network.conv}
+                    value={networkConfig?.conv ?? 0}
                     onChange={value => {
                       console.log('onChange', value);
                       setJobConfig(value, 'config.process[0].network.conv');
@@ -374,7 +378,7 @@ export default function SimpleJob({
                     min={0}
                     max={1024}
                   />
-                )}
+                ) : null}
               </>
             )}
           </Card>

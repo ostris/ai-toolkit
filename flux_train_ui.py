@@ -146,6 +146,7 @@ def start_training(
     steps,
     lr,
     rank,
+    adapter_type,
     model_to_train,
     low_vram,
     dataset_folder,
@@ -183,6 +184,11 @@ def start_training(
     config["config"]["process"][0]["train"]["lr"] = float(lr)
     config["config"]["process"][0]["network"]["linear"] = int(rank)
     config["config"]["process"][0]["network"]["linear_alpha"] = int(rank)
+    adapter_type_sanitized = (adapter_type or "LoRA").strip().lower()
+    if adapter_type_sanitized == "dora":
+        config["config"]["process"][0]["network"]["type"] = "dora"
+    else:
+        config["config"]["process"][0]["network"]["type"] = "lora"
     config["config"]["process"][0]["datasets"][0]["folder_path"] = dataset_folder
     config["config"]["process"][0]["save"]["push_to_hub"] = push_to_hub
     if(push_to_hub):
@@ -346,7 +352,8 @@ with gr.Blocks(theme=theme, css=css) as demo:
         with gr.Accordion("Advanced options", open=False):
             steps = gr.Number(label="Steps", value=1000, minimum=1, maximum=10000, step=1)
             lr = gr.Number(label="Learning Rate", value=4e-4, minimum=1e-6, maximum=1e-3, step=1e-6)
-            rank = gr.Number(label="LoRA Rank", value=16, minimum=4, maximum=128, step=4)
+            rank = gr.Number(label="Adapter Rank", value=16, minimum=4, maximum=128, step=4)
+            adapter_type = gr.Radio(["LoRA", "DoRA"], value="LoRA", label="Adapter Type")
             model_to_train = gr.Radio(["dev", "schnell"], value="dev", label="Model to train")
             low_vram = gr.Checkbox(label="Low VRAM", value=True)
             with gr.Accordion("Even more advanced options", open=False):
@@ -396,6 +403,7 @@ with gr.Blocks(theme=theme, css=css) as demo:
             steps,
             lr,
             rank,
+            adapter_type,
             model_to_train,
             low_vram,
             dataset_folder,
