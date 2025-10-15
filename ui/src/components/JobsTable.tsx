@@ -165,7 +165,7 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
                       <span className="text-red-400 mr-2">Queue Stopped</span>
                       <button
                         onClick={async () => {
-                          await startQueue(queue.gpu_ids as string);
+                          await startQueue(gpuKey);
                           refresh();
                         }}
                         className="ml-4 text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded"
