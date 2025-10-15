@@ -156,6 +156,7 @@ export interface ModelConfig {
   layer_offloading?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
+  reserve_ram_for_spillover?: number;
 }
 
 export interface SampleItem {

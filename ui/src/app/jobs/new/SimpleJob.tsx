@@ -212,15 +212,26 @@ export default function SimpleJob({
                   checked={jobConfig.config.process[0].model.low_vram}
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
+                {jobConfig.config.process[0].model.low_vram && (
+                  <SliderInput
+                    label="Reserve RAM for Spillover (GB)"
+                    docKey="model.reserve_ram_for_spillover"
+                    value={jobConfig.config.process[0].model.reserve_ram_for_spillover ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.reserve_ram_for_spillover')}
+                    min={0}
+                    max={12}
+                    step={1}
+                  />
+                )}
               </FormGroup>
             )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
-                <Checkbox
-                  label="Match Target Res"
-                  docKey="model.qie.match_target_res"
-                  checked={jobConfig.config.process[0].model.model_kwargs.match_target_res}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
-                />
+              <Checkbox
+                label="Match Target Res"
+                docKey="model.qie.match_target_res"
+                checked={jobConfig.config.process[0].model.model_kwargs.match_target_res}
+                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
+              />
             )}
             {modelArch?.additionalSections?.includes('model.layer_offloading') && (
               <>
