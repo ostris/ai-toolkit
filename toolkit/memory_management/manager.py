@@ -28,6 +28,7 @@ UNMANAGED_MODULES = [
     "LSTM",
     "GRU",
     "RNN",
+    "Conv3d"
 ]
 
 UNMANAGED_MODULES_INCLUDES = ["RotaryEmbedding", "Norm"]
