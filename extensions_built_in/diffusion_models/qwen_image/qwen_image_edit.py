@@ -176,6 +176,8 @@ class QwenImageEditModel(QwenImageModel):
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
 
+        # Convert control images to PIL format if provided
+        pil_images = None
         if control_images is not None:
             # control images are 0 - 1 scale, shape (bs, ch, height, width)
             # images are always run through at 1MP, based on diffusers inference code.
@@ -184,16 +186,32 @@ class QwenImageEditModel(QwenImageModel):
             width = math.sqrt(target_area * ratio)
             height = width / ratio
 
-            width = round(width / 32) * 32
-            height = round(height / 32) * 32
+            width = int(round(width / 32) * 32)
+            height = int(round(height / 32) * 32)
 
             control_images = F.interpolate(
                 control_images, size=(height, width), mode="bilinear"
             )
+            
+            # Convert tensor to PIL Image(s) for the processor
+            # control_images is (bs, ch, h, w) in range [0, 1]
+            pil_images = []
+            for i in range(control_images.shape[0]):
+                img_tensor = control_images[i]  # (ch, h, w)
+                # Convert to float32 first (NumPy doesn't support bfloat16)
+                img_tensor = img_tensor.float()
+                # Convert to [0, 255] and uint8
+                img_numpy = (img_tensor.permute(1, 2, 0).cpu().numpy() * 255).astype('uint8')
+                pil_img = Image.fromarray(img_numpy)
+                pil_images.append(pil_img)
+            
+            # If single image, pass as single PIL image instead of list
+            if len(pil_images) == 1:
+                pil_images = pil_images[0]
 
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
-            image=control_images,
+            image=pil_images,
             device=self.device_torch,
             num_images_per_prompt=1,
         )
