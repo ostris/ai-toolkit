@@ -613,6 +613,7 @@ class ModelConfig:
         self.ignore_if_contains: Optional[List[str]] = kwargs.get("ignore_if_contains", None)
         self.only_if_contains: Optional[List[str]] = kwargs.get("only_if_contains", None)
         self.quantize_kwargs = kwargs.get("quantize_kwargs", {})
+        self.flux_reference = kwargs.get("flux_reference", None)
         
         # splits the model over the available gpus WIP
         self.split_model_over_gpus = kwargs.get("split_model_over_gpus", False)
