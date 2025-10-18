@@ -157,11 +157,11 @@ export default function JobOverview({ job }: JobOverviewProps) {
 
       {/* GPU Widget Panel */}
       <div className="col-span-1">
-        <div  className="mb-4">
-          {isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}</div>
-        <div className="mt-4">{isGPUInfoLoaded && gpuList.length > 0 ? <GPUWidget gpu={gpuList[0]} /> : null}
+        <div className="flex flex-col space-y-4">
+          {isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}
+          {isGPUInfoLoaded && gpuList.length > 0 ? <GPUWidget gpu={gpuList[0]} /> : null}
+          <FilesWidget jobID={job.id} />
         </div>
-        <FilesWidget jobID={job.id} />
       </div>
     </div>
   );
