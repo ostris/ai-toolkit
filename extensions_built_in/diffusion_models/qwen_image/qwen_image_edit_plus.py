@@ -155,6 +155,78 @@ class QwenImageEditPlusModel(QwenImageModel):
         ).images[0]
         return img
 
+    def _prepare_control_images_for_prompt(self, control_images):
+        """Normalizes control image structures coming from the dataloader."""
+        if control_images is None:
+            return None
+
+        # Single tensor -> wrap for downstream logic.
+        if isinstance(control_images, torch.Tensor):
+            tensor = control_images
+            if tensor.dim() == 3:
+                tensor = tensor.unsqueeze(0)
+            elif tensor.dim() != 4:
+                raise ValueError("Control tensors must be 3D or 4D")
+            return [tensor]
+
+        if not isinstance(control_images, list) or len(control_images) == 0:
+            return None
+
+        # Already in expected format (list of tensors with batch dimension).
+        if isinstance(control_images[0], torch.Tensor):
+            normalized = []
+            for tensor in control_images:
+                ctrl = tensor
+                if ctrl.dim() == 3:
+                    ctrl = ctrl.unsqueeze(0)
+                elif ctrl.dim() != 4:
+                    raise ValueError("Control tensors must be 3D or 4D")
+                if ctrl.numel() == 0:
+                    continue
+                normalized.append(ctrl)
+            return normalized if len(normalized) > 0 else None
+
+        # List per batch item -> regroup per control index.
+        if isinstance(control_images[0], (list, tuple)):
+            num_controls = len(control_images[0])
+            regrouped = [[] for _ in range(num_controls)]
+
+            for sample_controls in control_images:
+                if len(sample_controls) != num_controls:
+                    raise ValueError("Inconsistent number of control images across batch items")
+                for idx, ctrl in enumerate(sample_controls):
+                    if not isinstance(ctrl, torch.Tensor):
+                        raise TypeError("Control images must be tensors")
+                    if ctrl.dim() == 3:
+                        ctrl = ctrl.unsqueeze(0)
+                    elif ctrl.dim() != 4:
+                        raise ValueError("Control tensors must be 3D or 4D")
+                    regrouped[idx].append(ctrl)
+
+            stacked_controls = []
+            for controls in regrouped:
+                if len(controls) == 0:
+                    continue
+                heights = [ctrl.shape[2] for ctrl in controls]
+                widths = [ctrl.shape[3] for ctrl in controls]
+                target_h = max(heights)
+                target_w = max(widths)
+                if not all(h == target_h and w == target_w for h, w in zip(heights, widths)):
+                    controls = [
+                        F.interpolate(
+                            ctrl,
+                            size=(target_h, target_w),
+                            mode="bilinear",
+                            align_corners=False,
+                        )
+                        for ctrl in controls
+                    ]
+                stacked_controls.append(torch.cat(controls, dim=0))
+
+            return stacked_controls if len(stacked_controls) > 0 else None
+
+        return None
+
     def condition_noisy_latents(
         self, latents: torch.Tensor, batch: "DataLoaderBatchDTO"
     ):
@@ -165,14 +237,10 @@ class QwenImageEditPlusModel(QwenImageModel):
         # todo handle not caching text encoder
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
-            
-        if control_images is None:
-            raise ValueError("Missing control images for QwenImageEditPlusModel")
-        
-        if not isinstance(control_images, List):
-            control_images = [control_images]
 
-        if control_images is not None and len(control_images) > 0:
+        control_images = self._prepare_control_images_for_prompt(control_images)
+
+        if control_images:
             for i in range(len(control_images)):
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
@@ -183,8 +251,26 @@ class QwenImageEditPlusModel(QwenImageModel):
                 height = round(height / 32) * 32
 
                 control_images[i] = F.interpolate(
-                    control_images[i], size=(height, width), mode="bilinear"
+                    control_images[i],
+                    size=(height, width),
+                    mode="bilinear",
+                    align_corners=False,
                 )
+                control_images[i] = control_images[i].to(
+                    device="cpu", dtype=torch.float32
+                )
+
+                # drop leading batch dimension so processor sees individual images
+                if control_images[i].dim() == 4 and control_images[i].shape[0] == 1:
+                    control_images[i] = control_images[i].squeeze(0)
+
+                if control_images[i].dim() != 3:
+                    raise ValueError(
+                        "Control image must be 3D (C, H, W) after preprocessing"
+                    )
+
+        if not control_images:
+            control_images = None
 
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
@@ -206,13 +292,6 @@ class QwenImageEditPlusModel(QwenImageModel):
     ):
         with torch.no_grad():
             batch_size, num_channels_latents, height, width = latent_model_input.shape
-            if self.vae.device != self.device_torch:
-                self.vae.to(self.device_torch)
-            
-            control_image_res = VAE_IMAGE_SIZE
-            if self.model_config.model_kwargs.get("match_target_res", False):
-                # use the current target size to set the control image res
-                control_image_res = height * width * self.pipeline.vae_scale_factor
 
             # pack image tokens
             latent_model_input = latent_model_input.view(
@@ -257,7 +336,7 @@ class QwenImageEditPlusModel(QwenImageModel):
                         if len(control_img.shape) == 3:
                             control_img = control_img.unsqueeze(0)
                         ratio = control_img.shape[2] / control_img.shape[3]
-                        c_width = math.sqrt(control_image_res * ratio)
+                        c_width = math.sqrt(VAE_IMAGE_SIZE * ratio)
                         c_height = c_width / ratio
 
                         c_width = round(c_width / 32) * 32
