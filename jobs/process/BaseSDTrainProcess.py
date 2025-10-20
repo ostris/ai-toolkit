@@ -1035,7 +1035,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
                         if random.random() < self.train_config.prompt_saturation_chance:
                             est_num_tokens = len(prompt.split(' '))
-                            if est_num_tokens < 77:
+                            # Avoid division by zero
+                            if est_num_tokens > 0:
                                 num_repeats = int(77 / est_num_tokens) + 1
                                 prompt = ', '.join([prompt] * num_repeats)
 
