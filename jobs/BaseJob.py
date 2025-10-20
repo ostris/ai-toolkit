@@ -69,3 +69,12 @@ class BaseJob:
         # if you implement this in child clas,
         # be sure to call super().cleanup() LAST
         del self
+
+    def calculate_progress(self, current_step: int, total_steps: int) -> float:
+        """
+        Returns the progress as a float between 0 and 1.
+        If total_steps is 0, returns 0.
+        """
+        if total_steps == 0:
+            return 0.0
+        return current_step / total_steps
