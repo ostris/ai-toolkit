@@ -91,6 +91,7 @@ def main():
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
+        job = None  # Ensure job is always defined
         try:
             job = get_job(config_file, args.name)
             job.run()
@@ -99,22 +100,26 @@ def main():
         except Exception as e:
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
-            try:
-                job.process[0].on_error(e)
-            except Exception as e2:
-                print_acc(f"Error running on_error: {e2}")
+            if job is not None:
+                try:
+                    job.process[0].on_error(e)
+                except Exception as e2:
+                    print_acc(f"Error running on_error: {e2}")
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
         except KeyboardInterrupt as e:
-            try:
-                job.process[0].on_error(e)
-            except Exception as e2:
-                print_acc(f"Error running on_error: {e2}")
+            if job is not None:
+                try:
+                    job.process[0].on_error(e)
+                except Exception as e2:
+                    print_acc(f"Error running on_error: {e2}")
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
 
 
 if __name__ == '__main__':
+    # Example usage:
+    # python run.py config/person_v1.yaml config/person_v2.yaml -r -n myrun -l output.log
     main()
