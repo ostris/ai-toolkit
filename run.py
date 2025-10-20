@@ -94,6 +94,7 @@ def main():
         job = None  # Ensure job is always defined
         try:
             job = get_job(config_file, args.name)
+            print_acc(f"Running job: {job}", type(job),job.name)
             job.run()
             job.cleanup()
             jobs_completed += 1
