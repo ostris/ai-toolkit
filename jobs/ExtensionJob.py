@@ -15,8 +15,8 @@ class ExtensionJob(BaseJob):
     def run(self):
         super().run()
 
-        print("")
-        print(f"Running  {len(self.process)} process{'' if len(self.process) == 1 else 'es'}")
+        print("ExtensionJob")
+        print(f"Running  {len(self.process)} process{'' if len(self.process) == 1 else 'es'}", type(self.process))
 
         for process in self.process:
             process.run()

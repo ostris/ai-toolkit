@@ -1506,7 +1506,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
+        print_acc("=== [DEBUG] Entering BaseSDTrainProcess.run ===")
+        print_acc(f"Job name: {self.job.name}")
+        print_acc(f"Is fine tuning: {self.is_fine_tuning}")
+        print_acc(f"Model config: {self.model_config}")
+        print_acc(f"Train config: {self.train_config}")
+        print_acc(f"Network config: {self.network_config}")
+        print_acc(f"Adapter config: {self.adapter_config}")
+        print_acc(f"Embedding config: {self.embed_config}")
+        print_acc(f"Decorator config: {self.decorator_config}")
+        print_acc(f"Datasets: {self.datasets}")
+        print_acc(f"Datasets reg: {self.datasets_reg}")
+        print_acc(f"Device: {self.device_torch}")
+        print_acc(f"Custom pipeline: {self.custom_pipeline}")
         BaseTrainProcess.run(self)
+        print_acc("=== [DEBUG] After BaseTrainProcess.run ===")
         params = []
 
         ### HOOK ###
@@ -2058,6 +2072,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):
+            print_acc(f"=== [DEBUG] Training step {step} ===")
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
             self.timer.start('train_loop')
