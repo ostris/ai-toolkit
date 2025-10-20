@@ -31,7 +31,7 @@ UNMANAGED_MODULES = [
     "Conv3d"
 ]
 
-UNMANAGED_MODULES_INCLUDES = ["RotaryEmbedding", "Norm"]
+UNMANAGED_MODULES_INCLUDES = ["RotaryEmbedding", "Norm", "RotaryPosEmbed"]
 
 
 class MemoryManager:
@@ -47,7 +47,11 @@ class MemoryManager:
     def memory_managed_to(self, *args, **kwargs):
         # first move all the unmanaged modules
         for module in self.unmanaged_modules:
-            module.to(*args, **kwargs)
+            if isinstance(module, torch.nn.Parameter):
+                # Parameter cannot move this way
+                module.data = module.data.to(*args, **kwargs)
+            else:
+                module.to(*args, **kwargs)
         # check for a dtype argument
         dtype = None
         if "dtype" in kwargs:
@@ -63,7 +67,11 @@ class MemoryManager:
 
     @classmethod
     def attach(
-        cls, module: torch.nn.Module, device: torch.device, offload_percent: float = 1.0
+        cls, 
+        module: torch.nn.Module, 
+        device: torch.device, 
+        offload_percent: float = 1.0,
+        ignore_modules: list[torch.nn.Module] = []
     ):
         if hasattr(module, "_memory_manager"):
             # already attached
@@ -75,7 +83,12 @@ class MemoryManager:
         module._mm_to = module.to
         module.to = module._memory_manager.memory_managed_to
 
-        modules_processed = []
+        # add ignore modules to unmanaged list
+        for im in ignore_modules:
+            module._memory_manager.unmanaged_modules.append(im)
+            
+        # count ignore modules as processed
+        modules_processed = [x for x in ignore_modules]
         # attach to all modules
         for name, sub_module in module.named_modules():
             for child_name, child_module in sub_module.named_modules():
