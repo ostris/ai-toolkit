@@ -36,7 +36,9 @@ class TrainJob(BaseJob):
 
 
     def run(self):
+        print(f"# Running1 job: {self.name}")
         super().run()
+        print(f"# Running2 job: {self.name}")
         print("")
         print(f"Running  {len(self.process)} process{'' if len(self.process) == 1 else 'es'}")
 
