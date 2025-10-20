@@ -1525,8 +1525,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         ### HOOK ###
         self.hook_before_model_load()
+        print(2)
         model_config_to_load = copy.deepcopy(self.model_config)
-
+        print(3)
         if self.is_fine_tuning:
             # get the latest checkpoint
             # check to see if we have a latest save
@@ -1536,8 +1537,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                 model_config_to_load.name_or_path = latest_save_path
                 self.load_training_state_from_metadata(latest_save_path)
-
         ModelClass = get_model_class(self.model_config)
+        print(4, hasattr(ModelClass, 'get_train_scheduler'))
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
             sampler = ModelClass.get_train_scheduler()
@@ -1557,13 +1558,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 },
                 arch=arch,
             )
-
+        print(5)
         if self.train_config.train_refiner and self.model_config.refiner_name_or_path is not None and self.network_config is None:
             previous_refiner_save = self.get_latest_save_path(self.job.name + '_refiner')
             if previous_refiner_save is not None:
                 model_config_to_load.refiner_name_or_path = previous_refiner_save
                 self.load_training_state_from_metadata(previous_refiner_save)
-
+        print(6)
         self.sd = ModelClass(
             # todo handle single gpu and multi gpu here
             # device=self.device,
@@ -1573,7 +1574,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             custom_pipeline=self.custom_pipeline,
             noise_scheduler=sampler,
         )
-        
+        print(7)
         self.hook_after_sd_init_before_load()
         # run base sd process run
         self.sd.load_model()
