@@ -366,7 +366,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
 
-        print_acc(len(gen_img_config_list), self.sd.network is not None, "gen_img_config_list2",  self.model_config.assistant_lora_path is not None, self.model_config.inference_lora_path is not None)
+        print_acc(len(gen_img_config_list), self.sd.network is not None, "gen_img_config_list2", 
+                  self.model_config.assistant_lora_path is not None, self.model_config.inference_lora_path is not None)
 
         print("[DEBUG] generate_images: after lora handling")
         network = unwrap_model(self.sd.network)
@@ -376,14 +377,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
 
         
-        print_acc("gen_img_config_list3", len(gen_img_config_list))
+        print("gen_img_config_list3", len(gen_img_config_list))
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = False
 
         if self.ema is not None:
             self.ema.train()
 
-        print_acc("gen_img_config_list4", len(gen_img_config_list))
+        print("gen_img_config_list4", len(gen_img_config_list))
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
