@@ -25,7 +25,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
         self.timestep_type = "linear"
-        print(10)
 
         with torch.no_grad():
             # create weights for timesteps
@@ -34,7 +33,14 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             # bsmntw? need a better name
             x = torch.arange(num_timesteps, dtype=torch.float32)
             print(13)
-            y = torch.exp(-2 * ((x - num_timesteps / 2) / num_timesteps) ** 2)
+            # Guard against division by zero
+            try:
+                denom = num_timesteps
+                if denom == 0:
+                    raise ZeroDivisionError("num_timesteps is zero")
+                y = torch.exp(-2 * ((x - num_timesteps / 2) / denom) ** 2)
+            except ZeroDivisionError:
+                y = torch.ones_like(x)
             print(15)
             # Shift minimum to 0
             y_shifted = y - y.min()
@@ -182,8 +188,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             if self.config.invert_sigmas:
                 sigmas = 1.0 - sigmas
                 timesteps = sigmas * self.config.num_train_timesteps
-                sigmas = torch.cat(
-                    [sigmas, torch.ones(1, device=sigmas.device)])
             else:
                 sigmas = torch.cat(
                     [sigmas, torch.zeros(1, device=sigmas.device)])
