@@ -372,6 +372,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         print("[DEBUG] generate_images: after lora handling")
         network = unwrap_model(self.sd.network)
         network.eval()
+        self.sd
         print("[DEBUG] generate_images: after lora handling1", network is not None)
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
@@ -459,10 +460,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             combined_items.sort(key=os.path.getctime)
             
             num_saves_to_keep = self.save_config.max_step_saves_to_keep
-            
+
             if hasattr(self.sd, 'max_step_saves_to_keep_multiplier'):
                 num_saves_to_keep *= self.sd.max_step_saves_to_keep_multiplier
 
+            assert num_saves_to_keep > 0
+            
             # Use slicing with a check to avoid 'NoneType' error
             safetensors_to_remove = safetensors_files[
                                     :-num_saves_to_keep] if safetensors_files else []
