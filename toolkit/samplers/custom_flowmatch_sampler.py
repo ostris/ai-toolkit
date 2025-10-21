@@ -36,21 +36,23 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             a = (x - safe_divisor / 2)
             print(12, safe_divisor, a / safe_divisor)
             # Prevent division by zero
-            y = torch.exp(-2 * (a / safe_divisor) ** 2)
-            print(14)
-            y_shifted = y - y.min()
-            sum_y_shifted = y_shifted.sum()
-            print(14, sum_y_shifted)
-            scale_factor = safe_divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
-            bsmntw_weighing = y_shifted * scale_factor
-            print(15)
-            hbsmntw_weighing = y_shifted * scale_factor
-            hbsmntw_weighing[safe_divisor // 2:] = hbsmntw_weighing[safe_divisor // 2:].max()
-            timesteps = torch.linspace(1000, 1, safe_divisor, device='cpu')
-            self.linear_timesteps = timesteps
-            self.linear_timesteps_weights = bsmntw_weighing
-            self.linear_timesteps_weights2 = hbsmntw_weighing
-            pass
+            try:
+                y = torch.exp(-2 * (a / safe_divisor) ** 2)
+                print(14)
+                y_shifted = y - y.min()
+                sum_y_shifted = y_shifted.sum()
+                print(14, sum_y_shifted)
+                scale_factor = safe_divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
+                bsmntw_weighing = y_shifted * scale_factor
+                print(15)
+                hbsmntw_weighing = y_shifted * scale_factor
+                hbsmntw_weighing[safe_divisor // 2:] = hbsmntw_weighing[safe_divisor // 2:].max()
+                timesteps = torch.linspace(1000, 1, safe_divisor, device='cpu')
+                self.linear_timesteps = timesteps
+                self.linear_timesteps_weights = bsmntw_weighing
+                self.linear_timesteps_weights2 = hbsmntw_weighing
+            except Exception as e:
+                print(e)
         print(20)
 
     def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False, timestep_type="linear") -> torch.Tensor:
