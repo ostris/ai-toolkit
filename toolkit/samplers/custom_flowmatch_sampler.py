@@ -27,30 +27,23 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         self.timestep_type = "linear"
         print(10)
         with torch.no_grad():
-            # create weights for timesteps
             num_timesteps = 1000
-            # Bell-Shaped Mean-Normalized Timestep Weighting
-            # bsmntw? need a better name
-
-            x = torch.arange(num_timesteps, dtype=torch.float32)
-            y = torch.exp(-2 * ((x - num_timesteps / 2) / num_timesteps) ** 2)
-
-            # Shift minimum to 0
-            y_shifted = y - y.min()
-
-            # Scale to make mean 1
-            bsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
             print(11)
-            # only do half bell
-            hbsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
-
-            # flatten second half to max
-            hbsmntw_weighing[num_timesteps //
-                             2:] = hbsmntw_weighing[num_timesteps // 2:].max()
-
-            # Create linear timesteps from 1000 to 1
-            timesteps = torch.linspace(1000, 1, num_timesteps, device='cpu')
-
+            x = torch.arange(num_timesteps, dtype=torch.float32)
+            print(12)
+            # Prevent division by zero if num_timesteps is 0
+            divisor = num_timesteps if num_timesteps > 0 else 1
+            y = torch.exp(-2 * ((x - divisor / 2) / divisor) ** 2)
+            print(14)
+            y_shifted = y - y.min()
+            # Scale to make mean 1, avoid division by zero
+            sum_y_shifted = y_shifted.sum()
+            scale_factor = divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
+            bsmntw_weighing = y_shifted * scale_factor
+            print(15)
+            hbsmntw_weighing = y_shifted * scale_factor
+            hbsmntw_weighing[divisor // 2:] = hbsmntw_weighing[divisor // 2:].max()
+            timesteps = torch.linspace(1000, 1, divisor, device='cpu')
             self.linear_timesteps = timesteps
             self.linear_timesteps_weights = bsmntw_weighing
             self.linear_timesteps_weights2 = hbsmntw_weighing
@@ -81,6 +74,14 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         schedule_timesteps = self.timesteps.to(device)
         timesteps = timesteps.to(device)
         step_indices = [(schedule_timesteps == t).nonzero().item()
+                        for t in timesteps]
+
+        sigma = sigmas[step_indices].flatten()
+        while len(sigma.shape) < n_dim:
+            sigma = sigma.unsqueeze(-1)
+
+        return sigma
+
                         for t in timesteps]
 
         sigma = sigmas[step_indices].flatten()
