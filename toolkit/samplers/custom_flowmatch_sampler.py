@@ -35,7 +35,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             safe_divisor = divisor if divisor != 0 else 1
             print(12, safe_divisor)
             # Correct: y is a tensor, not an int
-            y = [1]#torch.exp(-2 * ((x - safe_divisor / 2) / safe_divisor) ** 2)
+            y = torch.Tensor([1])#torch.exp(-2 * ((x - safe_divisor / 2) / safe_divisor) ** 2)
             print(14)
             y_shifted = y - y.min()
             sum_y_shifted = y_shifted.sum()
