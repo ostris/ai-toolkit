@@ -85,18 +85,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
 
         return sigma
 
-
-            original_samples: torch.Tensor,
-            noise: torch.Tensor,
-            timesteps: torch.Tensor,
-    ) -> torch.Tensor:
-        t_01 = (timesteps / 1000).to(original_samples.device)
-        # forward ODE
-        noisy_model_input = (1.0 - t_01) * original_samples + t_01 * noise
-        # reverse ODE
-        # noisy_model_input = (1 - t_01) * noise + t_01 * original_samples
-        return noisy_model_input
-
     def scale_model_input(self, sample: torch.Tensor, timestep: Union[float, torch.Tensor]) -> torch.Tensor:
         return sample
 
