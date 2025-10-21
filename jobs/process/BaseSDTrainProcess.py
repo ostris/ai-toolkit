@@ -353,7 +353,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 do_cfg_norm=sample_config.do_cfg_norm,
                 **extra_args
             ))
-        print_acc("gen_img_config_list33", len(gen_img_config_list))
+            
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
                  
@@ -365,12 +365,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
 
-        print_acc(len(gen_img_config_list), "gen_img_config_list2")
-        #print(sample_config.sampler)
-        print_acc(len(gen_img_config_list), "gen_img_config_list33")
-        #print(self.sd)
-        print_acc(len(gen_img_config_list), "gen_img_config_list44")
-        #print(self.sd.network)
+        print_acc(len(gen_img_config_list), "gen_img_config_list2",  self.model_config.assistant_lora_path is not None, self.model_config.inference_lora_path is not None)
+
+        print("[DEBUG] generate_images: after lora handling")
+        if network is not None:
+
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
 
