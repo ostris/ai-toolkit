@@ -1005,6 +1005,7 @@ class StableDiffusion:
         self.vae.eval()
         self.vae.requires_grad_(False)
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0, "VAE scale factor must be greater than 0"
         self.vae_scale_factor = VAE_SCALE_FACTOR
         self.unet.to(self.device_torch, dtype=dtype)
         self.unet.requires_grad_(False)
@@ -1129,7 +1130,7 @@ class StableDiffusion:
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
-        return torch.Tensor()
+
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
             print_acc("Unloading assistant lora")
@@ -1804,6 +1805,7 @@ class StableDiffusion:
 
     def get_time_ids_from_latents(self, latents: torch.Tensor, requires_aesthetic_score=False):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         if self.is_xl:
             bs, ch, h, w = list(latents.shape)
 
@@ -2076,6 +2078,7 @@ class StableDiffusion:
             # predict the noise residual
             if self.is_pixart:
                 VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+                assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
                 batch_size, ch, h, w = list(latents.shape)
 
                 height = h * VAE_SCALE_FACTOR
@@ -2533,7 +2536,7 @@ class StableDiffusion:
         image_list = [image.to(device, dtype=dtype) for image in image_list]
 
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
-
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         # resize images if not divisible by 8
         for i in range(len(image_list)):
             image = image_list[i]
