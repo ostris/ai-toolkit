@@ -28,11 +28,11 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         print(10)
         with torch.no_grad():
             num_timesteps = 1000
-            print(11)
             x = torch.arange(num_timesteps, dtype=torch.float32)
             print(12)
             # Prevent division by zero if num_timesteps is 0
             divisor = num_timesteps if num_timesteps > 0 else 1
+            print(11, divisor)
             y = torch.exp(-2 * ((x - divisor / 2) / divisor) ** 2)
             print(14)
             y_shifted = y - y.min()
