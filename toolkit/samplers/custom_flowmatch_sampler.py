@@ -36,12 +36,11 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             a = (x - safe_divisor / 2)
             print(12, safe_divisor, a)
             # Prevent division by zero
-            if safe_divisor == 0:
-                safe_divisor = 1
             y = torch.exp(-2 * (a / safe_divisor) ** 2)
             print(14)
             y_shifted = y - y.min()
             sum_y_shifted = y_shifted.sum()
+            print(14, sum_y_shifted)
             scale_factor = safe_divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
             bsmntw_weighing = y_shifted * scale_factor
             print(15)
