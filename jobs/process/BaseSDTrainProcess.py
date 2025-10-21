@@ -1536,7 +1536,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 model_config_to_load.name_or_path = latest_save_path
                 self.load_training_state_from_metadata(latest_save_path)
         ModelClass = get_model_class(self.model_config)
-        print(4, hasattr(ModelClass, 'get_train_scheduler'))
+        print(4, ModelClass, type(ModelClass), hasattr(ModelClass, 'get_train_scheduler'))
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
             sampler = ModelClass.get_train_scheduler()
