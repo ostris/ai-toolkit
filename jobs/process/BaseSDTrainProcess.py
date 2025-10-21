@@ -370,6 +370,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         print("[DEBUG] generate_images: after lora handling")
         network = unwrap_model(self.sd.network)
+        network.eval()
         print("[DEBUG] generate_images: after lora handling1", network is not None)
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
