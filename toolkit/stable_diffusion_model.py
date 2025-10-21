@@ -1159,7 +1159,7 @@ class StableDiffusion:
                 network.merge_in(merge_weight=merge_multiplier)
         else:
             network = BlankNetwork()
-
+        return [] # debug
         print("[DEBUG] generate_images: after network merge_in")
         self.save_device_state()
         self.set_device_state_preset('generate')
