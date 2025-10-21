@@ -1125,10 +1125,11 @@ class StableDiffusion:
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
         print("[DEBUG] generate_images: start", self.network)
+        print_acc("Unloading assistant lora")
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
-
+        return torch.Tensor()
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
             print_acc("Unloading assistant lora")
@@ -1715,7 +1716,8 @@ class StableDiffusion:
                     self.adapter.clear_memory()
 
         # clear pipeline and cache to reduce vram usage
-        del pipeline
+        if pipeline is not None:
+            del pipeline
         if refiner_pipeline is not None:
             del refiner_pipeline
         torch.cuda.empty_cache()
