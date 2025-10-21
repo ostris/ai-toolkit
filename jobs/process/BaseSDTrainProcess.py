@@ -366,11 +366,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.adapter.is_sampling = True
 
         print_acc(len(gen_img_config_list), "gen_img_config_list2")
-        print(sample_config.sampler)
+        #print(sample_config.sampler)
         print_acc(len(gen_img_config_list), "gen_img_config_list33")
-        print(self.sd)
+        #print(self.sd)
         print_acc(len(gen_img_config_list), "gen_img_config_list44")
-        print(self.sd.network)
+        #print(self.sd.network)
         # send to be generated
         self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
 

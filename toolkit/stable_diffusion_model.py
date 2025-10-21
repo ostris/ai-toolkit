@@ -1125,11 +1125,10 @@ class StableDiffusion:
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
         print("[DEBUG] generate_images: start", self.network)
-        return [] # debug
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
-        return [] # debug
+
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
             print_acc("Unloading assistant lora")
@@ -1160,7 +1159,7 @@ class StableDiffusion:
                 network.merge_in(merge_weight=merge_multiplier)
         else:
             network = BlankNetwork()
-        return [] # debug
+
         print("[DEBUG] generate_images: after network merge_in")
         self.save_device_state()
         self.set_device_state_preset('generate')
