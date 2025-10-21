@@ -21,6 +21,7 @@ import torch
 import torch.backends.cuda
 from huggingface_hub import HfApi, Repository, interpreter_login
 from huggingface_hub.utils import HfFolder
+from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
@@ -1811,6 +1812,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)
                     self.network.multiplier = 1.0
+                
+                if self.network_config.layer_offloading:
+                    MemoryManager.attach(
+                        self.network,
+                        self.device_torch
+                    )
 
             if self.embed_config is not None:
                 # we are doing embedding training as well

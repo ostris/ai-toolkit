@@ -108,6 +108,14 @@ class MemoryManager:
                         LinearLayerMemoryManager.attach(
                             child_module, module._memory_manager
                         )
+                        # attach to ARA as well
+                        if hasattr(child_module, "ara_lora_ref"):
+                            ara = child_module.ara_lora_ref()
+                            if ara not in modules_processed:
+                                MemoryManager.attach(
+                                    ara, 
+                                    device,
+                                )
                     modules_processed.append(child_module)
                 elif (
                     child_module.__class__.__name__ in CONV_MODULES
@@ -125,6 +133,15 @@ class MemoryManager:
                         ConvLayerMemoryManager.attach(
                             child_module, module._memory_manager
                         )
+                        # attach to ARA as well
+                        if hasattr(child_module, "ara_lora_ref"):
+                            ara = child_module.ara_lora_ref()
+                            if ara not in modules_processed:
+                                MemoryManager.attach(
+                                    ara, 
+                                    device,
+                                )
+                            modules_processed.append(ara)
                     modules_processed.append(child_module)
                 elif child_module.__class__.__name__ in UNMANAGED_MODULES or any(
                     inc in child_module.__class__.__name__

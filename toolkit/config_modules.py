@@ -208,6 +208,9 @@ class NetworkConfig:
         
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
+        
+        # ramtorch, doesn't work yet
+        self.layer_offloading = kwargs.get('layer_offloading', False)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']
