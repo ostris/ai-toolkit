@@ -414,7 +414,7 @@ class QwenImageModel(BaseModel):
             dtype = self.vae_torch_dtype
 
         # Move to vae to device if on cpu
-        if self.vae.device == "cpu":
+        if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)

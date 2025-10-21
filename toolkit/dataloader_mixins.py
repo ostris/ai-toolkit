@@ -1662,6 +1662,8 @@ class LatentCachingFileItemDTOMixin:
             item["flip_x"] = True
         if self.flip_y:
             item["flip_y"] = True
+        if self.dataset_config.num_frames > 1:
+            item["num_frames"] = self.dataset_config.num_frames
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
