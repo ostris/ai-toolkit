@@ -353,7 +353,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 do_cfg_norm=sample_config.do_cfg_norm,
                 **extra_args
             ))
-
+        print_acc("gen_img_config_list33", len(gen_img_config_list))
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
                  
@@ -367,7 +367,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         print_acc("gen_img_config_list2", len(gen_img_config_list))
         # send to be generated
-        #self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) #DEBUG
+        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
 
         
         print_acc("gen_img_config_list3", len(gen_img_config_list))
