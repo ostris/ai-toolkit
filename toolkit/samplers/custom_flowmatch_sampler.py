@@ -36,9 +36,9 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             # Guard against division by zero
             try:
                 denom = num_timesteps
-                if denom == 0:
-                    raise ZeroDivisionError("num_timesteps is zero")
-                y = torch.exp(-2 * ((x - num_timesteps / 2) / denom) ** 2)
+                y = torch.from_numpy(
+                    np.exp(-2 * ((x.numpy() - num_timesteps / 2) / denom) ** 2)
+                )
             except ZeroDivisionError:
                 y = torch.ones_like(x)
             print(15)
