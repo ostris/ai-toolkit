@@ -356,8 +356,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
-
-        print_acc("gen_img_config_list1", len(gen_img_config_list))
                  
         # if we have an ema, set it to validation mode
         if self.ema is not None:
@@ -369,7 +367,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         print_acc("gen_img_config_list2", len(gen_img_config_list))
         # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        #self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) #DEBUG
 
         
         print_acc("gen_img_config_list3", len(gen_img_config_list))
