@@ -1081,6 +1081,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # Standard Deviation: tensor([0.5623, 0.5295, 0.5347])
                         imgs_channel_mean = imgs.mean(dim=(2, 3), keepdim=True)
                         imgs_channel_std = imgs.std(dim=(2, 3), keepdim=True)
+                        assert imgs_channel_std.min() > 0, "Image channel std is too small, cannot standardize"
                         imgs = (imgs - imgs_channel_mean) / imgs_channel_std
                         target_mean = torch.tensor(target_mean_list, device=self.device_torch, dtype=dtype)
                         target_std = torch.tensor(target_std_list, device=self.device_torch, dtype=dtype)
@@ -1106,6 +1107,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                     latents_channel_mean = latents.mean(dim=(2, 3), keepdim=True)
                     latents_channel_std = latents.std(dim=(2, 3), keepdim=True)
+                    assert latents_channel_std.min() > 0, "Latent channel std is too small, cannot standardize"
                     latents = (latents - latents_channel_mean) / latents_channel_std
                     target_mean = torch.tensor(target_mean_list, device=self.device_torch, dtype=dtype)
                     target_std = torch.tensor(target_std_list, device=self.device_torch, dtype=dtype)
