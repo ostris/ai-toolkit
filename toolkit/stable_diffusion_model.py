@@ -1125,7 +1125,7 @@ class StableDiffusion:
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
         print("[DEBUG] generate_images: start", self.network)
-        return  []#DEBUG
+
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
@@ -1764,6 +1764,7 @@ class StableDiffusion:
             num_channels=None,
     ):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         if height is None and pixel_height is None:
             raise ValueError("height or pixel_height must be specified")
         if width is None and pixel_width is None:
