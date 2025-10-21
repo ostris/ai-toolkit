@@ -1525,9 +1525,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         ### HOOK ###
         self.hook_before_model_load()
-        print(2)
         model_config_to_load = copy.deepcopy(self.model_config)
-        print(3)
         if self.is_fine_tuning:
             # get the latest checkpoint
             # check to see if we have a latest save
@@ -1542,6 +1540,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
             sampler = ModelClass.get_train_scheduler()
+            print(5)
         else:
             # get the noise scheduler
             arch = 'sd'
@@ -1558,13 +1557,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 },
                 arch=arch,
             )
-        print(5)
+        print(7)
         if self.train_config.train_refiner and self.model_config.refiner_name_or_path is not None and self.network_config is None:
             previous_refiner_save = self.get_latest_save_path(self.job.name + '_refiner')
             if previous_refiner_save is not None:
                 model_config_to_load.refiner_name_or_path = previous_refiner_save
                 self.load_training_state_from_metadata(previous_refiner_save)
-        print(6)
+        print(8)
         self.sd = ModelClass(
             # todo handle single gpu and multi gpu here
             # device=self.device,
