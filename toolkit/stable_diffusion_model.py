@@ -287,6 +287,7 @@ class StableDiffusion:
         # self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.device_torch)
 
         model_path = self.model_config.name_or_path
+        assert model_path is not None
         if 'civitai.com' in self.model_config.name_or_path:
             # load is a civit ai model, use the loader.
             from toolkit.civitai import get_model_path_from_url
@@ -1455,6 +1456,7 @@ class StableDiffusion:
                         conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
                     else: 
+                        assert gen_config.prompt is not None
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
