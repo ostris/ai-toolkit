@@ -1129,6 +1129,7 @@ class StableDiffusion:
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
+        return [] # debug
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
             print_acc("Unloading assistant lora")
