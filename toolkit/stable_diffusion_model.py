@@ -1124,7 +1124,7 @@ class StableDiffusion:
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
-        print_acc("[DEBUG] generate_images: start")
+        print("[DEBUG] generate_images: start")
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
@@ -1144,7 +1144,7 @@ class StableDiffusion:
             # move weights on to the device
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
 
-        print_acc("[DEBUG] generate_images: after lora handling")
+        print("[DEBUG] generate_images: after lora handling")
         if network is not None:
             network.eval()
             # check if we have the same network weight for all samples. If we do, we can merge in th
@@ -1159,10 +1159,10 @@ class StableDiffusion:
         else:
             network = BlankNetwork()
 
-        print_acc("[DEBUG] generate_images: after network merge_in")
+        print("[DEBUG] generate_images: after network merge_in")
         self.save_device_state()
         self.set_device_state_preset('generate')
-        print_acc("[DEBUG] generate_images: after device state preset")
+        print("[DEBUG] generate_images: after device state preset")
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
 
@@ -1196,6 +1196,8 @@ class StableDiffusion:
                 except:
                     pass
 
+            print("[DEBUG] generate_images: after sampler/noise_scheduler setup")
+            # ...existing code...
             if sampler.startswith("sample_") and self.is_xl:
                 # using kdiffusion
                 Pipe = StableDiffusionKDiffusionXLPipeline
@@ -1335,6 +1337,7 @@ class StableDiffusion:
             if sampler.startswith("sample_"):
                 pipeline.set_scheduler(sampler)
 
+        print("[DEBUG] generate_images: after pipeline/scheduler setup")
         refiner_pipeline = None
         if self.refiner_unet:
             # build refiner pipeline
