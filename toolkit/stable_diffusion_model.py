@@ -1138,7 +1138,7 @@ class StableDiffusion:
                 self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
             else:
                 self.assistant_lora.is_active = False
-        return [] # debug
+
         if self.model_config.inference_lora_path is not None:
             print_acc("Loading inference lora")
             self.assistant_lora.is_active = True
