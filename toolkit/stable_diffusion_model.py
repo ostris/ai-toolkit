@@ -1125,7 +1125,7 @@ class StableDiffusion:
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
         print("[DEBUG] generate_images: start", self.network)
-
+        return [] # debug
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
