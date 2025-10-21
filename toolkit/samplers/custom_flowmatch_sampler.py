@@ -44,7 +44,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             print(15)
             # Shift minimum to 0
             y_shifted = y - y.min()
-            print(1, y_shifted)
             # Scale to make mean 1
             bsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
 
@@ -61,7 +60,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.linear_timesteps = timesteps
             self.linear_timesteps_weights = bsmntw_weighing
             self.linear_timesteps_weights2 = hbsmntw_weighing
-            print(33)
             pass
 
     def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False, timestep_type="linear") -> torch.Tensor:
