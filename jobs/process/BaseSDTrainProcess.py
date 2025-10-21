@@ -286,6 +286,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for i in range(len(sample_config.prompts)):
                 test_image_paths.append(test_image_path_list[i % len(test_image_path_list)])
 
+        print_acc("sample", len(sample_config.prompts))
+
         for i in range(len(sample_config.prompts)):
             if sample_config.walk_seed:
                 current_seed = start_seed + i
@@ -355,6 +357,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
 
+        print_acc("gen_img_config_list", len(gen_img_config_list))
+                 
         # if we have an ema, set it to validation mode
         if self.ema is not None:
             self.ema.eval()
@@ -1035,7 +1039,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
                         if random.random() < self.train_config.prompt_saturation_chance:
                             est_num_tokens = len(prompt.split(' '))
-                            if est_num_tokens < 77:
+                            if est_num_tokens < 77 and est_num_tokens > 0:
                                 num_repeats = int(77 / est_num_tokens) + 1
                                 prompt = ', '.join([prompt] * num_repeats)
 
@@ -2005,7 +2009,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
             self.sample(self.step_num)
-        
+        print("Starting training loop...", self.accelerator.is_local_main_process)
         if self.accelerator.is_local_main_process:
             self.progress_bar = ToolkitProgressBar(
                 total=self.train_config.steps,
@@ -2051,7 +2055,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
         # TRAIN LOOP
         ###################################################################
-
+        print("Starting training loop... self.train_config.steps", self.train_config.steps)
 
         start_step_num = self.step_num
         did_first_flush = False
