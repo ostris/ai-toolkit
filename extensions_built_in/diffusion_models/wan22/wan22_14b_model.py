@@ -374,6 +374,7 @@ class Wan2214bModel(Wan21):
     # static method to get the scheduler
     @staticmethod
     def get_train_scheduler():
+        print("Getting Wan22 14b train scheduler", scheduler_config)
         scheduler = CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
         return scheduler
 
