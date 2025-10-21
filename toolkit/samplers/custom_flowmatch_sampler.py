@@ -25,7 +25,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
         self.timestep_type = "linear"
-
+        print(10)
         with torch.no_grad():
             # create weights for timesteps
             num_timesteps = 1000
@@ -40,7 +40,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
 
             # Scale to make mean 1
             bsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
-
+            print(11)
             # only do half bell
             hbsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
 
@@ -55,6 +55,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.linear_timesteps_weights = bsmntw_weighing
             self.linear_timesteps_weights2 = hbsmntw_weighing
             pass
+        print(12)
 
     def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False, timestep_type="linear") -> torch.Tensor:
         # Get the indices of the timesteps
