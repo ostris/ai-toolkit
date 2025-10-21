@@ -29,17 +29,15 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         with torch.no_grad():
             num_timesteps = 1000
             x = torch.arange(num_timesteps, dtype=torch.float32)
-  
-            # Prevent division by zero if num_timesteps is 0
+
             divisor = num_timesteps if num_timesteps > 0 else 1
             print(11, divisor)
-            # Prevent division by zero in denominator
             safe_divisor = divisor if divisor != 0 else 1
             print(12, safe_divisor)
-            y = 1#torch.exp(-2 * ((x - safe_divisor / 2) / safe_divisor) ** 2)
+            # Correct: y is a tensor, not an int
+            y = [1]#torch.exp(-2 * ((x - safe_divisor / 2) / safe_divisor) ** 2)
             print(14)
             y_shifted = y - y.min()
-            # Scale to make mean 1, avoid division by zero
             sum_y_shifted = y_shifted.sum()
             scale_factor = safe_divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
             bsmntw_weighing = y_shifted * scale_factor
@@ -84,6 +82,8 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             sigma = sigma.unsqueeze(-1)
 
         return sigma
+
+
 
     def scale_model_input(self, sample: torch.Tensor, timestep: Union[float, torch.Tensor]) -> torch.Tensor:
         return sample
