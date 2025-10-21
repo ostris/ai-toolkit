@@ -287,6 +287,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for i in range(len(sample_config.prompts)):
                 test_image_paths.append(test_image_path_list[i % len(test_image_path_list)])
 
+        print_acc("sample", len(sample_config.prompts))
+
         for i in range(len(sample_config.prompts)):
             if sample_config.walk_seed:
                 current_seed = start_seed + i
@@ -352,10 +354,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 do_cfg_norm=sample_config.do_cfg_norm,
                 **extra_args
             ))
-
+            
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
-
+                 
         # if we have an ema, set it to validation mode
         if self.ema is not None:
             self.ema.eval()
@@ -363,16 +365,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # let adapter know we are sampling
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
-        
+
+        print_acc(len(gen_img_config_list), self.sd.network is not None, "gen_img_config_list2",  self.model_config.assistant_lora_path is not None, self.model_config.inference_lora_path is not None)
+
+        print("[DEBUG] generate_images: after lora handling")
+        network = unwrap_model(self.sd.network)
+        print("[DEBUG] generate_images: after lora handling1", network is not None)
         # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
 
         
+        print_acc("gen_img_config_list3", len(gen_img_config_list))
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = False
 
         if self.ema is not None:
             self.ema.train()
+
+        print_acc("gen_img_config_list4", len(gen_img_config_list))
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
@@ -1036,7 +1046,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
                         if random.random() < self.train_config.prompt_saturation_chance:
                             est_num_tokens = len(prompt.split(' '))
-                            if est_num_tokens < 77:
+                            if est_num_tokens < 77 and est_num_tokens > 0:
                                 num_repeats = int(77 / est_num_tokens) + 1
                                 prompt = ', '.join([prompt] * num_repeats)
 
@@ -2012,7 +2022,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
             self.sample(self.step_num)
-        
+        print("Starting training loop...", self.accelerator.is_local_main_process)
         if self.accelerator.is_local_main_process:
             self.progress_bar = ToolkitProgressBar(
                 total=self.train_config.steps,
@@ -2058,7 +2068,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
         # TRAIN LOOP
         ###################################################################
-
+        print("Starting training loop... self.train_config.steps", self.train_config.steps)
 
         start_step_num = self.step_num
         did_first_flush = False

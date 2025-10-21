@@ -1124,9 +1124,11 @@ class StableDiffusion:
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
+        print("[DEBUG] generate_images: start", self.network)
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
+
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
             print_acc("Unloading assistant lora")
@@ -1136,13 +1138,14 @@ class StableDiffusion:
                 self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
             else:
                 self.assistant_lora.is_active = False
-                
+
         if self.model_config.inference_lora_path is not None:
             print_acc("Loading inference lora")
             self.assistant_lora.is_active = True
             # move weights on to the device
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
 
+        print("[DEBUG] generate_images: after lora handling")
         if network is not None:
             network.eval()
             # check if we have the same network weight for all samples. If we do, we can merge in th
@@ -1157,10 +1160,10 @@ class StableDiffusion:
         else:
             network = BlankNetwork()
 
+        print("[DEBUG] generate_images: after network merge_in")
         self.save_device_state()
         self.set_device_state_preset('generate')
-
-        # save current seed state for training
+        print("[DEBUG] generate_images: after device state preset")
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
 
@@ -1194,6 +1197,8 @@ class StableDiffusion:
                 except:
                     pass
 
+            print("[DEBUG] generate_images: after sampler/noise_scheduler setup")
+            # ...existing code...
             if sampler.startswith("sample_") and self.is_xl:
                 # using kdiffusion
                 Pipe = StableDiffusionKDiffusionXLPipeline
@@ -1333,6 +1338,7 @@ class StableDiffusion:
             if sampler.startswith("sample_"):
                 pipeline.set_scheduler(sampler)
 
+        print("[DEBUG] generate_images: after pipeline/scheduler setup")
         refiner_pipeline = None
         if self.refiner_unet:
             # build refiner pipeline
@@ -1758,6 +1764,7 @@ class StableDiffusion:
             num_channels=None,
     ):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         if height is None and pixel_height is None:
             raise ValueError("height or pixel_height must be specified")
         if width is None and pixel_width is None:
