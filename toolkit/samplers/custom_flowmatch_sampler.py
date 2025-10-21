@@ -34,7 +34,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             print(11, divisor)
             safe_divisor = divisor if divisor != 0 else 1
             a = (x - safe_divisor / 2)
-            print(12, safe_divisor, (-2 * (a / safe_divisor) ** 2))
+            print(123, safe_divisor,  torch.exp(-2 * (a / safe_divisor) ** 2))
             # Prevent division by zero
             try:
                 y = torch.exp(-2 * (a / safe_divisor) ** 2)
