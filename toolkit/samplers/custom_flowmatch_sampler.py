@@ -29,21 +29,24 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         with torch.no_grad():
             num_timesteps = 1000
             x = torch.arange(num_timesteps, dtype=torch.float32)
-            print(12)
+  
             # Prevent division by zero if num_timesteps is 0
             divisor = num_timesteps if num_timesteps > 0 else 1
             print(11, divisor)
-            y = torch.exp(-2 * ((x - divisor / 2) / divisor) ** 2)
+            # Prevent division by zero in denominator
+            safe_divisor = divisor if divisor != 0 else 1
+            print(12, safe_divisor)
+            y = torch.exp(-2 * ((x - safe_divisor / 2) / safe_divisor) ** 2)
             print(14)
             y_shifted = y - y.min()
             # Scale to make mean 1, avoid division by zero
             sum_y_shifted = y_shifted.sum()
-            scale_factor = divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
+            scale_factor = safe_divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
             bsmntw_weighing = y_shifted * scale_factor
             print(15)
             hbsmntw_weighing = y_shifted * scale_factor
-            hbsmntw_weighing[divisor // 2:] = hbsmntw_weighing[divisor // 2:].max()
-            timesteps = torch.linspace(1000, 1, divisor, device='cpu')
+            hbsmntw_weighing[safe_divisor // 2:] = hbsmntw_weighing[safe_divisor // 2:].max()
+            timesteps = torch.linspace(1000, 1, safe_divisor, device='cpu')
             self.linear_timesteps = timesteps
             self.linear_timesteps_weights = bsmntw_weighing
             self.linear_timesteps_weights2 = hbsmntw_weighing
@@ -83,8 +86,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         return sigma
 
 
-    def add_noise(
-            self,
             original_samples: torch.Tensor,
             noise: torch.Tensor,
             timesteps: torch.Tensor,
