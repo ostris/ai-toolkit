@@ -1173,6 +1173,7 @@ class SDTrainer(BaseSDTrainProcess):
         guidance_embedding_scale = self.train_config.cfg_scale
         if self.train_config.do_guidance_loss:
             guidance_embedding_scale = self._guidance_loss_target_batch
+        assert batch.tensor is not None, "Batch tensor is None in predict_noise"
         return self.sd.predict_noise(
             latents=noisy_latents.to(self.device_torch, dtype=dtype),
             conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
@@ -2008,6 +2009,7 @@ class SDTrainer(BaseSDTrainProcess):
             batch_list = [batch]
         total_loss = None
         self.optimizer.zero_grad()
+        assert len(batch_list) > 0, "No batches to process in train loop"
         for batch in batch_list:
             if self.sd.is_multistage:
                 # handle multistage switching
