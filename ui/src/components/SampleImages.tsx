@@ -154,9 +154,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
     switch (cols) {
       case 1:
-        return 'grid-cols-1';
       case 2:
-        return 'grid-cols-2';
       case 3:
         return 'grid-cols-3';
       case 4:
@@ -234,7 +232,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
       case 40:
         return 'grid-cols-40';
       default:
-        return 'grid-cols-1';
+        return 'grid-cols-3';
     }
   }, [numSamples]);
 
@@ -262,17 +260,38 @@ export default function SampleImages({ job }: SampleImagesProps) {
         {PageInfoContent}
         {sampleImages && (
           <div className={`grid ${gridColsClass} gap-1`}>
-            {sampleImages.map((sample: string) => (
-              <SampleImageCard
-                key={sample}
-                imageUrl={sample}
-                numSamples={numSamples}
-                sampleImages={sampleImages}
-                alt="Sample Image"
-                onClick={() => setSelectedSamplePath(sample)}
-                observerRoot={containerRef.current}
-              />
-            ))}
+            {sampleImages.map((sample: string, idx: number) => {
+              // Compute current group (groups are size = numSamples)
+              const groupIndex = Math.floor(idx / numSamples);
+              const groupStart = groupIndex * numSamples;
+              const groupEnd = Math.min(groupStart + numSamples, sampleImages.length);
+              const groupSize = groupEnd - groupStart;
+              const isEndOfGroup = idx === groupEnd - 1;
+
+              // Only enforce a MIN of 3 when the group's planned width is < 3
+              const MIN_COLS = 3;
+              const shouldPad = numSamples < MIN_COLS && groupSize < MIN_COLS;
+              const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
+
+              return (
+                <div key={sample} className="contents">
+                  <SampleImageCard
+                    imageUrl={sample}
+                    numSamples={numSamples}
+                    sampleImages={sampleImages}
+                    alt="Sample Image"
+                    onClick={() => setSelectedSamplePath(sample)}
+                    observerRoot={containerRef.current}
+                  />
+
+                  {isEndOfGroup &&
+                    padsNeeded > 0 &&
+                    Array.from({ length: padsNeeded }).map((_, i) => (
+                      <div key={`pad-${groupIndex}-${i}`} className="invisible" />
+                    ))}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
