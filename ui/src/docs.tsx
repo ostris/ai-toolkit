@@ -228,6 +228,25 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+
+  'model.reserve_ram_for_spillover': {
+    title: 'Reserve RAM for spillover',
+    description: (
+      <>
+        This option will reserve the specified amount of RAM (in gigabytes) at the beginning of the training run and
+        release it just before the model is loaded to video memory.
+        <br />
+        <br />
+        This can prevent CUDA Out of Memory errors during the training initialization in case when both RAM and VRAM are
+        at full capacity and the system cannot allocate RAM for video memory spillover. Especially useful in combination
+        with the "Layer Offloading" option as it uses a lot of RAM.
+        <br />
+        <br />
+        On low-end systems with both low RAM and low VRAM, system memory will be paged to disk and video memory will
+        fall back to RAM. This makes training slow but it will complete successfully even on low-end systems.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {
