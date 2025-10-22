@@ -608,7 +608,7 @@ class Wan21(BaseModel):
         if dtype is None:
             dtype = self.vae_torch_dtype
 
-        if self.vae.device == 'cpu':
+        if self.vae.device == torch.device('cpu'):
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
