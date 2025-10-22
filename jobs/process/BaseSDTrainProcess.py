@@ -2185,7 +2185,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.torch_profiler is not None:
                 torch.cuda.synchronize()  # Make sure all CUDA ops are done
                 self.torch_profiler.stop()
-                
+
                 print("\n==== Profile Results ====")
                 print(self.torch_profiler.key_averages().table(sort_by="cpu_time_total", row_limit=1000))
             self.timer.stop('train_loop')
@@ -2197,10 +2197,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                 self.adapter.clear_memory()
 
-            with torch.no_grad():
-                # torch.cuda.empty_cache()
-                # if optimizer has get_lrs method, then use it
-                if not did_oom and loss_dict is not None:
+            # Only update progress bar if we didn't OOM (loss_dict exists)
+            if not did_oom:
+                with torch.no_grad():
+                    # torch.cuda.empty_cache()
+                    # if optimizer has get_lrs method, then use it
                     if hasattr(optimizer, 'get_avg_learning_rate'):
                         learning_rate = optimizer.get_avg_learning_rate()
                     elif hasattr(optimizer, 'get_learning_rates'):
