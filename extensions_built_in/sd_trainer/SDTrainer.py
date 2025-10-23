@@ -350,7 +350,7 @@ class SDTrainer(BaseSDTrainProcess):
         
         if self.train_config.blank_prompt_preservation and self.cached_blank_embeds is None:
             # make sure we have this if not unloading
-            self.cached_blank_embeds = self.sd.encode_prompt("", **encode_kwargs).to(
+            self.cached_blank_embeds = self.sd.encode_prompt("").to(
                 self.device_torch,
                 dtype=self.sd.torch_dtype
             ).detach()
