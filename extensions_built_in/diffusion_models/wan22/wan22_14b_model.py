@@ -447,7 +447,11 @@ class Wan2214bModel(Wan21):
         output_path: str,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        if not self.network.network_config.split_multistage_loras:
+        # Use .module if network is DDP
+        network_config = getattr(self.network, "network_config", None)
+        if hasattr(self.network, "module"):
+            network_config = getattr(self.network.module, "network_config", None)
+        if not network_config or not getattr(network_config, "split_multistage_loras", False):
             # just save as a combo lora
             save_file(state_dict, output_path, metadata=metadata)
             return

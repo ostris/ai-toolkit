@@ -242,7 +242,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # fine_tuning here is for training actual SD network, not LoRA, embeddings, etc. it is (Dreambooth, etc)
         self.is_fine_tuning = True
-        if self.network_config is not None or is_training_adapter or self.embed_config is not None or self.decorator_config is not None:
+        if self.network_config_safe is not None or is_training_adapter or self.embed_config is not None or self.decorator_config is not None:
             self.is_fine_tuning = False
 
         self.named_lora = False
@@ -1516,6 +1516,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # set trainable params
         self.sd.adapter = self.adapter
 
+    @property
+    def network_config_safe(self):
+        # Use .module if wrapped by DDP, else direct
+        if hasattr(self, "module") and hasattr(self.module, "network_config"):
+            return self.module.network_config
+        return getattr(self, "network_config", None)
+
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
@@ -1703,14 +1710,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.hook_after_model_load()
         flush()
         if not self.is_fine_tuning:
-            if self.network_config is not None:
+            if self.network_config_safe is not None:
                 # TODO should we completely switch to LycorisSpecialNetwork?
-                network_kwargs = self.network_config.network_kwargs
+                network_kwargs = self.network_config_safe.network_kwargs
                 is_lycoris = False
-                is_lorm = self.network_config.type.lower() == 'lorm'
+                is_lorm = self.network_config_safe.type.lower() == 'lorm'
                 # default to LoCON if there are any conv layers or if it is named
                 NetworkClass = LoRASpecialNetwork
-                if self.network_config.type.lower() == 'locon' or self.network_config.type.lower() == 'lycoris':
+                if self.network_config_safe.type.lower() == 'locon' or self.network_config_safe.type.lower() == 'lycoris':
                     NetworkClass = LycorisSpecialNetwork
                     is_lycoris = True
 
@@ -1729,13 +1736,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.network = NetworkClass(
                     text_encoder=text_encoder,
                     unet=self.sd.get_model_to_train(),
-                    lora_dim=self.network_config.linear,
+                    lora_dim=self.network_config_safe.linear,
                     multiplier=1.0,
-                    alpha=self.network_config.linear_alpha,
+                    alpha=self.network_config_safe.linear_alpha,
                     train_unet=self.train_config.train_unet,
                     train_text_encoder=self.train_config.train_text_encoder,
-                    conv_lora_dim=self.network_config.conv,
-                    conv_alpha=self.network_config.conv_alpha,
+                    conv_lora_dim=self.network_config_safe.conv,
+                    conv_alpha=self.network_config_safe.conv_alpha,
                     is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
                     is_v2=self.model_config.is_v2,
                     is_v3=self.model_config.is_v3,
@@ -1745,14 +1752,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_lumina2=self.model_config.is_lumina2,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
-                    dropout=self.network_config.dropout,
+                    dropout=self.network_config_safe.dropout,
                     use_text_encoder_1=self.model_config.use_text_encoder_1,
                     use_text_encoder_2=self.model_config.use_text_encoder_2,
                     use_bias=is_lorm,
+
                     is_lorm=is_lorm,
-                    network_config=self.network_config,
-                    network_type=self.network_config.type,
-                    transformer_only=self.network_config.transformer_only,
+                    network_config=self.network_config_safe,
+                    network_type=self.network_config_safe.type,
+                    transformer_only=self.network_config_safe.transformer_only,
                     is_transformer=self.sd.is_transformer,
                     base_model=self.sd,
                     **network_kwargs
