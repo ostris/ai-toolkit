@@ -335,8 +335,11 @@ class I2VAdapter(torch.nn.Module):
         model_class = sd.model.__class__.__name__
 
         if self.network_config is not None:
-
-            network_kwargs = {} if self.network_config.network_kwargs is None else self.network_config.network_kwargs
+            # Support DDP-wrapped network_config
+            network_config = self.network_config
+            if hasattr(network_config, "module"):
+                network_config = network_config.module
+            network_kwargs = {} if getattr(network_config, "network_kwargs", None) is None else network_config.network_kwargs
             if hasattr(sd, 'target_lora_modules'):
                 network_kwargs['target_lin_modules'] = sd.target_lora_modules
 
@@ -363,9 +366,6 @@ class I2VAdapter(torch.nn.Module):
                 train_text_encoder=self.train_config.train_text_encoder,
                 conv_lora_dim=self.network_config.conv,
                 conv_alpha=self.network_config.conv_alpha,
-                is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
-                is_v2=self.model_config.is_v2,
-                is_v3=self.model_config.is_v3,
                 is_pixart=self.model_config.is_pixart,
                 is_auraflow=self.model_config.is_auraflow,
                 is_flux=self.model_config.is_flux,
