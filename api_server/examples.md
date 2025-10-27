@@ -191,3 +191,125 @@ curl -X POST http://localhost:8000/sessions/sdxl-lora-demo/steps \
   -H "Content-Type: application/json" \
   -d '{ "steps": 100 }'
 ```
+
+---
+
+# Image and Video Captioning API
+
+The API server includes endpoints for generating captions using **Florence2** or **JoyCaption** models. Both models support images and videos.
+
+## Florence2 Examples
+
+### 1. Caption an image with Florence2 (default model)
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/workspaces/ai-toolkit/fennec_girl_flowers.png"
+  }'
+```
+
+### 3. Caption a video with Florence2
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/workspaces/ai-toolkit/video.mp4",
+    "model_type": "florence2",
+    "num_frames": 8,
+    "sample_method": "uniform",
+    "combine_method": "first",
+    "max_new_tokens": 1024,
+    "num_beams": 3,
+    "task": "<DETAILED_CAPTION>"
+  }'
+```
+
+## JoyCaption Examples
+
+### 5. Caption an image with JoyCaption
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/workspaces/ai-toolkit/fennec_girl_flowers.png",
+    "model_type": "joycaption"
+  }'
+```
+
+### 6. JoyCaption with custom prompt
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/path/to/image.jpg",
+    "model_type": "joycaption",
+    "prompt": "Write a long descriptive caption for this image in a formal tone.",
+    "max_new_tokens": 512,
+    "temperature": 0.6,
+    "top_p": 0.9
+  }'
+```
+
+### 9. Caption a video with JoyCaption
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/workspaces/ai-toolkit/video.mp4",
+    "model_type": "joycaption",
+    "prompt": "Describe what is happening in this video in a narrative style.",
+    "num_frames": 8,
+    "sample_method": "uniform",
+    "combine_method": "longest",
+    "temperature": 0.6,
+    "top_p": 0.9,
+    "max_new_tokens": 512
+  }'
+```
+
+## Model Management
+
+### 13. Unload caption model to free GPU memory
+
+```bash
+curl -X POST http://localhost:8000/caption/unload \
+  -H "Content-Type: application/json"
+```
+
+## Complete Parameter Reference
+
+### Common Parameters (Both Models)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `image_path` | string | null | Path to local image file |
+| `image_url` | string | null | URL to image file |
+| `video_path` | string | null | Path to local video file |
+| `video_url` | string | null | URL to video file |
+| `model_type` | string | "florence2" | Model to use: "florence2" or "joycaption" |
+| `model_path` | string | varies | Custom model path (overrides default) |
+| `max_new_tokens` | integer | 1024 (florence2)<br>512 (joycaption) | Maximum tokens to generate |
+| `num_frames` | integer | 8 | Number of frames to extract from video |
+| `sample_method` | string | "uniform" | Frame sampling: "uniform" or "first" |
+| `combine_method` | string | "first" | Caption combining: "first", "longest", or "combined" |
+
+### Florence2-Specific Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `num_beams` | integer | 3 | Number of beams for beam search |
+| `task` | string | "&lt;DETAILED_CAPTION&gt;" | Task type: "&lt;CAPTION&gt;", "&lt;DETAILED_CAPTION&gt;", "&lt;MORE_DETAILED_CAPTION&gt;" |
+
+### JoyCaption-Specific Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `prompt` | string | "Write a long descriptive caption..." | Custom prompt for caption generation |
+| `temperature` | float | 0.6 | Sampling temperature (0.0-2.0)<br>Lower = more focused, Higher = more creative |
+| `top_p` | float | 0.9 | Nucleus sampling parameter (0.0-1.0)<br>Lower = more focused, Higher = more diverse |
