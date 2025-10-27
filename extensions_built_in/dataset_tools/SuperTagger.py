@@ -65,6 +65,12 @@ class SuperTagger(BaseExtensionProcess):
             return LLaVAImageProcessor(device=self.device)
         elif self.caption_method.startswith('fuyu'):
             return FuyuImageProcessor(device=self.device)
+        elif self.caption_method.startswith('florence2') or self.caption_method.startswith('florence'):
+            from .tools.florence2_utils import Florence2ImageProcessor
+            return Florence2ImageProcessor(device=self.device)
+        elif self.caption_method.startswith('joycaption') or self.caption_method.startswith('joy'):
+            from .tools.joycaption_utils import JoyCaptionImageProcessor
+            return JoyCaptionImageProcessor(device=self.device)
         else:
             raise ValueError(f"Unknown caption method: {self.caption_method}")
 

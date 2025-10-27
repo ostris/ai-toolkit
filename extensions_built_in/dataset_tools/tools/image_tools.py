@@ -13,8 +13,10 @@ img_ext = ['.jpg', '.jpeg', '.png', '.webp']
 if TYPE_CHECKING:
     from .llava_utils import LLaVAImageProcessor
     from .fuyu_utils import FuyuImageProcessor
+    from .florence2_utils import Florence2ImageProcessor
+    from .joycaption_utils import JoyCaptionImageProcessor
 
-ImageProcessor = Union['LLaVAImageProcessor', 'FuyuImageProcessor']
+ImageProcessor = Union['LLaVAImageProcessor', 'FuyuImageProcessor', 'Florence2ImageProcessor', 'JoyCaptionImageProcessor']
 
 
 def pil_to_cv2(image):
