@@ -1097,8 +1097,19 @@ class SDTrainer(BaseSDTrainProcess):
                     embeds_to_use = batch.prompt_embeds.clone().to(self.device_torch, dtype=dtype)
                 else:
                     prompt_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.encode_control_in_text_embeddings:
+                        ctl = getattr(batch, 'control_tensor_list', None)
+                        if ctl is not None:
+                            prompt_kwargs['control_images'] = ctl
+                        elif batch.control_tensor is not None:
+                            tensor = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            if tensor.dim() == 5:
+                                per_batch = []
+                                for b in range(tensor.shape[0]):
+                                    per_batch.append([tensor[b, i].detach().cpu() for i in range(tensor.shape[1])])
+                                prompt_kwargs['control_images'] = per_batch
+                            elif tensor.dim() == 4:
+                                prompt_kwargs['control_images'] = tensor.detach().cpu()
                     embeds_to_use = self.sd.encode_prompt(
                         prompt_list,
                         long_prompts=self.do_long_prompts).to(
@@ -1485,8 +1496,19 @@ class SDTrainer(BaseSDTrainProcess):
                 with self.timer('encode_prompt'):
                     unconditional_embeds = None
                     prompt_kwargs = {}
-                    if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.encode_control_in_text_embeddings:
+                        ctl = getattr(batch, 'control_tensor_list', None)
+                        if ctl is not None:
+                            prompt_kwargs['control_images'] = ctl
+                        elif batch.control_tensor is not None:
+                            tensor = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            if tensor.dim() == 5:
+                                per_batch = []
+                                for b in range(tensor.shape[0]):
+                                    per_batch.append([tensor[b, i].detach().cpu() for i in range(tensor.shape[1])])
+                                prompt_kwargs['control_images'] = per_batch
+                            elif tensor.dim() == 4:
+                                prompt_kwargs['control_images'] = tensor.detach().cpu()
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
