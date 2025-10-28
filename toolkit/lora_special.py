@@ -570,10 +570,110 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                 unet.conv_in = self.unet_conv_in
                 unet.conv_out = self.unet_conv_out
 
-    def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr):
-        # call Lora prepare_optimizer_params
+    def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr, optimizer_params=None):
+        # Check if we're training a WAN 2.2 14B MoE model
+        base_model = self.base_model_ref() if self.base_model_ref is not None else None
+        is_wan22_moe = base_model is not None and hasattr(base_model, 'arch') and base_model.arch in ["wan22_14b", "wan22_14b_i2v"]
+
+        # If MoE model and optimizer_params provided, split param groups for high/low noise experts
+        if is_wan22_moe and optimizer_params is not None and self.unet_loras:
+            return self._prepare_moe_optimizer_params(text_encoder_lr, unet_lr, default_lr, optimizer_params)
+
+        # Otherwise use standard param group creation
         all_params = super().prepare_optimizer_params(text_encoder_lr, unet_lr, default_lr)
 
+        if self.full_train_in_out:
+            if self.is_pixart or self.is_auraflow or self.is_flux or (base_model is not None and base_model.arch == "wan21"):
+                all_params.append({"lr": unet_lr, "params": list(self.transformer_pos_embed.parameters())})
+                all_params.append({"lr": unet_lr, "params": list(self.transformer_proj_out.parameters())})
+            else:
+                all_params.append({"lr": unet_lr, "params": list(self.unet_conv_in.parameters())})
+                all_params.append({"lr": unet_lr, "params": list(self.unet_conv_out.parameters())})
+
+        return all_params
+
+    def _prepare_moe_optimizer_params(self, text_encoder_lr, unet_lr, default_lr, optimizer_params):
+        """
+        Prepare optimizer params with separate groups for High Noise and Low Noise experts.
+        Allows per-expert lr_bump, min_lr, max_lr configuration for automagic optimizer.
+        """
+        self.requires_grad_(True)
+        all_params = []
+
+        def enumerate_params(loras):
+            params = []
+            for lora in loras:
+                params.extend(lora.parameters())
+            return params
+
+        # Handle text encoder loras (standard, no splitting)
+        if self.text_encoder_loras:
+            param_data = {"params": enumerate_params(self.text_encoder_loras)}
+            if text_encoder_lr is not None:
+                param_data["lr"] = text_encoder_lr
+            all_params.append(param_data)
+
+        # Split unet_loras by transformer (High Noise = transformer_1, Low Noise = transformer_2)
+        if self.unet_loras:
+            high_noise_loras = []
+            low_noise_loras = []
+            other_loras = []
+
+            for lora in self.unet_loras:
+                # Note: lora_name uses $$ as separator, so check for 'transformer_1' substring
+                # This correctly matches names like "transformer$$transformer_1$$blocks$$0$$attn1$$to_q"
+                if 'transformer_1' in lora.lora_name:
+                    high_noise_loras.append(lora)
+                elif 'transformer_2' in lora.lora_name:
+                    low_noise_loras.append(lora)
+                else:
+                    other_loras.append(lora)
+
+            # Extract per-expert optimizer params with fallback to defaults
+            default_lr_bump = optimizer_params.get('lr_bump')
+            default_min_lr = optimizer_params.get('min_lr')
+            default_max_lr = optimizer_params.get('max_lr')
+
+            # High Noise Expert param group
+            if high_noise_loras:
+                high_noise_params = {"params": enumerate_params(high_noise_loras)}
+                if unet_lr is not None:
+                    high_noise_params["lr"] = unet_lr
+
+                # Add per-expert optimizer params if using automagic
+                if default_lr_bump is not None:
+                    high_noise_params["lr_bump"] = optimizer_params.get('high_noise_lr_bump', default_lr_bump)
+                if default_min_lr is not None:
+                    high_noise_params["min_lr"] = optimizer_params.get('high_noise_min_lr', default_min_lr)
+                if default_max_lr is not None:
+                    high_noise_params["max_lr"] = optimizer_params.get('high_noise_max_lr', default_max_lr)
+
+                all_params.append(high_noise_params)
+
+            # Low Noise Expert param group
+            if low_noise_loras:
+                low_noise_params = {"params": enumerate_params(low_noise_loras)}
+                if unet_lr is not None:
+                    low_noise_params["lr"] = unet_lr
+
+                # Add per-expert optimizer params if using automagic
+                if default_lr_bump is not None:
+                    low_noise_params["lr_bump"] = optimizer_params.get('low_noise_lr_bump', default_lr_bump)
+                if default_min_lr is not None:
+                    low_noise_params["min_lr"] = optimizer_params.get('low_noise_min_lr', default_min_lr)
+                if default_max_lr is not None:
+                    low_noise_params["max_lr"] = optimizer_params.get('low_noise_max_lr', default_max_lr)
+
+                all_params.append(low_noise_params)
+
+            # Other loras (not transformer-specific) - use defaults
+            if other_loras:
+                other_params = {"params": enumerate_params(other_loras)}
+                if unet_lr is not None:
+                    other_params["lr"] = unet_lr
+                all_params.append(other_params)
+
+        # Add full_train_in_out params if needed
         if self.full_train_in_out:
             base_model = self.base_model_ref() if self.base_model_ref is not None else None
             if self.is_pixart or self.is_auraflow or self.is_flux or (base_model is not None and base_model.arch == "wan21"):
