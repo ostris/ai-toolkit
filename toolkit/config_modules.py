@@ -836,6 +836,7 @@ class DatasetConfig:
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
+        self.max_pixels_per_frame: int = kwargs.get('max_pixels_per_frame', None)
         self.scale: float = kwargs.get('scale', 1.0)
         self.buckets: bool = kwargs.get('buckets', True)
         self.bucket_tolerance: int = kwargs.get('bucket_tolerance', 64)
