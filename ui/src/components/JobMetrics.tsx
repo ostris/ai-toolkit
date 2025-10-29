@@ -393,17 +393,18 @@ export default function JobMetrics({ job }: JobMetricsProps) {
         </div>
 
         {/* Chart area with lines */}
-        <svg className="absolute left-16 right-4 top-4 bottom-8" style={{ width: 'calc(100% - 5rem)', height: 'calc(100% - 3rem)' }}>
+        <svg className="absolute left-16 right-4 top-4 bottom-8" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: 'calc(100% - 5rem)', height: 'calc(100% - 3rem)' }}>
           {/* High Noise (lr_0) line */}
           <polyline
             points={dataWithLR.map((m, idx) => {
               const x = (idx / (dataWithLR.length - 1)) * 100;
               const y = m.lr_0 != null ? (1 - ((m.lr_0 - minLR) / lrRange)) * 100 : null;
-              return y != null ? `${x}%,${y}%` : null;
+              return y != null ? `${x},${y}` : null;
             }).filter(p => p).join(' ')}
             fill="none"
             stroke="#fb923c"
-            strokeWidth="2"
+            strokeWidth="0.5"
+            vectorEffect="non-scaling-stroke"
           />
 
           {/* Low Noise (lr_1) line */}
@@ -411,11 +412,12 @@ export default function JobMetrics({ job }: JobMetricsProps) {
             points={dataWithLR.map((m, idx) => {
               const x = (idx / (dataWithLR.length - 1)) * 100;
               const y = m.lr_1 != null ? (1 - ((m.lr_1 - minLR) / lrRange)) * 100 : null;
-              return y != null ? `${x}%,${y}%` : null;
+              return y != null ? `${x},${y}` : null;
             }).filter(p => p).join(' ')}
             fill="none"
             stroke="#3b82f6"
-            strokeWidth="2"
+            strokeWidth="0.5"
+            vectorEffect="non-scaling-stroke"
           />
         </svg>
 
@@ -463,17 +465,18 @@ export default function JobMetrics({ job }: JobMetricsProps) {
         </div>
 
         {/* Chart area with lines and phase backgrounds */}
-        <svg className="absolute left-12 right-4 top-4 bottom-8" style={{ width: 'calc(100% - 4rem)', height: 'calc(100% - 3rem)' }}>
+        <svg className="absolute left-12 right-4 top-4 bottom-8" viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: 'calc(100% - 4rem)', height: 'calc(100% - 3rem)' }}>
           {/* Conv Alpha line */}
           <polyline
             points={dataWithAlpha.map((m, idx) => {
               const x = (idx / (dataWithAlpha.length - 1)) * 100;
               const y = m.conv_alpha != null ? (1 - ((m.conv_alpha - minAlpha) / alphaRange)) * 100 : null;
-              return y != null ? `${x}%,${y}%` : null;
+              return y != null ? `${x},${y}` : null;
             }).filter(p => p).join(' ')}
             fill="none"
             stroke="#10b981"
-            strokeWidth="2"
+            strokeWidth="0.5"
+            vectorEffect="non-scaling-stroke"
           />
 
           {/* Linear Alpha line */}
@@ -481,12 +484,13 @@ export default function JobMetrics({ job }: JobMetricsProps) {
             points={dataWithAlpha.map((m, idx) => {
               const x = (idx / (dataWithAlpha.length - 1)) * 100;
               const y = m.linear_alpha != null ? (1 - ((m.linear_alpha - minAlpha) / alphaRange)) * 100 : null;
-              return y != null ? `${x}%,${y}%` : null;
+              return y != null ? `${x},${y}` : null;
             }).filter(p => p).join(' ')}
             fill="none"
             stroke="#8b5cf6"
-            strokeWidth="2"
-            strokeDasharray="4 4"
+            strokeWidth="0.5"
+            strokeDasharray="2 2"
+            vectorEffect="non-scaling-stroke"
           />
         </svg>
 
