@@ -1,22 +1,28 @@
 # AI Toolkit (Relaxis Enhanced Fork)
 
-**🚀 Enhanced fork with Progressive Alpha Scheduling, Advanced Metrics, and Video Training Optimizations**
+**Enhanced fork with smarter training, better video support, and RTX 50-series compatibility**
 
-AI Toolkit is an all-in-one training suite for diffusion models supporting the latest image and video models on consumer hardware. This fork adds intelligent alpha scheduling that automatically adjusts LoRA capacity through training phases, comprehensive metrics tracking, and video-specific optimizations.
+AI Toolkit is an all-in-one training suite for diffusion models. This fork makes training easier and more successful by automatically adjusting training strength as your model learns, with specific improvements for video models.
 
-**Fork Features:**
-- 📊 **Progressive Alpha Scheduling** - Automatic phase transitions (α=8→14→20) based on loss convergence
-- 📈 **Advanced Metrics Tracking** - Real-time loss trends, gradient stability, R² confidence
-- 🎥 **Video Training Optimizations** - Thresholds tuned for 10-100x higher variance in video
-- 🔧 **Improved Training Success** - 40-50% baseline → 75-85% with alpha scheduling
+## What's Different in This Fork
+
+**Smarter Training:**
+- Alpha scheduling automatically increases training strength at the right times
+- Training success improved from ~40% to ~75-85%
+- Works especially well for video training
+
+**Better Video Support:**
+- Improved bucket allocation for videos with different aspect ratios
+- Optimized settings for high-variance video training
+- Per-expert learning rates for video models with multiple experts
+
+**RTX 50-Series Support:**
+- Full Blackwell architecture support (RTX 5090, 5080, etc.)
+- Includes CUDA 12.8 and flash attention compilation fixes
 
 **Original by Ostris** | **Enhanced by Relaxis**
 
-## Support My Work
-
-If you enjoy my projects or use them commercially, please consider sponsoring me. Every bit helps! 💖
-
-[Sponsor on GitHub](https://github.com/orgs/ostris) | [Support on Patreon](https://www.patreon.com/ostris) | [Donate on PayPal](https://www.paypal.com/donate/?hosted_button_id=9GEFUKC8T9R9W)
+---
 
 ### Current Sponsors
 
@@ -374,28 +380,55 @@ All criteria must be satisfied for automatic transition.
 
 ---
 
+## Beginner's Guide: Your First LoRA
+
+**What's a LoRA?** Think of it like teaching your AI model a new skill without retraining the whole thing. It's fast, cheap, and works great.
+
+**What you'll need:**
+- 10-30 images (or videos) of what you want to teach
+- Text descriptions for each image
+- An Nvidia GPU (at least 12GB VRAM recommended)
+- ~30 minutes to a few hours depending on your data
+
+**What will happen:**
+1. **Setup** (5 min): Install the software
+2. **Prepare data** (10 min): Organize your images and write captions
+3. **Start training** (30 min - 3 hrs): The AI learns from your data
+4. **Use your LoRA**: Apply it to generate new images/videos
+
+**What to expect during training:**
+- **Steps 0-500**: Loss drops quickly (model learning basics)
+- **Steps 500-2000**: Loss stabilizes (foundation phase with alpha scheduling)
+- **Steps 2000-5000**: Loss improves slowly (balance phase, main learning)
+- **Steps 5000-7000**: Final refinement (emphasis phase, details)
+
+Your training will show metrics like:
+- **Loss**: Goes down = good. Stays flat = model learned everything.
+- **Phase**: Foundation → Balance → Emphasis (automatic with alpha scheduling)
+- **Gradient Stability**: Measures training health (~48-55% is normal)
+
 ## Installation
 
 Requirements:
 - python >3.10
-- Nvidia GPU with enough ram to do what you need
+- Nvidia GPU with enough VRAM (12GB minimum, 24GB+ recommended)
 - python venv
 - git
 
-**Install this enhanced fork:**
+### Standard Installation (RTX 30/40 Series)
 
-Linux:
+**Linux:**
 ```bash
 git clone https://github.com/relaxis/ai-toolkit.git
 cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
-# install torch first
+# Install PyTorch for CUDA 12.6
 pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
-Windows:
+**Windows:**
 
 If you are having issues with Windows, I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install) (modify the git clone URL to use `relaxis/ai-toolkit`)
 
@@ -406,6 +439,34 @@ python -m venv venv
 .\venv\Scripts\activate
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
+```
+
+### RTX 50-Series (Blackwell) Installation
+
+**Additional steps for RTX 5090, 5080, 5070, etc:**
+
+1. Install CUDA 12.8 (Blackwell requires 12.8+):
+```bash
+# Download from https://developer.nvidia.com/cuda-12-8-0-download-archive
+# Or use package manager:
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install cuda-toolkit-12-8
+```
+
+2. Follow standard installation above, then compile flash attention for Blackwell:
+```bash
+source venv/bin/activate
+export CUDA_HOME=/usr/local/cuda-12.8
+export TORCH_CUDA_ARCH_LIST="10.0+PTX"  # Blackwell architecture
+FLASH_ATTENTION_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn --no-build-isolation
+```
+
+3. Verify it works:
+```bash
+python -c "import flash_attn; print('Flash Attention OK')"
+nvidia-smi  # Should show CUDA 12.8
 ```
 
 **Or install the original version:**
@@ -640,10 +701,35 @@ Datasets generally need to be a folder containing images and associated text fil
 formats are jpg, jpeg, and png. Webp currently has issues. The text files should be named the same as the images
 but with a `.txt` extension. For example `image2.jpg` and `image2.txt`. The text file should contain only the caption.
 You can add the word `[trigger]` in the caption file and if you have `trigger_word` in your config, it will be automatically
-replaced. 
+replaced.
+
+### Improved Bucket Allocation (Fork Enhancement)
+
+**What changed:** This fork improves how images/videos with different sizes and aspect ratios are grouped for training.
 
 Images are never upscaled but they are downscaled and placed in buckets for batching. **You do not need to crop/resize your images**.
-The loader will automatically resize them and can handle varying aspect ratios. 
+The loader will automatically resize them and can handle varying aspect ratios.
+
+**Improvements in this fork:**
+- **Better video aspect ratio handling**: Videos with mixed aspect ratios (16:9, 9:16, 1:1) batch more efficiently
+- **Pixel count optimization**: Instead of fixed resolutions, uses `max_pixels_per_frame` for flexible sizing
+- **Smarter bucketing**: Groups similar aspect ratios together to minimize wasted VRAM
+- **Per-video frame counts**: Each video can have different frame counts (33, 41, 49) without issues
+
+**For video datasets:**
+```yaml
+datasets:
+  - folder_path: /path/to/videos
+    resolution: [512]  # Base resolution
+    max_pixels_per_frame: 262144  # ~512x512, flexible per aspect ratio
+    num_frames: 33  # Default, can vary per video
+```
+
+The system will automatically:
+1. Calculate optimal resolution for each video's aspect ratio
+2. Group similar sizes into buckets
+3. Minimize padding/cropping
+4. Maximize VRAM utilization 
 
 
 ## Training Specific Layers
@@ -801,6 +887,89 @@ model:
 train:
   switch_boundary_every: 100  # Switch between experts every 100 steps
 ```
+
+## Understanding Training Metrics
+
+**New to LoRA training?** Here's what all those numbers mean.
+
+### What You Can Actually Control
+
+- **Learning Rate** (`lr`): How big the training updates are (set in config)
+- **Alpha Values** (`conv_alpha`, `linear_alpha`): LoRA strength (auto-adjusted with alpha scheduling)
+- **Batch Size**: How many images per step (limited by VRAM)
+- **Training Steps**: How long to train
+
+### What Gets Measured (You Can't Change These)
+
+#### Loss
+**What it is**: How wrong your model's predictions are
+**Good value**: Going down over time
+**Your training**: Should start high (~0.5-1.0) and decrease to ~0.02-0.1
+
+#### Gradient Stability
+**What it is**: How consistent your training updates are (0-100%)
+**Good value**: Video >50%, Images >55%
+**What it means**: Below 50% = unstable training, won't transition phases
+**Can you change it?**: NO - this measures training dynamics
+
+#### R² (Fit Quality)
+**What it is**: How well we can predict your loss trend (0-1 scale)
+**Good value**: Video >0.01, Images >0.1
+**What it means**: Confirms loss is actually plateauing, not just noisy
+**Can you change it?**: NO - this is measured from your loss history
+
+#### Loss Slope
+**What it is**: How fast loss is changing
+**Good value**: Negative (improving), near zero (plateaued)
+**What it means**: -0.0001 = good improvement, close to 0 = ready for next phase
+
+### Phase Transitions Explained
+
+With alpha scheduling enabled, training goes through phases:
+
+| Phase | Conv Alpha | When It Happens | What It Does |
+|-------|-----------|-----------------|--------------|
+| **Foundation** | 8 | Steps 0-2000+ | Conservative start, stable learning |
+| **Balance** | 14 | After foundation plateaus | Main learning phase |
+| **Emphasis** | 20 | After balance plateaus | Fine details, final refinement |
+
+**To move to next phase, you need ALL of:**
+- Minimum steps completed (2000/3000/2000)
+- Loss slope near zero (plateau)
+- Gradient stability > threshold (50% video, 55% images)
+- R² > threshold (0.01 video, 0.1 images)
+
+**Why am I stuck in a phase?**
+- Not enough steps yet (most common - just wait)
+- Gradient stability too low (training still unstable)
+- R² too low (loss too noisy to confirm plateau)
+- Loss still improving (not plateaued yet)
+
+### Common Questions
+
+**"My gradient stability is 48%, can I increase it?"**
+No. It's a measurement, not a setting. It naturally improves as training stabilizes.
+
+**"My R² is 0.005, is that bad?"**
+For video at step 400? Normal. You need 0.01 to transition phases. Keep training.
+
+**"Training never transitions phases"**
+Your thresholds might be too strict. Video training is very noisy. Use the "Video Training" preset in the UI.
+
+**"What should I actually watch?"**
+1. Loss going down ✓
+2. Samples looking good ✓
+3. Checkpoints being saved ✓
+
+Everything else is automatic.
+
+### Where to Find Metrics
+
+- **UI**: Jobs page → Click your job → Metrics tab
+- **File**: `output/{job_name}/metrics_{job_name}.jsonl`
+- **Terminal**: Shows current loss and phase during training
+
+See [`METRICS_GUIDE.md`](METRICS_GUIDE.md) for detailed technical explanations.
 
 
 ## Updates
