@@ -868,9 +868,9 @@ export default function JobMetrics({ job }: JobMetricsProps) {
       )}
 
       {/* Loss Trend Indicator */}
-      {current.loss_slope != null && current.loss_r2 != null && (
-        <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
-          <h3 className="text-lg font-semibold mb-4 text-gray-200">Loss Trend Analysis</h3>
+      <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
+        <h3 className="text-lg font-semibold mb-4 text-gray-200">Loss Trend Analysis</h3>
+        {current.loss_slope != null && current.loss_r2 != null ? (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <Tooltip text="How fast loss is changing. Negative = good (improving). Near zero = plateaued. Positive = getting worse! Based on linear regression of recent loss values.">
@@ -905,8 +905,14 @@ export default function JobMetrics({ job }: JobMetricsProps) {
               </p>
             </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="text-gray-400 text-center py-8">
+            <p className="text-lg mb-2">Collecting samples... ({current.loss_samples || 0}/20)</p>
+            <p className="text-sm">Need 20 loss samples to calculate trend analysis</p>
+            <p className="text-xs mt-2 text-gray-500">Loss trends will appear after {20 - (current.loss_samples || 0)} more steps</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
