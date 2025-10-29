@@ -9,6 +9,7 @@ type DisableableSections =
   | 'network.conv'
   | 'trigger_word'
   | 'train.diff_output_preservation'
+  | 'train.blank_prompt_preservation'
   | 'train.unload_text_encoder'
   | 'slider';
 
