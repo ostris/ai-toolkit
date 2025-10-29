@@ -1983,7 +1983,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # Clean up metrics when starting fresh (not resuming from checkpoint)
         if self.step_num == 0 and self.start_step == 0:
             # Starting from scratch - remove any old metrics
-            import os
             if os.path.exists(self.metrics_logger.metrics_file):
                 print(f"Starting fresh from step 0 - clearing old metrics")
                 os.remove(self.metrics_logger.metrics_file)
