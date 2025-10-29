@@ -157,6 +157,11 @@ export default function JobMetrics({ job }: JobMetricsProps) {
 
   const { current } = stats;
 
+  // Determine which expert is currently active based on step
+  const currentBlockIndex = Math.floor(current.step / 100);
+  const currentActiveExpert = currentBlockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
+  const stepsInCurrentBlock = current.step % 100;
+
   // Separate ALL metrics by expert for full history visualization
   // MoE switches experts every 100 steps: steps 0-99=expert0, 100-199=expert1, 200-299=expert0, etc.
   const allWithExpert = metrics.map((m) => {
@@ -770,29 +775,77 @@ export default function JobMetrics({ job }: JobMetricsProps) {
         </div>
       </div>
 
+      {/* Current Training Status (MoE) */}
+      {(stats.highNoiseLoss != null || stats.lowNoiseLoss != null) && (
+        <div className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 rounded-xl p-6 border-2 border-purple-600/50">
+          <h3 className="text-xl font-semibold mb-4 flex items-center text-purple-300">
+            <Layers className="w-6 h-6 mr-2" />
+            Currently Training: {currentActiveExpert === 'high_noise' ? 'High Noise Expert' : 'Low Noise Expert'}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-gray-400">Current Step</p>
+              <p className="text-3xl font-bold text-white">{current.step}</p>
+              <p className="text-xs text-gray-500 mt-1">Step {stepsInCurrentBlock + 1}/100 in expert block</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-400">Current Loss</p>
+              <p className="text-3xl font-bold text-yellow-400">
+                {current.loss != null ? current.loss.toFixed(4) : 'N/A'}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">This step only</p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-400">Expert Learning Rate</p>
+              <p className="text-2xl font-bold text-green-400">
+                {currentActiveExpert === 'high_noise'
+                  ? (current.lr_0 != null ? current.lr_0.toExponential(2) : 'N/A')
+                  : (current.lr_1 != null ? current.lr_1.toExponential(2) : 'N/A')
+                }
+              </p>
+              <p className="text-xs text-gray-500 mt-1">{currentActiveExpert === 'high_noise' ? 'lr_0' : 'lr_1'}</p>
+            </div>
+          </div>
+          <div className="mt-4 p-3 bg-gray-950/50 rounded-lg">
+            <p className="text-xs text-gray-400">
+              💡 MoE switches experts every 100 steps. {currentActiveExpert === 'high_noise' ? 'High Noise' : 'Low Noise'} expert handles
+              {currentActiveExpert === 'high_noise' ? ' harder denoising (timesteps 1000-900)' : ' detail refinement (timesteps 900-0)'}.
+              Next switch in {100 - stepsInCurrentBlock - 1} steps.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* MoE Expert Comparison (if applicable) */}
       {(stats.highNoiseLoss != null || stats.lowNoiseLoss != null) && (
         <div className="bg-gray-900 rounded-xl p-6 border border-gray-800">
           <h3 className="text-lg font-semibold mb-4 flex items-center text-gray-200">
             <Layers className="w-5 h-5 mr-2 text-purple-400" />
-            Expert Comparison (MoE) - Last {windowSize} steps
+            Historical Averages (Last {windowSize} steps)
           </h3>
+          <p className="text-xs text-gray-500 mb-4">These averages include historical data from both experts and update as the window slides. See "Currently Training" above for real-time info.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-gradient-to-br from-red-900/20 to-orange-900/20 rounded-lg p-4 border border-red-800/30">
-              <p className="text-sm text-gray-400 mb-1">High Noise Expert</p>
+            <div className={`bg-gradient-to-br from-red-900/20 to-orange-900/20 rounded-lg p-4 border ${currentActiveExpert === 'high_noise' ? 'border-red-500 border-2' : 'border-red-800/30'}`}>
+              <p className="text-sm text-gray-400 mb-1 flex items-center">
+                High Noise Expert
+                {currentActiveExpert === 'high_noise' && <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-xs rounded">ACTIVE</span>}
+              </p>
               <p className="text-xs text-gray-500 mb-2">Timesteps 1000-900 (harder denoising)</p>
               <p className="text-3xl font-bold text-red-400">
                 {stats.highNoiseLoss != null ? stats.highNoiseLoss.toFixed(4) : 'N/A'}
               </p>
-              <p className="text-xs text-gray-500 mt-2">Avg loss</p>
+              <p className="text-xs text-gray-500 mt-2">Historical avg (last {windowSize} steps)</p>
             </div>
-            <div className="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 rounded-lg p-4 border border-blue-800/30">
-              <p className="text-sm text-gray-400 mb-1">Low Noise Expert</p>
+            <div className={`bg-gradient-to-br from-blue-900/20 to-cyan-900/20 rounded-lg p-4 border ${currentActiveExpert === 'low_noise' ? 'border-blue-500 border-2' : 'border-blue-800/30'}`}>
+              <p className="text-sm text-gray-400 mb-1 flex items-center">
+                Low Noise Expert
+                {currentActiveExpert === 'low_noise' && <span className="ml-2 px-2 py-0.5 bg-blue-500 text-white text-xs rounded">ACTIVE</span>}
+              </p>
               <p className="text-xs text-gray-500 mb-2">Timesteps 900-0 (detail refinement)</p>
               <p className="text-3xl font-bold text-blue-400">
                 {stats.lowNoiseLoss != null ? stats.lowNoiseLoss.toFixed(4) : 'N/A'}
               </p>
-              <p className="text-xs text-gray-500 mt-2">Avg loss</p>
+              <p className="text-xs text-gray-500 mt-2">Historical avg (last {windowSize} steps)</p>
             </div>
           </div>
           {stats.highNoiseLoss != null && stats.lowNoiseLoss != null && (
