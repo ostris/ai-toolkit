@@ -10,9 +10,10 @@ import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
+import JobMetrics from '@/components/JobMetrics';
 import { Job } from '@prisma/client';
 
-type PageKey = 'overview' | 'samples' | 'config';
+type PageKey = 'overview' | 'metrics' | 'samples' | 'config';
 
 interface Page {
   name: string;
@@ -28,6 +29,12 @@ const pages: Page[] = [
     value: 'overview',
     component: JobOverview,
     mainCss: 'pt-24',
+  },
+  {
+    name: 'Metrics',
+    value: 'metrics',
+    component: JobMetrics,
+    mainCss: 'pt-24 px-0',
   },
   {
     name: 'Samples',
