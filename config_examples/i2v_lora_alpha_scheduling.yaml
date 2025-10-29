@@ -1,0 +1,126 @@
+job: extension
+config:
+  name: video_lora_training
+  process:
+  - type: diffusion_trainer
+    training_folder: output
+    device: cuda
+    performance_log_every: 10
+
+    # Network configuration with alpha scheduling
+    network:
+      type: lora
+      linear: 64
+      linear_alpha: 16
+      conv: 64
+      conv_alpha: 14  # This gets overridden by alpha_schedule
+
+      # Alpha scheduling for progressive LoRA training
+      # Automatically increases alpha through 3 phases as training progresses
+      alpha_schedule:
+        enabled: true
+        linear_alpha: 16  # Fixed alpha for linear layers
+
+        # Progressive conv_alpha phases with automatic transitions
+        conv_alpha_phases:
+          foundation:
+            alpha: 8  # Conservative start for stable early training
+            min_steps: 2000
+            exit_criteria:
+              # Video-optimized thresholds (video has higher variance than images)
+              loss_improvement_rate_below: 0.005  # Plateau threshold
+              min_gradient_stability: 0.50         # Gradient sign agreement
+              min_loss_r2: 0.01                     # R² for trend validity
+
+          balance:
+            alpha: 14  # Standard strength for main training
+            min_steps: 3000
+            exit_criteria:
+              loss_improvement_rate_below: 0.005
+              min_gradient_stability: 0.50
+              min_loss_r2: 0.01
+
+          emphasis:
+            alpha: 20  # Strong alpha for fine details
+            min_steps: 2000
+            # No exit criteria - final phase
+
+    # Save configuration
+    save:
+      dtype: bf16
+      save_every: 100  # Save checkpoints every 100 steps
+      max_step_saves_to_keep: 25
+      save_format: diffusers
+      push_to_hub: false
+
+    # Dataset configuration for I2V training
+    datasets:
+    - folder_path: path/to/your/videos
+      caption_ext: txt
+      caption_dropout_rate: 0.3
+      resolution: [512]
+      max_pixels_per_frame: 262144
+      shrink_video_to_frames: true
+      num_frames: 33
+      do_i2v: true  # Image-to-Video mode
+
+    # Training configuration
+    train:
+      attention_backend: flash
+      batch_size: 1
+      steps: 10000
+      gradient_accumulation: 1
+      train_unet: true
+      train_text_encoder: false
+      gradient_checkpointing: true
+      noise_scheduler: flowmatch
+
+      # Automagic optimizer with gradient stability tracking
+      optimizer: automagic
+      optimizer_params:
+        lr_bump: 5.0e-06
+        min_lr: 8.0e-06
+        max_lr: 0.0003
+        beta2: 0.999
+        weight_decay: 0.0001
+        clip_threshold: 1
+
+      lr: 1.0e-05
+      max_grad_norm: 1
+      dtype: bf16
+
+      # EMA for smoother training
+      ema_config:
+        use_ema: true
+        ema_decay: 0.99
+
+      # For MoE models (Mixture of Experts)
+      switch_boundary_every: 100  # Switch experts every 100 steps
+
+    # Model configuration
+    model:
+      name_or_path: ai-toolkit/Wan2.2-I2V-A14B-Diffusers-bf16
+      quantize: true
+      qtype: uint4|ostris/accuracy_recovery_adapters/wan22_14b_i2v_torchao_uint4.safetensors
+      quantize_te: true
+      qtype_te: qfloat8
+      arch: wan22_14b_i2v
+      low_vram: true
+      model_kwargs:
+        train_high_noise: true
+        train_low_noise: true
+
+    # Sampling configuration
+    sample:
+      sampler: flowmatch
+      sample_every: 400
+      width: 320
+      height: 480
+      samples:
+      - prompt: "your test prompt here"
+        ctrl_img: path/to/control/image.png
+        network_multiplier: 1.0
+      guidance_scale: 4
+      sample_steps: 25
+      num_frames: 41
+      fps: 16

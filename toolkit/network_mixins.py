@@ -210,9 +210,18 @@ class ToolkitModuleMixin:
 
             # scaling for rank dropout: treat as if the rank is changed
             # maskから計算することも考えられるが、augmentation的な効果を期待してrank_dropoutを用いる
-            scale = self.scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
+            # Use dynamic scale if get_current_scale method exists
+            if hasattr(self, 'get_current_scale'):
+                base_scale = self.get_current_scale()
+            else:
+                base_scale = self.scale
+            scale = base_scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
         else:
-            scale = self.scale
+            # Use dynamic scale if get_current_scale method exists
+            if hasattr(self, 'get_current_scale'):
+                scale = self.get_current_scale()
+            else:
+                scale = self.scale
 
         lx = self.lora_up(lx)
 
@@ -531,7 +540,9 @@ class ToolkitNetworkMixin:
             # add extra items to state dict
             for key in list(extra_state_dict.keys()):
                 v = extra_state_dict[key]
-                v = v.detach().clone().to("cpu").to(dtype)
+                # Only detach if it's a tensor; otherwise copy as-is
+                if hasattr(v, 'detach'):
+                    v = v.detach().clone().to("cpu").to(dtype)
                 save_dict[key] = v
 
         if self.peft_format:

@@ -158,8 +158,211 @@ _Last updated: 2025-10-20 15:52 UTC_
 
 ---
 
+## 🔧 Fork Enhancements (Relaxis Branch)
 
+This fork adds **Alpha Scheduling** and **Advanced Metrics Tracking** for video LoRA training. These features provide automatic progression through training phases and real-time visibility into training health.
 
+### 🚀 Features Added
+
+#### 1. **Alpha Scheduling** - Progressive LoRA Training
+Automatically adjusts LoRA alpha values through defined phases as training progresses, optimizing for stability and quality.
+
+**Key Benefits:**
+- **Conservative start** (α=8): Stable early training, prevents divergence
+- **Progressive increase** (α=8→14→20): Gradually adds LoRA strength
+- **Automatic transitions**: Based on loss plateau and gradient stability
+- **Video-optimized**: Thresholds tuned for high-variance video training
+
+**Files Added:**
+- `toolkit/alpha_scheduler.py` - Core alpha scheduling logic with phase management
+- `toolkit/alpha_metrics_logger.py` - JSONL metrics logging for UI visualization
+
+**Files Modified:**
+- `jobs/process/BaseSDTrainProcess.py` - Alpha scheduler integration and checkpoint save/load
+- `toolkit/config_modules.py` - NetworkConfig alpha_schedule extraction
+- `toolkit/kohya_lora.py` - LoRANetwork alpha scheduling support
+- `toolkit/lora_special.py` - LoRASpecialNetwork initialization with scheduler
+- `toolkit/models/i2v_adapter.py` - I2V adapter alpha scheduling integration
+- `toolkit/network_mixins.py` - SafeTensors checkpoint save fix for non-tensor state
+
+#### 2. **Advanced Metrics Tracking**
+Real-time training metrics with loss trend analysis, gradient stability, and phase tracking.
+
+**Metrics Captured:**
+- **Loss analysis**: Slope (linear regression), R² (trend confidence), CV (variance)
+- **Gradient stability**: Sign agreement rate from automagic optimizer (target: 0.55)
+- **Phase tracking**: Current phase, steps in phase, alpha values
+- **Per-expert metrics**: Separate tracking for MoE (Mixture of Experts) models
+- **Loss history**: 200-step window for trend analysis
+
+**Files Added:**
+- `ui/src/components/JobMetrics.tsx` - React component for metrics visualization
+- `ui/src/app/api/jobs/[jobID]/metrics/route.ts` - API endpoint for metrics data
+- `ui/cron/actions/monitorJobs.ts` - Background monitoring with metrics sync
+
+**Files Modified:**
+- `ui/src/app/jobs/[jobID]/page.tsx` - Integrated metrics display
+- `ui/cron/worker.ts` - Metrics collection in worker process
+- `ui/cron/actions/startJob.ts` - Metrics initialization on job start
+- `toolkit/optimizer.py` - Gradient stability tracking interface
+- `toolkit/optimizers/automagic.py` - Gradient sign agreement calculation
+
+#### 3. **Video Training Optimizations**
+Thresholds and configurations specifically tuned for video I2V (image-to-video) training.
+
+**Why Video is Different:**
+- **10-100x higher variance** than image training
+- **R² threshold**: 0.01 (vs 0.1 for images) - video has extreme noise
+- **Loss plateau threshold**: 0.005 (vs 0.001) - slower convergence
+- **Gradient stability**: 0.50 minimum (vs 0.55) - more tolerance for variance
+
+### 📋 Example Configuration
+
+See [`config_examples/i2v_lora_alpha_scheduling.yaml`](config_examples/i2v_lora_alpha_scheduling.yaml) for a complete example with alpha scheduling enabled.
+
+**Quick Example:**
+```yaml
+network:
+  type: lora
+  linear: 64
+  linear_alpha: 16
+  conv: 64
+  alpha_schedule:
+    enabled: true
+    linear_alpha: 16
+    conv_alpha_phases:
+      foundation:
+        alpha: 8
+        min_steps: 2000
+        exit_criteria:
+          loss_improvement_rate_below: 0.005
+          min_gradient_stability: 0.50
+          min_loss_r2: 0.01
+      balance:
+        alpha: 14
+        min_steps: 3000
+        exit_criteria:
+          loss_improvement_rate_below: 0.005
+          min_gradient_stability: 0.50
+          min_loss_r2: 0.01
+      emphasis:
+        alpha: 20
+        min_steps: 2000
+```
+
+### 📊 Metrics Output
+
+Metrics are logged to `output/{job_name}/metrics_{job_name}.jsonl` in newline-delimited JSON format:
+
+```json
+{
+  "step": 2500,
+  "timestamp": "2025-10-29T18:19:46.510064",
+  "loss": 0.087,
+  "gradient_stability": 0.51,
+  "expert": null,
+  "lr_0": 7.06e-05,
+  "lr_1": 0.0,
+  "alpha_enabled": true,
+  "phase": "balance",
+  "phase_idx": 1,
+  "steps_in_phase": 500,
+  "conv_alpha": 14,
+  "linear_alpha": 16,
+  "loss_slope": 0.00023,
+  "loss_r2": 0.007,
+  "loss_samples": 200,
+  "gradient_stability_avg": 0.507
+}
+```
+
+### 🎯 Expected Training Progression
+
+**Phase 1: Foundation (Steps 0-2000+)**
+- Conv Alpha: 8 (conservative, stable)
+- Focus: Stable convergence, basic structure learning
+- Transition: Automatic when loss plateaus and gradients stabilize
+
+**Phase 2: Balance (Steps 2000-5000+)**
+- Conv Alpha: 14 (standard strength)
+- Focus: Main feature learning, refinement
+- Transition: Automatic when loss plateaus again
+
+**Phase 3: Emphasis (Steps 5000-7000)**
+- Conv Alpha: 20 (strong, fine details)
+- Focus: Detail enhancement, final refinement
+- Completion: Optimal LoRA strength achieved
+
+### 🔍 Monitoring Your Training
+
+**Key Metrics to Watch:**
+
+1. **Loss Slope** - Should trend toward 0 (plateau)
+   - Positive (+0.001+): ⚠️ Loss increasing, may need intervention
+   - Near zero (±0.0001): ✅ Plateauing, ready for transition
+   - Negative (-0.001+): ✅ Improving, keep training
+
+2. **Gradient Stability** - Should be ≥ 0.50
+   - Below 0.45: ⚠️ Unstable training
+   - 0.50-0.55: ✅ Healthy range for video
+   - Above 0.55: ✅ Very stable
+
+3. **Loss R²** - Trend confidence (video: expect 0.01-0.05)
+   - Below 0.01: ⚠️ Very noisy (normal for video early on)
+   - 0.01-0.05: ✅ Good trend for video training
+   - Above 0.1: ✅ Strong trend (rare in video)
+
+4. **Phase Transitions** - Logged with full details
+   - Foundation → Balance: Expected around step 2000-2500
+   - Balance → Emphasis: Expected around step 5000-5500
+
+### 🛠️ Troubleshooting
+
+**Alpha Scheduler Not Activating:**
+- Verify `alpha_schedule.enabled: true` in your config
+- Check logs for "Alpha scheduler enabled with N phases"
+- Ensure you're using a supported network type (LoRA)
+
+**No Automatic Transitions:**
+- Video training may not reach strict R² thresholds
+- Consider video-optimized exit criteria (see example config)
+- Check metrics: loss_slope, loss_r2, gradient_stability
+
+**Checkpoint Save Errors:**
+- Alpha scheduler state is saved to separate JSON file
+- Format: `{checkpoint}_alpha_scheduler.json`
+- Loads automatically when resuming from checkpoint
+
+### 📚 Technical Details
+
+**Phase Transition Logic:**
+1. Minimum steps in phase must be met
+2. Loss slope < threshold (plateau detection)
+3. Gradient stability > threshold
+4. Loss R² > threshold (trend validity)
+5. Loss CV < 0.5 (variance check)
+
+All criteria must be satisfied for automatic transition.
+
+**Loss Trend Analysis:**
+- Uses linear regression on 200-step loss window
+- Calculates slope (improvement rate) and R² (confidence)
+- Minimum 20 samples required before trends are reported
+- Updates every step for real-time monitoring
+
+**Gradient Stability:**
+- Measures sign agreement rate of gradients (from automagic optimizer)
+- Target range: 0.55-0.70 (images), 0.50-0.65 (video)
+- Tracked over 200-step rolling window
+- Used as stability indicator for phase transitions
+
+### 🔗 Links
+
+- **Example Config**: [`config_examples/i2v_lora_alpha_scheduling.yaml`](config_examples/i2v_lora_alpha_scheduling.yaml)
+- **Upstream**: [ostris/ai-toolkit](https://github.com/ostris/ai-toolkit)
+- **This Fork**: [relaxis/ai-toolkit](https://github.com/relaxis/ai-toolkit)
+
+---
 
 ## Installation
 

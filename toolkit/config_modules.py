@@ -205,7 +205,13 @@ class NetworkConfig:
             self.conv_alpha = 9999999999
         # -1 automatically finds the largest factor
         self.lokr_factor = kwargs.get('lokr_factor', -1)
-        
+
+        # Alpha scheduling config
+        self.alpha_schedule = kwargs.get('alpha_schedule', None)
+        if self.alpha_schedule:
+            print(f"[DEBUG NetworkConfig] alpha_schedule found in kwargs: {self.alpha_schedule}")
+            print(f"[DEBUG NetworkConfig] alpha_schedule enabled: {self.alpha_schedule.get('enabled')}")
+
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
         
