@@ -167,8 +167,13 @@ class ChromaModel(BaseModel):
 
         chroma_params.depth = double_blocks
         chroma_params.depth_single_blocks = single_blocks
+
+        # load Chroma into RAM in bfloat16, go back to fp32 afterwards
+        def_dtype = torch.get_default_dtype()
+        torch.set_default_dtype(torch.bfloat16)
         transformer = Chroma(chroma_params)
-        
+        torch.set_default_dtype(def_dtype)
+
         # add dtype, not sure why it doesnt have it
         transformer.dtype = dtype
         # load the state dict into the model
