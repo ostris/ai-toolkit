@@ -38,17 +38,47 @@ class TrainingStatistics:
         self.recent_losses = []
         self.gradient_stability_history = []
 
+        # EMA trackers (Exponential Moving Averages)
+        # alpha = 2 / (N + 1) for N-period EMA
+        self.loss_ema_10 = None   # 10-step EMA, alpha = 2/11 ≈ 0.182
+        self.loss_ema_50 = None   # 50-step EMA, alpha = 2/51 ≈ 0.039
+        self.loss_ema_100 = None  # 100-step EMA, alpha = 2/101 ≈ 0.020
+
+        self.grad_ema_10 = None
+        self.grad_ema_50 = None
+        self.grad_ema_100 = None
+
     def add_loss(self, loss: float):
-        """Add a loss value to the history."""
+        """Add a loss value to the history and update EMAs."""
         self.recent_losses.append(loss)
         if len(self.recent_losses) > self.window_size:
             self.recent_losses.pop(0)
 
+        # Update EMAs
+        if self.loss_ema_10 is None:
+            self.loss_ema_10 = loss
+            self.loss_ema_50 = loss
+            self.loss_ema_100 = loss
+        else:
+            self.loss_ema_10 = 0.182 * loss + 0.818 * self.loss_ema_10
+            self.loss_ema_50 = 0.039 * loss + 0.961 * self.loss_ema_50
+            self.loss_ema_100 = 0.020 * loss + 0.980 * self.loss_ema_100
+
     def add_gradient_stability(self, stability: float):
-        """Add gradient stability metric to history."""
+        """Add gradient stability metric to history and update EMAs."""
         self.gradient_stability_history.append(stability)
         if len(self.gradient_stability_history) > self.window_size:
             self.gradient_stability_history.pop(0)
+
+        # Update EMAs
+        if self.grad_ema_10 is None:
+            self.grad_ema_10 = stability
+            self.grad_ema_50 = stability
+            self.grad_ema_100 = stability
+        else:
+            self.grad_ema_10 = 0.182 * stability + 0.818 * self.grad_ema_10
+            self.grad_ema_50 = 0.039 * stability + 0.961 * self.grad_ema_50
+            self.grad_ema_100 = 0.020 * stability + 0.980 * self.grad_ema_100
 
     def get_loss_slope(self) -> tuple:
         """
@@ -68,25 +98,24 @@ class TrainingStatistics:
         return slope, r_squared
 
     def get_gradient_stability(self) -> float:
-        """Get average gradient stability over recent history."""
-        if not self.gradient_stability_history:
+        """Get gradient stability using 50-step EMA."""
+        if self.grad_ema_50 is None:
             return 0.0
 
-        # Use recent 50 samples or all if less
-        recent = self.gradient_stability_history[-50:]
-        return np.mean(recent)
+        return self.grad_ema_50
 
     def get_loss_cv(self) -> float:
-        """Calculate coefficient of variation for recent losses."""
-        if len(self.recent_losses) < 10:
+        """Calculate coefficient of variation for recent losses using 50-step EMA."""
+        if self.loss_ema_50 is None or len(self.recent_losses) < 10:
             return 0.0
 
+        # Use recent 50 losses for std calculation
         losses = np.array(self.recent_losses[-50:])
-        mean_loss = np.mean(losses)
-        if mean_loss == 0:
+        if self.loss_ema_50 == 0:
             return 0.0
 
-        return np.std(losses) / mean_loss
+        # CV = std / mean, where mean is the 50-step EMA
+        return np.std(losses) / self.loss_ema_50
 
 
 class PhaseAlphaScheduler:
@@ -422,7 +451,14 @@ class PhaseAlphaScheduler:
             'loss_r2': loss_r2,
             'gradient_stability': self.global_statistics.get_gradient_stability(),
             'loss_cv': self.global_statistics.get_loss_cv(),
-            'transitions': len(self.transition_history)
+            'transitions': len(self.transition_history),
+            # Add EMAs for charting (exponential moving averages)
+            'loss_ema_10': self.global_statistics.loss_ema_10,
+            'loss_ema_50': self.global_statistics.loss_ema_50,
+            'loss_ema_100': self.global_statistics.loss_ema_100,
+            'grad_ema_10': self.global_statistics.grad_ema_10,
+            'grad_ema_50': self.global_statistics.grad_ema_50,
+            'grad_ema_100': self.global_statistics.grad_ema_100,
         }
 
         # Add per-expert status if available
@@ -434,7 +470,14 @@ class PhaseAlphaScheduler:
                     'loss_slope': expert_slope,
                     'loss_r2': expert_r2,
                     'gradient_stability': stats.get_gradient_stability(),
-                    'loss_cv': stats.get_loss_cv()
+                    'loss_cv': stats.get_loss_cv(),
+                    # Add per-expert EMAs
+                    'loss_ema_10': stats.loss_ema_10,
+                    'loss_ema_50': stats.loss_ema_50,
+                    'loss_ema_100': stats.loss_ema_100,
+                    'grad_ema_10': stats.grad_ema_10,
+                    'grad_ema_50': stats.grad_ema_50,
+                    'grad_ema_100': stats.grad_ema_100,
                 }
 
         return status
@@ -483,6 +526,13 @@ class PhaseAlphaScheduler:
             'transition_history': self.transition_history,
             'global_losses': list(self.global_statistics.recent_losses),
             'global_grad_stability': list(self.global_statistics.gradient_stability_history),
+            # Save EMAs
+            'global_loss_ema_10': self.global_statistics.loss_ema_10,
+            'global_loss_ema_50': self.global_statistics.loss_ema_50,
+            'global_loss_ema_100': self.global_statistics.loss_ema_100,
+            'global_grad_ema_10': self.global_statistics.grad_ema_10,
+            'global_grad_ema_50': self.global_statistics.grad_ema_50,
+            'global_grad_ema_100': self.global_statistics.grad_ema_100,
         }
 
         # Save per-expert statistics if they exist
@@ -491,7 +541,13 @@ class PhaseAlphaScheduler:
             for expert_name, stats in self.statistics.items():
                 state['expert_statistics'][expert_name] = {
                     'losses': list(stats.recent_losses),
-                    'grad_stability': list(stats.gradient_stability_history)
+                    'grad_stability': list(stats.gradient_stability_history),
+                    'loss_ema_10': stats.loss_ema_10,
+                    'loss_ema_50': stats.loss_ema_50,
+                    'loss_ema_100': stats.loss_ema_100,
+                    'grad_ema_10': stats.grad_ema_10,
+                    'grad_ema_50': stats.grad_ema_50,
+                    'grad_ema_100': stats.grad_ema_100,
                 }
 
         return state
@@ -514,6 +570,13 @@ class PhaseAlphaScheduler:
         # Restore global statistics
         self.global_statistics.recent_losses = state.get('global_losses', [])
         self.global_statistics.gradient_stability_history = state.get('global_grad_stability', [])
+        # Restore EMAs
+        self.global_statistics.loss_ema_10 = state.get('global_loss_ema_10')
+        self.global_statistics.loss_ema_50 = state.get('global_loss_ema_50')
+        self.global_statistics.loss_ema_100 = state.get('global_loss_ema_100')
+        self.global_statistics.grad_ema_10 = state.get('global_grad_ema_10')
+        self.global_statistics.grad_ema_50 = state.get('global_grad_ema_50')
+        self.global_statistics.grad_ema_100 = state.get('global_grad_ema_100')
 
         # Restore per-expert statistics if they exist
         if 'expert_statistics' in state:
@@ -522,6 +585,13 @@ class PhaseAlphaScheduler:
                     self.statistics[expert_name] = TrainingStatistics()
                 self.statistics[expert_name].recent_losses = expert_state.get('losses', [])
                 self.statistics[expert_name].gradient_stability_history = expert_state.get('grad_stability', [])
+                # Restore EMAs
+                self.statistics[expert_name].loss_ema_10 = expert_state.get('loss_ema_10')
+                self.statistics[expert_name].loss_ema_50 = expert_state.get('loss_ema_50')
+                self.statistics[expert_name].loss_ema_100 = expert_state.get('loss_ema_100')
+                self.statistics[expert_name].grad_ema_10 = expert_state.get('grad_ema_10')
+                self.statistics[expert_name].grad_ema_50 = expert_state.get('grad_ema_50')
+                self.statistics[expert_name].grad_ema_100 = expert_state.get('grad_ema_100')
 
         logger.info(
             f"Alpha scheduler state restored: "
