@@ -425,8 +425,10 @@ class Automagic(torch.optim.Optimizer):
                     current_params.append(p)
         
         # If the number of parameters doesn't match, we can't reliably map them
-        if len(current_params) != len(state_dict['param_groups'][0]['params']):
-            print(f"WARNING: Number of parameters doesn't match between saved state ({len(state_dict['param_groups'][0]['params'])}) "
+        # Count saved params across ALL param groups (important for MoE with multiple groups)
+        saved_param_count = sum(len(group['params']) for group in state_dict['param_groups'])
+        if len(current_params) != saved_param_count:
+            print(f"WARNING: Number of parameters doesn't match between saved state ({saved_param_count}) "
                   f"and current model ({len(current_params)}). Learning rate masks may not be correctly loaded.")
         
         # Map parameters by their position in the param_groups
