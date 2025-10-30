@@ -100,6 +100,20 @@ class AlphaMetricsLogger:
                     if hasattr(stats, 'get_gradient_stability'):
                         metrics['gradient_stability_avg'] = stats.get_gradient_stability()
 
+                    # Add EMA metrics for charting
+                    if hasattr(stats, 'loss_ema_10'):
+                        metrics['loss_ema_10'] = stats.loss_ema_10
+                    if hasattr(stats, 'loss_ema_50'):
+                        metrics['loss_ema_50'] = stats.loss_ema_50
+                    if hasattr(stats, 'loss_ema_100'):
+                        metrics['loss_ema_100'] = stats.loss_ema_100
+                    if hasattr(stats, 'grad_ema_10'):
+                        metrics['grad_ema_10'] = stats.grad_ema_10
+                    if hasattr(stats, 'grad_ema_50'):
+                        metrics['grad_ema_50'] = stats.grad_ema_50
+                    if hasattr(stats, 'grad_ema_100'):
+                        metrics['grad_ema_100'] = stats.grad_ema_100
+
             except Exception as e:
                 # Don't fail training if metrics collection fails
                 print(f"Warning: Failed to collect alpha scheduler metrics: {e}")
