@@ -1,112 +1,117 @@
-# Training Recommendations Based on Research
+# Training Recommendations for WAN 2.2 I2V MOTION LoRAs
 
-## Problem Summary
+## CRITICAL: Motion vs Character Training
 
-Your training run showed classic signs of:
-1. **High noise expert overfitting** (rapid improvement then plateau with high variance)
-2. **Low noise expert degradation** (performance got worse: 0.0883 → 0.0969)
-3. **Gradient instability** preventing phase transitions (0.486 vs 0.50 required)
+**This document is for MOTION training (rubbing, squirting, movement).**
+Character/style training research (T-LoRA, etc.) gives **OPPOSITE** recommendations.
 
-## Root Causes (Research-Backed)
+### Character Training vs Motion Training
 
-### 1. High Noise Timesteps Overfit Rapidly
+| Aspect | Character/Style | Motion |
+|--------|----------------|--------|
+| **High Noise Role** | Memorizes poses/backgrounds (BAD) | Learns coarse motion structure (CRITICAL) |
+| **Low Noise Role** | Refines details (CRITICAL) | Can suppress motion if too strong |
+| **LR Strategy** | Lower high noise to prevent overfitting | **HIGHER high noise to preserve motion** |
+| **Training Duration** | 500-800 steps max | 1800-2200 steps |
 
-**Source**: T-LoRA paper (arxiv.org/html/2507.05964v1)
+## Problem Summary (squ1rtv15 Analysis)
 
-> "Fine-tuning at higher timesteps t∈[800;1000] leads to rapid overfitting, causing memorization of poses and backgrounds, which limits image diversity."
+Your training run showed:
+1. **Motion degradation** - Early samples had crazy coarse motion, later samples became tame/no motion
+2. **Low noise overpowering** - Weight growth 1.3x faster than high noise after step 2400
+3. **LR ratio too small** - 1.35x ratio insufficient for motion dominance
+4. **Best checkpoint still had issues** - Floaty/slow motion, weak coarse movement
 
-**Your data confirms this:**
-- High noise: Loss improved 27% (0.1016 → 0.0739)
-- But variance remained extremely high (±0.066)
-- Trained for 1566 steps (research recommends 500-800 max)
+## Root Causes (Weight Analysis)
 
-### 2. Gradient Conflicts Between Timesteps
+### squ1rtv15 Step 2400 (Best Checkpoint) Analysis:
 
-**Source**: Decouple-Then-Merge paper, Min-SNR Weighting Strategy
+```
+High Noise Expert:
+- Loss: 0.0755 (±0.0715 std)
+- Learning Rate: 0.000148
+- Weight magnitude: 0.005605 (NEEDS 0.008-0.010 for strong motion)
+- Training steps: ~783 high noise batches
 
-> "Optimizing a denoising function for a specific noise level can harm other timesteps" and "gradients computed at different timesteps may conflict."
+Low Noise Expert:
+- Loss: 0.0826 (±0.0415 std)
+- Learning Rate: 0.000110
+- Weight magnitude: 0.004710
 
-**Your data confirms this:**
-- Low noise loss WORSENED by 10%
-- High noise's aggressive updates created conflicting gradients
-- Overall gradient stability stuck at 48.6%
-
-### 3. Your Config Amplified the Problem
-
-```yaml
-# CURRENT (WRONG)
-high_noise_lr_bump: 1.0e-05  # 2x higher - encourages overfitting
-low_noise_lr_bump: 5.0e-06   # 2x lower - handicaps the expert that needs help
-
-# RESEARCH SAYS:
-- T-LoRA: REDUCE training signal at high noise (fewer params, lower LR)
-- TimeStep Master: Use UNIFORM learning rate (1e-4) across all experts
-- Min-SNR: Use loss weighting to balance timesteps, not different LRs
+LR Ratio: 1.35x (high/low) - INSUFFICIENT FOR MOTION
+Weight Ratio: 1.19x (high/low) - TOO WEAK
 ```
 
-## Recommended Config Changes
+### What Went Wrong (Steps 2400→3000):
 
-### Option 1: Equal Learning Rates (Recommended)
+```
+High Noise: +5.4% weight growth
+Low Noise:  +7.1% weight growth (1.3x FASTER!)
+
+Result: Low noise overpowered motion, made it tame/suppressed
+```
+
+## Corrected Config for Motion Training
+
+### Recommended: 4x LR Ratio (Motion Dominance)
 
 ```yaml
 train:
   optimizer: automagic
   optimizer_params:
-    # Same LR for both experts (TimeStep Master approach)
-    high_noise_lr_bump: 8.0e-06
-    high_noise_min_lr: 8.0e-06
-    high_noise_max_lr: 0.0002
+    # HIGH noise gets 4x MORE learning rate (motion structure is critical)
+    high_noise_lr_bump: 2.0e-05    # 4x higher than low noise
+    high_noise_min_lr: 2.0e-05
+    high_noise_max_lr: 0.0005      # Allow growth for strong motion
 
-    low_noise_lr_bump: 8.0e-06
-    low_noise_min_lr: 8.0e-06
-    low_noise_max_lr: 0.0002
+    # LOW noise constrained (prevents suppressing motion)
+    low_noise_lr_bump: 5.0e-06     # Same as original (worked for refinement)
+    low_noise_min_lr: 5.0e-06
+    low_noise_max_lr: 0.0001       # Capped to prevent overpowering
 
     # Shared settings
     beta2: 0.999
     weight_decay: 0.0001
     clip_threshold: 1
+
+  steps: 2200  # Stop before low noise overpowers (was 10000)
 ```
 
-### Option 2: Inverted LRs (Conservative High Noise)
+### Conservative: 3x LR Ratio
+
+If 4x seems too aggressive, try 3x:
 
 ```yaml
 train:
   optimizer: automagic
   optimizer_params:
-    # LOWER LR for high noise to prevent overfitting
-    high_noise_lr_bump: 5.0e-06
-    high_noise_min_lr: 5.0e-06
-    high_noise_max_lr: 0.0001  # Half of low noise
+    high_noise_lr_bump: 1.5e-05    # 3x higher than low noise
+    high_noise_min_lr: 1.5e-05
+    high_noise_max_lr: 0.0004
 
-    # HIGHER LR for low noise to help it learn
-    low_noise_lr_bump: 1.0e-05
-    low_noise_min_lr: 8.0e-06
-    low_noise_max_lr: 0.0002
+    low_noise_lr_bump: 5.0e-06
+    low_noise_min_lr: 5.0e-06
+    low_noise_max_lr: 0.0001
 ```
-
-### Option 3: Reduce High Noise Rank (T-LoRA Strategy)
-
-If the toolkit supports dynamic rank adjustment:
-- High noise: Use rank 32 (half of full rank 64)
-- Low noise: Use rank 64 (full capacity)
-
-This reduces high noise's memorization capacity while maintaining low noise's detail learning.
 
 ## Training Duration Recommendations
 
-**From T-LoRA paper:**
-- 500-800 training steps per expert with orthogonal initialization
-- Stop high noise early if loss plateaus with high variance
+**For Motion LoRAs (squ1rtv15 data):**
+- Best checkpoint: Steps 2000-2400 (but still had issues)
+- After 2400: Low noise started overpowering motion
+- Total trained: 3070 steps (degraded significantly)
 
-**Your training:**
-- High noise: 1566 steps (2x too long - likely overfitted by step 800)
-- Low noise: 1504 steps (also too long given the degradation)
+**Recommended for next run:**
+- Target: 1800-2200 total steps
+- Monitor samples every 100 steps
+- Watch for motion becoming tame/suppressed (low noise overpowering)
+- Stop immediately if motion quality degrades
 
-**Recommendation:**
-- Target 600-800 steps per expert maximum
-- Monitor samples frequently (every 100 steps)
-- Stop if high noise shows memorization (identical poses, backgrounds)
-- Stop if low noise degrades (loss increases)
+**Warning signs to stop training:**
+- Motion becomes floaty/slow
+- Coarse movement weakens
+- Samples lose energy/intensity
+- Weight ratio (high/low) drops below 1.5x
 
 ## Phase Transition Strategy
 
@@ -125,92 +130,131 @@ network:
           loss_improvement_rate_below: 0.005
 ```
 
-## Alternative Approaches
+## Alternative Approaches (NOT RECOMMENDED)
 
-### 1. Sequential Training (Decouple-Then-Merge)
+### Min-SNR Loss Weighting - INCOMPATIBLE
 
-Train experts separately then merge:
+**DO NOT USE** - WAN 2.2 uses FlowMatch scheduler which lacks `alphas_cumprod` attribute.
+
+```
+AttributeError: 'CustomFlowMatchEulerDiscreteScheduler' object has no attribute 'alphas_cumprod'
+```
+
+Min-SNR weighting only works with DDPM-based schedulers, not FlowMatch.
+
+### Sequential Training - UNTESTED
+
+Could train experts separately, but ai-toolkit doesn't currently support this for WAN 2.2 I2V:
 
 ```bash
-# Phase 1: Train high noise ONLY
-python run.py --config high_noise_only.yaml  # 500 steps
-
-# Phase 2: Train low noise ONLY (starting from phase 1 checkpoint)
-python run.py --config low_noise_only.yaml   # 800 steps
-
-# Phase 3: Joint fine-tuning (short, both experts)
-python run.py --config both_experts.yaml     # 200 steps
+# Theoretical approach (not implemented):
+# Phase 1: High noise only (1000 steps)
+# Phase 2: Low noise only (1500 steps)
+# Phase 3: Joint fine-tuning (200 steps)
 ```
 
-### 2. Min-SNR Loss Weighting
+Easier to use differential learning rates as shown above.
 
-If supported, use SNR-based loss weighting instead of per-expert LRs:
-
-```yaml
-train:
-  loss_weighting: min_snr
-  min_snr_gamma: 5  # Standard value
-```
-
-### 3. Early Stopping Per Expert
-
-Implement checkpointing:
-- Save every 100 steps
-- Test samples at each checkpoint
-- Identify when high noise overfits (usually ~500-800 steps)
-- Identify when low noise degrades
-- Resume from best checkpoint
-
-## Monitoring Guidelines
+## Monitoring Guidelines for Motion Training
 
 Watch for these warning signs:
 
-**High Noise Overfitting:**
-- Loss plateaus but variance stays high (±0.05+)
-- Samples show memorized poses/backgrounds
-- Gradient stability decreases
+**Motion Degradation (Low Noise Overpowering):**
+- Motion becomes tame/subtle compared to earlier samples
+- Coarse movement weakens (less rubbing, less body movement)
+- Motion feels floaty or slow-motion
+- Weight ratio (high/low) decreasing over time
+- **ACTION:** Stop training immediately, use earlier checkpoint
 
-**Low Noise Degradation:**
-- Loss INCREASES instead of decreasing
-- Samples lose fine details
-- Becomes worse than early checkpoints
+**High Noise Too Weak:**
+- Weight magnitude stays below 0.008
+- LR ratio under 3x
+- Samples lack energy from the start
+- **ACTION:** Increase high_noise_lr_bump for next run
 
-**Gradient Conflicts:**
-- Overall gradient stability stuck below 0.50
-- Loss oscillates heavily between expert switches
-- Phase transitions never trigger
+**Low Noise Overpowering (Critical Issue):**
+- Low noise weight growth FASTER than high noise
+- Motion suppression after checkpoint that looked good
+- Loss improving but samples getting worse
+- **ACTION:** Lower low_noise_max_lr or stop training earlier
 
-## Next Steps
+**Good Progress Indicators:**
+- Weight ratio (high/low) stays above 1.5x
+- Motion intensity consistent across checkpoints
+- Coarse movement strong, details refining gradually
+- LR ratio staying at 3-4x throughout training
 
-1. **Stop current training** if still running
-2. **Review samples** from steps 500, 800, 1000, 1500
-3. **Identify best checkpoint** before overfitting started
-4. **Restart training** with equal LRs or inverted LRs
-5. **Target 600-800 steps per expert** maximum
-6. **Test frequently** and stop early if issues appear
+## Next Steps for squ1rtv17
 
-## Research References
+1. **Create new config** with 4x LR ratio (high_noise: 2e-5, low_noise: 5e-6)
+2. **Set max steps to 2200** (not 10000)
+3. **Monitor samples every 100 steps** - watch for motion degradation
+4. **Stop immediately if**:
+   - Motion becomes tame/weak
+   - Weight ratio drops below 1.5x
+   - Samples worse than earlier checkpoint
+5. **Best checkpoint likely around step 1800-2000**
 
-1. **T-LoRA**: Single Image Diffusion Model Customization Without Overfitting
-   - arxiv.org/html/2507.05964v1
-   - Key insight: High noise timesteps overfit rapidly
+## Key Learnings from squ1rtv15
 
-2. **TimeStep Master**: Asymmetrical Mixture of Timestep LoRA Experts
-   - arxiv.org/html/2503.07416
-   - Key insight: Use uniform LR, separate LoRAs per timestep range
+**What Worked:**
+- Dataset quality good (motion present in early samples)
+- WAN 2.2 I2V architecture correct
+- Alpha scheduling (foundation phase at alpha=8)
+- Save frequency (every 100 steps allowed finding best checkpoint)
 
-3. **Min-SNR Weighting Strategy**: Efficient Diffusion Training via Min-SNR
-   - openaccess.thecvf.com/content/ICCV2023/papers/Hang_Efficient_Diffusion_Training_via_Min-SNR_Weighting_Strategy_ICCV_2023_paper.pdf
-   - Key insight: Gradient conflicts between timesteps
+**What Failed:**
+- LR ratio too small (1.35x insufficient for motion)
+- Trained too long (3070 steps, should stop ~2000)
+- Low noise overpowered motion after step 2400
+- High noise weights too weak (0.0056 vs needed 0.008-0.010)
 
-4. **Decouple-Then-Merge**: Towards Better Training for Diffusion Models
-   - openreview.net/forum?id=Y0P6cOZzNm
-   - Key insight: Train timestep ranges separately to avoid interference
+**Critical Insight:**
+Motion LoRAs need HIGH noise expert to dominate. Character LoRAs are opposite.
 
-## Questions?
+## Research Context
 
-If loss behavior doesn't match these patterns, or if you see unexpected results:
-- Check dataset quality (corrupted frames, bad captions)
-- Verify model architecture (correct WAN 2.2 I2V 14B variant)
-- Review batch size / gradient accumulation
-- Check for NaN/Inf in loss logs
+**WARNING:** Most LoRA research focuses on character/style training, which is backwards for motion.
+
+**Relevant Concepts:**
+- **WAN 2.2 I2V Architecture**: Dual transformer MoE (boundary_ratio=0.9)
+  - transformer_1: High noise (900-1000 timesteps, 10% of denoising)
+  - transformer_2: Low noise (0-900 timesteps, 90% of denoising)
+
+- **Gradient Conflicts**: Different timestep experts can interfere (why MoE helps)
+
+- **Weight Magnitude**: Indicates training strength (~0.008-0.010 for strong motion)
+
+**Character Training Research (T-LoRA, etc.) - NOT APPLICABLE:**
+- Recommends LOWER high noise LR (opposite of what motion needs)
+- Warns about overfitting at high timesteps (not an issue for motion)
+- Targets 500-800 steps (too short for motion learning)
+
+## Diagnostic Checklist
+
+If next training run still has issues:
+
+**Dataset Quality:**
+- [ ] All videos show clear rubbing motion
+- [ ] Squirting visible in source videos
+- [ ] Captions describe motion ("rubbing", "squirting")
+- [ ] No corrupted frames
+
+**Model Setup:**
+- [ ] Using ai-toolkit/Wan2.2-I2V-A14B-Diffusers-bf16
+- [ ] Quantization: uint4 (for model), qfloat8 (for text encoder)
+- [ ] arch: wan22_14b_i2v
+- [ ] boundary_ratio: 0.9 (I2V default)
+
+**Training Params:**
+- [ ] LR ratio 3-5x (high/low)
+- [ ] Max steps 1800-2200
+- [ ] Batch size 1, gradient accumulation 1
+- [ ] FlowMatch scheduler (NOT DDPM)
+- [ ] No min_snr_gamma (incompatible)
+
+**Monitoring:**
+- [ ] Save every 100 steps
+- [ ] Check samples at each checkpoint
+- [ ] Watch weight ratios in metrics
+- [ ] Stop if motion degrades
