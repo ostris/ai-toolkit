@@ -2076,6 +2076,14 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.current_boundary_index in self.sd.trainable_multistage_boundaries:
                             # if this boundary is trainable, we can stop looking
                             break
+
+                    # Set current expert name for metrics tracking
+                    if self.current_boundary_index == 0:
+                        self.current_expert_name = 'high_noise'
+                    elif self.current_boundary_index == 1:
+                        self.current_expert_name = 'low_noise'
+                    else:
+                        self.current_expert_name = f'expert_{self.current_boundary_index}'
             loss = self.train_single_accumulation(batch)
             self.steps_this_boundary += 1
             if total_loss is None:
