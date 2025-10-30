@@ -44,13 +44,20 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     // Always include first and last, evenly distribute the rest
     let metrics = allMetrics;
     if (allMetrics.length > 500) {
-      const step = Math.floor(allMetrics.length / 499); // 499 + first = 500
-      metrics = allMetrics.filter((_, idx) => idx === 0 || idx === allMetrics.length - 1 || idx % step === 0);
+      const lastIdx = allMetrics.length - 1;
+      const step = Math.floor(allMetrics.length / 498); // Leave room for first and last
 
-      // Ensure we don't exceed 500 points
-      if (metrics.length > 500) {
-        metrics = metrics.slice(0, 500);
+      // Get evenly distributed middle points
+      const middleIndices = new Set<number>();
+      for (let i = step; i < lastIdx; i += step) {
+        middleIndices.add(i);
+        if (middleIndices.size >= 498) break; // Max 498 middle points
       }
+
+      // Always include first and last
+      metrics = allMetrics.filter((_, idx) =>
+        idx === 0 || idx === lastIdx || middleIndices.has(idx)
+      );
     }
 
     return NextResponse.json({ metrics, total: allMetrics.length });

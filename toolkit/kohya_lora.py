@@ -461,6 +461,9 @@ def create_network(
     if module_dropout is not None:
         module_dropout = float(module_dropout)
 
+    # alpha scheduling config
+    alpha_schedule_config = kwargs.get("alpha_schedule", None)
+
     # すごく引数が多いな ( ^ω^)･･･
     network = LoRANetwork(
         text_encoder,
@@ -477,6 +480,7 @@ def create_network(
         block_alphas=block_alphas,
         conv_block_dims=conv_block_dims,
         conv_block_alphas=conv_block_alphas,
+        alpha_schedule_config=alpha_schedule_config,
         varbose=True,
     )
 

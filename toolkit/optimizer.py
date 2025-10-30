@@ -96,7 +96,10 @@ def get_optimizer(
         optimizer = Adafactor(params, lr=float(learning_rate), **optimizer_params)
     elif lower_type == 'automagic':
         from toolkit.optimizers.automagic import Automagic
-        optimizer = Automagic(params, lr=float(learning_rate), **optimizer_params)
+        # Filter out per-expert params - they're already in param groups, not constructor params
+        automagic_params = {k: v for k, v in optimizer_params.items()
+                           if not k.startswith('high_noise_') and not k.startswith('low_noise_')}
+        optimizer = Automagic(params, lr=float(learning_rate), **automagic_params)
     else:
         raise ValueError(f'Unknown optimizer type {optimizer_type}')
     return optimizer

@@ -5,7 +5,7 @@ import weakref
 import os
 import re
 import sys
-from typing import List, Optional, Dict, Type, Union
+from typing import List, Optional, Dict, Type, Union, Any
 import torch
 from diffusers import UNet2DConditionModel, PixArtTransformer2DModel, AuraFlowTransformer2DModel, WanTransformer3DModel
 from transformers import CLIPTextModel
@@ -113,8 +113,13 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         if type(alpha) == torch.Tensor:
             alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
+        self.initial_alpha = alpha
         self.scale = alpha / self.lora_dim
         self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える
+
+        # Alpha scheduler support (will be set by network if enabled)
+        self.alpha_scheduler = None
+        self.is_conv = org_module.__class__.__name__ in CONV_MODULES
 
         # same as microsoft's
         torch.nn.init.kaiming_uniform_(self.lora_down.weight, a=math.sqrt(5))
@@ -133,6 +138,18 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         self.org_forward = self.org_module[0].forward
         self.org_module[0].forward = self.forward
         # del self.org_module
+
+    def get_current_alpha(self):
+        """Get current alpha value (can be dynamic if scheduler is enabled)."""
+        if self.alpha_scheduler is None:
+            return self.initial_alpha
+
+        return self.alpha_scheduler.get_current_alpha(self.lora_name, self.is_conv)
+
+    def get_current_scale(self):
+        """Get current scale value (alpha/rank) for forward pass."""
+        current_alpha = self.get_current_alpha()
+        return current_alpha / self.lora_dim
 
 
 class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
@@ -199,6 +216,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             is_transformer: bool = False,
             base_model: 'StableDiffusion' = None,
             is_ara: bool = False,
+            alpha_schedule_config: Optional[Dict[str, Any]] = None,
             **kwargs
     ) -> None:
         """
@@ -569,6 +587,25 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                 self.unet_conv_out = copy.deepcopy(unet_conv_out)
                 unet.conv_in = self.unet_conv_in
                 unet.conv_out = self.unet_conv_out
+
+        # Initialize alpha scheduler if enabled
+        self.alpha_scheduler = None
+        print(f"[DEBUG LoRASpecialNetwork] alpha_schedule_config received: {alpha_schedule_config}")
+        if alpha_schedule_config:
+            print(f"[DEBUG LoRASpecialNetwork] alpha_schedule enabled: {alpha_schedule_config.get('enabled', False)}")
+            print(f"[DEBUG LoRASpecialNetwork] lora_dim (rank): {lora_dim}")
+
+        if alpha_schedule_config and alpha_schedule_config.get('enabled', False):
+            print(f"[DEBUG LoRASpecialNetwork] Creating PhaseAlphaScheduler...")
+            from .alpha_scheduler import PhaseAlphaScheduler
+            self.alpha_scheduler = PhaseAlphaScheduler(alpha_schedule_config, lora_dim)
+
+            # Attach scheduler to all LoRA modules
+            all_loras = self.text_encoder_loras + self.unet_loras
+            for lora in all_loras:
+                lora.alpha_scheduler = self.alpha_scheduler
+
+            print(f"Alpha scheduler enabled with {len(self.alpha_scheduler.phases)} phases")
 
     def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr, optimizer_params=None):
         # Check if we're training a WAN 2.2 14B MoE model

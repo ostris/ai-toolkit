@@ -879,14 +879,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if hasattr(self.network, 'alpha_scheduler') and self.network.alpha_scheduler is not None:
                 import json
                 scheduler_file = path.replace('.safetensors', '_alpha_scheduler.json')
+                print_acc(f"[DEBUG] Looking for alpha scheduler at: {scheduler_file}")
                 if os.path.exists(scheduler_file):
                     try:
                         with open(scheduler_file, 'r') as f:
                             scheduler_state = json.load(f)
+                        print_acc(f"[DEBUG] Loaded state: steps_in_phase={scheduler_state.get('steps_in_phase')}, total_steps={scheduler_state.get('total_steps')}")
                         self.network.alpha_scheduler.load_state_dict(scheduler_state)
-                        print_acc(f"Loaded alpha scheduler state from {scheduler_file}")
+                        print_acc(f"✓ Loaded alpha scheduler state from {scheduler_file}")
+                        print_acc(f"  steps_in_phase={self.network.alpha_scheduler.steps_in_phase}, total_steps={self.network.alpha_scheduler.total_steps}")
                     except Exception as e:
-                        print_acc(f"Warning: Failed to load alpha scheduler state: {e}")
+                        print_acc(f"✗ WARNING: Failed to load alpha scheduler state: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print_acc(f"[DEBUG] Alpha scheduler file not found: {scheduler_file}")
 
             self.load_training_state_from_metadata(path)
             return extra_weights
@@ -2124,7 +2131,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
 
 
-        start_step_num = self.step_num
+        # When resuming, start from next step (checkpoint step is already complete)
+        start_step_num = self.step_num if self.step_num == 0 else self.step_num + 1
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):
