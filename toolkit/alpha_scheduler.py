@@ -570,7 +570,7 @@ def create_default_config(rank: int, conv_alpha: float = 14, linear_alpha: float
                 'min_steps': 1000,
                 'exit_criteria': {
                     'loss_improvement_rate_below': 0.001,
-                    'min_gradient_stability': 0.55,
+                    'min_gradient_stability': 0.47,  # Realistic for video with MoE conflicts
                     'min_loss_r2': 0.005  # Very low for noisy video training
                 }
             },
@@ -579,7 +579,7 @@ def create_default_config(rank: int, conv_alpha: float = 14, linear_alpha: float
                 'min_steps': 1500,
                 'exit_criteria': {
                     'loss_improvement_rate_below': 0.0005,
-                    'min_gradient_stability': 0.60,
+                    'min_gradient_stability': 0.52,  # Slightly higher for refinement phase
                     'min_loss_r2': 0.003  # Very low for noisy video training
                 }
             },

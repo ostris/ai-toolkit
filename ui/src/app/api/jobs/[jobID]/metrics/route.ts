@@ -30,11 +30,8 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     const fileContent = fs.readFileSync(metricsPath, 'utf-8');
     const lines = fileContent.trim().split('\n').filter(line => line.trim());
 
-    // Get last 1000 entries (or all if less)
-    const recentLines = lines.slice(-1000);
-
     // Parse each line as JSON
-    const metrics = recentLines.map(line => {
+    const allMetrics = lines.map(line => {
       try {
         return JSON.parse(line);
       } catch (e) {
@@ -43,7 +40,20 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
       }
     }).filter(m => m !== null);
 
-    return NextResponse.json({ metrics });
+    // Downsample to max 500 points for chart performance
+    // Always include first and last, evenly distribute the rest
+    let metrics = allMetrics;
+    if (allMetrics.length > 500) {
+      const step = Math.floor(allMetrics.length / 499); // 499 + first = 500
+      metrics = allMetrics.filter((_, idx) => idx === 0 || idx === allMetrics.length - 1 || idx % step === 0);
+
+      // Ensure we don't exceed 500 points
+      if (metrics.length > 500) {
+        metrics = metrics.slice(0, 500);
+      }
+    }
+
+    return NextResponse.json({ metrics, total: allMetrics.length });
   } catch (error) {
     console.error('Error reading metrics file:', error);
     return NextResponse.json({ metrics: [], error: 'Error reading metrics file' });
