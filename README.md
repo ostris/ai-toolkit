@@ -216,6 +216,8 @@ npm run build_and_start
 
 You can now access the UI at `http://localhost:8675` or `http://<your-ip>:8675` if you are running it on a server.
 
+This UI downloads large model files in order to train on your datasets. If you wish to change the directory at which this UI downloads base models like Qwen, Flux, and Wan, simply set `HF_HOME=/path/to/hf/cache` in your environment before building and running the UI.
+
 ## Securing the UI
 
 If you are hosting the UI on a cloud provider or any network that is not secure, I highly recommend securing it with an auth token. 
