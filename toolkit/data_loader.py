@@ -332,6 +332,7 @@ class PairedImageDataset(Dataset):
                 width=img2.width,
                 height=img2.height,
                 resolution=self.size,
+                max_pixels_per_frame=getattr(self.dataset_config, 'max_pixels_per_frame', None) if hasattr(self, 'dataset_config') else None
                 # divisibility=self.
             )
 

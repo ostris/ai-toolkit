@@ -209,6 +209,7 @@ class BucketsMixin:
         config: 'DatasetConfig' = self.dataset_config
         resolution = config.resolution
         bucket_tolerance = config.bucket_tolerance
+        max_pixels_per_frame = config.max_pixels_per_frame
         file_list: List['FileItemDTO'] = self.file_list
 
         # for file_item in enumerate(file_list):
@@ -240,7 +241,8 @@ class BucketsMixin:
                 bucket_resolution = get_bucket_for_image_size(
                     width, height,
                     resolution=resolution,
-                    divisibility=bucket_tolerance
+                    divisibility=bucket_tolerance,
+                    max_pixels_per_frame=max_pixels_per_frame
                 )
 
                 # Calculate scale factors for width and height
@@ -1601,7 +1603,8 @@ class PoiFileItemDTOMixin:
         bucket_resolution = get_bucket_for_image_size(
             new_width, new_height,
             resolution=self.dataset_config.resolution,
-            divisibility=bucket_tolerance
+            divisibility=bucket_tolerance,
+            max_pixels_per_frame=self.dataset_config.max_pixels_per_frame
         )
 
         width_scale_factor = bucket_resolution["width"] / new_width

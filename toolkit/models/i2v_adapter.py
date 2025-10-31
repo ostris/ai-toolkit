@@ -353,6 +353,13 @@ class I2VAdapter(torch.nn.Module):
                 # always ignore patch_embedding
                 network_kwargs['ignore_if_contains'].append('patch_embedding')
 
+            # Extract alpha scheduling config if present
+            alpha_schedule_config = getattr(self.network_config, 'alpha_schedule', None)
+            print(f"[DEBUG i2v_adapter] alpha_schedule_config from network_config: {alpha_schedule_config}")
+            if alpha_schedule_config:
+                print(f"[DEBUG i2v_adapter] alpha_schedule enabled: {alpha_schedule_config.get('enabled')}")
+                print(f"[DEBUG i2v_adapter] alpha_schedule keys: {list(alpha_schedule_config.keys())}")
+
             self.control_lora = LoRASpecialNetwork(
                 text_encoder=sd.text_encoder,
                 unet=sd.unet,
@@ -382,6 +389,7 @@ class I2VAdapter(torch.nn.Module):
                 transformer_only=self.network_config.transformer_only,
                 is_transformer=sd.is_transformer,
                 base_model=sd,
+                alpha_schedule_config=alpha_schedule_config,
                 **network_kwargs
             )
             self.control_lora.force_to(self.device_torch, dtype=torch.float32)

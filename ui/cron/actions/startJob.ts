@@ -100,6 +100,8 @@ const startAndWatchJob = (job: Job) => {
     try {
       let subprocess;
 
+      const devNull = fs.openSync('/dev/null', 'a');
+
       if (isWindows) {
         // Spawn Python directly on Windows so the process can survive parent exit
         subprocess = spawn(pythonPath, args, {
@@ -110,13 +112,13 @@ const startAndWatchJob = (job: Job) => {
           cwd: TOOLKIT_ROOT,
           detached: true,
           windowsHide: true,
-          stdio: 'ignore', // don't tie stdio to parent
+          stdio: ['ignore', devNull, devNull], // redirect stdout/stderr to /dev/null
         });
       } else {
-        // For non-Windows platforms, fully detach and ignore stdio so it survives daemon-like
+        // For non-Windows platforms, fully detach and redirect stdio so it survives daemon-like
         subprocess = spawn(pythonPath, args, {
           detached: true,
-          stdio: 'ignore',
+          stdio: ['ignore', devNull, devNull], // redirect stdout/stderr to /dev/null
           env: {
             ...process.env,
             ...additionalEnv,
@@ -175,5 +177,16 @@ export default async function startJob(jobID: string) {
     },
   });
   // start and watch the job asynchronously so the cron can continue
-  startAndWatchJob(job);
+  // Note: We intentionally don't await this so the cron loop can continue processing
+  // The promise will run in the background and handle errors internally
+  startAndWatchJob(job).catch(async (error) => {
+    console.error(`Error in startAndWatchJob for job ${jobID}:`, error);
+    await prisma.job.update({
+      where: { id: jobID },
+      data: {
+        status: 'error',
+        info: `Failed to start job: ${error?.message || 'Unknown error'}`,
+      },
+    });
+  });
 }

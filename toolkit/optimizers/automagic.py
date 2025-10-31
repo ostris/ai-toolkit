@@ -62,6 +62,14 @@ class Automagic(torch.optim.Optimizer):
         # pretty print total paramiters with comma seperation
         print(f"Total training paramiters: {self._total_paramiter_size:,}")
 
+        # Track global step for MoE training detection
+        self._global_step = 0
+
+        # Alpha scheduler support - track loss and gradient stability
+        self.recent_losses = []
+        self.max_loss_history = 200
+        self._gradient_sign_agreements = []
+
         # needs to be enabled to count paramiters
         if self.do_paramiter_swapping:
             self.enable_paramiter_swapping(self.paramiter_swapping_factor)
@@ -162,7 +170,22 @@ class Automagic(torch.optim.Optimizer):
         if closure is not None:
             loss = closure()
 
+            # Track loss for alpha scheduler
+            if loss is not None:
+                loss_value = loss.item() if torch.is_tensor(loss) else float(loss)
+                self.recent_losses.append(loss_value)
+                if len(self.recent_losses) > self.max_loss_history:
+                    self.recent_losses.pop(0)
+
+        # Increment global step counter for MoE skip detection
+        self._global_step += 1
+
         for group in self.param_groups:
+            # Get per-group lr_bump, min_lr, max_lr or fall back to global defaults
+            group_lr_bump = group.get('lr_bump', self.lr_bump)
+            group_min_lr = group.get('min_lr', self.min_lr)
+            group_max_lr = group.get('max_lr', self.max_lr)
+
             for p in group["params"]:
                 if p.grad is None or not p.requires_grad:
                     continue
@@ -241,28 +264,56 @@ class Automagic(torch.optim.Optimizer):
                 # Ensure state is properly initialized
                 if 'last_polarity' not in state or 'lr_mask' not in state:
                     self.initialize_state(p)
-                
+
+                # Check if this param was skipped (MoE expert switching)
+                # If last update was more than 1 step ago, polarity comparison is invalid
+                last_step = state.get('last_step', None)
+                if last_step is None:
+                    # First time this param is being updated - no valid comparison
+                    param_was_skipped = True
+                else:
+                    param_was_skipped = (self._global_step - last_step) > 1
+
                 # Get signs of current last update and updates
                 last_polarity = state['last_polarity']
                 current_polarity = (update > 0).to(torch.bool)
-                sign_agreement = torch.where(
-                    last_polarity == current_polarity, 1, -1)
-                state['last_polarity'] = current_polarity
+
+                # Update last step
+                state['last_step'] = self._global_step
 
                 lr_mask = state['lr_mask'].to(torch.float32)
 
                 # Update learning rate mask based on sign agreement
-                new_lr = torch.where(
-                    sign_agreement > 0,
-                    lr_mask + self.lr_bump,  # Increase lr
-                    lr_mask - self.lr_bump  # Decrease lr
-                )
+                if param_was_skipped:
+                    # Param was skipped (MoE expert paused) - don't compare stale polarity
+                    # Keep current LR to resume from where expert left off
+                    new_lr = lr_mask
+                else:
+                    # Normal case: param updated on consecutive steps
+                    sign_agreement = torch.where(
+                        last_polarity == current_polarity, 1, -1)
+                    new_lr = torch.where(
+                        sign_agreement > 0,
+                        lr_mask + group_lr_bump,  # Increase lr - per-group
+                        lr_mask - group_lr_bump  # Decrease lr - per-group
+                    )
+
+                    # Track gradient stability for alpha scheduler
+                    # Calculate agreement rate (fraction of elements with same sign)
+                    agreement_rate = (last_polarity == current_polarity).float().mean().item()
+                    self._gradient_sign_agreements.append(agreement_rate)
+                    # Keep only recent history
+                    if len(self._gradient_sign_agreements) > 1000:
+                        self._gradient_sign_agreements.pop(0)
+
+                # Update polarity for next step
+                state['last_polarity'] = current_polarity
 
                 # Clip learning rates to bounds
                 new_lr = torch.clamp(
                     new_lr,
-                    min=self.min_lr,
-                    max=self.max_lr
+                    min=group_min_lr,  # Per-group min
+                    max=group_max_lr   # Per-group max
                 )
 
                 # Apply the learning rate mask to the update
@@ -289,6 +340,7 @@ class Automagic(torch.optim.Optimizer):
     def initialize_state(self, p):
         state = self.state[p]
         state["step"] = 0
+        state["last_step"] = self._global_step  # Track when param was last updated
 
         # store the lr mask
         if 'lr_mask' not in state:
@@ -373,8 +425,10 @@ class Automagic(torch.optim.Optimizer):
                     current_params.append(p)
         
         # If the number of parameters doesn't match, we can't reliably map them
-        if len(current_params) != len(state_dict['param_groups'][0]['params']):
-            print(f"WARNING: Number of parameters doesn't match between saved state ({len(state_dict['param_groups'][0]['params'])}) "
+        # Count saved params across ALL param groups (important for MoE with multiple groups)
+        saved_param_count = sum(len(group['params']) for group in state_dict['param_groups'])
+        if len(current_params) != saved_param_count:
+            print(f"WARNING: Number of parameters doesn't match between saved state ({saved_param_count}) "
                   f"and current model ({len(current_params)}). Learning rate masks may not be correctly loaded.")
         
         # Map parameters by their position in the param_groups
@@ -421,3 +475,20 @@ class Automagic(torch.optim.Optimizer):
                 current_state['lr_mask'] = Auto8bitTensor(torch.ones(
                     current_param.shape).to(current_param.device, dtype=torch.float32) * self.lr
                 )
+
+    def get_gradient_sign_agreement_rate(self):
+        """
+        Get average gradient sign agreement rate over recent history.
+        Returns a value between 0 and 1, where 1 means perfect stability.
+        """
+        if not self._gradient_sign_agreements:
+            return 0.0
+
+        # Use recent 100 samples or all if less
+        recent = self._gradient_sign_agreements[-100:]
+        import numpy as np
+        return float(np.mean(recent))
+
+    def get_recent_losses(self):
+        """Get list of recent loss values for alpha scheduler."""
+        return list(self.recent_losses)

@@ -378,6 +378,120 @@ export default function SimpleJob({
               </>
             )}
           </Card>
+          {jobConfig.config.process[0].network?.type == 'lora' && (
+            <Card title="Alpha Scheduling (Advanced)">
+              <div className="text-sm text-gray-400 mb-4">
+                Automatically adjusts LoRA strength through training phases for better results. Recommended for video training.
+              </div>
+              <label className="flex items-center space-x-2 mb-4">
+                <input
+                  type="checkbox"
+                  checked={jobConfig.config.process[0].network?.alpha_schedule?.enabled ?? false}
+                  onChange={e => setJobConfig(e.target.checked, 'config.process[0].network.alpha_schedule.enabled')}
+                  className="w-4 h-4"
+                />
+                <span>Enable Alpha Scheduling</span>
+              </label>
+              {jobConfig.config.process[0].network?.alpha_schedule?.enabled && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <NumberInput
+                      label="Foundation Alpha"
+                      value={jobConfig.config.process[0].network?.alpha_schedule?.conv_alpha_phases?.foundation?.alpha ?? 8}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.alpha')}
+                      placeholder="8"
+                      min={1}
+                      max={128}
+                    />
+                    <NumberInput
+                      label="Balance Alpha"
+                      value={jobConfig.config.process[0].network?.alpha_schedule?.conv_alpha_phases?.balance?.alpha ?? 14}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.alpha')}
+                      placeholder="14"
+                      min={1}
+                      max={128}
+                    />
+                    <NumberInput
+                      label="Emphasis Alpha"
+                      value={jobConfig.config.process[0].network?.alpha_schedule?.conv_alpha_phases?.emphasis?.alpha ?? 20}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.alpha_schedule.conv_alpha_phases.emphasis.alpha')}
+                      placeholder="20"
+                      min={1}
+                      max={128}
+                    />
+                  </div>
+                  <div className="text-xs text-gray-500 mb-4">
+                    Alpha values control LoRA strength. Training starts conservative (8), increases to standard (14), then strong (20).
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <NumberInput
+                      label="Foundation Min Steps"
+                      value={jobConfig.config.process[0].network?.alpha_schedule?.conv_alpha_phases?.foundation?.min_steps ?? 2000}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.min_steps')}
+                      placeholder="2000"
+                      min={100}
+                      max={10000}
+                    />
+                    <NumberInput
+                      label="Balance Min Steps"
+                      value={jobConfig.config.process[0].network?.alpha_schedule?.conv_alpha_phases?.balance?.min_steps ?? 3000}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.min_steps')}
+                      placeholder="3000"
+                      min={100}
+                      max={10000}
+                    />
+                    <NumberInput
+                      label="Emphasis Min Steps"
+                      value={jobConfig.config.process[0].network?.alpha_schedule?.conv_alpha_phases?.emphasis?.min_steps ?? 2000}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.alpha_schedule.conv_alpha_phases.emphasis.min_steps')}
+                      placeholder="2000"
+                      min={100}
+                      max={10000}
+                    />
+                  </div>
+                  <div className="text-xs text-gray-500 mt-2">
+                    Minimum steps in each phase before automatic transition. Video: use defaults. Images: can be shorter.
+                  </div>
+                  <div className="mt-4 p-4 bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold mb-2">Training Type</h4>
+                    <select
+                      value={jobConfig.config.process[0].network?.alpha_schedule?._preset ?? 'video'}
+                      onChange={e => {
+                        const preset = e.target.value;
+                        setJobConfig(preset, 'config.process[0].network.alpha_schedule._preset');
+
+                        // Set video-optimized thresholds
+                        if (preset === 'video') {
+                          setJobConfig(0.005, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.exit_criteria.loss_improvement_rate_below');
+                          setJobConfig(0.50, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.exit_criteria.min_gradient_stability');
+                          setJobConfig(0.01, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.exit_criteria.min_loss_r2');
+                          setJobConfig(0.005, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.exit_criteria.loss_improvement_rate_below');
+                          setJobConfig(0.50, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.exit_criteria.min_gradient_stability');
+                          setJobConfig(0.01, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.exit_criteria.min_loss_r2');
+                        }
+                        // Set image-optimized thresholds
+                        else if (preset === 'image') {
+                          setJobConfig(0.001, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.exit_criteria.loss_improvement_rate_below');
+                          setJobConfig(0.55, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.exit_criteria.min_gradient_stability');
+                          setJobConfig(0.1, 'config.process[0].network.alpha_schedule.conv_alpha_phases.foundation.exit_criteria.min_loss_r2');
+                          setJobConfig(0.001, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.exit_criteria.loss_improvement_rate_below');
+                          setJobConfig(0.55, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.exit_criteria.min_gradient_stability');
+                          setJobConfig(0.1, 'config.process[0].network.alpha_schedule.conv_alpha_phases.balance.exit_criteria.min_loss_r2');
+                        }
+                      }}
+                      className="w-full p-2 bg-gray-700 rounded"
+                    >
+                      <option value="video">Video Training (Default)</option>
+                      <option value="image">Image Training</option>
+                    </select>
+                    <div className="text-xs text-gray-500 mt-2">
+                      Video training uses more tolerant thresholds due to higher variance. Images can use stricter thresholds.
+                    </div>
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
           {!disableSections.includes('slider') && (
             <Card title="Slider">
               <TextInput

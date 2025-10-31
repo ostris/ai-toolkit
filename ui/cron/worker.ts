@@ -1,4 +1,6 @@
 import processQueue from './actions/processQueue';
+import monitorJobs from './actions/monitorJobs';
+
 class CronWorker {
   interval: number;
   is_running: boolean;
@@ -25,6 +27,9 @@ class CronWorker {
   }
 
   async loop() {
+    // Monitor and clean up stuck/stopping jobs first
+    await monitorJobs();
+    // Then process the queue to start new jobs
     await processQueue();
   }
 }

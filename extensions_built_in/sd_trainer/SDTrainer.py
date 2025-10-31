@@ -116,6 +116,35 @@ class SDTrainer(BaseSDTrainProcess):
 
     def before_model_load(self):
         pass
+
+    def _calculate_grad_norm(self, params):
+        if params is None or len(params) == 0:
+            return None
+
+        if isinstance(params[0], dict):
+            param_iterable = (p for group in params for p in group.get('params', []))
+        else:
+            param_iterable = params
+
+        total_norm_sq = None
+        for param in param_iterable:
+            if param is None:
+                continue
+            grad = getattr(param, 'grad', None)
+            if grad is None:
+                continue
+            if grad.is_sparse:
+                grad = grad.coalesce()._values()
+            grad_norm = grad.detach().float().norm(2)
+            if total_norm_sq is None:
+                total_norm_sq = grad_norm.pow(2)
+            else:
+                total_norm_sq = total_norm_sq + grad_norm.pow(2)
+
+        if total_norm_sq is None:
+            return None
+
+        return total_norm_sq.sqrt()
     
     def cache_sample_prompts(self):
         if self.train_config.disable_sampling:
@@ -2047,6 +2076,14 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.current_boundary_index in self.sd.trainable_multistage_boundaries:
                             # if this boundary is trainable, we can stop looking
                             break
+
+                    # Set current expert name for metrics tracking
+                    if self.current_boundary_index == 0:
+                        self.current_expert_name = 'high_noise'
+                    elif self.current_boundary_index == 1:
+                        self.current_expert_name = 'low_noise'
+                    else:
+                        self.current_expert_name = f'expert_{self.current_boundary_index}'
             loss = self.train_single_accumulation(batch)
             self.steps_this_boundary += 1
             if total_loss is None:
@@ -2057,7 +2094,11 @@ class SDTrainer(BaseSDTrainProcess):
                 torch.cuda.empty_cache()
 
 
+        grad_norm_value = None
         if not self.is_grad_accumulation_step:
+            grad_norm_tensor = self._calculate_grad_norm(self.params)
+            if grad_norm_tensor is not None:
+                grad_norm_value = grad_norm_tensor.item()
             # fix this for multi params
             if self.train_config.optimizer != 'adafactor':
                 if isinstance(self.params[0], dict):
@@ -2095,6 +2136,8 @@ class SDTrainer(BaseSDTrainProcess):
         loss_dict = OrderedDict(
             {'loss': (total_loss / len(batch_list)).item()}
         )
+        if grad_norm_value is not None:
+            loss_dict['grad_norm'] = grad_norm_value
 
         self.end_of_training_loop()
 

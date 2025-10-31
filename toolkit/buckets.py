@@ -6,7 +6,31 @@ class BucketResolution(TypedDict):
     height: int
 
 
-# resolutions SDXL was trained on with a 1024x1024 base resolution
+# Video-friendly resolutions with common aspect ratios
+# Base resolution: 1024×1024
+# Keep only PRIMARY buckets to avoid videos being assigned to undersized buckets
+resolutions_video_1024: List[BucketResolution] = [
+    # Square
+    {"width": 1024, "height": 1024},  # 1:1
+
+    # 16:9 landscape (1.778 aspect - YouTube, TV standard)
+    {"width": 1024, "height": 576},
+
+    # 9:16 portrait (0.562 aspect - TikTok, Instagram Reels)
+    {"width": 576, "height": 1024},
+
+    # 4:3 landscape (1.333 aspect - older content)
+    {"width": 1024, "height": 768},
+
+    # 3:4 portrait (0.75 aspect)
+    {"width": 768, "height": 1024},
+
+    # Slightly wider/taller variants for flexibility
+    {"width": 1024, "height": 640},  # 1.6 aspect
+    {"width": 640, "height": 1024},  # 0.625 aspect
+]
+
+# SDXL resolutions (kept for backwards compatibility)
 resolutions_1024: List[BucketResolution] = [
     # SDXL Base resolution
     {"width": 1024, "height": 1024},
@@ -56,12 +80,48 @@ resolutions_1024: List[BucketResolution] = [
     {"width": 128, "height": 8192},
 ]
 
-def get_bucket_sizes(resolution: int = 512, divisibility: int = 8) -> List[BucketResolution]:
-    # determine scaler form 1024 to resolution
-    scaler = resolution / 1024
+def get_bucket_sizes(resolution: int = 512, divisibility: int = 8, use_video_buckets: bool = True, max_pixels_per_frame: int = None) -> List[BucketResolution]:
+    # Use video-friendly buckets by default for better aspect ratio preservation
+    base_resolutions = resolutions_video_1024 if use_video_buckets else resolutions_1024
 
+    # If max_pixels_per_frame is specified, use pixel budget scaling
+    # This maximizes resolution for each aspect ratio while keeping memory usage consistent
+    if max_pixels_per_frame is not None:
+        bucket_size_list = []
+        for bucket in base_resolutions:
+            # Calculate aspect ratio
+            base_aspect = bucket["width"] / bucket["height"]
+
+            # Calculate optimal dimensions for this aspect ratio within pixel budget
+            # For aspect ratio a = w/h and pixel budget p = w*h:
+            # w = sqrt(p * a), h = sqrt(p / a)
+            optimal_width = (max_pixels_per_frame * base_aspect) ** 0.5
+            optimal_height = (max_pixels_per_frame / base_aspect) ** 0.5
+
+            # Round down to divisibility
+            width = int(optimal_width)
+            height = int(optimal_height)
+            width = width - (width % divisibility)
+            height = height - (height % divisibility)
+
+            # Verify we're under budget (should always be true with round-down)
+            actual_pixels = width * height
+            if actual_pixels > max_pixels_per_frame:
+                # Safety check - scale down if somehow over budget
+                scale = (max_pixels_per_frame / actual_pixels) ** 0.5
+                width = int(width * scale)
+                height = int(height * scale)
+                width = width - (width % divisibility)
+                height = height - (height % divisibility)
+
+            bucket_size_list.append({"width": width, "height": height})
+
+        return bucket_size_list
+
+    # Original scaling logic (for backwards compatibility)
+    scaler = resolution / 1024
     bucket_size_list = []
-    for bucket in resolutions_1024:
+    for bucket in base_resolutions:
         # must be divisible by 8
         width = int(bucket["width"] * scaler)
         height = int(bucket["height"] * scaler)
@@ -69,6 +129,12 @@ def get_bucket_sizes(resolution: int = 512, divisibility: int = 8) -> List[Bucke
             width = width - (width % divisibility)
         if height % divisibility != 0:
             height = height - (height % divisibility)
+
+        # Filter buckets where any dimension exceeds the resolution parameter
+        # This ensures memory usage stays within bounds for the target resolution
+        if max(width, height) > resolution:
+            continue
+
         bucket_size_list.append({"width": width, "height": height})
 
     return bucket_size_list
@@ -86,17 +152,15 @@ def get_bucket_for_image_size(
         height: int,
         bucket_size_list: List[BucketResolution] = None,
         resolution: Union[int, None] = None,
-        divisibility: int = 8
+        divisibility: int = 8,
+        max_pixels_per_frame: int = None
 ) -> BucketResolution:
 
     if bucket_size_list is None and resolution is None:
         # get resolution from width and height
         resolution = get_resolution(width, height)
     if bucket_size_list is None:
-        # if real resolution is smaller, use that instead
-        real_resolution = get_resolution(width, height)
-        resolution = min(resolution, real_resolution)
-        bucket_size_list = get_bucket_sizes(resolution=resolution, divisibility=divisibility)
+        bucket_size_list = get_bucket_sizes(resolution=resolution, divisibility=divisibility, max_pixels_per_frame=max_pixels_per_frame)
 
     # Check for exact match first
     for bucket in bucket_size_list:

@@ -49,6 +49,7 @@ from toolkit.saving import save_t2i_from_diffusers, load_t2i_model, save_ip_adap
 from toolkit.scheduler import get_lr_scheduler
 from toolkit.sd_device_states_presets import get_train_sd_device_state_preset
 from toolkit.stable_diffusion_model import StableDiffusion
+from toolkit.alpha_metrics_logger import AlphaMetricsLogger
 
 from jobs.process import BaseTrainProcess
 from toolkit.metadata import get_meta_for_safetensors, load_metadata_from_safetensors, add_base_model_info_to_meta, \
@@ -130,6 +131,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.logger = create_logger(self.logging_config, config)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
+
+        # Initialize metrics logger for UI visualization
+        # Note: self.name is set in parent BaseProcess.__init__, self.save_root in BaseTrainProcess.__init__
+        self.metrics_logger = AlphaMetricsLogger(
+            output_dir=self.save_root,
+            job_name=self.name
+        )
         self.data_loader: Union[DataLoader, None] = None
         self.data_loader_reg: Union[DataLoader, None] = None
         self.trigger_word = self.get_conf('trigger_word', None)
@@ -264,6 +272,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.current_boundary_index = 0
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
+        self.current_expert_name = 'high_noise'  # Start with high noise (boundary_index 0)
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -536,11 +545,31 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 # if we are doing embedding training as well, add that
                 embedding_dict = self.embedding.state_dict() if self.embedding else None
+
+                # Save alpha scheduler state to separate JSON file (can't go in safetensors)
+                if hasattr(self.network, 'alpha_scheduler') and self.network.alpha_scheduler is not None:
+                    scheduler_state = self.network.alpha_scheduler.state_dict()
+                    if scheduler_state.get('enabled', False):
+                        # Save to JSON file alongside checkpoint
+                        import json
+                        scheduler_file = file_path.replace('.safetensors', '_alpha_scheduler.json')
+                        try:
+                            with open(scheduler_file, 'w') as f:
+                                json.dump(scheduler_state, f, indent=2)
+                            print(f"Saved alpha scheduler state to {scheduler_file}")
+                        except Exception as e:
+                            print(f"Warning: Failed to save alpha scheduler state: {e}")
+
+                # Only add embedding dict to extra_state_dict (tensors only)
+                extra_state_dict = {}
+                if embedding_dict is not None:
+                    extra_state_dict.update(embedding_dict)
+
                 self.network.save_weights(
                     file_path,
                     dtype=get_torch_dtype(self.save_config.dtype),
                     metadata=save_meta,
-                    extra_state_dict=embedding_dict
+                    extra_state_dict=extra_state_dict if extra_state_dict else None
                 )
                 self.network.multiplier = prev_multiplier
                 # if we have an embedding as well, pair it with the network
@@ -840,9 +869,36 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.start_step = self.step_num
             print_acc(f"Found step {self.step_num} in metadata, starting from there")
 
+            # Clean up metrics beyond the checkpoint step
+            self.metrics_logger.cleanup_metrics_after_step(self.step_num)
+
     def load_weights(self, path):
         if self.network is not None:
             extra_weights = self.network.load_weights(path)
+
+            # Load alpha scheduler state from separate JSON file (not in safetensors)
+            if hasattr(self.network, 'alpha_scheduler') and self.network.alpha_scheduler is not None:
+                import json
+                scheduler_file = path.replace('.safetensors', '_alpha_scheduler.json')
+                # For MoE models, strip expert suffix (_high_noise, _low_noise) since scheduler is shared
+                scheduler_file = scheduler_file.replace('_high_noise_alpha_scheduler.json', '_alpha_scheduler.json')
+                scheduler_file = scheduler_file.replace('_low_noise_alpha_scheduler.json', '_alpha_scheduler.json')
+                print_acc(f"[DEBUG] Looking for alpha scheduler at: {scheduler_file}")
+                if os.path.exists(scheduler_file):
+                    try:
+                        with open(scheduler_file, 'r') as f:
+                            scheduler_state = json.load(f)
+                        print_acc(f"[DEBUG] Loaded state: steps_in_phase={scheduler_state.get('steps_in_phase')}, total_steps={scheduler_state.get('total_steps')}")
+                        self.network.alpha_scheduler.load_state_dict(scheduler_state)
+                        print_acc(f"✓ Loaded alpha scheduler state from {scheduler_file}")
+                        print_acc(f"  steps_in_phase={self.network.alpha_scheduler.steps_in_phase}, total_steps={self.network.alpha_scheduler.total_steps}")
+                    except Exception as e:
+                        print_acc(f"✗ WARNING: Failed to load alpha scheduler state: {e}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print_acc(f"[DEBUG] Alpha scheduler file not found: {scheduler_file}")
+
             self.load_training_state_from_metadata(path)
             return extra_weights
         else:
@@ -878,6 +934,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.epoch_num = meta['training_info']['epoch']
                 self.start_step = self.step_num
                 print_acc(f"Found step {self.step_num} in metadata, starting from there")
+
+                # Clean up metrics beyond the checkpoint step
+                self.metrics_logger.cleanup_metrics_after_step(self.step_num)
 
     # def get_sigmas(self, timesteps, n_dim=4, dtype=torch.float32):
     #     self.sd.noise_scheduler.set_timesteps(1000, device=self.device_torch)
@@ -1713,6 +1772,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if hasattr(self.sd, 'target_lora_modules'):
                     network_kwargs['target_lin_modules'] = self.sd.target_lora_modules
 
+                # Extract alpha scheduling config from network_config
+                alpha_schedule_config = getattr(self.network_config, 'alpha_schedule', None)
+                print(f"[DEBUG BaseSDTrainProcess] alpha_schedule_config from network_config: {alpha_schedule_config}")
+                if alpha_schedule_config:
+                    print(f"[DEBUG BaseSDTrainProcess] alpha_schedule enabled: {alpha_schedule_config.get('enabled')}")
+
                 self.network = NetworkClass(
                     text_encoder=text_encoder,
                     unet=self.sd.get_model_to_train(),
@@ -1742,6 +1807,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     transformer_only=self.network_config.transformer_only,
                     is_transformer=self.sd.is_transformer,
                     base_model=self.sd,
+                    alpha_schedule_config=alpha_schedule_config,
                     **network_kwargs
                 )
 
@@ -1791,6 +1857,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     config['default_lr'] = self.train_config.lr
                 if 'learning_rate' in sig.parameters:
                     config['learning_rate'] = self.train_config.lr
+                if 'optimizer_params' in sig.parameters:
+                    config['optimizer_params'] = self.train_config.optimizer_params
                 params_net = self.network.prepare_optimizer_params(
                     **config
                 )
@@ -1922,6 +1990,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.train_config.start_step is not None:
             self.step_num = self.train_config.start_step
             self.start_step = self.step_num
+
+        # Clean up metrics when starting fresh (not resuming from checkpoint)
+        if self.step_num == 0 and self.start_step == 0:
+            # Starting from scratch - remove any old metrics
+            if os.path.exists(self.metrics_logger.metrics_file):
+                print(f"Starting fresh from step 0 - clearing old metrics")
+                os.remove(self.metrics_logger.metrics_file)
 
         optimizer_type = self.train_config.optimizer.lower()
         
@@ -2060,7 +2135,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
 
 
-        start_step_num = self.step_num
+        # When resuming, start from next step (checkpoint step is already complete)
+        start_step_num = self.step_num if self.step_num == 0 else self.step_num + 1
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):
@@ -2185,7 +2261,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.torch_profiler is not None:
                 torch.cuda.synchronize()  # Make sure all CUDA ops are done
                 self.torch_profiler.stop()
-                
+
                 print("\n==== Profile Results ====")
                 print(self.torch_profiler.key_averages().table(sort_by="cpu_time_total", row_limit=1000))
             self.timer.stop('train_loop')
@@ -2197,12 +2273,114 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                 self.adapter.clear_memory()
 
-            with torch.no_grad():
-                # torch.cuda.empty_cache()
-                # if optimizer has get_lrs method, then use it
-                if not did_oom and loss_dict is not None:
-                    if hasattr(optimizer, 'get_avg_learning_rate'):
+            # Only update progress bar if we didn't OOM (loss_dict exists)
+            if not did_oom:
+                # Update alpha scheduler if enabled
+                if hasattr(self.sd, 'network') and self.sd.network is not None:
+                    if hasattr(self.sd.network, 'alpha_scheduler') and self.sd.network.alpha_scheduler is not None:
+                        # Extract loss value from loss_dict
+                        loss_value = None
+                        if isinstance(loss_dict, dict):
+                            # Try common loss keys
+                            for key in ['loss', 'train_loss', 'total_loss']:
+                                if key in loss_dict:
+                                    loss_value = loss_dict[key]
+                                    if hasattr(loss_value, 'item'):
+                                        loss_value = loss_value.item()
+                                    break
+                        else:
+                            # loss_dict is a tensor directly
+                            if hasattr(loss_dict, 'item'):
+                                loss_value = loss_dict.item()
+                            else:
+                                loss_value = float(loss_dict)
+
+                        if loss_value is None and self.step_num % 100 == 0:
+                            print(f"[WARNING] Alpha scheduler: loss_value is None at step {self.step_num}, loss_dict type: {type(loss_dict)}, keys: {loss_dict.keys() if isinstance(loss_dict, dict) else 'N/A'}")
+
+                        # Get gradient stability from optimizer if available
+                        grad_stability = None
+                        if hasattr(optimizer, 'get_gradient_sign_agreement_rate'):
+                            grad_stability = optimizer.get_gradient_sign_agreement_rate()
+
+                        # Update scheduler
+                        self.sd.network.alpha_scheduler.update(
+                            step=self.step_num,
+                            loss=loss_value,
+                            gradient_stability=grad_stability
+                        )
+
+                # Log metrics for UI visualization (always, even without alpha scheduler)
+                loss_value = None
+                if isinstance(loss_dict, dict):
+                    for key in ['loss', 'train_loss', 'total_loss']:
+                        if key in loss_dict:
+                            loss_value = loss_dict[key]
+                            if hasattr(loss_value, 'item'):
+                                loss_value = loss_value.item()
+                            break
+
+                grad_stability = None
+                if hasattr(optimizer, 'get_gradient_sign_agreement_rate'):
+                    grad_stability = optimizer.get_gradient_sign_agreement_rate()
+
+                # Determine current expert if MoE training
+                current_expert = None
+                if hasattr(self, 'current_expert_name'):
+                    current_expert = self.current_expert_name
+
+                # Get alpha scheduler if available
+                alpha_scheduler = None
+                if hasattr(self.sd, 'network') and self.sd.network is not None:
+                    if hasattr(self.sd.network, 'alpha_scheduler'):
+                        alpha_scheduler = self.sd.network.alpha_scheduler
+
+                # Extract learning rate(s) for metrics logging
+                learning_rate = None
+                learning_rates = None
+                if hasattr(optimizer, 'get_avg_learning_rate'):
+                    # Check if this is MoE with multiple param groups
+                    if hasattr(optimizer, 'get_learning_rates') and len(optimizer.param_groups) > 1:
+                        # Show per-expert LRs for MoE
+                        learning_rates = optimizer.get_learning_rates()
+                    else:
                         learning_rate = optimizer.get_avg_learning_rate()
+                elif hasattr(optimizer, 'get_learning_rates'):
+                    lrs = optimizer.get_learning_rates()
+                    if len(lrs) > 1:
+                        learning_rates = lrs
+                    else:
+                        learning_rate = lrs[0]
+                elif self.train_config.optimizer.lower().startswith('dadaptation') or \
+                        self.train_config.optimizer.lower().startswith('prodigy'):
+                    learning_rate = (
+                            optimizer.param_groups[0]["d"] *
+                            optimizer.param_groups[0]["lr"]
+                    )
+                else:
+                    learning_rate = optimizer.param_groups[0]['lr']
+
+                self.metrics_logger.log_step(
+                    step=self.step_num,
+                    loss=loss_value,
+                    gradient_stability=grad_stability,
+                    expert=current_expert,
+                    scheduler=alpha_scheduler,
+                    learning_rate=learning_rate,
+                    learning_rates=learning_rates
+                )
+
+                with torch.no_grad():
+                    # torch.cuda.empty_cache()
+                    # if optimizer has get_lrs method, then use it
+                    if hasattr(optimizer, 'get_avg_learning_rate'):
+                        # Check if this is MoE with multiple param groups
+                        if hasattr(optimizer, 'get_learning_rates') and len(optimizer.param_groups) > 1:
+                            # Show per-expert LRs for MoE
+                            group_lrs = optimizer.get_learning_rates()
+                            learning_rate = None  # Will use group_lrs instead
+                        else:
+                            learning_rate = optimizer.get_avg_learning_rate()
                     elif hasattr(optimizer, 'get_learning_rates'):
                         learning_rate = optimizer.get_learning_rates()[0]
                     elif self.train_config.optimizer.lower().startswith('dadaptation') or \
@@ -2214,7 +2392,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     else:
                         learning_rate = optimizer.param_groups[0]['lr']
 
-                    prog_bar_string = f"lr: {learning_rate:.1e}"
+                    # Format LR string (per-expert for MoE, single value otherwise)
+                    if hasattr(optimizer, 'get_avg_learning_rate') and learning_rate is None:
+                        # MoE: show each expert's LR
+                        lr_strings = []
+                        for i, lr in enumerate(group_lrs):
+                            lr_val = lr.item() if hasattr(lr, 'item') else lr
+                            lr_strings.append(f"lr{i}: {lr_val:.1e}")
+                        prog_bar_string = " ".join(lr_strings)
+                    else:
+                        prog_bar_string = f"lr: {learning_rate:.1e}"
                     for key, value in loss_dict.items():
                         prog_bar_string += f" {key}: {value:.3e}"
 
