@@ -880,6 +880,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if hasattr(self.network, 'alpha_scheduler') and self.network.alpha_scheduler is not None:
                 import json
                 scheduler_file = path.replace('.safetensors', '_alpha_scheduler.json')
+                # For MoE models, strip expert suffix (_high_noise, _low_noise) since scheduler is shared
+                scheduler_file = scheduler_file.replace('_high_noise_alpha_scheduler.json', '_alpha_scheduler.json')
+                scheduler_file = scheduler_file.replace('_low_noise_alpha_scheduler.json', '_alpha_scheduler.json')
                 print_acc(f"[DEBUG] Looking for alpha scheduler at: {scheduler_file}")
                 if os.path.exists(scheduler_file):
                     try:
