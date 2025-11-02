@@ -34,13 +34,19 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     },
   });
 
-  // if queue doesn't exist, create it
+  // if queue doesn't exist, create it and start it automatically
   if (!queue) {
     await prisma.queue.create({
       data: {
         gpu_ids: job.gpu_ids,
-        is_running: false,
+        is_running: true,
       },
+    });
+  } else if (!queue.is_running) {
+    // if queue exists but is not running, start it
+    await prisma.queue.update({
+      where: { id: queue.id },
+      data: { is_running: true },
     });
   }
 
