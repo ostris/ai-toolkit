@@ -1682,9 +1682,53 @@ class BaseSDTrainProcess(BaseTrainProcess):
         #         for block in model.single_transformer_blocks:
         #             processor = FluxSageAttnProcessor2_0()
         #             block.attn.set_processor(processor)
-                    
+
         #     except ImportError:
         #         print_acc("sage attention is not installed. Using SDP instead")
+
+        # Enable SageAttention for Wan models (2-3x speedup on attention)
+        if hasattr(self.sd, 'arch') and 'wan' in str(self.sd.arch):
+            try:
+                from sageattention import sageattn
+                from toolkit.models.wan_sage_attn import WanSageAttnProcessor2_0
+                from diffusers import WanTransformer3DModel
+                from extensions_built_in.diffusion_models.wan22.wan22_14b_model import DualWanTransformer3DModel
+
+                print_acc("Enabling SageAttention for Wan model...")
+
+                processor_count = 0
+                # Handle both single and dual transformer setups
+                if isinstance(self.sd.unet, DualWanTransformer3DModel):
+                    # Wan 2.2 14B has dual transformers
+                    for transformer_name, transformer in [('transformer_1', self.sd.unet.transformer_1),
+                                                          ('transformer_2', self.sd.unet.transformer_2)]:
+                        if hasattr(transformer, 'blocks'):
+                            for block in transformer.blocks:
+                                # Wan blocks have attn1 and attn2
+                                for attn_name in ['attn1', 'attn2']:
+                                    if hasattr(block, attn_name):
+                                        attn = getattr(block, attn_name)
+                                        if hasattr(attn, 'set_processor'):
+                                            processor = WanSageAttnProcessor2_0()
+                                            attn.set_processor(processor)
+                                            processor_count += 1
+                    print_acc(f"SageAttention enabled on {processor_count} attention layers in DualWanTransformer3DModel")
+                elif isinstance(self.sd.unet, WanTransformer3DModel):
+                    # Single transformer Wan models
+                    if hasattr(self.sd.unet, 'blocks'):
+                        for block in self.sd.unet.blocks:
+                            # Wan blocks have attn1 and attn2
+                            for attn_name in ['attn1', 'attn2']:
+                                if hasattr(block, attn_name):
+                                    attn = getattr(block, attn_name)
+                                    if hasattr(attn, 'set_processor'):
+                                        processor = WanSageAttnProcessor2_0()
+                                        attn.set_processor(processor)
+                                        processor_count += 1
+                        print_acc(f"SageAttention enabled on {processor_count} attention layers in WanTransformer3DModel")
+
+            except ImportError as e:
+                print_acc(f"SageAttention not available: {e}. Using standard attention instead.")
 
         if self.train_config.gradient_checkpointing:
             # if has method enable_gradient_checkpointing
