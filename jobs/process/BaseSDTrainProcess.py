@@ -2098,7 +2098,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # make sure it had bare minimum
         if 'max_iterations' not in lr_scheduler_params:
-            lr_scheduler_params['total_iters'] = self.train_config.steps
+            # Adjust total_iters to account for gradient accumulation
+            # The scheduler should step once per optimizer step, not per training iteration
+            gradient_accumulation_steps = max(1, self.train_config.gradient_accumulation_steps)
+            if gradient_accumulation_steps == -1:
+                # -1 means accumulate for entire epoch, difficult to predict step count
+                # Use total steps as fallback (will step more frequently than ideal)
+                lr_scheduler_params['total_iters'] = self.train_config.steps
+            else:
+                # Calculate actual number of optimizer steps
+                lr_scheduler_params['total_iters'] = self.train_config.steps // gradient_accumulation_steps
 
         lr_scheduler = get_lr_scheduler(
             self.train_config.lr_scheduler,

@@ -2121,13 +2121,14 @@ class SDTrainer(BaseSDTrainProcess):
             if self.ema is not None:
                 with self.timer('ema_update'):
                     self.ema.update()
+
+            # Step LR scheduler only when optimizer steps (not during gradient accumulation)
+            # Scheduler total_iters is adjusted for gradient accumulation in BaseSDTrainProcess
+            with self.timer('scheduler_step'):
+                self.lr_scheduler.step()
         else:
             # gradient accumulation. Just a place for breakpoint
             pass
-
-        # TODO Should we only step scheduler on grad step? If so, need to recalculate last step
-        with self.timer('scheduler_step'):
-            self.lr_scheduler.step()
 
         if self.embedding is not None:
             with self.timer('restore_embeddings'):
