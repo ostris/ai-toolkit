@@ -292,7 +292,9 @@ Requirements:
 - python venv
 - git
 
-### Standard Installation (RTX 30/40 Series)
+### Recommended Installation (All GPUs - RTX 30/40/50 Series)
+
+**This installation uses PyTorch nightly builds for best compatibility with latest features including SageAttention:**
 
 **Linux:**
 ```bash
@@ -300,9 +302,16 @@ git clone https://github.com/relaxis/ai-toolkit.git
 cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
-# Install PyTorch for CUDA 12.6
-pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+
+# Install PyTorch nightly with CUDA 13.0 support
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
+
+# Install all dependencies (includes sageattention, lycoris-lora, etc.)
 pip3 install -r requirements.txt
+
+# Verify installation
+python3 -c "import torch; print(f'PyTorch {torch.__version__}')"
+python3 -c "import sageattention; print('SageAttention installed')"
 ```
 
 **Windows:**
@@ -314,37 +323,49 @@ git clone https://github.com/relaxis/ai-toolkit.git
 cd ai-toolkit
 python -m venv venv
 .\venv\Scripts\activate
-pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+
+# Install PyTorch nightly with CUDA 13.0 support
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu130
+
+# Install all dependencies
 pip install -r requirements.txt
+
+# Verify installation
+python -c "import torch; print(f'PyTorch {torch.__version__}')"
+python -c "import sageattention; print('SageAttention installed')"
 ```
 
-### RTX 50-Series (Blackwell) Installation
+**Key packages included in requirements.txt:**
+- **PyTorch nightly** (cu130): Latest features and bug fixes
+- **SageAttention ≥2.0.0**: 15-20% speedup for Wan model training
+- **Lycoris-lora 1.8.3**: Advanced LoRA architectures
+- **TorchAO 0.10.0**: Quantization and optimization tools
+- **Diffusers** (latest): HuggingFace diffusion models library
+- **Transformers 4.52.4**: Model architectures and utilities
 
-**Additional steps for RTX 5090, 5080, 5070, etc:**
+### RTX 50-Series (Blackwell) Notes
 
-1. Install CUDA 12.8 (Blackwell requires 12.8+):
+**The PyTorch nightly installation above already supports RTX 50 series (5090, 5080, 5070, etc.)!**
+
+PyTorch nightly with CUDA 13.0 includes Blackwell architecture support. No additional steps needed.
+
+**Optional: Compile Flash Attention for optimal performance:**
+
+If you want to optimize flash attention specifically for Blackwell:
+
 ```bash
-# Download from https://developer.nvidia.com/cuda-12-8-0-download-archive
-# Or use package manager:
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt-get update
-sudo apt-get install cuda-toolkit-12-8
-```
+source venv/bin/activate  # Linux
+# .\venv\Scripts\activate  # Windows
 
-2. Follow standard installation above, then compile flash attention for Blackwell:
-```bash
-source venv/bin/activate
-export CUDA_HOME=/usr/local/cuda-12.8
+export CUDA_HOME=/usr/local/cuda  # Point to your CUDA installation
 export TORCH_CUDA_ARCH_LIST="10.0+PTX"  # Blackwell architecture
 FLASH_ATTENTION_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn --no-build-isolation
+
+# Verify
+python -c "import flash_attn; print('Flash Attention OK')"
 ```
 
-3. Verify it works:
-```bash
-python -c "import flash_attn; print('Flash Attention OK')"
-nvidia-smi  # Should show CUDA 12.8
-```
+**Note:** Flash attention compilation is optional. SageAttention provides excellent performance without it.
 
 **Or install the original version:**
 
