@@ -77,54 +77,66 @@ export default function JobMetrics({ job }: JobMetricsProps) {
   const stats = useMemo(() => {
     if (metrics.length === 0) return null;
 
-    const recent = metrics.slice(-windowSize);
     const currentMetric = metrics[metrics.length - 1];
 
+    // Helper function to infer expert from step number
+    const inferExpert = (m: MetricsData): string => {
+      if (m.expert) return m.expert;
+      // MoE switches experts every 100 steps: steps 0-99=high_noise, 100-199=low_noise, etc.
+      const blockIndex = Math.floor(m.step / 100);
+      return blockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
+    };
+
+    // CRITICAL FIX: Separate by expert FIRST, then apply windowing
+    // This prevents mixing high-noise and low-noise data in the same window
+    const allHighNoiseMetrics = metrics.filter(m => inferExpert(m) === 'high_noise');
+    const allLowNoiseMetrics = metrics.filter(m => inferExpert(m) === 'low_noise');
+
+    // Apply windowing to each expert separately
+    const recentHighNoise = allHighNoiseMetrics.slice(-windowSize);
+    const recentLowNoise = allLowNoiseMetrics.slice(-windowSize);
+
+    // For backward compatibility, also create a mixed recent window
+    const recent = metrics.slice(-windowSize);
     const losses = recent.filter(m => m.loss != null).map(m => m.loss!);
     const gradStabilities = recent.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
 
-    // Calculate loss statistics
+    // Calculate loss statistics from mixed window (for overall metrics)
     const avgLoss = losses.length > 0 ? losses.reduce((a, b) => a + b, 0) / losses.length : null;
     const minLoss = losses.length > 0 ? Math.min(...losses) : null;
     const maxLoss = losses.length > 0 ? Math.max(...losses) : null;
 
-    // Calculate Exponential Moving Average (EMA) for loss
+    // Calculate Exponential Moving Average (EMA) for loss with spike filtering
     // EMA gives more weight to recent values: EMA_t = α * value_t + (1-α) * EMA_{t-1}
     // α (smoothing factor) = 2 / (N + 1), where N is the window size
-    const calculateEMA = (values: number[], windowSize: number) => {
+    // SPIKE_THRESHOLD filters out expert-switch spikes (e.g., 0.554 at boundary)
+    const SPIKE_THRESHOLD = 0.3; // Filter losses > 0.3 from EMA calculation
+    const calculateEMA = (values: number[], windowSize: number, filterSpikes: boolean = false) => {
       if (values.length === 0) return null;
       const alpha = 2 / (windowSize + 1);
-      let ema = values[0]; // Initialize with first value
-      for (let i = 1; i < values.length; i++) {
-        ema = alpha * values[i] + (1 - alpha) * ema;
+
+      // Optionally filter extreme spikes (from expert switches)
+      const filtered = filterSpikes ? values.filter(v => v < SPIKE_THRESHOLD) : values;
+      if (filtered.length === 0) return null;
+
+      let ema = filtered[0]; // Initialize with first value
+      for (let i = 1; i < filtered.length; i++) {
+        ema = alpha * filtered[i] + (1 - alpha) * ema;
       }
       return ema;
     };
 
     const emaLoss = calculateEMA(losses, windowSize);
 
-    // Calculate gradient stability statistics
+    // Calculate gradient stability statistics from mixed window
     const avgGradStability = gradStabilities.length > 0
       ? gradStabilities.reduce((a, b) => a + b, 0) / gradStabilities.length
       : null;
     const emaGradStability = calculateEMA(gradStabilities, windowSize);
 
-    // Separate metrics by expert (infer from step pattern if not explicitly set)
-    const withExpert = recent.map((m) => {
-      // If expert is explicitly set, use it
-      if (m.expert) return { ...m, inferredExpert: m.expert };
-
-      // MoE switches experts every 100 steps: steps 0-99=expert0, 100-199=expert1, etc.
-      const blockIndex = Math.floor(m.step / 100);
-      const inferredExpert = blockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
-      return { ...m, inferredExpert };
-    });
-
-    const highNoiseMetrics = withExpert.filter(m => m.inferredExpert === 'high_noise' || m.expert === 'high_noise');
-    const lowNoiseMetrics = withExpert.filter(m => m.inferredExpert === 'low_noise' || m.expert === 'low_noise');
-
-    const highNoiseLosses = highNoiseMetrics.filter(m => m.loss != null).map(m => m.loss!);
-    const lowNoiseLosses = lowNoiseMetrics.filter(m => m.loss != null).map(m => m.loss!);
+    // Extract per-expert data from properly windowed metrics
+    const highNoiseLosses = recentHighNoise.filter(m => m.loss != null).map(m => m.loss!);
+    const lowNoiseLosses = recentLowNoise.filter(m => m.loss != null).map(m => m.loss!);
 
     const highNoiseLoss = highNoiseLosses.length > 0
       ? highNoiseLosses.reduce((a, b) => a + b, 0) / highNoiseLosses.length
@@ -134,12 +146,12 @@ export default function JobMetrics({ job }: JobMetricsProps) {
       ? lowNoiseLosses.reduce((a, b) => a + b, 0) / lowNoiseLosses.length
       : null;
 
-    // Calculate per-expert EMAs
-    const highNoiseLossEMA = calculateEMA(highNoiseLosses, windowSize);
-    const lowNoiseLossEMA = calculateEMA(lowNoiseLosses, windowSize);
+    // Calculate per-expert EMAs with spike filtering enabled
+    const highNoiseLossEMA = calculateEMA(highNoiseLosses, windowSize, true);
+    const lowNoiseLossEMA = calculateEMA(lowNoiseLosses, windowSize, true);
 
-    const highNoiseGradStabilities = highNoiseMetrics.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
-    const lowNoiseGradStabilities = lowNoiseMetrics.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
+    const highNoiseGradStabilities = recentHighNoise.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
+    const lowNoiseGradStabilities = recentLowNoise.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
 
     const highNoiseGradStabilityEMA = calculateEMA(highNoiseGradStabilities, windowSize);
     const lowNoiseGradStabilityEMA = calculateEMA(lowNoiseGradStabilities, windowSize);
@@ -160,6 +172,8 @@ export default function JobMetrics({ job }: JobMetricsProps) {
       lowNoiseGradStabilityEMA,
       totalSteps: metrics.length,
       recentMetrics: recent,
+      recentHighNoise,  // NEW: properly windowed high-noise data
+      recentLowNoise,   // NEW: properly windowed low-noise data
     };
   }, [metrics, windowSize]);
 
@@ -210,20 +224,13 @@ export default function JobMetrics({ job }: JobMetricsProps) {
   const allHighNoiseData = allWithExpert.filter(m => m.inferredExpert === 'high_noise');
   const allLowNoiseData = allWithExpert.filter(m => m.inferredExpert === 'low_noise');
 
-  // Separate recent metrics by expert for windowed view
-  const withExpert = stats.recentMetrics.map((m) => {
-    if (m.expert) return { ...m, inferredExpert: m.expert };
-    // Calculate which 100-step block this step is in
-    const blockIndex = Math.floor(m.step / 100);
-    const inferredExpert = blockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
-    return { ...m, inferredExpert };
-  });
-
-  const highNoiseData = withExpert.filter(m => m.inferredExpert === 'high_noise');
-  const lowNoiseData = withExpert.filter(m => m.inferredExpert === 'low_noise');
+  // Use properly windowed per-expert data from stats
+  // CRITICAL: These are already separated by expert BEFORE windowing
+  const highNoiseData = stats.recentHighNoise;
+  const lowNoiseData = stats.recentLowNoise;
 
   // Helper function to calculate regression line for a dataset
-  const calculateRegression = (data: typeof withExpert) => {
+  const calculateRegression = (data: MetricsData[]) => {
     const lossDataPoints = data
       .map((m, idx) => ({ x: idx, y: m.loss }))
       .filter(p => p.y != null) as { x: number; y: number }[];
@@ -272,7 +279,7 @@ export default function JobMetrics({ job }: JobMetricsProps) {
 
   // Helper function to render a loss chart for a specific expert
   const renderLossChart = (
-    data: typeof withExpert,
+    data: MetricsData[],
     regression: { regressionLine: { x: number; y: number }[]; slope: number },
     expertName: string,
     color: string,
@@ -350,7 +357,7 @@ export default function JobMetrics({ job }: JobMetricsProps) {
 
   // Helper function to render gradient stability chart for a specific expert
   const renderGradientChart = (
-    data: typeof withExpert,
+    data: MetricsData[],
     expertName: string,
     color: string
   ) => {
