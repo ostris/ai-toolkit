@@ -2177,10 +2177,47 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
         # TRAIN LOOP
         ###################################################################
-
-
         # When resuming, start from next step (checkpoint step is already complete)
         start_step_num = self.step_num if self.step_num == 0 else self.step_num + 1
+
+        # Realign multistage boundary state when resuming from checkpoint
+        if getattr(self.sd, 'is_multistage', False) and hasattr(self.sd, 'multistage_boundaries'):
+            total_boundaries = len(self.sd.multistage_boundaries)
+            if total_boundaries > 0 and self.train_config.switch_boundary_every:
+                # Calculate which boundary we should be in based on last completed step
+                effective_step = max(start_step_num - 1, 0)
+                boundary_cycle_index = effective_step // self.train_config.switch_boundary_every
+                boundary_index = boundary_cycle_index % total_boundaries
+
+                # Skip non-trainable boundaries
+                trainable = getattr(self.sd, 'trainable_multistage_boundaries', list(range(total_boundaries)))
+                if trainable:
+                    while boundary_index not in trainable:
+                        boundary_cycle_index += 1
+                        boundary_index = boundary_cycle_index % total_boundaries
+
+                # Set boundary state
+                self.current_boundary_index = boundary_index
+
+                # CRITICAL FIX: After completing a step, steps_this_boundary has been incremented
+                # So we must add 1 to match the actual state after processing effective_step
+                # Example: after completing step 700 (first step of cycle), steps_this_boundary = 1, not 0
+                steps_within_cycle = effective_step % self.train_config.switch_boundary_every
+                self.steps_this_boundary = steps_within_cycle + 1
+
+                # Set expert name for metrics tracking
+                if self.current_boundary_index == 0:
+                    self.current_expert_name = 'high_noise'
+                elif self.current_boundary_index == 1:
+                    self.current_expert_name = 'low_noise'
+                else:
+                    self.current_expert_name = f'expert_{self.current_boundary_index}'
+
+                print_acc(f"✓ Realigned multistage boundaries for resume:")
+                print_acc(f"  Resume step: {start_step_num}, Last completed: {effective_step}")
+                print_acc(f"  Boundary index: {self.current_boundary_index} ({self.current_expert_name})")
+                print_acc(f"  Steps in boundary: {self.steps_this_boundary}/{self.train_config.switch_boundary_every}")
+
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):

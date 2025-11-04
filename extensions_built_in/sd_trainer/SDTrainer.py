@@ -2067,6 +2067,7 @@ class SDTrainer(BaseSDTrainProcess):
             if self.sd.is_multistage:
                 # handle multistage switching
                 if self.steps_this_boundary >= self.train_config.switch_boundary_every or self.current_boundary_index not in self.sd.trainable_multistage_boundaries:
+                    old_expert = self.current_expert_name
                     # iterate to make sure we only train trainable_multistage_boundaries
                     while True:
                         self.steps_this_boundary = 0
@@ -2084,6 +2085,10 @@ class SDTrainer(BaseSDTrainProcess):
                         self.current_expert_name = 'low_noise'
                     else:
                         self.current_expert_name = f'expert_{self.current_boundary_index}'
+
+                    # Log boundary switches for debugging
+                    if self.step_num % 100 == 0:  # Only log at boundary switches
+                        print_acc(f"  → Switched expert: {old_expert} → {self.current_expert_name} (step {self.step_num})")
             loss = self.train_single_accumulation(batch)
             self.steps_this_boundary += 1
             if total_loss is None:

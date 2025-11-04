@@ -88,10 +88,26 @@ export default function JobMetrics({ job }: JobMetricsProps) {
     const minLoss = losses.length > 0 ? Math.min(...losses) : null;
     const maxLoss = losses.length > 0 ? Math.max(...losses) : null;
 
+    // Calculate Exponential Moving Average (EMA) for loss
+    // EMA gives more weight to recent values: EMA_t = α * value_t + (1-α) * EMA_{t-1}
+    // α (smoothing factor) = 2 / (N + 1), where N is the window size
+    const calculateEMA = (values: number[], windowSize: number) => {
+      if (values.length === 0) return null;
+      const alpha = 2 / (windowSize + 1);
+      let ema = values[0]; // Initialize with first value
+      for (let i = 1; i < values.length; i++) {
+        ema = alpha * values[i] + (1 - alpha) * ema;
+      }
+      return ema;
+    };
+
+    const emaLoss = calculateEMA(losses, windowSize);
+
     // Calculate gradient stability statistics
     const avgGradStability = gradStabilities.length > 0
       ? gradStabilities.reduce((a, b) => a + b, 0) / gradStabilities.length
       : null;
+    const emaGradStability = calculateEMA(gradStabilities, windowSize);
 
     // Separate metrics by expert (infer from step pattern if not explicitly set)
     const withExpert = recent.map((m) => {
@@ -107,22 +123,41 @@ export default function JobMetrics({ job }: JobMetricsProps) {
     const highNoiseMetrics = withExpert.filter(m => m.inferredExpert === 'high_noise' || m.expert === 'high_noise');
     const lowNoiseMetrics = withExpert.filter(m => m.inferredExpert === 'low_noise' || m.expert === 'low_noise');
 
-    const highNoiseLoss = highNoiseMetrics.length > 0
-      ? highNoiseMetrics.filter(m => m.loss != null).reduce((a, b) => a + b.loss!, 0) / highNoiseMetrics.filter(m => m.loss != null).length
+    const highNoiseLosses = highNoiseMetrics.filter(m => m.loss != null).map(m => m.loss!);
+    const lowNoiseLosses = lowNoiseMetrics.filter(m => m.loss != null).map(m => m.loss!);
+
+    const highNoiseLoss = highNoiseLosses.length > 0
+      ? highNoiseLosses.reduce((a, b) => a + b, 0) / highNoiseLosses.length
       : null;
 
-    const lowNoiseLoss = lowNoiseMetrics.length > 0
-      ? lowNoiseMetrics.filter(m => m.loss != null).reduce((a, b) => a + b.loss!, 0) / lowNoiseMetrics.filter(m => m.loss != null).length
+    const lowNoiseLoss = lowNoiseLosses.length > 0
+      ? lowNoiseLosses.reduce((a, b) => a + b, 0) / lowNoiseLosses.length
       : null;
+
+    // Calculate per-expert EMAs
+    const highNoiseLossEMA = calculateEMA(highNoiseLosses, windowSize);
+    const lowNoiseLossEMA = calculateEMA(lowNoiseLosses, windowSize);
+
+    const highNoiseGradStabilities = highNoiseMetrics.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
+    const lowNoiseGradStabilities = lowNoiseMetrics.filter(m => m.gradient_stability != null).map(m => m.gradient_stability!);
+
+    const highNoiseGradStabilityEMA = calculateEMA(highNoiseGradStabilities, windowSize);
+    const lowNoiseGradStabilityEMA = calculateEMA(lowNoiseGradStabilities, windowSize);
 
     return {
       current: currentMetric,
       avgLoss,
+      emaLoss,
       minLoss,
       maxLoss,
       avgGradStability,
+      emaGradStability,
       highNoiseLoss,
       lowNoiseLoss,
+      highNoiseLossEMA,
+      lowNoiseLossEMA,
+      highNoiseGradStabilityEMA,
+      lowNoiseGradStabilityEMA,
       totalSteps: metrics.length,
       recentMetrics: recent,
     };
@@ -744,6 +779,22 @@ export default function JobMetrics({ job }: JobMetricsProps) {
           </p>
         </div>
 
+        {/* EMA Loss */}
+        <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div className="flex items-center justify-between mb-2">
+            <Tooltip text="Exponential Moving Average of loss. Weights recent values more heavily than simple average. Best indicator of current training trend.">
+              <p className="text-sm text-gray-400">EMA Loss ({windowSize})</p>
+            </Tooltip>
+            <TrendingDown className="w-4 h-4 text-cyan-400" />
+          </div>
+          <p className="text-2xl font-bold text-cyan-400">
+            {stats.emaLoss != null ? stats.emaLoss.toFixed(4) : 'N/A'}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            Weighted toward recent steps
+          </p>
+        </div>
+
         {/* Gradient Stability */}
         {stats.avgGradStability != null && (
           <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
@@ -835,10 +886,21 @@ export default function JobMetrics({ job }: JobMetricsProps) {
                 {currentActiveExpert === 'high_noise' && <span className="ml-2 px-2 py-0.5 bg-red-500 text-white text-xs rounded">ACTIVE</span>}
               </p>
               <p className="text-xs text-gray-500 mb-2">Timesteps 1000-900 (harder denoising)</p>
-              <p className="text-3xl font-bold text-red-400">
-                {stats.highNoiseLoss != null ? stats.highNoiseLoss.toFixed(4) : 'N/A'}
-              </p>
-              <p className="text-xs text-gray-500 mt-2">Historical avg (last {windowSize} steps)</p>
+              <div className="space-y-2">
+                <div>
+                  <p className="text-xs text-gray-400">Simple Average</p>
+                  <p className="text-2xl font-bold text-red-400">
+                    {stats.highNoiseLoss != null ? stats.highNoiseLoss.toFixed(4) : 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">EMA (weighted recent)</p>
+                  <p className="text-3xl font-bold text-red-300">
+                    {stats.highNoiseLossEMA != null ? stats.highNoiseLossEMA.toFixed(4) : 'N/A'}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Window: last {windowSize} steps</p>
             </div>
             <div className={`bg-gradient-to-br from-blue-900/20 to-cyan-900/20 rounded-lg p-4 border ${currentActiveExpert === 'low_noise' ? 'border-blue-500 border-2' : 'border-blue-800/30'}`}>
               <p className="text-sm text-gray-400 mb-1 flex items-center">
@@ -846,10 +908,21 @@ export default function JobMetrics({ job }: JobMetricsProps) {
                 {currentActiveExpert === 'low_noise' && <span className="ml-2 px-2 py-0.5 bg-blue-500 text-white text-xs rounded">ACTIVE</span>}
               </p>
               <p className="text-xs text-gray-500 mb-2">Timesteps 900-0 (detail refinement)</p>
-              <p className="text-3xl font-bold text-blue-400">
-                {stats.lowNoiseLoss != null ? stats.lowNoiseLoss.toFixed(4) : 'N/A'}
-              </p>
-              <p className="text-xs text-gray-500 mt-2">Historical avg (last {windowSize} steps)</p>
+              <div className="space-y-2">
+                <div>
+                  <p className="text-xs text-gray-400">Simple Average</p>
+                  <p className="text-2xl font-bold text-blue-400">
+                    {stats.lowNoiseLoss != null ? stats.lowNoiseLoss.toFixed(4) : 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400">EMA (weighted recent)</p>
+                  <p className="text-3xl font-bold text-blue-300">
+                    {stats.lowNoiseLossEMA != null ? stats.lowNoiseLossEMA.toFixed(4) : 'N/A'}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Window: last {windowSize} steps</p>
             </div>
           </div>
           {stats.highNoiseLoss != null && stats.lowNoiseLoss != null && (
