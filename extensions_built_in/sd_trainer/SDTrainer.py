@@ -1332,8 +1332,9 @@ class SDTrainer(BaseSDTrainProcess):
             mask_multiplier = torch.ones((noisy_latents.shape[0], 1, 1, 1), device=self.device_torch, dtype=dtype)
             if batch.mask_tensor is not None:
                 with self.timer('get_mask_multiplier'):
-                    # upsampling no supported for bfloat16
-                    mask_multiplier = batch.mask_tensor.to(self.device_torch, dtype=torch.float16).detach()
+                    # FIXED: BF16 interpolation is fully supported in modern PyTorch (2.0+)
+                    # Previous FP16 hardcoding caused precision loss and gradient instability
+                    mask_multiplier = batch.mask_tensor.to(self.device_torch, dtype=dtype).detach()
                     # scale down to the size of the latents, mask multiplier shape(bs, 1, width, height), noisy_latents shape(bs, channels, width, height)
                     if len(noisy_latents.shape) == 5:
                         # video B,C,T,H,W
@@ -1347,7 +1348,6 @@ class SDTrainer(BaseSDTrainProcess):
                     )
                     # expand to match latents
                     mask_multiplier = mask_multiplier.expand(-1, noisy_latents.shape[1], -1, -1)
-                    mask_multiplier = mask_multiplier.to(self.device_torch, dtype=dtype).detach()
                     # make avg 1.0
                     mask_multiplier = mask_multiplier / mask_multiplier.mean()
 
