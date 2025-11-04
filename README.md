@@ -355,29 +355,38 @@ python -c "import sageattention; print('SageAttention installed')"
 - **Diffusers** (latest): HuggingFace diffusion models library
 - **Transformers 4.52.4**: Model architectures and utilities
 
-### RTX 50-Series (Blackwell) Notes
+### RTX 50-Series (Blackwell) Installation
 
-**The PyTorch nightly installation above already supports RTX 50 series (5090, 5080, 5070, etc.)!**
+**Blackwell GPUs (RTX 5090, 5080, 5070, etc.) require CUDA 13.0 or newer.**
 
-PyTorch nightly with CUDA 13.0 includes Blackwell architecture support. No additional steps needed.
+The PyTorch nightly installation above includes Blackwell support built-in. **No additional CUDA installation needed** for basic training - PyTorch ships with its own CUDA libraries.
 
-**Optional: Compile Flash Attention for optimal performance:**
+**If you want to compile flash attention for Blackwell (optional):**
 
-If you want to optimize flash attention specifically for Blackwell:
-
+1. **Install CUDA 13.0 toolkit** (required only for compilation):
 ```bash
-source venv/bin/activate  # Linux
-# .\venv\Scripts\activate  # Windows
+# Download from: https://developer.nvidia.com/cuda-13-0-download-archive
+# Or use package manager (Ubuntu example):
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install cuda-toolkit-13-0
+```
 
-export CUDA_HOME=/usr/local/cuda  # Point to your CUDA installation
-export TORCH_CUDA_ARCH_LIST="10.0+PTX"  # Blackwell architecture
+2. **Compile flash attention:**
+```bash
+source venv/bin/activate
+
+export CUDA_HOME=/usr/local/cuda-13.0  # Point to CUDA 13.0
+export TORCH_CUDA_ARCH_LIST="10.0+PTX"  # Blackwell compute capability
 FLASH_ATTENTION_FORCE_BUILD=TRUE MAX_JOBS=8 pip install flash-attn --no-build-isolation
 
 # Verify
 python -c "import flash_attn; print('Flash Attention OK')"
+nvidia-smi  # Should show CUDA 13.0+ driver
 ```
 
-**Note:** Flash attention compilation is optional. SageAttention provides excellent performance without it.
+**Note:** Flash attention compilation is **completely optional**. SageAttention provides excellent performance without it, and most users won't need flash attention at all.
 
 **Or install the original version:**
 
