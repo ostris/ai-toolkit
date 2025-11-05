@@ -467,7 +467,30 @@ The system will automatically:
 1. Calculate optimal resolution for each video's aspect ratio
 2. Group similar sizes into buckets
 3. Minimize padding/cropping
-4. Maximize VRAM utilization 
+4. Maximize VRAM utilization
+
+### Temporal Jitter for Video Training
+
+To prevent temporal overfitting (where the model memorizes exact frame timings), you can add random frame sampling variation:
+
+```yaml
+datasets:
+  - folder_path: /path/to/videos
+    num_frames: 33
+    temporal_jitter: 1  # ±1 frame randomness per sample point
+```
+
+**How it works:**
+- Applies independent ±N frame offset to each sampled frame index
+- Creates natural variation between epochs without breaking motion continuity
+- Helps prevent artifacts like "frothy blobs" in liquid/motion generation
+
+**Recommended settings:**
+- `temporal_jitter: 1` - Conservative, works well for most cases
+- `temporal_jitter: 2` - More aggressive variation
+- `temporal_jitter: 0` - Disable for finisher phases requiring maximum precision
+
+Works with both `shrink_video_to_frames: true` and `false` modes.
 
 
 ## Training Specific Layers
