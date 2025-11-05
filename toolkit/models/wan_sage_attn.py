@@ -38,15 +38,15 @@ class WanSageAttnProcessor2_0:
 
         encoder_hidden_states_img = None
         if attn.add_k_proj is not None:
-            # Match Diffusers reference: reserve 512 tokens for text, remaining for image
-            # Fall back to configured num_img_tokens if sequence is shorter than expected
+            # Match Diffusers reference: reserve last 512 tokens for text, remaining (front) for image
             if encoder_hidden_states is None:
                 encoder_hidden_states = hidden_states
             img_ctx_len = max(encoder_hidden_states.shape[1] - 512, 0)
-            if img_ctx_len == 0:
-                img_ctx_len = min(self.num_img_tokens, encoder_hidden_states.shape[1])
-            encoder_hidden_states_img = encoder_hidden_states[:, :img_ctx_len]
-            encoder_hidden_states = encoder_hidden_states[:, img_ctx_len:]
+            if img_ctx_len > 0:
+                encoder_hidden_states_img = encoder_hidden_states[:, :img_ctx_len]
+                encoder_hidden_states = encoder_hidden_states[:, img_ctx_len:]
+            else:
+                encoder_hidden_states_img = None  # text-only context; no image tokens
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
 
@@ -85,7 +85,10 @@ class WanSageAttnProcessor2_0:
         hidden_states_img = None
         if encoder_hidden_states_img is not None:
             key_img, value_img = _get_added_kv_projections(attn, encoder_hidden_states_img)
-            key_img = attn.norm_added_k(key_img)
+            if hasattr(attn, "norm_added_k") and attn.norm_added_k is not None:
+                key_img = attn.norm_added_k(key_img)
+            if hasattr(attn, "norm_added_v") and attn.norm_added_v is not None:
+                value_img = attn.norm_added_v(value_img)
 
             key_img = key_img.unflatten(2, (attn.heads, -1))  # (B, S_img, H, D)
             value_img = value_img.unflatten(2, (attn.heads, -1))

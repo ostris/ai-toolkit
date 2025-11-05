@@ -20,6 +20,11 @@ def add_first_frame_conditioning(
     """
     device = latent_model_input.device
     dtype = latent_model_input.dtype
+    # Use VAE's parameter dtype for encode to avoid mixed-dtype conv issues
+    try:
+        vae_dtype = next(vae.parameters()).dtype
+    except StopIteration:
+        vae_dtype = getattr(vae, 'dtype', dtype)
     vae_scale_factor_temporal = 2 ** sum(vae.temperal_downsample)
 
     # Get number of frames from latent model input
@@ -61,8 +66,9 @@ def add_first_frame_conditioning(
     # video_condition = video_condition.permute(0, 2, 1, 3, 4)
 
     # Encode with VAE
+    # Encode in the VAE's dtype, then cast back to original latent dtype
     latent_condition = vae.encode(
-        video_condition.to(device, dtype)
+        video_condition.to(device, vae_dtype)
     ).latent_dist.sample()
     latent_condition = latent_condition.to(device, dtype)
     
@@ -134,6 +140,11 @@ def add_first_frame_conditioning_v22(
     """
     device = latent_model_input.device
     dtype = latent_model_input.dtype
+    # Use VAE's parameter dtype for encode to avoid mixed-dtype conv issues
+    try:
+        vae_dtype = next(vae.parameters()).dtype
+    except StopIteration:
+        vae_dtype = getattr(vae, 'dtype', dtype)
     bs, _, T, H, W = latent_model_input.shape
     scale = vae.config.scale_factor_spatial
     target_h = H * scale
@@ -148,7 +159,9 @@ def add_first_frame_conditioning_v22(
     # Resize and encode
     first_frame_up = F.interpolate(first_frame, size=(target_h, target_w), mode="bilinear", align_corners=False)
     first_frame_up = first_frame_up.unsqueeze(2)  # (bs, 3, 1, H, W)
-    encoded = vae.encode(first_frame_up).latent_dist.sample().to(dtype).to(device)
+    # Encode in the VAE's dtype, then cast back to original latent dtype
+    encoded = vae.encode(first_frame_up.to(device, vae_dtype)).latent_dist.sample()
+    encoded = encoded.to(device, dtype)
 
     # Normalize
     mean = torch.tensor(vae.config.latents_mean).view(1, -1, 1, 1, 1).to(device, dtype)
@@ -167,7 +180,8 @@ def add_first_frame_conditioning_v22(
         # If last_frame is provided, encode it similarly
         last_frame_up = F.interpolate(last_frame, size=(target_h, target_w), mode="bilinear", align_corners=False)
         last_frame_up = last_frame_up.unsqueeze(2)
-        last_encoded = vae.encode(last_frame_up).latent_dist.sample().to(dtype).to(device)
+        last_encoded = vae.encode(last_frame_up.to(device, vae_dtype)).latent_dist.sample()
+        last_encoded = last_encoded.to(device, dtype)
         last_encoded = (last_encoded - mean) * std
         latent[:, :, -last_encoded.shape[2]:] = last_encoded  # replace last
         mask[:, :, -last_encoded.shape[2]:] = 0.0  #
