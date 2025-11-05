@@ -519,7 +519,16 @@ class ImageProcessingDTOMixin:
                     
             # Final safety check - ensure no frame exceeds max valid index
             frames_to_extract = [min(frame_idx, max_frame_index) for frame_idx in frames_to_extract]
-            
+
+            # Add temporal per-frame jitter (optional)
+            temporal_jitter = getattr(self.dataset_config, 'temporal_jitter', 0)
+            if temporal_jitter > 0 and len(frames_to_extract) > 0:
+                # Independent ±N jitter per index, clamped to valid range
+                frames_to_extract = [
+                    max(0, min(idx + random.randint(-temporal_jitter, temporal_jitter), max_frame_index))
+                    for idx in frames_to_extract
+                ]
+
             # Only log frames to extract if in debug mode
             if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
                 print_acc(f"  Frames to extract: {frames_to_extract}")
