@@ -613,7 +613,10 @@ class Wan21(BaseModel):
         self.vae.eval()
         self.vae.requires_grad_(False)
 
-        image_list = [image.to(device, dtype=dtype) for image in image_list]
+        # CRITICAL: Encode with VAE's native dtype, then convert latents to training dtype
+        # Using wrong dtype (e.g., BF16) with VAE trained in FP32/FP16 causes encoding errors
+        vae_dtype = self.vae.dtype
+        image_list = [image.to(device, dtype=vae_dtype) for image in image_list]
 
         # Normalize shapes
         norm_images = []
