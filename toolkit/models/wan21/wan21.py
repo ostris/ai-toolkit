@@ -449,15 +449,19 @@ class Wan21(BaseModel):
 
         scheduler = Wan21.get_train_scheduler()
         self.print_and_status_update("Loading VAE")
-        # todo, example does float 32? check if quality suffers
-        
+        # IMPORTANT: Load VAE in its native/binary dtype to avoid unwanted conversions.
+        # For WAN VAEs published in BF16, align to the training dtype (bf16) here.
+        # Using fp32 here will upcast BF16 weights and can cause soft/pixelated outputs.
+        vae_dtype = self.torch_dtype
         if self._wan_vae_path is not None:
             # load the vae from individual repo
             vae = AutoencoderKLWan.from_pretrained(
-                self._wan_vae_path, torch_dtype=dtype).to(dtype=dtype)
+                self._wan_vae_path, torch_dtype=vae_dtype
+            ).to(dtype=vae_dtype)
         else:
             vae = AutoencoderKLWan.from_pretrained(
-                vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
+                vae_path, subfolder="vae", torch_dtype=vae_dtype
+            ).to(dtype=vae_dtype)
         flush()
 
         self.print_and_status_update("Making pipe")
@@ -606,15 +610,16 @@ class Wan21(BaseModel):
         if device is None:
             device = self.vae_device_torch
         if dtype is None:
-            dtype = self.vae_torch_dtype
+            # Return latents in the training dtype by default (e.g., bf16)
+            # Encodes still occur in the VAE's own dtype for correctness.
+            dtype = self.torch_dtype
 
         if self.vae.device == torch.device('cpu'):
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
 
-        # CRITICAL: Encode with VAE's native dtype, then convert latents to training dtype
-        # Using wrong dtype (e.g., BF16) with VAE trained in FP32/FP16 causes encoding errors
+        # Encode with VAE's native dtype, then convert latents to the desired output dtype
         vae_dtype = self.vae.dtype
         image_list = [image.to(device, dtype=vae_dtype) for image in image_list]
 
