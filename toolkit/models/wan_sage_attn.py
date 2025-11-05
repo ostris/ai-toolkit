@@ -73,13 +73,29 @@ class WanSageAttnProcessor2_0:
                 except Exception:
                     pass
                 HAS_LOGGED_ROTARY_SHAPES = True
-            # Apply via diffusers helper in a consistent layout for both tuple and tensor rotary
-            query_hnd = query.permute(0, 2, 1, 3)  # (B, H, S, D) -> (B, S, H, D)
-            key_hnd = key.permute(0, 2, 1, 3)
-            query_hnd = diffusers_apply_rotary_emb(query_hnd, rotary_emb, use_real=False)
-            key_hnd = diffusers_apply_rotary_emb(key_hnd, rotary_emb, use_real=False)
-            query = query_hnd.permute(0, 2, 1, 3)
-            key = key_hnd.permute(0, 2, 1, 3)
+            # Match Diffusers WAN rotary application:
+            if isinstance(rotary_emb, tuple):
+                freqs_cos, freqs_sin = rotary_emb
+
+                def apply_rotary_emb_custom(hs: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+                    x1, x2 = hs.unflatten(-1, (-1, 2)).unbind(-1)
+                    cos = cos[..., 0::2]
+                    sin = sin[..., 1::2]
+                    out = torch.empty_like(hs)
+                    out[..., 0::2] = x1 * cos - x2 * sin
+                    out[..., 1::2] = x1 * sin + x2 * cos
+                    return out.type_as(hs)
+
+                query = apply_rotary_emb_custom(query, freqs_cos, freqs_sin)
+                key = apply_rotary_emb_custom(key, freqs_cos, freqs_sin)
+            else:
+                # For complex rotary tensors, use the generic helper with H,S layout
+                q_hnd = query.permute(0, 2, 1, 3)  # (B, H, S, D)
+                k_hnd = key.permute(0, 2, 1, 3)
+                q_hnd = diffusers_apply_rotary_emb(q_hnd, rotary_emb, use_real=False)
+                k_hnd = diffusers_apply_rotary_emb(k_hnd, rotary_emb, use_real=False)
+                query = q_hnd.permute(0, 2, 1, 3)  # back to (B, S, H, D)
+                key = k_hnd.permute(0, 2, 1, 3)
 
         # I2V task - process image conditioning separately
         hidden_states_img = None
