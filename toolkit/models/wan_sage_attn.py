@@ -7,6 +7,7 @@ from diffusers.models.transformers.transformer_wan import (
     _get_qkv_projections,
     _get_added_kv_projections,
 )
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 from toolkit.print import print_acc
 
 HAS_LOGGED_ROTARY_SHAPES = False
@@ -19,6 +20,7 @@ class WanSageAttnProcessor2_0:
     """
 
     def __init__(self, num_img_tokens: int = 257):
+        # Fallback only; we prefer computing image context length dynamically
         self.num_img_tokens = num_img_tokens
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError(
@@ -36,10 +38,15 @@ class WanSageAttnProcessor2_0:
 
         encoder_hidden_states_img = None
         if attn.add_k_proj is not None:
-            encoder_hidden_states_img = encoder_hidden_states[:,
-                                                              :self.num_img_tokens]
-            encoder_hidden_states = encoder_hidden_states[:,
-                                                          self.num_img_tokens:]
+            # Match Diffusers reference: reserve 512 tokens for text, remaining for image
+            # Fall back to configured num_img_tokens if sequence is shorter than expected
+            if encoder_hidden_states is None:
+                encoder_hidden_states = hidden_states
+            img_ctx_len = max(encoder_hidden_states.shape[1] - 512, 0)
+            if img_ctx_len == 0:
+                img_ctx_len = min(self.num_img_tokens, encoder_hidden_states.shape[1])
+            encoder_hidden_states_img = encoder_hidden_states[:, :img_ctx_len]
+            encoder_hidden_states = encoder_hidden_states[:, img_ctx_len:]
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
 
@@ -66,29 +73,13 @@ class WanSageAttnProcessor2_0:
                 except Exception:
                     pass
                 HAS_LOGGED_ROTARY_SHAPES = True
-            # Support both tuple(rotary_cos, rotary_sin) and complex-valued rotary embeddings
-            if isinstance(rotary_emb, tuple):
-                freqs_cos, freqs_sin = rotary_emb
-
-                def apply_rotary_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
-                    x1, x2 = hidden_states.unflatten(-1, (-1, 2)).unbind(-1)
-                    cos = cos[..., 0::2]
-                    sin = sin[..., 1::2]
-                    out = torch.empty_like(hidden_states)
-                    out[..., 0::2] = x1 * cos - x2 * sin
-                    out[..., 1::2] = x1 * sin + x2 * cos
-                    return out.type_as(hidden_states)
-
-                query = apply_rotary_emb(query, freqs_cos, freqs_sin)
-                key = apply_rotary_emb(key, freqs_cos, freqs_sin)
-            else:
-                # Fallback path for complex rotary embeddings; temporarily permute to (B, H, S, D)
-                query_hnd = query.permute(0, 2, 1, 3)
-                key_hnd = key.permute(0, 2, 1, 3)
-                query_hnd = diffusers_apply_rotary_emb(query_hnd, rotary_emb, use_real=False)
-                key_hnd = diffusers_apply_rotary_emb(key_hnd, rotary_emb, use_real=False)
-                query = query_hnd.permute(0, 2, 1, 3)
-                key = key_hnd.permute(0, 2, 1, 3)
+            # Apply via diffusers helper in a consistent layout for both tuple and tensor rotary
+            query_hnd = query.permute(0, 2, 1, 3)  # (B, H, S, D) -> (B, S, H, D)
+            key_hnd = key.permute(0, 2, 1, 3)
+            query_hnd = diffusers_apply_rotary_emb(query_hnd, rotary_emb, use_real=False)
+            key_hnd = diffusers_apply_rotary_emb(key_hnd, rotary_emb, use_real=False)
+            query = query_hnd.permute(0, 2, 1, 3)
+            key = key_hnd.permute(0, 2, 1, 3)
 
         # I2V task - process image conditioning separately
         hidden_states_img = None
@@ -96,22 +87,39 @@ class WanSageAttnProcessor2_0:
             key_img, value_img = _get_added_kv_projections(attn, encoder_hidden_states_img)
             key_img = attn.norm_added_k(key_img)
 
-            key_img = key_img.unflatten(2, (attn.heads, -1))
+            key_img = key_img.unflatten(2, (attn.heads, -1))  # (B, S_img, H, D)
             value_img = value_img.unflatten(2, (attn.heads, -1))
 
-            # Use SageAttention for image conditioning
-            hidden_states_img = sageattn(
-                query, key_img, value_img, attn_mask=None, is_causal=False, tensor_layout="NHD"
-            )
-            hidden_states_img = hidden_states_img.flatten(2, 3)
+            # Permute to HND layout expected by sageattn
+            q_hnd = query.permute(0, 2, 1, 3)
+            k_img_hnd = key_img.permute(0, 2, 1, 3)
+            v_img_hnd = value_img.permute(0, 2, 1, 3)
+            sm_scale = getattr(attn, "scale", None)
+            if sm_scale is None:
+                sm_scale = 1.0 / (q_hnd.shape[-1] ** 0.5)
+
+            hs_img_hnd = sageattn(q_hnd, k_img_hnd, v_img_hnd, tensor_layout="HND", is_causal=False, sm_scale=sm_scale)
+            # Back to (B, S, H, D), then flatten heads
+            hidden_states_img = hs_img_hnd.permute(0, 2, 1, 3).flatten(2, 3)
             hidden_states_img = hidden_states_img.type_as(query)
 
-        # Main attention with SageAttention
-        hidden_states = sageattn(
-            query, key, value, attn_mask=attention_mask, is_causal=False, tensor_layout="NHD"
-        )
-        hidden_states = hidden_states.flatten(2, 3)
-        hidden_states = hidden_states.type_as(query)
+        # Main attention; if an attention mask is provided, fall back to reference backend for correctness
+        if attention_mask is not None:
+            hs = dispatch_attention_fn(
+                query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False, backend=None
+            )
+            hidden_states = hs.flatten(2, 3)
+            hidden_states = hidden_states.type_as(query)
+        else:
+            q_hnd = query.permute(0, 2, 1, 3)
+            k_hnd = key.permute(0, 2, 1, 3)
+            v_hnd = value.permute(0, 2, 1, 3)
+            sm_scale = getattr(attn, "scale", None)
+            if sm_scale is None:
+                sm_scale = 1.0 / (q_hnd.shape[-1] ** 0.5)
+            hs_hnd = sageattn(q_hnd, k_hnd, v_hnd, tensor_layout="HND", is_causal=False, sm_scale=sm_scale)
+            hidden_states = hs_hnd.permute(0, 2, 1, 3).flatten(2, 3)
+            hidden_states = hidden_states.type_as(query)
 
         # Combine image conditioning if present
         if hidden_states_img is not None:
