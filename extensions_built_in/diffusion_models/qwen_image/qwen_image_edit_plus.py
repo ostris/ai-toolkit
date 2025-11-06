@@ -212,7 +212,7 @@ class QwenImageEditPlusModel(QwenImageModel):
             control_image_res = VAE_IMAGE_SIZE
             if self.model_config.model_kwargs.get("match_target_res", False):
                 # use the current target size to set the control image res
-                control_image_res = height * width * self.pipeline.vae_scale_factor
+                control_image_res = height * self.pipeline.vae_scale_factor * width * self.pipeline.vae_scale_factor
 
             # pack image tokens
             latent_model_input = latent_model_input.view(

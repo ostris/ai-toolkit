@@ -228,6 +228,36 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.diff_output_preservation': {
+    title: 'Differential Output Preservation',
+    description: (
+      <>
+        Differential Output Preservation (DOP) is a technique to help preserve class of the trained concept during
+        training. For this, you must have a trigger word set to differentiate your concept from its class. For instance,
+        You may be training a woman named Alice. Your trigger word may be "Alice". The class is "woman", since Alice is
+        a woman. We want to teach the model to remember what it knows about the class "woman" while teaching it what is
+        different about Alice. During training, the trainer will make a prediction with your LoRA bypassed and your
+        trigger word in the prompt replaced with the class word. Making "photo of Alice" become "photo of woman". This
+        prediction is called the prior prediction. Each step, we will do the normal training step, but also do another
+        step with this prior prediction and the class prompt in order to teach our LoRA to preserve the knowledge of the
+        class. This should not only improve the performance of your trained concept, but also allow you to do things
+        like "Alice standing next to a woman" and not make both of the people look like Alice.
+      </>
+    ),
+  },
+  'train.blank_prompt_preservation': {
+    title: 'Blank Prompt Preservation',
+    description: (
+      <>
+        Blank Prompt Preservation (BPP) is a technique to help preserve the current models knowledge when unprompted.
+        This will not only help the model become more flexible, but will also help the quality of your concept during
+        inference, especially when a model uses CFG (Classifier Free Guidance) on inference. At each step during
+        training, a prior prediction is made with a blank prompt and with the LoRA disabled. This prediction is then
+        used as a target on an additional training step with a blank prompt, to preserve the model's knowledge when no
+        prompt is given. This helps the model to not overfit to the prompt and retain its generalization capabilities.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

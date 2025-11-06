@@ -95,8 +95,13 @@ class SDTrainer(BaseSDTrainProcess):
                 raise ValueError("diff_output_preservation requires a network to be set")
             if self.train_config.train_text_encoder:
                 raise ValueError("diff_output_preservation is not supported with train_text_encoder")
-            
-            # always do a prior prediction when doing diff output preservation
+        
+        if self.train_config.blank_prompt_preservation:
+            if self.network_config is None:
+                raise ValueError("blank_prompt_preservation requires a network to be set")
+        
+        if self.train_config.blank_prompt_preservation or self.train_config.diff_output_preservation:
+            # always do a prior prediction when doing output preservation
             self.do_prior_prediction = True
         
         # store the loss target for a batch so we can use it in a loss
@@ -342,6 +347,13 @@ class SDTrainer(BaseSDTrainProcess):
                     # keep legacy usage for now. 
                     self.sd.text_encoder_to("cpu")
                 flush()
+        
+        if self.train_config.blank_prompt_preservation and self.cached_blank_embeds is None:
+            # make sure we have this if not unloading
+            self.cached_blank_embeds = self.sd.encode_prompt("").to(
+                self.device_torch,
+                dtype=self.sd.torch_dtype
+            ).detach()
         
         if self.train_config.diffusion_feature_extractor_path is not None:
             vae = self.sd.vae
@@ -605,33 +617,28 @@ class SDTrainer(BaseSDTrainProcess):
                     stepped_latents = torch.cat(stepped_chunks, dim=0)
                     
                 stepped_latents = stepped_latents.to(self.sd.vae.device, dtype=self.sd.vae.dtype)
-                # resize to half the size of the latents
-                stepped_latents_half = torch.nn.functional.interpolate(
-                    stepped_latents, 
-                    size=(stepped_latents.shape[2] // 2, stepped_latents.shape[3] // 2), 
-                    mode='bilinear', 
-                    align_corners=False
-                )
-                pred_features = self.dfe(stepped_latents.float())
-                pred_features_half = self.dfe(stepped_latents_half.float())
+                sl = stepped_latents
+                if len(sl.shape) == 5:
+                    # video B,C,T,H,W
+                    sl = sl.permute(0, 2, 1, 3, 4)  # B,T,C,H,W
+                    b, t, c, h, w = sl.shape
+                    sl = sl.reshape(b * t, c, h, w)
+                pred_features = self.dfe(sl.float())
                 with torch.no_grad():
-                    target_features = self.dfe(batch.latents.to(self.device_torch, dtype=torch.float32))
-                    batch_latents_half = torch.nn.functional.interpolate(
-                        batch.latents.to(self.device_torch, dtype=torch.float32),
-                        size=(batch.latents.shape[2] // 2, batch.latents.shape[3] // 2),
-                        mode='bilinear',
-                        align_corners=False
-                    )
-                    target_features_half = self.dfe(batch_latents_half)
+                    bl = batch.latents
+                    bl = bl.to(self.sd.vae.device)
+                    if len(bl.shape) == 5:
+                        # video B,C,T,H,W
+                        bl = bl.permute(0, 2, 1, 3, 4)  # B,T,C,H,W
+                        b, t, c, h, w = bl.shape
+                        bl = bl.reshape(b * t, c, h, w)
+                    target_features = self.dfe(bl.float())
                     # scale dfe so it is weaker at higher noise levels
                     dfe_scaler = 1 - (timesteps.float() / 1000.0).view(-1, 1, 1, 1).to(self.device_torch)
                 
                 dfe_loss = torch.nn.functional.mse_loss(pred_features, target_features, reduction="none") * \
                     self.train_config.diffusion_feature_extractor_weight * dfe_scaler
-                
-                dfe_loss_half = torch.nn.functional.mse_loss(pred_features_half, target_features_half, reduction="none") * \
-                    self.train_config.diffusion_feature_extractor_weight * dfe_scaler
-                additional_loss += dfe_loss.mean() + dfe_loss_half.mean()
+                additional_loss += dfe_loss.mean()
             elif self.dfe.version == 2:
                 # version 2
                 # do diffusion feature extraction on target
@@ -666,39 +673,40 @@ class SDTrainer(BaseSDTrainProcess):
                 unconditional_embeds = concat_prompt_embeds(
                     [self.unconditional_embeds] * noisy_latents.shape[0],
                 )
-                cfm_pred = self.predict_noise(
+                unconditional_target = self.predict_noise(
                     noisy_latents=noisy_latents,
                     timesteps=timesteps,
                     conditional_embeds=unconditional_embeds,
                     unconditional_embeds=None,
                     batch=batch,
                 )
-                
-                # zero cfg
-                
-                # ref https://github.com/WeichenFan/CFG-Zero-star/blob/cdac25559e3f16cb95f0016c04c709ea1ab9452b/wan_pipeline.py#L557
-                batch_size = target.shape[0]
-                positive_flat = target.view(batch_size, -1)
-                negative_flat = cfm_pred.view(batch_size, -1)
-                # Calculate dot production
-                dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
-                # Squared norm of uncondition
-                squared_norm = torch.sum(negative_flat ** 2, dim=1, keepdim=True) + 1e-8
-                # st_star = v_cond^T * v_uncond / ||v_uncond||^2
-                st_star = dot_product / squared_norm
-
-                alpha = st_star
-                
                 is_video = len(target.shape) == 5
                 
-                alpha = alpha.view(batch_size, 1, 1, 1) if not is_video else alpha.view(batch_size, 1, 1, 1, 1)
+                if self.train_config.do_guidance_loss_cfg_zero:
+                    # zero cfg
+                    # ref https://github.com/WeichenFan/CFG-Zero-star/blob/cdac25559e3f16cb95f0016c04c709ea1ab9452b/wan_pipeline.py#L557
+                    batch_size = target.shape[0]
+                    positive_flat = target.view(batch_size, -1)
+                    negative_flat = unconditional_target.view(batch_size, -1)
+                    # Calculate dot production
+                    dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
+                    # Squared norm of uncondition
+                    squared_norm = torch.sum(negative_flat ** 2, dim=1, keepdim=True) + 1e-8
+                    # st_star = v_cond^T * v_uncond / ||v_uncond||^2
+                    st_star = dot_product / squared_norm
+
+                    alpha = st_star
+                    
+                    alpha = alpha.view(batch_size, 1, 1, 1) if not is_video else alpha.view(batch_size, 1, 1, 1, 1)
+                else:
+                    alpha = 1.0
 
                 guidance_scale = self._guidance_loss_target_batch
                 if isinstance(guidance_scale, list):
                     guidance_scale = torch.tensor(guidance_scale).to(target.device, dtype=target.dtype)
                     guidance_scale = guidance_scale.view(-1, 1, 1, 1) if not is_video else guidance_scale.view(-1, 1, 1, 1, 1)
                 
-                unconditional_target = cfm_pred * alpha
+                unconditional_target = unconditional_target * alpha
                 target = unconditional_target + guidance_scale * (target - unconditional_target)
                 
             
@@ -1769,6 +1777,14 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.train_config.diff_output_preservation:
                             prior_embeds_to_use = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
                         
+                        if self.train_config.blank_prompt_preservation:
+                            blank_embeds = self.cached_blank_embeds.clone().detach().to(
+                                self.device_torch, dtype=dtype
+                            )
+                            prior_embeds_to_use = concat_prompt_embeds(
+                                [blank_embeds] * noisy_latents.shape[0]
+                            )
+                        
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,
                             conditional_embeds=prior_embeds_to_use,
@@ -1944,7 +1960,8 @@ class SDTrainer(BaseSDTrainProcess):
                         prior_to_calculate_loss = prior_pred
                         # if we are doing diff_output_preservation and not noing inverted masked prior
                         # then we need to send none here so it will not target the prior
-                        if self.train_config.diff_output_preservation and not do_inverted_masked_prior:
+                        doing_preservation = self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation
+                        if doing_preservation and not do_inverted_masked_prior:
                             prior_to_calculate_loss = None
                         
                         loss = self.calculate_loss(
@@ -1957,24 +1974,34 @@ class SDTrainer(BaseSDTrainProcess):
                             prior_pred=prior_to_calculate_loss,
                         )
                     
-                    if self.train_config.diff_output_preservation:
+                    if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
                         # send the loss backwards otherwise checkpointing will fail
                         self.accelerator.backward(loss)
                         normal_loss = loss.detach() # dont send backward again
                         
-                        dop_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
-                        dop_pred = self.predict_noise(
+                        with torch.no_grad():
+                            if self.train_config.diff_output_preservation:
+                                preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
+                            elif self.train_config.blank_prompt_preservation:
+                                blank_embeds = self.cached_blank_embeds.clone().detach().to(
+                                    self.device_torch, dtype=dtype
+                                )
+                                preservation_embeds = concat_prompt_embeds(
+                                    [blank_embeds] * noisy_latents.shape[0]
+                                )
+                        preservation_pred = self.predict_noise(
                             noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
                             timesteps=timesteps,
-                            conditional_embeds=dop_embeds.to(self.device_torch, dtype=dtype),
+                            conditional_embeds=preservation_embeds.to(self.device_torch, dtype=dtype),
                             unconditional_embeds=unconditional_embeds,
                             batch=batch,
                             **pred_kwargs
                         )
-                        dop_loss = torch.nn.functional.mse_loss(dop_pred, prior_pred) * self.train_config.diff_output_preservation_multiplier
-                        self.accelerator.backward(dop_loss)
-                        
-                        loss = normal_loss + dop_loss
+                        multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
+                        preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
+                        self.accelerator.backward(preservation_loss)
+
+                        loss = normal_loss + preservation_loss
                         loss = loss.clone().detach()
                         # require grad again so the backward wont fail
                         loss.requires_grad_(True)
