@@ -2059,12 +2059,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         optimizer_state_filename = f'optimizer.pt'
         optimizer_state_file_path = os.path.join(self.save_root, optimizer_state_filename)
         if os.path.exists(optimizer_state_file_path):
-            # try to load
-            # previous param groups
-            # previous_params = copy.deepcopy(optimizer.param_groups)
-            previous_lrs = []
+            # Save automagic-specific params from current config BEFORE loading
+            # These will be reapplied after loading to ensure config changes take effect
+            config_param_settings = []
             for group in optimizer.param_groups:
-                previous_lrs.append(group['lr'])
+                config_param_settings.append({
+                    'min_lr': group.get('min_lr'),
+                    'max_lr': group.get('max_lr'),
+                    'lr_bump': group.get('lr_bump'),
+                })
 
             load_optimizer = True
             if self.network is not None:
@@ -2084,12 +2087,55 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(f"Failed to load optimizer state from {optimizer_state_file_path}")
                     print_acc(e)
 
-            # update the optimizer LR from the params
-            print_acc(f"Updating optimizer LR from params")
-            if len(previous_lrs) > 0:
+            # Reapply automagic-specific params from current config
+            # This ensures updated min_lr/max_lr/lr_bump values take effect
+            # BUT we DO NOT overwrite the 'lr' field - that should come from the loaded checkpoint
+            print_acc(f"Updating optimizer min_lr/max_lr/lr_bump from config")
+            if len(config_param_settings) > 0:
                 for i, group in enumerate(optimizer.param_groups):
-                    group['lr'] = previous_lrs[i]
-                    group['initial_lr'] = previous_lrs[i]
+                    # DO NOT overwrite group['lr'] - it should come from the checkpoint
+                    # Only update the config-driven parameters
+                    if config_param_settings[i]['min_lr'] is not None:
+                        group['min_lr'] = config_param_settings[i]['min_lr']
+                    if config_param_settings[i]['max_lr'] is not None:
+                        group['max_lr'] = config_param_settings[i]['max_lr']
+                    if config_param_settings[i]['lr_bump'] is not None:
+                        group['lr_bump'] = config_param_settings[i]['lr_bump']
+
+                # Clamp lr_mask values in optimizer state to respect new min_lr/max_lr bounds
+                # This handles case where config's min_lr/max_lr changed since checkpoint was saved
+                for group_idx, group in enumerate(optimizer.param_groups):
+                    group_min_lr = group.get('min_lr')
+                    group_max_lr = group.get('max_lr')
+                    if group_min_lr is not None or group_max_lr is not None:
+                        for param in group['params']:
+                            if param in optimizer.state:
+                                param_state = optimizer.state[param]
+                                if 'lr_mask' in param_state:
+                                    # lr_mask might be Auto8bitTensor, extract the actual tensor
+                                    lr_mask = param_state['lr_mask']
+
+                                    # Skip clamping for Auto8bitTensor and quantized tensors - will be clamped on first step
+                                    if isinstance(lr_mask, dict) and 'quantized' in lr_mask:
+                                        continue
+                                    elif hasattr(lr_mask, 'dequantize') or type(lr_mask).__name__ == 'Auto8bitTensor':
+                                        # This is an Auto8bitTensor object
+                                        continue
+                                    elif hasattr(lr_mask, 'data'):
+                                        lr_mask_tensor = lr_mask.data
+                                    else:
+                                        lr_mask_tensor = lr_mask
+
+                                    # Clamp to new bounds
+                                    if group_min_lr is not None:
+                                        lr_mask_tensor.clamp_(min=group_min_lr)
+                                    if group_max_lr is not None:
+                                        lr_mask_tensor.clamp_(max=group_max_lr)
+
+                                    # Update avg_lr
+                                    param_state['avg_lr'] = torch.mean(lr_mask_tensor)
+
+                print_acc(f"✓ Clamped lr_mask values to config's min_lr/max_lr bounds")
 
             # Update the learning rates if they changed
             # optimizer.param_groups = previous_params
@@ -2211,8 +2257,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # CRITICAL FIX: After completing a step, steps_this_boundary has been incremented
                 # So we must add 1 to match the actual state after processing effective_step
                 # Example: after completing step 700 (first step of cycle), steps_this_boundary = 1, not 0
+                # BUGFIX: Don't add 1 for fresh start (effective_step=0), only for resume
                 steps_within_cycle = effective_step % self.train_config.switch_boundary_every
-                self.steps_this_boundary = steps_within_cycle + 1
+                self.steps_this_boundary = 0 if effective_step == 0 else steps_within_cycle + 1
 
                 # Set expert name for metrics tracking
                 if self.current_boundary_index == 0:

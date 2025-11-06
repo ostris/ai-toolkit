@@ -461,6 +461,8 @@ class Automagic(torch.optim.Optimizer):
                 # Make sure the shapes match
                 if 'quantized' in saved_lr_mask and saved_lr_mask['quantized'].shape == current_param.shape:
                     current_state['lr_mask'] = Auto8bitTensor(saved_lr_mask)
+                    # Recalculate avg_lr from the loaded lr_mask
+                    current_state['avg_lr'] = torch.mean(current_state['lr_mask'].to(torch.float32))
                 else:
                     print(f"WARNING: Shape mismatch for parameter {i}. "
                           f"Expected {current_param.shape}, got {saved_lr_mask['quantized'].shape if 'quantized' in saved_lr_mask else 'unknown'}. "
@@ -469,12 +471,14 @@ class Automagic(torch.optim.Optimizer):
                     current_state['lr_mask'] = Auto8bitTensor(torch.ones(
                         current_param.shape).to(current_param.device, dtype=torch.float32) * self.lr
                     )
+                    current_state['avg_lr'] = torch.mean(current_state['lr_mask'].to(torch.float32))
             except Exception as e:
                 print(f"ERROR: Failed to load lr_mask for parameter {i}: {e}")
                 # Initialize a new lr_mask
                 current_state['lr_mask'] = Auto8bitTensor(torch.ones(
                     current_param.shape).to(current_param.device, dtype=torch.float32) * self.lr
                 )
+                current_state['avg_lr'] = torch.mean(current_state['lr_mask'].to(torch.float32))
 
     def get_gradient_sign_agreement_rate(self):
         """

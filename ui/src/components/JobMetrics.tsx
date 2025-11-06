@@ -45,6 +45,7 @@ export default function JobMetrics({ job }: JobMetricsProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [windowSize, setWindowSize] = useState<10 | 50 | 100>(100);
+  const [switchBoundaryEvery, setSwitchBoundaryEvery] = useState<number>(100);
 
   useEffect(() => {
     const fetchMetrics = async () => {
@@ -56,6 +57,9 @@ export default function JobMetrics({ job }: JobMetricsProps) {
           setError(data.error);
         } else {
           setMetrics(data.metrics || []);
+          if (data.switchBoundaryEvery) {
+            setSwitchBoundaryEvery(data.switchBoundaryEvery);
+          }
         }
         setLoading(false);
       } catch (err) {
@@ -82,8 +86,8 @@ export default function JobMetrics({ job }: JobMetricsProps) {
     // Helper function to infer expert from step number
     const inferExpert = (m: MetricsData): string => {
       if (m.expert) return m.expert;
-      // MoE switches experts every 100 steps: steps 0-99=high_noise, 100-199=low_noise, etc.
-      const blockIndex = Math.floor(m.step / 100);
+      // MoE switches experts every switchBoundaryEvery steps
+      const blockIndex = Math.floor(m.step / switchBoundaryEvery);
       return blockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
     };
 
@@ -175,7 +179,7 @@ export default function JobMetrics({ job }: JobMetricsProps) {
       recentHighNoise,  // NEW: properly windowed high-noise data
       recentLowNoise,   // NEW: properly windowed low-noise data
     };
-  }, [metrics, windowSize]);
+  }, [metrics, windowSize, switchBoundaryEvery]);
 
   if (loading) {
     return (
@@ -207,16 +211,15 @@ export default function JobMetrics({ job }: JobMetricsProps) {
   const { current } = stats;
 
   // Determine which expert is currently active based on step
-  const currentBlockIndex = Math.floor(current.step / 100);
+  const currentBlockIndex = Math.floor(current.step / switchBoundaryEvery);
   const currentActiveExpert = currentBlockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
-  const stepsInCurrentBlock = current.step % 100;
+  const stepsInCurrentBlock = current.step % switchBoundaryEvery;
 
   // Separate ALL metrics by expert for full history visualization
-  // MoE switches experts every 100 steps: steps 0-99=expert0, 100-199=expert1, 200-299=expert0, etc.
   const allWithExpert = metrics.map((m) => {
     if (m.expert) return { ...m, inferredExpert: m.expert };
-    // Calculate which 100-step block this step is in
-    const blockIndex = Math.floor(m.step / 100);
+    // Calculate which block this step is in based on switchBoundaryEvery
+    const blockIndex = Math.floor(m.step / switchBoundaryEvery);
     const inferredExpert = blockIndex % 2 === 0 ? 'high_noise' : 'low_noise';
     return { ...m, inferredExpert };
   });
@@ -848,7 +851,7 @@ export default function JobMetrics({ job }: JobMetricsProps) {
             <div>
               <p className="text-sm text-gray-400">Current Step</p>
               <p className="text-3xl font-bold text-white">{current.step}</p>
-              <p className="text-xs text-gray-500 mt-1">Step {stepsInCurrentBlock + 1}/100 in expert block</p>
+              <p className="text-xs text-gray-500 mt-1">Step {stepsInCurrentBlock + 1}/{switchBoundaryEvery} in expert block</p>
             </div>
             <div>
               <p className="text-sm text-gray-400">Current Loss</p>
@@ -870,9 +873,9 @@ export default function JobMetrics({ job }: JobMetricsProps) {
           </div>
           <div className="mt-4 p-3 bg-gray-950/50 rounded-lg">
             <p className="text-xs text-gray-400">
-              💡 MoE switches experts every 100 steps. {currentActiveExpert === 'high_noise' ? 'High Noise' : 'Low Noise'} expert handles
+              💡 MoE switches experts every {switchBoundaryEvery} steps. {currentActiveExpert === 'high_noise' ? 'High Noise' : 'Low Noise'} expert handles
               {currentActiveExpert === 'high_noise' ? ' harder denoising (timesteps 1000-900)' : ' detail refinement (timesteps 900-0)'}.
-              Next switch in {100 - stepsInCurrentBlock - 1} steps.
+              Next switch in {switchBoundaryEvery - stepsInCurrentBlock - 1} steps.
             </p>
           </div>
         </div>
