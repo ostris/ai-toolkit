@@ -5,9 +5,7 @@
 
 This enhanced fork of AI Toolkit is specifically optimized for **Wan 2.2 14B I2V (image-to-video)** model training. While it supports other models, all features, optimizations, and documentation prioritize video LoRA training success.
 
-## Why This Fork?
-
-**🎯 Wan 2.2 I2V Optimized:**
+**Changes**
 - SageAttention <DISABLED UNTIL SAGE TEAM UPDATE WITH BACK PASS AUTOGRAD OPERATOR, CURRENTLY THIS IS NOT WORKING, USE FLASH ATTENTION>
 - Alpha scheduling tuned for video's high variance (10-100x higher than images)
 - Per-expert metrics tracking (high_noise and low_noise experts)
