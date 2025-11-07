@@ -11,6 +11,7 @@ This enhanced fork of AI Toolkit is specifically optimized for **Wan 2.2 14B I2V
 - Per-expert metrics tracking (high_noise and low_noise experts)
 - Correct boundary alignment on checkpoint resume
 - Video-specific thresholds and exit criteria
+- Adamw8bit loss bug fixed (wasnt huge but was worth doing) 
 
 **Metrics:**
 - Real-time EMA (Exponential Moving Average) tracking
@@ -32,13 +33,12 @@ This fork adds **Alpha Scheduling**, **Advanced Metrics Tracking**, and **SageAt
 ## Features Added
 
 #### 1. **Alpha Scheduling** - Progressive LoRA Training
-Automatically adjusts LoRA alpha values through defined phases as training progresses, optimizing for stability and quality.
+Automatically adjusts LoRA alpha values through defined phases as training progresses, optimizing for stability and quality. NB:- Gradient stability can drift to 47% when stable so probably aim for this in your yaml and not above 50%
 
 **Key Benefits:**
 - **Conservative start** (α=8): Stable early training, prevents divergence
 - **Progressive increase** (α=8→14→20): Gradually adds LoRA strength
-- **Automatic transitions**: Based on loss plateau and gradient stability
-- **Video-optimized**: Thresholds tuned for high-variance video training
+- **Automatic transitions**: Based on loss plateau and gradient stability (in theory, still needs more testing) 
 
 **Files Added:**
 - `toolkit/alpha_scheduler.py` - Core alpha scheduling logic with phase management
@@ -52,18 +52,18 @@ Automatically adjusts LoRA alpha values through defined phases as training progr
 - `toolkit/models/i2v_adapter.py` - I2V adapter alpha scheduling integration
 - `toolkit/network_mixins.py` - SafeTensors checkpoint save fix for non-tensor state
 
-#### 2. **Advanced Metrics Tracking**
+#### 2. **Metrics Tracking**
 Real-time training metrics with loss trend analysis, gradient stability, and phase tracking.
 
 **Metrics Captured:**
-- **Loss analysis**: Slope (linear regression), R² (trend confidence), CV (variance)
+- **Loss analysis**: Slope (linear regression), R² (trend confidence), CV (variance) (alpha scheduling)
 - **Gradient stability**: Sign agreement rate from automagic optimizer (target: 0.55)
 - **Phase tracking**: Current phase, steps in phase, alpha values
 - **Per-expert metrics**: Separate tracking for MoE (Mixture of Experts) models with correct boundary alignment
 - **EMA (Exponential Moving Average)**: Weighted averaging that prioritizes recent steps (10/50/100 step windows)
 - **Loss history**: 200-step window for trend analysis
 
-**Critical Fixes (Nov 2025):**
+**fix changelog:**
 - **Fixed boundary misalignment on resume**: Metrics now correctly track which expert is training after checkpoint resume
 - **Fixed off-by-one error**: `steps_this_boundary` calculation now accurately reflects training state
 - **Added EMA calculations**: UI now displays both simple averages and EMAs for better trend analysis
