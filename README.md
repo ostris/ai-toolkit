@@ -8,39 +8,30 @@ This enhanced fork of AI Toolkit is specifically optimized for **Wan 2.2 14B I2V
 ## Why This Fork?
 
 **🎯 Wan 2.2 I2V Optimized:**
-- SageAttention: 15-20% faster training for Wan models
+- SageAttention <DISABLED UNTIL SAGE TEAM UPDATE WITH BACK PASS AUTOGRAD OPERATOR, CURRENTLY THIS IS NOT WORKING, USE FLASH ATTENTION>
 - Alpha scheduling tuned for video's high variance (10-100x higher than images)
 - Per-expert metrics tracking (high_noise and low_noise experts)
 - Correct boundary alignment on checkpoint resume
 - Video-specific thresholds and exit criteria
 
-**📊 Production-Grade Metrics:**
+**Metrics:**
 - Real-time EMA (Exponential Moving Average) tracking
 - Per-expert loss and gradient stability monitoring
 - Fixed metrics corruption on resume (critical bug fixed Nov 2024)
 - Accurate training health indicators optimized for video training
 
-**⚡ Performance & Compatibility:**
+** Performance & Compatibility:**
 - PyTorch nightly support (CUDA 13.0)
 - Full RTX 50-series (Blackwell) support
-- SageAttention automatic detection and optimization
-- Memory-efficient training with quantization support
-
-**🚀 Training Success:**
-- Improved success rate: ~40% → ~75-85% for video training
-- Automatic alpha scheduling prevents divergence
-- Progressive strength increase based on loss trends
-- Video-optimized gradient stability targets (0.50 vs 0.55 for images)
-
-**Original by Ostris** | **Enhanced by Relaxis for Wan 2.2 I2V Training**
+- basically tested on various different configs and confirmed working. 
 
 ---
 
-## 🔧 Fork Enhancements (Relaxis Branch)
+## Fork Enhancements
 
-This fork adds **Alpha Scheduling**, **Advanced Metrics Tracking**, and **SageAttention Support** for video LoRA training. These features provide automatic progression through training phases, accurate real-time visibility into training health, and optimized performance for Wan models.
+This fork adds **Alpha Scheduling**, **Advanced Metrics Tracking**, and **SageAttention Support** for video LoRA training. These features provide automatic progression through training phases, accurate real-time visibility into training health, and optimized performance for Wan models <CONFIRMED NOT WORKING UNTIL SAGE ATTENTION IMPLEMENT BACK PASS AUTOGRAD OPTIMIZER - USE FLASH ATTENTION>
 
-### 🚀 Features Added
+## Features Added
 
 #### 1. **Alpha Scheduling** - Progressive LoRA Training
 Automatically adjusts LoRA alpha values through defined phases as training progresses, optimizing for stability and quality.
@@ -74,7 +65,7 @@ Real-time training metrics with loss trend analysis, gradient stability, and pha
 - **EMA (Exponential Moving Average)**: Weighted averaging that prioritizes recent steps (10/50/100 step windows)
 - **Loss history**: 200-step window for trend analysis
 
-**Critical Fixes (Nov 2024):**
+**Critical Fixes (Nov 2025):**
 - **Fixed boundary misalignment on resume**: Metrics now correctly track which expert is training after checkpoint resume
 - **Fixed off-by-one error**: `steps_this_boundary` calculation now accurately reflects training state
 - **Added EMA calculations**: UI now displays both simple averages and EMAs for better trend analysis
@@ -91,34 +82,16 @@ Real-time training metrics with loss trend analysis, gradient stability, and pha
 - `ui/cron/worker.ts` - Metrics collection in worker process
 - `ui/cron/actions/startJob.ts` - Metrics initialization on job start
 - `toolkit/optimizer.py` - Gradient stability tracking interface
-- `toolkit/optimizers/automagic.py` - Gradient sign agreement calculation
-
-#### 3. **SageAttention Support** - ⚠️ DISABLED (Training Incompatible)
-
-**⚠️ CRITICAL: SageAttention is currently DISABLED for training.**
-
-**Why SageAttention doesn't work for training:**
-SageAttention is an **inference-only optimization** that breaks gradient computation during training. While it provides 15-20% speedup for inference, it causes:
-- **Gradient corruption**: Backpropagation produces incorrect or NaN gradients
-- **Training divergence**: Loss fails to decrease or spikes unpredictably
-- **No parameter updates**: LoRA weights don't learn properly
-
-**Technical explanation:**
-SageAttention uses quantized attention calculations and kernel optimizations that are not differentiable. PyTorch's autograd cannot correctly compute gradients through these operations, breaking the training loop.
-
-**Status:**
-- ✅ **Inference**: SageAttention works perfectly for generation/sampling
-- ❌ **Training**: Disabled (line 1690 in BaseSDTrainProcess.py: `if False and ...`)
-- 🔬 **Future**: May be re-enabled if SageAttention adds training-compatible mode
+- `toolkit/optimizers/automagic.py` - Gradient sign agreement 
 
 **Files Added:**
-- `toolkit/models/wan_sage_attn.py` - SageAttention implementation (inference-only)
+- `toolkit/models/wan_sage_attn.py` - SageAttention implementation (inference-only, broken until back pass operator is implemented which is likely to be never).
 
 **Files Modified:**
 - `jobs/process/BaseSDTrainProcess.py` - SageAttention disabled for training, works for inference
 - `requirements.txt` - Added sageattention dependency (optional)
 
-**Alternative:** Use `attention_backend: flash` or `attention_backend: native` for training
+**Alternative:** Use `attention_backend: flash` or `attention_backend: native` for training - requires flash attention compilation which is too tricky to include in a requirements.txt - you will have to build this yourself 
 
 #### 4. **Video Training Optimizations**
 Thresholds and configurations specifically tuned for video I2V (image-to-video) training.
@@ -129,7 +102,7 @@ Thresholds and configurations specifically tuned for video I2V (image-to-video) 
 - **Loss plateau threshold**: 0.005 (vs 0.001) - slower convergence
 - **Gradient stability**: 0.50 minimum (vs 0.55) - more tolerance for variance
 
-### 📋 Example Configuration
+### Example Configuration
 
 See [`config_examples/i2v_lora_alpha_scheduling.yaml`](config_examples/i2v_lora_alpha_scheduling.yaml) for a complete example with alpha scheduling enabled.
 
@@ -163,7 +136,7 @@ network:
         min_steps: 2000
 ```
 
-### 📊 Metrics Output
+### Metrics Output
 
 Metrics are logged to `output/{job_name}/metrics_{job_name}.jsonl` in newline-delimited JSON format:
 
@@ -189,47 +162,14 @@ Metrics are logged to `output/{job_name}/metrics_{job_name}.jsonl` in newline-de
 }
 ```
 
-### 🎯 Expected Training Progression
+### Monitoring Your Trainin
 
-**Phase 1: Foundation (Steps 0-2000+)**
-- Conv Alpha: 8 (conservative, stable)
-- Focus: Stable convergence, basic structure learning
-- Transition: Automatic when loss plateaus and gradients stabilize
+**Loss R²** - Trend confidence (video: expect 0.01-0.05)
+   - Below 0.01: Very noisy (normal for video early on)
+   - 0.01-0.05: Good trend for video training
+   - Above 0.1: Strong trend (rare in video) TEST HEURISTIC ONLY, NOT CONFIRMED TO BE ACCURATE ACROSS RECENT CHANGES 
 
-**Phase 2: Balance (Steps 2000-5000+)**
-- Conv Alpha: 14 (standard strength)
-- Focus: Main feature learning, refinement
-- Transition: Automatic when loss plateaus again
-
-**Phase 3: Emphasis (Steps 5000-7000)**
-- Conv Alpha: 20 (strong, fine details)
-- Focus: Detail enhancement, final refinement
-- Completion: Optimal LoRA strength achieved
-
-### 🔍 Monitoring Your Training
-
-**Key Metrics to Watch:**
-
-1. **Loss Slope** - Should trend toward 0 (plateau)
-   - Positive (+0.001+): ⚠️ Loss increasing, may need intervention
-   - Near zero (±0.0001): ✅ Plateauing, ready for transition
-   - Negative (-0.001+): ✅ Improving, keep training
-
-2. **Gradient Stability** - Should be ≥ 0.50
-   - Below 0.45: ⚠️ Unstable training
-   - 0.50-0.55: ✅ Healthy range for video
-   - Above 0.55: ✅ Very stable
-
-3. **Loss R²** - Trend confidence (video: expect 0.01-0.05)
-   - Below 0.01: ⚠️ Very noisy (normal for video early on)
-   - 0.01-0.05: ✅ Good trend for video training
-   - Above 0.1: ✅ Strong trend (rare in video)
-
-4. **Phase Transitions** - Logged with full details
-   - Foundation → Balance: Expected around step 2000-2500
-   - Balance → Emphasis: Expected around step 5000-5500
-
-### 🛠️ Troubleshooting
+### Troubleshooting
 
 **Alpha Scheduler Not Activating:**
 - Verify `alpha_schedule.enabled: true` in your config
@@ -246,7 +186,7 @@ Metrics are logged to `output/{job_name}/metrics_{job_name}.jsonl` in newline-de
 - Format: `{checkpoint}_alpha_scheduler.json`
 - Loads automatically when resuming from checkpoint
 
-### 📚 Technical Details
+### Technical Details
 
 **Phase Transition Logic:**
 1. Minimum steps in phase must be met
@@ -279,7 +219,6 @@ All criteria must be satisfied for automatic transition.
 
 ## Beginner's Guide: Your First LoRA
 
-**What's a LoRA?** Think of it like teaching your AI model a new skill without retraining the whole thing. It's fast, cheap, and works great.
 
 **What you'll need:**
 - 10-30 images (or videos) of what you want to teach
@@ -292,17 +231,6 @@ All criteria must be satisfied for automatic transition.
 2. **Prepare data** (10 min): Organize your images and write captions
 3. **Start training** (30 min - 3 hrs): The AI learns from your data
 4. **Use your LoRA**: Apply it to generate new images/videos
-
-**What to expect during training:**
-- **Steps 0-500**: Loss drops quickly (model learning basics)
-- **Steps 500-2000**: Loss stabilizes (foundation phase with alpha scheduling)
-- **Steps 2000-5000**: Loss improves slowly (balance phase, main learning)
-- **Steps 5000-7000**: Final refinement (emphasis phase, details)
-
-Your training will show metrics like:
-- **Loss**: Goes down = good. Stays flat = model learned everything.
-- **Phase**: Foundation → Balance → Emphasis (automatic with alpha scheduling)
-- **Gradient Stability**: Measures training health (~48-55% is normal)
 
 ## Installation
 
@@ -357,7 +285,7 @@ python -c "import sageattention; print('SageAttention installed')"
 
 **Key packages included in requirements.txt:**
 - **PyTorch nightly** (cu130): Latest features and bug fixes
-- **SageAttention ≥2.0.0**: 15-20% speedup for Wan model training
+- **SageAttention ≥2.0.0**: <BORKED - SORRY> 
 - **Lycoris-lora 1.8.3**: Advanced LoRA architectures
 - **TorchAO 0.10.0**: Quantization and optimization tools
 - **Diffusers** (latest): HuggingFace diffusion models library
@@ -566,12 +494,6 @@ Everything else should work the same including layer targeting.
 
 This fork is specifically optimized for **Wan 2.2 14B I2V** (image-to-video) training with advanced features not available in the original toolkit.
 
-**What makes this fork special for Wan 2.2:**
-- ✅ **SageAttention**: Automatic 15-20% speedup for Wan models
-- ✅ **Fixed Metrics**: Correct expert labeling after checkpoint resume (critical bug fixed Nov 2024)
-- ✅ **Per-Expert EMA**: Separate tracking for high_noise and low_noise experts
-- ✅ **Alpha Scheduling**: Video-optimized thresholds (10-100x more tolerant than images)
-- ✅ **Boundary Alignment**: Proper multistage state restoration on resume
 
 ### Example Configuration for Video Training
 
@@ -651,7 +573,7 @@ This fork is designed and tested specifically for **Wan 2.2 14B I2V** with full 
 - Mixture of Experts (MoE) training with high_noise and low_noise experts
 - Automatic boundary switching every 100 steps
 - SageAttention optimization (detected automatically)
-- Per-expert metrics tracking and EMA calculations
+- Per-expert metrics tracking and EMA cal
 
 **Configuration for Wan 2.2 14B I2V:**
 ```yaml
@@ -702,100 +624,3 @@ train:
 **What it is**: How fast loss is changing
 **Good value**: Negative (improving), near zero (plateaued)
 **What it means**: -0.0001 = good improvement, close to 0 = ready for next phase
-
-### Phase Transitions Explained
-
-With alpha scheduling enabled, training goes through phases:
-
-| Phase | Conv Alpha | When It Happens | What It Does |
-|-------|-----------|-----------------|--------------|
-| **Foundation** | 8 | Steps 0-2000+ | Conservative start, stable learning |
-| **Balance** | 14 | After foundation plateaus | Main learning phase |
-| **Emphasis** | 20 | After balance plateaus | Fine details, final refinement |
-
-**To move to next phase, you need ALL of:**
-- Minimum steps completed (2000/3000/2000)
-- Loss slope near zero (plateau)
-- Gradient stability > threshold (50% video, 55% images)
-- R² > threshold (0.01 video, 0.1 images)
-
-**Why am I stuck in a phase?**
-- Not enough steps yet (most common - just wait)
-- Gradient stability too low (training still unstable)
-- R² too low (loss too noisy to confirm plateau)
-- Loss still improving (not plateaued yet)
-
-### Common Questions
-
-**"My gradient stability is 48%, can I increase it?"**
-No. It's a measurement, not a setting. It naturally improves as training stabilizes.
-
-**"My R² is 0.005, is that bad?"**
-For video at step 400? Normal. You need 0.01 to transition phases. Keep training.
-
-**"Training never transitions phases"**
-Your thresholds might be too strict. Video training is very noisy. Use the "Video Training" preset in the UI.
-
-**"What should I actually watch?"**
-1. Loss going down ✓
-2. Samples looking good ✓
-3. Checkpoints being saved ✓
-
-Everything else is automatic.
-
-### Where to Find Metrics
-
-- **UI**: Jobs page → Click your job → Metrics tab
-- **File**: `output/{job_name}/metrics_{job_name}.jsonl`
-- **Terminal**: Shows current loss and phase during training
-
-See [`METRICS_GUIDE.md`](METRICS_GUIDE.md) for detailed technical explanations.
-
-
-## Updates
-
-Only larger updates are listed here. There are usually smaller daily updated that are omitted.
-
-### November 4, 2024
-- **SageAttention Support**: Added SageAttention optimization for Wan 2.2 I2V models for faster training with lower memory usage
-- **CRITICAL FIX**: Fixed metrics regression causing incorrect expert labels after checkpoint resume
-  - Boundary realignment now correctly restores multistage state on resume
-  - Fixed off-by-one error in `steps_this_boundary` calculation
-  - Added debug logging for boundary switches and realignment verification
-- **Enhanced Metrics UI**: Added Exponential Moving Average (EMA) calculations
-  - Per-expert EMA tracking for high_noise and low_noise experts
-  - EMA loss displayed alongside simple averages (10/50/100 step windows)
-  - Better gradient stability visualization with per-expert EMA
-- **Improved Resume Logic**: Checkpoint resume now properly tracks which expert was training
-  - Eliminates data corruption in metrics when resuming mid-training
-  - Ensures accurate loss tracking per expert throughout training sessions
-
-### Jul 17, 2025
-- Make it easy to add control images to the samples in the ui
-
-### Jul 11, 2025
-- Added better video config settings to the UI for video models.
-- Added Wan I2V training to the UI
-
-### June 29, 2025
-- Fixed issue where Kontext forced sizes on sampling
-
-### June 26, 2025
-- Added support for instruction dataset training 
-### June 17, 2025
-- Performance optimizations for batch preparation
-- Added some docs via a popup for items in the simple ui explaining what settings do. Still a WIP
-
-### June 16, 2025
-- Hide control images in the UI when viewing datasets
-- WIP on mean flow loss
-
-### June 12, 2025
-- Fixed issue that resulted in blank captions in the dataloader
-
-### June 10, 2025
-- Decided to keep track up updates in the readme
-- Added support for SDXL in the UI
-- Added support for SD 1.5 in the UI
-- Fixed UI Wan 2.1 14b name bug
-- Added support for for conv training in the UI for models that support it
