@@ -1687,7 +1687,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         #         print_acc("sage attention is not installed. Using SDP instead")
 
         # Enable SageAttention for Wan models (2-3x speedup on attention)
-        if hasattr(self.sd, 'arch') and 'wan' in str(self.sd.arch):
+        # DISABLED: SageAttention breaks training gradients (inference-only)
+        if False and hasattr(self.sd, 'arch') and 'wan' in str(self.sd.arch):
             try:
                 from sageattention import sageattn
                 from toolkit.models.wan_sage_attn import WanSageAttnProcessor2_0

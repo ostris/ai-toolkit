@@ -93,24 +93,32 @@ Real-time training metrics with loss trend analysis, gradient stability, and pha
 - `toolkit/optimizer.py` - Gradient stability tracking interface
 - `toolkit/optimizers/automagic.py` - Gradient sign agreement calculation
 
-#### 3. **SageAttention Support** - Faster Training with Lower Memory
-Optimized attention mechanism for Wan 2.2 I2V models providing significant speedups with reduced memory usage.
+#### 3. **SageAttention Support** - ⚠️ DISABLED (Training Incompatible)
 
-**Key Benefits:**
-- **~15-20% faster training**: Optimized attention calculations reduce per-step time
-- **Lower VRAM usage**: More efficient memory allocation during attention operations
-- **No quality loss**: Mathematically equivalent to standard attention
-- **Automatic detection**: Enabled automatically for compatible Wan models
+**⚠️ CRITICAL: SageAttention is currently DISABLED for training.**
+
+**Why SageAttention doesn't work for training:**
+SageAttention is an **inference-only optimization** that breaks gradient computation during training. While it provides 15-20% speedup for inference, it causes:
+- **Gradient corruption**: Backpropagation produces incorrect or NaN gradients
+- **Training divergence**: Loss fails to decrease or spikes unpredictably
+- **No parameter updates**: LoRA weights don't learn properly
+
+**Technical explanation:**
+SageAttention uses quantized attention calculations and kernel optimizations that are not differentiable. PyTorch's autograd cannot correctly compute gradients through these operations, breaking the training loop.
+
+**Status:**
+- ✅ **Inference**: SageAttention works perfectly for generation/sampling
+- ❌ **Training**: Disabled (line 1690 in BaseSDTrainProcess.py: `if False and ...`)
+- 🔬 **Future**: May be re-enabled if SageAttention adds training-compatible mode
 
 **Files Added:**
-- `toolkit/models/wan_sage_attn.py` - SageAttention implementation for Wan transformers
+- `toolkit/models/wan_sage_attn.py` - SageAttention implementation (inference-only)
 
 **Files Modified:**
-- `jobs/process/BaseSDTrainProcess.py` - SageAttention initialization and model patching
-- `requirements.txt` - Added sageattention dependency
+- `jobs/process/BaseSDTrainProcess.py` - SageAttention disabled for training, works for inference
+- `requirements.txt` - Added sageattention dependency (optional)
 
-**Supported Models:**
-- Wan 2.2 I2V 14B models (both high_noise and low_noise experts)
+**Alternative:** Use `attention_backend: flash` or `attention_backend: native` for training
 
 #### 4. **Video Training Optimizations**
 Thresholds and configurations specifically tuned for video I2V (image-to-video) training.
