@@ -2907,7 +2907,7 @@ class StableDiffusion:
                     try:
                         te_has_grad = encoder.text_model.final_layer_norm.weight.requires_grad
                     except:
-                        te_has_grad = encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+                        te_has_grad = False
                 self.device_state['text_encoder'].append({
                     'training': encoder.training,
                     'device': encoder.device,

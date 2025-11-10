@@ -545,7 +545,10 @@ class TrainConfig:
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
-        
+
+        self.do_differential_guidance = kwargs.get('do_differential_guidance', False)
+        self.differential_guidance_scale = kwargs.get('differential_guidance_scale', 3.0)
+
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 

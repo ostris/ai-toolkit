@@ -708,7 +708,11 @@ class SDTrainer(BaseSDTrainProcess):
                 
                 unconditional_target = unconditional_target * alpha
                 target = unconditional_target + guidance_scale * (target - unconditional_target)
-                
+
+            if self.train_config.do_differential_guidance:
+                with torch.no_grad():
+                    guidance_scale = self.train_config.differential_guidance_scale
+                    target = noise_pred + guidance_scale * (target - noise_pred)
             
         if target is None:
             target = noise
