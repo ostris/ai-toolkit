@@ -139,6 +139,8 @@ export interface TrainConfig {
   blank_prompt_preservation_multiplier?: number;
   switch_boundary_every: number;
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
+  do_differential_guidance?: boolean;
+  differential_guidance_scale?: number;
 }
 
 export interface QuantizeKwargsConfig {

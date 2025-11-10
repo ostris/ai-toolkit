@@ -784,6 +784,45 @@ export default function SimpleJob({
           </Card>
         </div>
         <div>
+          <Card title="Advanced" collapsible>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div>
+                <Checkbox
+                  label="Do Differential Guidance"
+                  docKey={'train.do_differential_guidance'}
+                  className="pt-1"
+                  checked={jobConfig.config.process[0].train.do_differential_guidance || false}
+                  onChange={value => {
+                    let newValue = value == false ? undefined : value;
+                    setJobConfig(newValue, 'config.process[0].train.do_differential_guidance');
+                    if (!newValue) {
+                      setJobConfig(undefined, 'config.process[0].train.differential_guidance_scale');
+                    } else if (
+                      jobConfig.config.process[0].train.differential_guidance_scale === undefined ||
+                      jobConfig.config.process[0].train.differential_guidance_scale === null
+                    ) {
+                      // set default differential guidance scale to 3.0
+                      setJobConfig(3.0, 'config.process[0].train.differential_guidance_scale');
+                    }
+                  }}
+                />
+                {jobConfig.config.process[0].train.differential_guidance_scale && (
+                  <>
+                    <NumberInput
+                      label="Differential Guidance Scale"
+                      className="pt-2"
+                      value={(jobConfig.config.process[0].train.differential_guidance_scale as number) || 3.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.differential_guidance_scale')}
+                      placeholder="eg. 3.0"
+                      min={0}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          </Card>
+        </div>
+        <div>
           <Card title="Datasets">
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (

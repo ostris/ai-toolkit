@@ -258,6 +258,25 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.do_differential_guidance': {
+    title: 'Differential Guidance',
+    description: (
+      <>
+        Differential Guidance will amplify the difference of the model prediction and the target during training to make
+        a new target. Differential Guidance Scale will be the multiplier for the difference. This is still experimental,
+        but in my tests, it makes the model train faster, and learns details better in every scenario I have tried with
+        it.
+        <br />
+        <br />
+        The idea is that normal training inches closer to the target but never actually gets there, because it is
+        limited by the learning rate. With differential guidance, we amplify the difference for a new target beyond the
+        actual target, this would make the model learn to hit or overshoot the target instead of falling short.
+        <br />
+        <br />
+        <img src="/imgs/diff_guidance.png" alt="Differential Guidance Diagram" className="max-w-full mx-auto" />
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {
