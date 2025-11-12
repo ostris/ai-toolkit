@@ -287,6 +287,7 @@ class StableDiffusion:
         # self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.device_torch)
 
         model_path = self.model_config.name_or_path
+        assert model_path is not None
         if 'civitai.com' in self.model_config.name_or_path:
             # load is a civit ai model, use the loader.
             from toolkit.civitai import get_model_path_from_url
@@ -1005,6 +1006,7 @@ class StableDiffusion:
         self.vae.eval()
         self.vae.requires_grad_(False)
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0, "VAE scale factor must be greater than 0"
         self.vae_scale_factor = VAE_SCALE_FACTOR
         self.unet.to(self.device_torch, dtype=dtype)
         self.unet.requires_grad_(False)
@@ -1124,9 +1126,12 @@ class StableDiffusion:
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
+        print("[DEBUG] generate_images: start", self.network)
+        print_acc("Unloading assistant lora")
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
+
         # if using assistant, unfuse it
         if self.model_config.assistant_lora_path is not None:
             print_acc("Unloading assistant lora")
@@ -1136,13 +1141,14 @@ class StableDiffusion:
                 self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
             else:
                 self.assistant_lora.is_active = False
-                
+
         if self.model_config.inference_lora_path is not None:
             print_acc("Loading inference lora")
             self.assistant_lora.is_active = True
             # move weights on to the device
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
 
+        print("[DEBUG] generate_images: after lora handling")
         if network is not None:
             network.eval()
             # check if we have the same network weight for all samples. If we do, we can merge in th
@@ -1157,10 +1163,10 @@ class StableDiffusion:
         else:
             network = BlankNetwork()
 
+        print("[DEBUG] generate_images: after network merge_in")
         self.save_device_state()
         self.set_device_state_preset('generate')
-
-        # save current seed state for training
+        print("[DEBUG] generate_images: after device state preset")
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
 
@@ -1194,6 +1200,8 @@ class StableDiffusion:
                 except:
                     pass
 
+            print("[DEBUG] generate_images: after sampler/noise_scheduler setup")
+            # ...existing code...
             if sampler.startswith("sample_") and self.is_xl:
                 # using kdiffusion
                 Pipe = StableDiffusionKDiffusionXLPipeline
@@ -1333,6 +1341,7 @@ class StableDiffusion:
             if sampler.startswith("sample_"):
                 pipeline.set_scheduler(sampler)
 
+        print("[DEBUG] generate_images: after pipeline/scheduler setup")
         refiner_pipeline = None
         if self.refiner_unet:
             # build refiner pipeline
@@ -1447,6 +1456,7 @@ class StableDiffusion:
                         conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
                     else: 
+                        assert gen_config.prompt is not None
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
@@ -1709,7 +1719,8 @@ class StableDiffusion:
                     self.adapter.clear_memory()
 
         # clear pipeline and cache to reduce vram usage
-        del pipeline
+        if pipeline is not None:
+            del pipeline
         if refiner_pipeline is not None:
             del refiner_pipeline
         torch.cuda.empty_cache()
@@ -1758,6 +1769,7 @@ class StableDiffusion:
             num_channels=None,
     ):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         if height is None and pixel_height is None:
             raise ValueError("height or pixel_height must be specified")
         if width is None and pixel_width is None:
@@ -1795,6 +1807,7 @@ class StableDiffusion:
 
     def get_time_ids_from_latents(self, latents: torch.Tensor, requires_aesthetic_score=False):
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         if self.is_xl:
             bs, ch, h, w = list(latents.shape)
 
@@ -2067,6 +2080,7 @@ class StableDiffusion:
             # predict the noise residual
             if self.is_pixart:
                 VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
+                assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
                 batch_size, ch, h, w = list(latents.shape)
 
                 height = h * VAE_SCALE_FACTOR
@@ -2524,7 +2538,7 @@ class StableDiffusion:
         image_list = [image.to(device, dtype=dtype) for image in image_list]
 
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
-
+        assert VAE_SCALE_FACTOR > 0 and (VAE_SCALE_FACTOR & (VAE_SCALE_FACTOR - 1)) == 0, "VAE_SCALE_FACTOR must be a power of 2"
         # resize images if not divisible by 8
         for i in range(len(image_list)):
             image = image_list[i]

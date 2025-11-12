@@ -89,7 +89,7 @@ def main():
 
     if accelerator.is_main_process:
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
-
+    job = None
     for config_file in config_file_list:
         try:
             job = get_job(config_file, args.name)
