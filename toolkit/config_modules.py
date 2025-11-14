@@ -38,6 +38,16 @@ class LoggingConfig:
         self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
         self.run_name: str = kwargs.get('run_name', None)
 
+class OxenConfig:
+    def __init__(self, **kwargs):
+        self.enabled: bool = kwargs.get('enabled', False)
+        self.repo_id: Optional[str] = kwargs.get('repo_id', None)  # Format: "namespace/repo_name"
+        self.host: str = kwargs.get('host', 'hub.oxen.ai')
+        self.scheme: str = kwargs.get('scheme', 'https')
+        self.output_dir_base: str = kwargs.get('output_dir_base', 'experiments')
+        self.fine_tune_id: Optional[str] = kwargs.get('fine_tune_id', None)
+        self.log_every: int = kwargs.get('log_every', 100)
+
 class SampleItem:
     def __init__(
         self,
@@ -94,7 +104,7 @@ class SampleConfig:
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
         if self.num_frames > 1 and self.ext not in ['webp']:
-            print("Changing sample extention to animated webp")
+            print("Changing sample extension to animated webp")
             self.ext = 'webp'
         
         prompts: list[str] = kwargs.get('prompts', [])
