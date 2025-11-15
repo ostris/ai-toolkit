@@ -104,6 +104,33 @@ class PromptEmbeds:
                 pe.attention_mask = pe.attention_mask.expand(batch_size, -1)
         return pe
 
+    def share_memory_(self):
+        """
+        Move tensors to shared memory for multi-process access (e.g., DataLoader workers).
+        This prevents duplication of cached embeddings across workers.
+        Returns self for chaining.
+        """
+        if isinstance(self.text_embeds, list) or isinstance(self.text_embeds, tuple):
+            for t in self.text_embeds:
+                if t is not None:
+                    t.share_memory_()
+        else:
+            if self.text_embeds is not None:
+                self.text_embeds.share_memory_()
+
+        if self.pooled_embeds is not None:
+            self.pooled_embeds.share_memory_()
+
+        if self.attention_mask is not None:
+            if isinstance(self.attention_mask, list) or isinstance(self.attention_mask, tuple):
+                for t in self.attention_mask:
+                    if t is not None:
+                        t.share_memory_()
+            else:
+                self.attention_mask.share_memory_()
+
+        return self
+
     def save(self, path: str):
         """
         Save the prompt embeds to a file.

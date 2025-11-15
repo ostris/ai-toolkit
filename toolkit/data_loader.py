@@ -579,7 +579,61 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 # handle cropping to a specific point of interest
                 # setup buckets every epoch
                 self.setup_buckets(quiet=True)
+
+        # Enable shared memory for cached data after caching completes
+        # This should be called every epoch in case new data was cached
+        self.enable_shared_memory()
+
         self.epoch_num += 1
+
+    def enable_shared_memory(self):
+        """
+        Enable shared memory for all cached tensors (latents, text embeddings, clip vision).
+        This prevents memory duplication when dataset is pickled to DataLoader workers.
+        Call this after all caching operations complete.
+        """
+        if not hasattr(self, 'file_list') or len(self.file_list) == 0:
+            return
+
+        # Count how many items have cached data
+        latents_count = 0
+        text_embeds_count = 0
+        clip_embeds_count = 0
+
+        for file_item in self.file_list:
+            # Enable shared memory for cached latents
+            if hasattr(file_item, '_encoded_latent') and file_item._encoded_latent is not None:
+                file_item._encoded_latent.share_memory_()
+                latents_count += 1
+
+            # Enable shared memory for cached text embeddings (PromptEmbeds)
+            if hasattr(file_item, 'prompt_embeds') and file_item.prompt_embeds is not None:
+                file_item.prompt_embeds.share_memory_()
+                text_embeds_count += 1
+
+            # Enable shared memory for cached clip vision embeddings (dict of tensors)
+            if hasattr(file_item, 'clip_image_embeds') and file_item.clip_image_embeds is not None:
+                for key, tensor in file_item.clip_image_embeds.items():
+                    if tensor is not None:
+                        tensor.share_memory_()
+                clip_embeds_count += 1
+
+            # Enable shared memory for unconditional clip embeddings
+            if hasattr(file_item, 'clip_image_embeds_unconditional') and file_item.clip_image_embeds_unconditional is not None:
+                for key, tensor in file_item.clip_image_embeds_unconditional.items():
+                    if tensor is not None:
+                        tensor.share_memory_()
+
+        # Only print if we actually enabled shared memory for something
+        if latents_count > 0 or text_embeds_count > 0 or clip_embeds_count > 0:
+            print_acc(f"Enabled shared memory for cached data:")
+            if latents_count > 0:
+                print_acc(f"  - Latents: {latents_count} items")
+            if text_embeds_count > 0:
+                print_acc(f"  - Text embeddings: {text_embeds_count} items")
+            if clip_embeds_count > 0:
+                print_acc(f"  - CLIP vision embeddings: {clip_embeds_count} items")
+            print_acc(f"  Workers will now share this memory instead of duplicating it")
 
     def __len__(self):
         if self.dataset_config.buckets:

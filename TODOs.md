@@ -32,39 +32,37 @@ This document tracks potential improvements and optimizations for the AI Toolkit
 
 ---
 
-#### 2. Shared Memory for Cached Data
+#### 2. Shared Memory for Cached Data (COMPLETED ✓)
 **Impact:** Near-zero memory duplication for cached latents/embeddings
 
-**Current issue:**
-- Each worker gets a copy of all cached latents in RAM
-- With cache_latents: true, massive duplication
+**Status:** Completed
 
-**Proposed solution:**
-```python
-# In main process
-import torch.multiprocessing as mp
-shared_cache = mp.Manager().dict()
+**Implementation:**
+- Added `share_memory_()` method to `PromptEmbeds` class for text embeddings
+- Added `enable_shared_memory()` method to `AiToolkitDataset` to enable sharing for all cached data
+- Automatically called after all caching operations complete in `setup_epoch()`
+- Handles latents, text embeddings, and CLIP vision embeddings
 
-# Each FileItemDTO stores key, not full tensor
-file_item.latent_cache_key = f"latent_{hash(file_item.path)}"
-shared_cache[file_item.latent_cache_key] = latent_tensor
+**How it works:**
+- After caching completes, all cached tensors are moved to shared memory via `tensor.share_memory_()`
+- When dataset is pickled to worker processes, shared tensors are accessible without duplication
+- Workers read from shared memory instead of having their own copies
+- Memory savings scale with cache size: for 1000 images with 400MB cache, saves 1.2GB with 4 workers
 
-# Workers access shared memory
-latent = shared_cache[file_item.latent_cache_key]
+**Files modified:**
+- `toolkit/prompt_utils.py`: Added `share_memory_()` method to `PromptEmbeds`
+- `toolkit/data_loader.py`: Added `enable_shared_memory()` method, called in `setup_epoch()`
+
+**Complexity:** Medium
+**Actual savings:** Hundreds of MB to GBs (depends on cache size and num_workers)
+
+**Example:**
 ```
-
-**Alternative: Use PyTorch shared tensors:**
-```python
-# Store in shared memory
-latent_tensor.share_memory_()  # Makes tensor accessible across processes
+1000 images, cached latents = 400MB
+- WITHOUT shared memory (4 workers): 400MB × 4 = 1.6GB
+- WITH shared memory (4 workers): 400MB × 1 = 400MB
+- Savings: 1.2GB (75% reduction)
 ```
-
-**Files to modify:**
-- `toolkit/dataloader_mixins.py`: LatentCachingMixin
-- `toolkit/data_loader.py`: get_dataloader_from_datasets
-
-**Complexity:** High (requires significant refactoring)
-**Estimated savings:** All cached data becomes shared (hundreds of MB to GBs)
 
 ---
 
