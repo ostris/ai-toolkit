@@ -730,12 +730,15 @@ def get_dataloader_from_datasets(
     # check if is caching latents
 
     dataloader_kwargs = {}
-    
+
     if is_native_windows():
         dataloader_kwargs['num_workers'] = 0
     else:
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        # persistent_workers keeps workers alive between epochs (requires num_workers > 0)
+        if dataset_config_list[0].persistent_workers and dataset_config_list[0].num_workers > 0:
+            dataloader_kwargs['persistent_workers'] = True
 
     if has_buckets:
         # make sure they all have buckets
