@@ -328,20 +328,99 @@ python -m toolkit.diagnose_dataloader_memory config/your_config.yaml
 
 ### 🎯 Features
 
-#### 9. Smart Batch Size Scaling
+#### 9. Smart Batch Size Scaling (COMPLETED ✓)
 **Impact:** Better GPU utilization, automatic tuning
 
-**Proposed solution:**
-- Automatically detect optimal batch size based on available memory
-- Gradually increase batch size during training (warmup)
-- Handle OOM gracefully and retry with smaller batch
+**Status:** Completed
 
-**Files to modify:**
-- New file: `toolkit/batch_size_tuner.py`
-- `jobs/process/BaseSDTrainProcess.py`: Integrate tuner
+**Implementation:**
+- Created `BatchSizeTuner` class for automatic batch size adjustment
+- Batch size warmup: Gradually increases from initial to stable size
+- OOM recovery: Automatically reduces batch size by 25% on OOM
+- Automatic scaling: Tries to increase batch size after 100 successful steps
+- Memory monitoring: Tracks GPU memory usage and headroom
+- Integrated into training loop with progress bar display
+
+**How it works:**
+- When `auto_scale_batch_size: true`, training starts with small batch size
+- **Warmup phase**: Gradually increases batch size over N steps
+- **Stable phase**: Maintains stable size, attempts increases when memory allows
+- **OOM handling**: Detects OOM, reduces batch size, continues training
+- **Progress tracking**: Shows current batch size in progress bar (e.g., "bs: 16")
+
+**Features:**
+1. **Auto-detection**: Binary search to find optimal batch size before training
+2. **Warmup**: Linear increase from initial to stable size over warmup_steps
+3. **OOM recovery**: Reduces batch size by 75% (configurable) on OOM
+4. **Automatic scaling**: Increases batch size after stability (every 100 steps)
+5. **Safety limits**: Respects min_batch_size and max_batch_size bounds
+6. **Memory awareness**: Only increases if GPU utilization < 90%
+
+**Files modified:**
+- `toolkit/batch_size_tuner.py`: New file with `BatchSizeTuner` class (new)
+- `toolkit/config_modules.py`: Added tuner config options to `TrainConfig`
+- `jobs/process/BaseSDTrainProcess.py`: Integrated tuner into training loop
+- TODOs.md: Marked TODO #9 as completed
+
+**Files created:**
+- `test_batch_size_tuner.py`: Comprehensive test suite
+- `example_batch_size_tuning.yaml`: Example configuration and documentation
+
+**Configuration:**
+```yaml
+train:
+  batch_size: 4                    # Initial batch size
+  auto_scale_batch_size: true      # Enable smart scaling
+  min_batch_size: 1               # Minimum allowed (default: 1)
+  max_batch_size: 32              # Maximum allowed (default: 32)
+  batch_size_warmup_steps: 100    # Warmup duration (default: 100)
+```
+
+**Benefits:**
+- **Easier configuration**: Start small, let it scale automatically
+- **Better GPU utilization**: Automatically finds optimal batch size
+- **OOM resilience**: Training doesn't crash, just adapts
+- **No manual tuning**: Eliminates trial-and-error batch size testing
+- **Memory efficient**: Only uses what fits, prevents waste
+
+**Example progression:**
+```
+Step 0:    batch_size = 4  (initial)
+Step 50:   batch_size = 10 (warmup)
+Step 100:  batch_size = 16 (warmup complete, stable)
+Step 200:  batch_size = 20 (auto-increased, good headroom)
+Step 250:  batch_size = 15 (OOM occurred, reduced)
+Step 350:  batch_size = 18 (increased again after stability)
+```
+
+**OOM Recovery Mechanism:**
+- Detects `torch.cuda.OutOfMemoryError`
+- Reduces batch size by 25% (oom_backoff_factor = 0.75)
+- Clears CUDA cache and continues training
+- Tracks OOM count (aborts after 5 consecutive OOMs)
+- Decays OOM count on successful steps
+
+**Memory Safety:**
+- Monitors GPU memory via `torch.cuda.max_memory_allocated()`
+- Maintains safety_margin (default: 90% utilization)
+- Only increases batch size when headroom available
+- Prevents approaching OOM proactively
 
 **Complexity:** High
-**Estimated benefit:** Easier configuration, better performance
+**Actual benefit:** Significantly easier configuration, optimal GPU utilization without manual tuning
+
+**Use cases:**
+- **New users**: Don't know optimal batch size → let tuner find it
+- **Experimentation**: Quick iteration without manual batch size testing
+- **Variable GPUs**: Training on different hardware → tuner adapts
+- **Memory-constrained**: Maximizes batch size within available memory
+- **Production**: Resilient to OOM, automatically recovers
+
+**Limitations:**
+- Warmup may delay reaching optimal batch size
+- Very small datasets may complete before tuner stabilizes
+- Batch size changes affect training dynamics (use fixed for reproducibility)
+- Requires at least 1 successful step before adjustment
 
 ---
 

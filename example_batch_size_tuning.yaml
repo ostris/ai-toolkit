@@ -1,0 +1,197 @@
+# Example configuration showing Smart Batch Size Scaling
+#
+# The batch size tuner automatically adjusts batch size for optimal GPU utilization
+# while avoiding OOM (Out Of Memory) errors.
+#
+# Features:
+# - Auto-detection: Find largest batch size that fits in GPU memory
+# - Batch size warmup: Gradually increase batch size during training
+# - OOM recovery: Automatically reduce batch size when OOM occurs
+# - Memory monitoring: Track GPU memory usage and headroom
+#
+# Benefits:
+# - Better GPU utilization (maximize throughput)
+# - Automatic tuning (no manual batch size testing)
+# - OOM resilience (training doesn't crash, just adapts)
+# - Easier configuration (start small, let it scale up)
+
+job: extension
+config:
+  name: my_training_job_with_batch_tuning
+  process:
+    - type: sd_trainer
+      training_folder: output
+
+      # Dataset configuration
+      datasets:
+        - folder_path: /path/to/dataset
+          caption_ext: .txt
+          resolution: 1024
+          cache_latents: true
+
+      # Network configuration
+      network:
+        type: lora
+        linear: 16
+        linear_alpha: 16
+
+      # Training settings with Batch Size Tuner
+      train:
+        steps: 1000
+
+        # === Basic Configuration ===
+        # Start with a safe, small batch size
+        batch_size: 4
+
+        # === Enable Auto-Scaling ===
+        auto_scale_batch_size: true  # Enable smart batch size scaling
+
+        # === Tuner Parameters ===
+        min_batch_size: 1           # Never go below this (default: 1)
+        max_batch_size: 32          # Never exceed this (default: 32)
+        batch_size_warmup_steps: 100  # Steps to warm up to stable size (default: 100)
+
+      # Optimizer
+      optimizer: adamw8bit
+      lr: 1e-4
+
+# How it works:
+#
+# 1. WARMUP PHASE (steps 0-100):
+#    - Starts at batch_size: 4
+#    - Gradually increases toward stable batch size
+#    - Monitors GPU memory usage
+#    - If OOM occurs, reduces and stabilizes
+#
+# 2. STABLE PHASE (steps 100+):
+#    - Maintains stable batch size
+#    - Every 100 successful steps, tries to increase
+#    - Monitors GPU memory (only increases if < 90% used)
+#    - If OOM, immediately reduces by 25%
+#
+# 3. OOM RECOVERY:
+#    - Detects OOM errors automatically
+#    - Reduces batch size by 25% (configurable)
+#    - Continues training without crashing
+#    - Tracks OOM count (aborts after 5 consecutive OOMs)
+
+# Example training progression:
+#
+# Step 0:    batch_size = 4  (initial)
+# Step 10:   batch_size = 6  (warmup)
+# Step 20:   batch_size = 8  (warmup)
+# ...
+# Step 100:  batch_size = 16 (warmup complete)
+# Step 200:  batch_size = 20 (auto-increased, good memory headroom)
+# Step 250:  batch_size = 15 (OOM occurred, reduced)
+# Step 300:  batch_size = 15 (stable)
+# Step 400:  batch_size = 18 (increased again)
+
+# GPU Memory Considerations:
+#
+# The tuner monitors GPU memory and aims for ~90% utilization:
+# - < 90% used: May try to increase batch size
+# - > 90% used: Stays at current size
+# - OOM: Immediately reduces by 25%
+#
+# Example on 24GB GPU:
+#   Initial: 4 images × ~3GB = 12GB (50% usage) → can increase
+#   After warmup: 16 images × ~3GB = ~18GB (75% usage) → stable
+#   OOM at 24: Reduces to 18 images (~16GB)
+
+# Progress Bar Output:
+#
+# With batch size tuner enabled, you'll see:
+#   Step 150/1000: lr: 1.0e-04 loss: 2.456e-02 bs: 16
+#                                                ↑
+#                                        Current batch size
+#
+# Without tuner:
+#   Step 150/1000: lr: 1.0e-04 loss: 2.456e-02
+
+# Alternative Configurations:
+#
+# === Conservative (for limited memory) ===
+# train:
+#   batch_size: 1
+#   auto_scale_batch_size: true
+#   min_batch_size: 1
+#   max_batch_size: 8   # Cap at small size
+#   batch_size_warmup_steps: 50
+#
+# === Aggressive (for high memory) ===
+# train:
+#   batch_size: 8
+#   auto_scale_batch_size: true
+#   min_batch_size: 4
+#   max_batch_size: 64  # Allow large batches
+#   batch_size_warmup_steps: 200
+#
+# === Disabled (fixed batch size) ===
+# train:
+#   batch_size: 16
+#   auto_scale_batch_size: false  # Traditional fixed batch size
+
+# Recommendations:
+#
+# For new users:
+# - Start with auto_scale_batch_size: true
+# - Use conservative initial batch_size (2-4)
+# - Set reasonable max_batch_size based on GPU (8-32)
+# - Let the tuner find optimal size automatically
+#
+# For experienced users:
+# - Use auto_scale for easier experimentation
+# - Adjust min/max based on specific model/dataset
+# - Disable for reproducible benchmarks (fixed batch size)
+#
+# For constrained memory:
+# - Set low max_batch_size (4-8)
+# - Use gradient_accumulation to simulate larger batches
+# - Enable cache_latents_to_disk to save memory
+#
+# For maximum throughput:
+# - Set high max_batch_size (32-64)
+# - Use shorter warmup_steps (50-100)
+# - Monitor that quality doesn't degrade with large batches
+
+# Combining with other optimizations:
+#
+# Batch size tuner works well with:
+# - GPU prefetching (gpu_prefetch_batches)
+# - Persistent workers (persistent_workers)
+# - Gradient accumulation
+# - Mixed precision training (fp16/bf16)
+#
+# Example optimal config:
+datasets:
+  - folder_path: /path/to/dataset
+    cache_latents: true
+    num_workers: 4
+    persistent_workers: true
+    gpu_prefetch_batches: 2
+
+train:
+  batch_size: 4
+  auto_scale_batch_size: true
+  max_batch_size: 32
+  batch_size_warmup_steps: 100
+  gradient_accumulation: 2  # Effective batch size = auto-tuned × 2
+  dtype: bf16
+
+# Troubleshooting:
+#
+# Q: Batch size keeps decreasing
+# A: GPU memory is too tight. Lower max_batch_size or enable more memory optimizations
+#
+# Q: Batch size never increases
+# A: Already at optimal size, or max_batch_size is too low
+#
+# Q: Training aborts with "Cannot reduce batch size further"
+# A: min_batch_size is too high, or GPU memory is critically low
+#
+# Q: Want to disable after testing
+# A: Set auto_scale_batch_size: false and use fixed batch_size
+#
+# Q: How to find optimal fixed batch size?
+# A: Enable tuner, train for 200-300 steps, note stable batch size, disable tuner with that value
