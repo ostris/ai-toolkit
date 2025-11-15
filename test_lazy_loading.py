@@ -8,6 +8,34 @@ import pickle
 import torch
 
 
+# Define classes at module level so they can be pickled
+class MockSD:
+    """Mock StableDiffusion model for testing."""
+    def __init__(self):
+        self.model_config = type('obj', (object,), {'arch': 'test'})()
+        self.device = 'cpu'
+        self.torch_dtype = None
+        # Simulate large model size
+        self.large_tensor = torch.randn(1000, 1000)  # ~4MB
+
+
+class MockDataset:
+    """Mock dataset with __getstate__ and __setstate__."""
+    def __init__(self, sd=None):
+        self.sd = sd
+        self.other_data = "important_data"
+
+    def __getstate__(self):
+        """Custom pickle state to exclude self.sd."""
+        state = self.__dict__.copy()
+        state['sd'] = None
+        return state
+
+    def __setstate__(self, state):
+        """Restore state from pickle."""
+        self.__dict__.update(state)
+
+
 def test_is_worker_process():
     """Test that is_worker_process() returns False in main process."""
     worker_info = torch.utils.data.get_worker_info()
@@ -18,31 +46,6 @@ def test_is_worker_process():
 
 def test_pickle_excludes_sd():
     """Test that pickling a dataset excludes self.sd."""
-
-    class MockSD:
-        """Mock StableDiffusion model for testing."""
-        def __init__(self):
-            self.model_config = type('obj', (object,), {'arch': 'test'})()
-            self.device = 'cpu'
-            self.torch_dtype = None
-            # Simulate large model size
-            self.large_tensor = torch.randn(1000, 1000)  # ~4MB
-
-    class MockDataset:
-        """Mock dataset with __getstate__ and __setstate__."""
-        def __init__(self, sd=None):
-            self.sd = sd
-            self.other_data = "important_data"
-
-        def __getstate__(self):
-            """Custom pickle state to exclude self.sd."""
-            state = self.__dict__.copy()
-            state['sd'] = None
-            return state
-
-        def __setstate__(self, state):
-            """Restore state from pickle."""
-            self.__dict__.update(state)
 
     # Create dataset with mock model
     mock_sd = MockSD()
