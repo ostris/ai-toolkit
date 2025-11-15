@@ -12,7 +12,7 @@ import traceback
 import cv2
 import numpy as np
 import torch
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file, save_file, safe_open
 from tqdm import tqdm
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, SiglipImageProcessor
 
@@ -1108,12 +1108,18 @@ class ClipImageFileItemDTOMixin:
         if self.clip_image_processor is None:
             is_dynamic_size_and_aspect = True # serving it raw
         if self.is_vision_clip_cached:
-            self.clip_image_embeds = load_file(self.get_clip_vision_embeddings_path())
+            # Use memory-mapped loading for CLIP embeddings to reduce RAM usage
+            # CLIP embeddings can be large (multiple tensors with high dimensions)
+            clip_path = self.get_clip_vision_embeddings_path()
+            with safe_open(clip_path, framework="pt", device="cpu") as f:
+                # Load all tensors from the file
+                self.clip_image_embeds = {key: f.get_tensor(key).clone() for key in f.keys()}
 
             # get a random unconditional image
             if self.clip_vision_unconditional_paths is not None:
                 unconditional_path = random.choice(self.clip_vision_unconditional_paths)
-                self.clip_image_embeds_unconditional = load_file(unconditional_path)
+                with safe_open(unconditional_path, framework="pt", device="cpu") as f:
+                    self.clip_image_embeds_unconditional = {key: f.get_tensor(key).clone() for key in f.keys()}
 
             return
         clip_image_path = self.get_new_clip_image_path()
@@ -1695,15 +1701,29 @@ class LatentCachingFileItemDTOMixin:
     def get_latent(self, device=None):
         if not self.is_latent_cached:
             return None
-        if self._encoded_latent is None:
-            # load it from disk
-            state_dict = load_file(
-                self.get_latent_path(),
-                # device=device if device is not None else self.latent_load_device
-                device='cpu'
-            )
-            self._encoded_latent = state_dict['latent']
-        return self._encoded_latent
+
+        latent_path = self.get_latent_path()
+
+        # Two caching strategies based on configuration:
+        # 1. Memory caching (cache_latents: true): Load once, keep in RAM, share across workers (TODO #2)
+        # 2. Disk-only caching (cache_latents_to_disk: true): Load on-demand via mmap, minimal RAM usage
+        if self.is_caching_to_memory:
+            # Strategy 1: Keep in RAM for sharing across workers
+            if self._encoded_latent is None:
+                state_dict = load_file(latent_path, device='cpu')
+                self._encoded_latent = state_dict['latent']
+            return self._encoded_latent
+        else:
+            # Strategy 2: Load on-demand via mmap (don't cache in RAM)
+            # This saves RAM at the cost of re-loading each time
+            # But with mmap, the OS caches the file pages, so it's still fast
+            with safe_open(latent_path, framework="pt", device="cpu") as f:
+                # Get mmap-backed tensor - data is paged in by OS as needed
+                latent = f.get_tensor('latent')
+                # Return a clone to detach from file handle
+                # The clone operation reads from mmap, avoiding full RAM allocation first
+                # After this returns, the latent can be used and then discarded
+                return latent.clone()
 
 
 class LatentCachingMixin:

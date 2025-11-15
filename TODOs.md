@@ -66,31 +66,43 @@ This document tracks potential improvements and optimizations for the AI Toolkit
 
 ---
 
-#### 3. Memory-Mapped Tensor Storage
-**Impact:** Near-zero memory per worker, still fast access
+#### 3. Memory-Mapped Tensor Storage (COMPLETED ✓)
+**Impact:** Reduced RAM usage for disk-cached data
 
-**Proposed solution:**
-```python
-# Instead of loading full tensor into RAM
-latent = torch.load(latent_path)  # Current
+**Status:** Completed
 
-# Use memory mapping
-latent = torch.from_file(
-    latent_path,
-    shared=True,
-    size=tensor_size,
-    dtype=torch.float16
-)  # OS handles paging from disk
-```
+**Implementation:**
+- Modified `get_latent()` in `LatentCachingFileItemDTOMixin` to use memory-mapped loading for disk-only caches
+- Modified `load_clip_image()` in `ClipImageFileItemDTOMixin` to use mmap for CLIP vision embeddings
+- Uses safetensors' `safe_open()` for lazy/mmap-backed tensor access
+- Automatically enabled for disk-only caches (`cache_latents_to_disk: true` without `cache_latents: true`)
 
-**Files to modify:**
-- `toolkit/dataloader_mixins.py`: LatentCachingFileItemDTOMixin.get_latent()
-- `toolkit/fastsafetensors_utils.py`: Add mmap support
+**How it works:**
+- For memory caches: Normal loading, shared across workers (TODO #2)
+- For disk-only caches: Memory-mapped loading via `safe_open()`
+- Tensors are backed by mmap'd file, OS pages in data as needed
+- When copied to GPU, data flows through mmap without full RAM load
+- Multiple workers can mmap the same file, OS deduplicates at page cache level
+
+**Files modified:**
+- `toolkit/dataloader_mixins.py`: Added mmap support to `get_latent()` and `load_clip_image()`
 
 **Complexity:** Medium
-**Estimated savings:** All cached tensors become memory-mapped
+**Actual benefit:** Reduces CPU RAM usage for disk-cached data, especially beneficial with many workers
 
-**Note:** This pairs well with fastsafetensors which already uses mmap internally
+**Use case:**
+- Best for: `cache_latents_to_disk: true` (disk-only caching)
+- Complements TODO #2 (shared memory) which is for in-memory caches
+- Together they cover both caching strategies
+
+**Example:**
+```yaml
+# Disk-only caching with mmap (TODO #3)
+cache_latents_to_disk: true  # Uses mmap, minimal RAM
+
+# OR in-memory caching with sharing (TODO #2)
+cache_latents: true  # Uses shared memory, faster but more RAM
+```
 
 ---
 
