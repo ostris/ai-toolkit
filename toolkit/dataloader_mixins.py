@@ -1716,6 +1716,9 @@ class LatentCachingMixin:
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
         if self.dataset_config.num_frames > 1:
             raise Exception("Error: caching latents is not supported for multi-frame datasets")
+        if self.sd is None:
+            raise RuntimeError("Error: self.sd is None. Cannot cache latents without model. "
+                             "This should not happen - caching should only occur in main process before pickling.")
         with accelerator.main_process_first():
             print_acc(f"Caching latents for {self.dataset_path}")
             # cache all latents to disk
@@ -1865,10 +1868,13 @@ class TextEmbeddingCachingMixin:
         self.is_caching_text_embeddings = self.dataset_config.cache_text_embeddings
 
     def cache_text_embeddings(self: 'AiToolkitDataset'):
+        if self.sd is None:
+            raise RuntimeError("Error: self.sd is None. Cannot cache text embeddings without model. "
+                             "This should not happen - caching should only occur in main process before pickling.")
         with accelerator.main_process_first():
             print_acc(f"Caching text_embeddings for {self.dataset_path}")
             print_acc(" - Saving text embeddings to disk")
-            
+
             did_move = False
 
             # use tqdm to show progress
@@ -1937,6 +1943,9 @@ class CLIPCachingMixin:
     def cache_clip_vision_to_disk(self: 'AiToolkitDataset'):
         if not self.is_caching_clip_vision_to_disk:
             return
+        if self.sd is None:
+            raise RuntimeError("Error: self.sd is None. Cannot cache clip vision without model. "
+                             "This should not happen - caching should only occur in main process before pickling.")
         with torch.no_grad():
             print_acc(f"Caching clip vision for {self.dataset_path}")
 
@@ -2127,10 +2136,13 @@ class ControlCachingMixin:
     def setup_controls(self: 'AiToolkitDataset'):
         if not self.is_generating_controls:
             return
+        if self.sd is None:
+            raise RuntimeError("Error: self.sd is None. Cannot setup controls without model. "
+                             "This should not happen - control setup should only occur in main process before pickling.")
         with torch.no_grad():
             print_acc(f"Generating controls for {self.dataset_path}")
             device = self.sd.device
-            
+
             self.control_generator = ControlGenerator(
                 device=device,
                 sd=self.sd,

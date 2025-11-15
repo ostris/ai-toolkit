@@ -29,6 +29,16 @@ import platform
 def is_native_windows():
     return platform.system() == "Windows" and platform.release() != "2"
 
+
+def is_worker_process():
+    """
+    Detect if we're running in a PyTorch DataLoader worker process.
+    Returns True if in a worker, False if in main process.
+    """
+    worker_info = torch.utils.data.get_worker_info()
+    return worker_info is not None
+
+
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
     
@@ -595,6 +605,25 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         else:
             # Dataloader is batching
             return self._get_single_item(item)
+
+    def __getstate__(self):
+        """
+        Custom pickle state to exclude self.sd from being pickled to worker processes.
+        This saves ~19GB per worker for large models like Qwen-Image.
+        """
+        state = self.__dict__.copy()
+        # Remove the unpicklable sd reference to save memory in workers
+        # Workers don't need the model - they only load cached latents/embeddings
+        state['sd'] = None
+        return state
+
+    def __setstate__(self, state):
+        """
+        Restore state from pickle. self.sd will be None in workers.
+        """
+        self.__dict__.update(state)
+        # Note: self.sd is None in worker processes, which is expected
+        # Workers only need to load cached data, not encode new data
 
 
 def get_dataloader_from_datasets(
