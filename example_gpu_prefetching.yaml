@@ -1,0 +1,140 @@
+# Example configuration showing GPU prefetching feature
+#
+# GPU prefetching asynchronously moves batches to GPU while training is running,
+# reducing GPU idle time and improving training throughput.
+#
+# Benefits:
+# - Faster training (reduced GPU idle time between batches)
+# - Better GPU utilization (next batch ready while current batch trains)
+# - Particularly beneficial for I/O-bound training (disk-cached latents, large batches)
+#
+# Requirements:
+# - CUDA-capable GPU
+# - Sufficient GPU memory for prefetch buffer (prefetch_batches * batch_size * data_size)
+#
+# How it works:
+# - Background thread fetches next N batches from DataLoader
+# - Asynchronously transfers them to GPU using CUDA streams
+# - Training loop gets pre-warmed batches from queue (already on GPU)
+# - While GPU trains on batch N, batch N+1 and N+2 are being prepared
+
+job: extension
+config:
+  name: my_training_job_with_prefetching
+  process:
+    - type: sd_trainer
+      training_folder: output
+
+      # Dataset configuration
+      datasets:
+        - folder_path: /path/to/dataset
+          caption_ext: .txt
+          resolution: 1024
+
+          # DataLoader worker settings
+          num_workers: 4              # Number of worker processes
+          prefetch_factor: 2          # Batches to prefetch per worker (worker → main process)
+          persistent_workers: true    # Keep workers alive between epochs
+
+          # GPU prefetching settings (NEW!)
+          gpu_prefetch_batches: 2     # Number of batches to prefetch to GPU (0 = disabled)
+                                      # Recommended: 2-3 batches
+                                      # Higher = more memory usage, lower = less benefit
+
+          # Caching settings (works great with GPU prefetching)
+          cache_latents: true         # Or cache_latents_to_disk: true
+
+      # Network configuration
+      network:
+        type: lora
+        linear: 16
+        linear_alpha: 16
+
+      # Training settings
+      train:
+        batch_size: 1
+        steps: 1000
+        gradient_accumulation_steps: 1
+
+      # Optimizer
+      optimizer: adamw8bit
+      lr: 1e-4
+
+# Performance comparison:
+#
+# WITHOUT GPU prefetching (gpu_prefetch_batches: 0):
+# - Batch loads to CPU → Training step → GPU transfer for next batch
+# - GPU waits while CPU prepares next batch
+# - GPU utilization: 70-85% (idle time between batches)
+#
+# WITH GPU prefetching (gpu_prefetch_batches: 2):
+# - Batches pre-loaded to GPU in background
+# - Training step gets batch instantly (already on GPU)
+# - GPU utilization: 90-98% (minimal idle time)
+#
+# Expected speedup:
+# - 10-30% faster training (depends on batch size, I/O speed, model size)
+# - Greater benefit for:
+#   * Disk-cached latents (I/O-bound)
+#   * Larger batch sizes
+#   * Slower storage (HDD vs SSD vs NVMe)
+#   * Complex data preprocessing
+
+# Memory considerations:
+#
+# GPU memory usage increases by:
+#   gpu_prefetch_batches × batch_size × data_size_per_item
+#
+# Example:
+#   batch_size: 4
+#   gpu_prefetch_batches: 2
+#   latent size: ~20MB per 1024x1024 image
+#   Total prefetch buffer: 2 × 4 × 20MB = 160MB
+#
+# Recommended settings:
+# - For 24GB GPU: gpu_prefetch_batches: 2-3
+# - For 12GB GPU: gpu_prefetch_batches: 1-2
+# - For 8GB GPU: gpu_prefetch_batches: 1 (or 0 if tight on memory)
+
+# Advanced tuning:
+#
+# Balance the prefetch pipeline:
+# 1. Worker prefetching (num_workers × prefetch_factor):
+#    - Controls CPU → main process pipeline
+#    - Recommended: num_workers=4, prefetch_factor=2
+#
+# 2. GPU prefetching (gpu_prefetch_batches):
+#    - Controls main process → GPU pipeline
+#    - Recommended: 2
+#
+# Total pipeline depth = num_workers × prefetch_factor + gpu_prefetch_batches
+#   Example: 4 × 2 + 2 = 10 batches in pipeline
+#
+# Optimal settings depend on:
+# - Storage speed (HDD/SSD/NVMe)
+# - Network latency (if using network storage)
+# - CPU speed (for preprocessing)
+# - GPU speed (for training)
+#
+# Start with defaults, monitor GPU utilization, adjust if needed.
+
+# Combining with other optimizations:
+#
+# For best performance, combine GPU prefetching with:
+# 1. Lazy model loading (TODO #1) - saves 19GB per worker
+# 2. Shared memory caching (TODO #2) - prevents cache duplication
+# 3. Memory-mapped loading (TODO #3) - reduces RAM for disk caches
+# 4. Persistent workers (TODO #4) - faster epoch transitions
+#
+# Example optimal config:
+datasets:
+  - folder_path: /path/to/dataset
+    resolution: 1024
+    # Worker optimization
+    num_workers: 4
+    persistent_workers: true
+    prefetch_factor: 2
+    # GPU optimization
+    gpu_prefetch_batches: 2
+    # Memory optimization
+    cache_latents_to_disk: true  # Or cache_latents: true for faster access

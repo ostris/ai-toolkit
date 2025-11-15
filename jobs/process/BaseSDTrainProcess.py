@@ -26,7 +26,7 @@ from toolkit.memory_management import MemoryManager
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
+from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch, get_dataloader_datasets, get_dataloader_with_prefetch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
@@ -2027,14 +2027,30 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if self.data_loader is not None:
             dataloader = self.data_loader
-            dataloader_iterator = iter(dataloader)
+            # Wrap with GPU prefetcher if configured
+            datasets = get_dataloader_datasets(dataloader)
+            gpu_prefetch_batches = datasets[0].dataset_config.gpu_prefetch_batches if datasets else 0
+            if gpu_prefetch_batches > 0:
+                print_acc(f"Enabling GPU prefetching with {gpu_prefetch_batches} batches")
+            dataloader_or_prefetcher = get_dataloader_with_prefetch(
+                dataloader, device=self.device, prefetch_batches=gpu_prefetch_batches
+            )
+            dataloader_iterator = iter(dataloader_or_prefetcher)
         else:
             dataloader = None
             dataloader_iterator = None
 
         if self.data_loader_reg is not None:
             dataloader_reg = self.data_loader_reg
-            dataloader_iterator_reg = iter(dataloader_reg)
+            # Wrap with GPU prefetcher if configured
+            datasets_reg = get_dataloader_datasets(dataloader_reg)
+            gpu_prefetch_batches_reg = datasets_reg[0].dataset_config.gpu_prefetch_batches if datasets_reg else 0
+            if gpu_prefetch_batches_reg > 0:
+                print_acc(f"Enabling GPU prefetching for reg dataloader with {gpu_prefetch_batches_reg} batches")
+            dataloader_reg_or_prefetcher = get_dataloader_with_prefetch(
+                dataloader_reg, device=self.device, prefetch_batches=gpu_prefetch_batches_reg
+            )
+            dataloader_iterator_reg = iter(dataloader_reg_or_prefetcher)
         else:
             dataloader_reg = None
             dataloader_iterator_reg = None
@@ -2104,7 +2120,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 # hit the end of an epoch, reset
                                 if self.progress_bar is not None:
                                     self.progress_bar.pause()
-                                dataloader_iterator_reg = iter(dataloader_reg)
+                                dataloader_iterator_reg = iter(dataloader_reg_or_prefetcher)
                                 trigger_dataloader_setup_epoch(dataloader_reg)
 
                             with self.timer('get_batch:reg'):
@@ -2121,7 +2137,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 # hit the end of an epoch, reset
                                 if self.progress_bar is not None:
                                     self.progress_bar.pause()
-                                dataloader_iterator = iter(dataloader)
+                                dataloader_iterator = iter(dataloader_or_prefetcher)
                                 trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
                                 if self.train_config.gradient_accumulation_steps == -1:

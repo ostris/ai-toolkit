@@ -802,3 +802,43 @@ def get_dataloader_datasets(dataloader: DataLoader):
         return dataloader.dataset.datasets
     else:
         return [dataloader.dataset]
+
+
+def get_dataloader_with_prefetch(dataloader: DataLoader, device: str = 'cuda', prefetch_batches: int = 0):
+    """
+    Wrap a dataloader with GPU prefetching for reduced idle time.
+
+    If prefetch_batches > 0, returns a DataLoaderPrefetcher that asynchronously
+    moves batches to GPU while training is running. Otherwise returns the original dataloader.
+
+    Args:
+        dataloader: PyTorch DataLoader to potentially wrap
+        device: Target device for prefetching (default: 'cuda')
+        prefetch_batches: Number of batches to prefetch (0 = disabled)
+
+    Returns:
+        DataLoaderPrefetcher if prefetch_batches > 0, otherwise original dataloader
+
+    Example:
+        >>> dataloader = get_dataloader_from_datasets(dataset_options, batch_size=4)
+        >>> # Get prefetcher config from dataset
+        >>> datasets = get_dataloader_datasets(dataloader)
+        >>> prefetch_batches = datasets[0].dataset_config.gpu_prefetch_batches if datasets else 0
+        >>> # Wrap with prefetcher
+        >>> dataloader_or_prefetcher = get_dataloader_with_prefetch(
+        >>>     dataloader, device='cuda', prefetch_batches=prefetch_batches
+        >>> )
+        >>> # Use normally - iterator automatically handles prefetching
+        >>> for batch in dataloader_or_prefetcher:
+        >>>     train_step(batch)  # batch already on GPU if prefetching enabled
+    """
+    if prefetch_batches > 0:
+        from toolkit.cache_prefetcher import DataLoaderPrefetcher
+        return DataLoaderPrefetcher(
+            dataloader=dataloader,
+            device=device,
+            prefetch_batches=prefetch_batches,
+            enabled=True,
+        )
+    else:
+        return dataloader
