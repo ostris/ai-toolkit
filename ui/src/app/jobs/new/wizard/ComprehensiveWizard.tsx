@@ -1080,6 +1080,20 @@ export default function ComprehensiveWizard({
                     </FormGroup>
                   </div>
                 )}
+
+                {/* Data-driven target configuration */}
+                <div className="mt-6 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-sm font-medium text-gray-300">Additional Target Options (Data-Driven)</span>
+                    <span className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded">New</span>
+                  </div>
+                  <StepRenderer
+                    stepId="target"
+                    selectedModel={jobConfig.config.process[0].model?.arch || ''}
+                    jobConfig={jobConfig}
+                    onConfigChange={handleDataDrivenConfigChange}
+                  />
+                </div>
               </div>
             )}
 
@@ -1367,6 +1381,20 @@ export default function ComprehensiveWizard({
                       )}
                     </div>
                   </FormGroup>
+                </div>
+
+                {/* Data-driven dataset configuration */}
+                <div className="mt-6 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-sm font-medium text-gray-300">Additional Dataset Options (Data-Driven)</span>
+                    <span className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded">New</span>
+                  </div>
+                  <StepRenderer
+                    stepId="dataset"
+                    selectedModel={jobConfig.config.process[0].model?.arch || ''}
+                    jobConfig={jobConfig}
+                    onConfigChange={handleDataDrivenConfigChange}
+                  />
                 </div>
               </div>
             )}
