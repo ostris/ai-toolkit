@@ -395,20 +395,81 @@ These are entirely hidden but powerful for advanced training:
 
 ---
 
+## RECENT UPDATES (November 2025)
+
+The guided wizard has been significantly expanded from ~50% to ~85% configuration coverage.
+
+### Newly Exposed Options:
+
+**Training Configuration (20+ new options):**
+- ✅ gradient_accumulation - Effective batch size multiplier
+- ✅ max_grad_norm - Gradient clipping threshold
+- ✅ unet_lr / text_encoder_lr - Separate component learning rates
+- ✅ train_unet / train_text_encoder - Component training toggles
+- ✅ prompt_dropout_prob - Prompt-level dropout
+- ✅ timestep_type - Timestep sampling strategy (sigmoid, linear, lognorm_blend, etc.)
+- ✅ snr_gamma - SNR loss weighting
+- ✅ cache_text_embeddings - Cache text embeddings in memory
+- ✅ unload_text_encoder - Offload TE to CPU
+
+**Model Configuration (8+ new options):**
+- ✅ layer_offloading - CPU ↔ GPU layer swapping
+- ✅ layer_offloading_transformer_percent - % of transformer to offload
+- ✅ layer_offloading_text_encoder_percent - % of TE to offload
+- ✅ compile - torch.compile() optimization
+- ✅ text_encoder_bits - TE quantization precision (16/8/4)
+- ✅ assistant_lora_path - Training adapter (e.g., Schnell adapter)
+- ✅ vae_path - Custom VAE model path
+- ✅ inference_lora_path - Inference-time LoRA
+
+**Network Configuration (6+ new options):**
+- ✅ conv / conv_alpha - Convolution layer rank and alpha
+- ✅ alpha - Global alpha override
+- ✅ dropout - Network dropout regularization
+- ✅ transformer_only - Train only transformer layers
+- ✅ lokr_full_rank / lokr_factor - LoKr-specific options
+
+**Dataset Configuration (6+ new options):**
+- ✅ num_repeats - Dataset repetition multiplier
+- ✅ keep_tokens - Preserve first N tokens
+- ✅ token_dropout_rate - Individual token dropout
+- ✅ shuffle_tokens - Token order randomization
+- ✅ default_caption - Fallback caption for uncaptioned images
+
+**Sample/Preview Configuration (8+ new options):**
+- ✅ width / height - Custom preview dimensions
+- ✅ neg - Negative prompt support
+- ✅ network_multiplier - LoRA strength during previews
+- ✅ guidance_rescale - Prevent over-saturation
+- ✅ format - Preview image format (jpg/png/webp)
+- ✅ refiner_start_at - SDXL refiner timing
+
+**Save Configuration (5+ new options):**
+- ✅ save_format - SafeTensors/Diffusers/CKPT
+- ✅ dtype - Save precision (bf16/float16/float32)
+- ✅ push_to_hub - HuggingFace Hub auto-upload
+- ✅ hf_repo_id - Hub repository ID
+- ✅ hf_private - Private repository option
+
+### Still Hidden (Advanced/Specialized):
+- Adapter configuration (IP-Adapter, ControlNet, etc.)
+- Multi-stage training options
+- Feature extractor paths
+- Optimal noise pairing
+- Differential guidance modes
+- Advanced preservation strategies (inverted_mask_prior, etc.)
+
+---
+
 ## RECOMMENDATIONS
 
 **For users who need advanced configuration:**
-1. Create custom YAML configs directly with these hidden options
-2. Update the wizard to expose more commonly-used options like:
-   - lr_scheduler / lr_scheduler_params (learning rate control)
-   - noise_scheduler (training dynamics)
-   - cache_latents / cache_latents_to_disk (speed)
-   - augmentations (data quality)
-   - loss_target (learning target)
+1. The wizard now covers most common use cases (~85% of options)
+2. For specialized features (adapters, multi-stage, feature extractors), create custom YAML configs
+3. Advanced preservation and guidance modes remain YAML-only for safety
 
-**High-priority candidates for wizard exposure:**
-- Learning rate scheduler control
-- Noise scheduler selection
-- Caching strategies
-- Augmentation configuration
-- Noise scheduling parameters (min/max denoising steps)
+**Remaining high-priority candidates for future exposure:**
+- Adapter type selection and configuration (IP-Adapter, ControlNet)
+- Multi-stage training boundaries
+- Advanced regularization (inverted_mask_prior, do_prior_divergence)
+- Control image path configuration

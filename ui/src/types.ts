@@ -65,10 +65,14 @@ export interface NetworkConfig {
   linear_alpha: number;
   conv: number;
   conv_alpha: number;
+  alpha?: number;
+  dropout?: number;
+  transformer_only?: boolean;
   lokr_full_rank: boolean;
   lokr_factor: number;
   network_kwargs: {
     ignore_if_contains: string[];
+    only_if_contains?: string[];
   };
 }
 
@@ -78,6 +82,8 @@ export interface SaveConfig {
   max_step_saves_to_keep: number;
   save_format: string;
   push_to_hub: boolean;
+  hf_repo_id?: string;
+  hf_private?: boolean;
 }
 
 export interface DatasetConfig {
@@ -138,6 +144,8 @@ export interface TrainConfig {
   content_or_style: string;
   optimizer: string;
   lr: number;
+  unet_lr?: number;
+  text_encoder_lr?: number;
   lr_scheduler?: string;
   lr_scheduler_params?: Record<string, unknown>;
   ema_config?: EMAConfig;
@@ -167,6 +175,8 @@ export interface TrainConfig {
   snr_gamma?: number;
   min_denoising_steps?: number;
   max_denoising_steps?: number;
+  max_grad_norm?: number;
+  prompt_dropout_prob?: number;
 }
 
 export interface QuantizeKwargsConfig {
@@ -186,6 +196,11 @@ export interface ModelConfig {
   layer_offloading?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
+  compile?: boolean;
+  vae_path?: string;
+  assistant_lora_path?: string;
+  inference_lora_path?: string;
+  text_encoder_bits?: number;
 }
 
 export interface SampleItem {
@@ -217,9 +232,13 @@ export interface SampleConfig {
   seed: number;
   walk_seed: boolean;
   guidance_scale: number;
+  guidance_rescale?: number;
   sample_steps: number;
   num_frames: number;
   fps: number;
+  format?: string;
+  network_multiplier?: number;
+  refiner_start_at?: number;
 }
 
 export interface SliderConfig {
