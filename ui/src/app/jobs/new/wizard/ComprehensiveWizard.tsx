@@ -830,10 +830,133 @@ export default function ComprehensiveWizard({
                 <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
                   Regularization helps prevent overfitting. These settings are optional but recommended.
                 </p>
-                {/* Placeholder for regularization settings */}
-                <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-md">
-                  <p className="text-sm text-gray-500">Advanced regularization settings coming soon...</p>
-                </div>
+
+                {/* Caption Dropout */}
+                <FormGroup
+                  label="Caption Dropout Rate"
+                  tooltip="Randomly drops captions during training to improve generalization. Higher values = more generalization but less prompt adherence."
+                >
+                  <NumberInput
+                    value={jobConfig.config.process[0].datasets?.[0]?.caption_dropout_rate || 0.05}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].caption_dropout_rate')}
+                    min={0}
+                    max={0.5}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Recommended: 0.05 (5%). Set to 0 for strict prompt following.
+                  </p>
+                </FormGroup>
+
+                {/* Weight Decay */}
+                <FormGroup
+                  label="Weight Decay"
+                  tooltip="L2 regularization strength. Prevents weights from growing too large."
+                >
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.optimizer_params?.weight_decay || 0.0001}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.weight_decay')}
+                    min={0}
+                    max={0.1}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Recommended: 0.0001 for most cases. Higher values (0.01) for small datasets.
+                  </p>
+                </FormGroup>
+
+                {/* Gradient Checkpointing */}
+                <FormGroup
+                  label="Gradient Checkpointing"
+                  tooltip="Trades compute for memory. Allows training larger models with less VRAM."
+                >
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].train?.gradient_checkpointing}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.gradient_checkpointing')}
+                    label="Enable gradient checkpointing (recommended for limited VRAM)"
+                  />
+                </FormGroup>
+
+                {/* EMA */}
+                <FormGroup
+                  label="Exponential Moving Average (EMA)"
+                  tooltip="Maintains a smoothed version of weights for more stable results"
+                >
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].train?.ema_config?.use_ema}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
+                    label="Enable EMA (reduces training noise)"
+                  />
+                </FormGroup>
+
+                {jobConfig.config.process[0].train?.ema_config?.use_ema && (
+                  <div className="ml-6">
+                    <FormGroup label="EMA Decay">
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.ema_config?.ema_decay || 0.99}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
+                        min={0.9}
+                        max={0.9999}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Higher = smoother but slower adaptation. Recommended: 0.99
+                      </p>
+                    </FormGroup>
+                  </div>
+                )}
+
+                {/* Diff Output Preservation */}
+                <FormGroup
+                  label="Differential Output Preservation"
+                  tooltip="Preserves model's original capabilities while learning new concepts"
+                >
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].train?.diff_output_preservation}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
+                    label="Enable output preservation (prevents catastrophic forgetting)"
+                  />
+                </FormGroup>
+
+                {jobConfig.config.process[0].train?.diff_output_preservation && (
+                  <div className="ml-6 space-y-3">
+                    <FormGroup label="Preservation Strength">
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.diff_output_preservation_multiplier || 1.0}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
+                        min={0.1}
+                        max={10}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Higher = more preservation, less concept learning
+                      </p>
+                    </FormGroup>
+
+                    <FormGroup label="Preservation Class">
+                      <TextInput
+                        value={jobConfig.config.process[0].train?.diff_output_preservation_class || 'person'}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
+                        placeholder="person"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Class to preserve (e.g., &quot;person&quot;, &quot;dog&quot;, &quot;style&quot;)
+                      </p>
+                    </FormGroup>
+                  </div>
+                )}
+
+                {/* Loss Type */}
+                <FormGroup
+                  label="Loss Function"
+                  tooltip="Different loss functions can affect training quality"
+                >
+                  <SelectInput
+                    value={jobConfig.config.process[0].train?.loss_type || 'mse'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.loss_type')}
+                    options={[
+                      { value: 'mse', label: 'MSE (Mean Squared Error) - Standard' },
+                      { value: 'mae', label: 'MAE (Mean Absolute Error) - Robust to outliers' },
+                      { value: 'wavelet', label: 'Wavelet - Better for fine details' }
+                    ]}
+                  />
+                </FormGroup>
               </div>
             )}
 
