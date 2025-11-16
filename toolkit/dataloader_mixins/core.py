@@ -66,6 +66,52 @@ class Augments:
                         raise ValueError(f"invalid cv2 enum: {split_string[1]}")
 
 
+transforms_dict = {
+    'ColorJitter': transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.03),
+    'RandomEqualize': transforms.RandomEqualize(p=0.2),
+}
+
+img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
+
+
+def standardize_images(images):
+    """
+    Standardize the given batch of images using the specified mean and std.
+    Expects values of 0 - 1
+
+    Args:
+    images (torch.Tensor): A batch of images in the shape of (N, C, H, W),
+                           where N is the number of images, C is the number of channels,
+                           H is the height, and W is the width.
+
+    Returns:
+    torch.Tensor: Standardized images.
+    """
+    mean = [0.48145466, 0.4578275, 0.40821073]
+    std = [0.26862954, 0.26130258, 0.27577711]
+
+    # Define the normalization transform
+    normalize = transforms.Normalize(mean=mean, std=std)
+
+    # Apply normalization to each image in the batch
+    standardized_images = torch.stack([normalize(img) for img in images])
+
+    return standardized_images
+
+
+def clean_caption(caption):
+    # this doesnt make any sense anymore in a world that is not based on comma seperated tokens
+    # # remove any newlines
+    # caption = caption.replace('\n', ', ')
+    # # remove new lines for all operating systems
+    # caption = caption.replace('\r', ', ')
+    # caption_split = caption.split(',')
+    # # remove empty strings
+    # caption_split = [p.strip() for p in caption_split if p.strip()]
+    # # join back together
+    # caption = ', '.join(caption_split)
+    return caption
+
 
 class ArgBreakMixin:
     # just stops super calls form hitting object

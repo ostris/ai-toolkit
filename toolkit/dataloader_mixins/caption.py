@@ -28,6 +28,7 @@ from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.pixtral_vision import PixtralVisionImagePreprocessorCompatible
 from toolkit.prompt_utils import inject_trigger_into_prompt
 from torchvision import transforms
+from toolkit.dataloader_mixins.core import clean_caption
 from PIL import Image, ImageFilter, ImageOps
 from PIL.ImageOps import exif_transpose
 import albumentations as A
