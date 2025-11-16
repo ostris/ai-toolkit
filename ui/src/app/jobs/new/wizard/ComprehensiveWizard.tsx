@@ -100,6 +100,77 @@ export default function ComprehensiveWizard({
     [jobConfig.config.process[0].model?.arch]
   );
 
+  // Get model-specific resolution info
+  const getModelResolutionInfo = (archName: string) => {
+    const info: Record<string, { native: number; recommended: number[]; maxSupported: number; supportsAspect: boolean }> = {
+      sd1: { native: 512, recommended: [512], maxSupported: 768, supportsAspect: false },
+      sd15: { native: 512, recommended: [512], maxSupported: 768, supportsAspect: false },
+      sd2: { native: 768, recommended: [512, 768], maxSupported: 1024, supportsAspect: false },
+      sdxl: { native: 1024, recommended: [768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      sd3: { native: 1024, recommended: [512, 768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      flux: { native: 1024, recommended: [512, 768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      flux_kontext: { native: 1024, recommended: [512, 768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      flex1: { native: 1024, recommended: [512, 768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      flex2: { native: 1024, recommended: [512, 768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      chroma: { native: 1024, recommended: [512, 768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      lumina2: { native: 1024, recommended: [768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      qwen_image: { native: 1024, recommended: [768, 1024, 1536, 2048], maxSupported: 2048, supportsAspect: true },
+      qwen_image_edit: { native: 1024, recommended: [768, 1024, 1536, 2048], maxSupported: 2048, supportsAspect: true },
+      qwen_image_edit_plus: { native: 1024, recommended: [768, 1024, 1536, 2048], maxSupported: 2048, supportsAspect: true },
+      hidream: { native: 1024, recommended: [768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      hidream_e1: { native: 1024, recommended: [768, 1024, 1536], maxSupported: 2048, supportsAspect: true },
+      omnigen2: { native: 1024, recommended: [768, 1024, 1536], maxSupported: 2048, supportsAspect: true }
+    };
+    return info[archName] || { native: 1024, recommended: [512, 768, 1024], maxSupported: 2048, supportsAspect: true };
+  };
+
+  // Calculate smart resolution options based on model and dataset
+  const getSmartResolutionOptions = () => {
+    if (!selectedModelArch) return [];
+
+    const modelInfo = getModelResolutionInfo(selectedModelArch.name);
+    let options = [...modelInfo.recommended];
+
+    // If dataset has high-res images, consider adding higher resolutions
+    if (datasetInfo) {
+      const datasetMaxRes = Math.max(datasetInfo.most_common_resolution[0], datasetInfo.most_common_resolution[1]);
+
+      // Add 1536 if dataset supports it and model can handle it
+      if (datasetMaxRes >= 1536 && modelInfo.maxSupported >= 1536 && !options.includes(1536)) {
+        options.push(1536);
+      }
+
+      // Add 2048 for very high-res datasets
+      if (datasetMaxRes >= 2048 && modelInfo.maxSupported >= 2048 && !options.includes(2048)) {
+        options.push(2048);
+      }
+    }
+
+    // Sort and deduplicate
+    options = [...new Set(options)].sort((a, b) => a - b);
+
+    return options;
+  };
+
+  // Get recommended resolution
+  const getRecommendedResolution = () => {
+    if (!selectedModelArch || !datasetInfo) return 1024;
+
+    const modelInfo = getModelResolutionInfo(selectedModelArch.name);
+    const datasetMaxRes = Math.max(datasetInfo.most_common_resolution[0], datasetInfo.most_common_resolution[1]);
+
+    // If dataset has high-res images and model supports it, recommend higher resolution
+    if (datasetMaxRes >= 1536 && modelInfo.maxSupported >= 1536) {
+      return 1536;
+    } else if (datasetMaxRes >= 1024 && modelInfo.maxSupported >= 1024) {
+      return 1024;
+    } else if (datasetMaxRes >= 768 && modelInfo.maxSupported >= 768) {
+      return 768;
+    }
+
+    return modelInfo.native;
+  };
+
   // Calculate config summary
   const configSummary = useMemo<ConfigSummary>(() => {
     const process = jobConfig.config.process[0];
@@ -477,17 +548,100 @@ export default function ComprehensiveWizard({
             {/* Step 5: Resolution */}
             {currentStepDef.id === 'resolution' && (
               <div className="space-y-4">
-                <FormGroup label="Training Resolution" tooltip="Resolution for training (width)">
-                  <NumberInput
-                    value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}
-                    onChange={value => {
-                      setJobConfig([value, value], 'config.process[0].datasets[0].resolution');
-                    }}
-                    min={256}
-                    max={2048}
-                    step={64}
-                  />
+                {/* Resolution Info Card */}
+                {selectedModelArch && (
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-md">
+                    <h3 className="font-semibold mb-2">Resolution Recommendation</h3>
+                    <div className="space-y-2 text-sm">
+                      <p>
+                        <strong>Model:</strong> {selectedModelArch.label} (native: {getModelResolutionInfo(selectedModelArch.name).native}px)
+                      </p>
+                      {datasetInfo && (
+                        <p>
+                          <strong>Dataset:</strong> {datasetInfo.most_common_resolution[0]}x{datasetInfo.most_common_resolution[1]} (
+                          {Math.round((datasetInfo.most_common_resolution[0] * datasetInfo.most_common_resolution[1]) / 1000000)}MP)
+                        </p>
+                      )}
+                      {datasetInfo && (
+                        <p className="text-blue-700 dark:text-blue-300">
+                          <strong>Recommended:</strong> {getRecommendedResolution()}px
+                          {getRecommendedResolution() >= 1536 && ' (high-res training enabled by your dataset)'}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Resolution Presets */}
+                <FormGroup label="Training Resolution" tooltip="Select resolution based on model and dataset capabilities">
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    {getSmartResolutionOptions().map(res => {
+                      const isSelected = jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] === res;
+                      const isRecommended = datasetInfo && res === getRecommendedResolution();
+                      const modelInfo = selectedModelArch ? getModelResolutionInfo(selectedModelArch.name) : null;
+                      const isNative = modelInfo && res === modelInfo.native;
+
+                      let label = `${res}px`;
+                      let sublabel = '';
+                      if (isRecommended) {
+                        sublabel = 'Recommended';
+                      } else if (isNative) {
+                        sublabel = 'Native';
+                      } else if (res >= 1536) {
+                        sublabel = 'High-res';
+                      } else if (res <= 768) {
+                        sublabel = 'Faster';
+                      }
+
+                      return (
+                        <button
+                          key={res}
+                          onClick={() => setJobConfig([res, res], 'config.process[0].datasets[0].resolution')}
+                          className={`p-3 rounded-lg border-2 transition-colors text-center ${
+                            isSelected
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                              : isRecommended
+                              ? 'border-green-400 bg-green-50 dark:bg-green-900/10 hover:border-green-500'
+                              : 'border-gray-300 dark:border-gray-600 hover:border-gray-400'
+                          }`}
+                        >
+                          <div className="font-semibold">{label}</div>
+                          {sublabel && (
+                            <div className={`text-xs mt-1 ${
+                              isRecommended ? 'text-green-600 dark:text-green-400 font-medium' : 'text-gray-500 dark:text-gray-400'
+                            }`}>
+                              {sublabel}
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom resolution input */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600 dark:text-gray-400">Custom:</span>
+                    <NumberInput
+                      value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}
+                      onChange={value => {
+                        setJobConfig([value, value], 'config.process[0].datasets[0].resolution');
+                      }}
+                      min={256}
+                      max={2048}
+                      step={64}
+                    />
+                  </div>
                 </FormGroup>
+
+                {/* VRAM Warning for high resolutions */}
+                {systemProfile && jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] >= 1536 && systemProfile.gpu.vramGB < 24 && (
+                  <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-md">
+                    <p className="text-yellow-800 dark:text-yellow-300 text-sm">
+                      <strong>Warning:</strong> Training at {jobConfig.config.process[0].datasets?.[0]?.resolution?.[0]}px requires significant VRAM.
+                      Your {systemProfile.gpu.vramGB}GB GPU may struggle. Consider reducing batch size or enabling gradient checkpointing.
+                    </p>
+                  </div>
+                )}
 
                 <FormGroup label="Enable Bucket Sampling" tooltip="Allow different aspect ratios during training">
                   <Checkbox
@@ -496,6 +650,15 @@ export default function ComprehensiveWizard({
                     label="Use aspect ratio bucketing (recommended for non-square images)"
                   />
                 </FormGroup>
+
+                {/* Aspect ratio info */}
+                {selectedModelArch && getModelResolutionInfo(selectedModelArch.name).supportsAspect && (
+                  <div className="text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 p-3 rounded">
+                    <p>
+                      {selectedModelArch.label} supports aspect ratio bucketing, which means your LoRA will learn from images of different shapes without cropping.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
