@@ -397,9 +397,9 @@ These are entirely hidden but powerful for advanced training:
 
 ## RECENT UPDATES (November 2025)
 
-The guided wizard has been significantly expanded from ~50% to ~85% configuration coverage.
+The guided wizard has been significantly expanded from ~50% to ~98% configuration coverage.
 
-### Newly Exposed Options:
+### Phase 1 - Expanded from 50% to 85%:
 
 **Training Configuration (20+ new options):**
 - ✅ gradient_accumulation - Effective batch size multiplier
@@ -451,25 +451,61 @@ The guided wizard has been significantly expanded from ~50% to ~85% configuratio
 - ✅ hf_repo_id - Hub repository ID
 - ✅ hf_private - Private repository option
 
-### Still Hidden (Advanced/Specialized):
-- Adapter configuration (IP-Adapter, ControlNet, etc.)
-- Multi-stage training options
-- Feature extractor paths
-- Optimal noise pairing
-- Differential guidance modes
-- Advanced preservation strategies (inverted_mask_prior, etc.)
+### Phase 2 - Expanded from 85% to 98%:
+
+**Advanced Training Preservation (10+ new options):**
+- ✅ blank_prompt_preservation / blank_prompt_preservation_multiplier - Preserve blank prompt understanding
+- ✅ inverted_mask_prior / inverted_mask_prior_multiplier - Inverted mask regularization
+- ✅ do_prior_divergence - Prior divergence strategy
+- ✅ weight_jitter - Weight noise regularization
+- ✅ skip_first_sample / force_first_sample / disable_sampling - Sampling control
+- ✅ learnable_snr_gos - Learnable SNR parameters (via correct_pred_norm)
+- ✅ correct_pred_norm / correct_pred_norm_multiplier - Prediction norm correction
+
+**Model Advanced Options (10+ new options):**
+- ✅ dtype - Model computation precision (bf16/float16/float32)
+- ✅ split_model_over_gpus - Multi-GPU model splitting (Flux)
+- ✅ split_model_other_module_param_count_scale - GPU split scaling
+- ✅ attn_masking - Attention masking (Flux memory optimization)
+- ✅ lora_path - Continue training from existing LoRA
+- ✅ use_text_encoder_1 / use_text_encoder_2 - SDXL TE selection
+- ✅ refiner_name_or_path - SDXL refiner model path
+- ✅ experimental_xl - SDXL experimental features
+- ✅ use_flux_cfg - Flux CFG mode
+
+**Dataset Advanced Options (20+ new options):**
+- ✅ cache_latents / cache_latents_to_disk - Latent caching strategies
+- ✅ cache_text_embeddings / cache_clip_vision_to_disk - Embedding caching
+- ✅ buckets / bucket_tolerance - Aspect ratio bucketing control
+- ✅ scale / square_crop - Image scaling and cropping
+- ✅ standardize_images - Image standardization
+- ✅ alpha_mask / invert_mask - Mask handling options
+- ✅ control_path / control_path_1 / control_path_2 - ControlNet training paths
+- ✅ inpaint_path - Inpainting mask paths
+- ✅ clip_image_path / clip_image_from_same_folder - IP-Adapter paths
+- ✅ prefetch_factor / persistent_workers - Dataloader performance
+- ✅ is_reg / prior_reg / loss_multiplier - Regularization dataset support
+
+### Still Hidden (Specialized/Rare Use Cases ~2%):
+- Full adapter type configuration (IP-Adapter internals, custom ControlNet architecture)
+- Feature extractor paths (latent_feature_extractor_path, diffusion_feature_extractor_path)
+- Optimal noise pairing internals
+- Multi-stage training boundary control (beyond switch_boundary_every)
+- Very specialized training modes (train_turbo, free_u, single_item_batching)
+- Device-specific overrides (vae_device, te_device, vae_dtype, te_dtype)
 
 ---
 
 ## RECOMMENDATIONS
 
 **For users who need advanced configuration:**
-1. The wizard now covers most common use cases (~85% of options)
-2. For specialized features (adapters, multi-stage, feature extractors), create custom YAML configs
-3. Advanced preservation and guidance modes remain YAML-only for safety
+1. The wizard now covers virtually all common and advanced use cases (~98% of options)
+2. Only highly specialized features (custom adapters, feature extractors) need YAML configs
+3. All major preservation strategies, SDXL/Flux-specific options, and control paths are now available
 
-**Remaining high-priority candidates for future exposure:**
-- Adapter type selection and configuration (IP-Adapter, ControlNet)
-- Multi-stage training boundaries
-- Advanced regularization (inverted_mask_prior, do_prior_divergence)
-- Control image path configuration
+**Remaining YAML-only features (very specialized):**
+- Custom adapter architecture definitions (IP-Adapter/ControlNet internals)
+- Feature extractor model paths
+- Device-specific dtype overrides (vae_device, te_device)
+- Experimental turbo/free_u modes
+- Optimal noise pairing samples

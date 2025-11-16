@@ -98,6 +98,8 @@ export interface DatasetConfig {
   network_weight: number;
   cache_latents?: boolean;
   cache_latents_to_disk?: boolean;
+  cache_text_embeddings?: boolean;
+  cache_clip_vision_to_disk?: boolean;
   resolution: number[];
   controls: string[];
   control_path?: string | null;
@@ -108,6 +110,8 @@ export interface DatasetConfig {
   flip_y: boolean;
   random_crop?: boolean;
   random_scale?: boolean;
+  scale?: number;
+  square_crop?: boolean;
   num_repeats?: number;
   keep_tokens?: number;
   token_dropout_rate?: number;
@@ -115,6 +119,23 @@ export interface DatasetConfig {
   control_path_1?: string | null;
   control_path_2?: string | null;
   control_path_3?: string | null;
+  // Advanced dataset options
+  buckets?: boolean;
+  bucket_tolerance?: number;
+  enable_ar_bucket?: boolean;
+  inpaint_path?: string | null;
+  unconditional_path?: string | null;
+  clip_image_path?: string | null;
+  clip_image_from_same_folder?: boolean;
+  alpha_mask?: boolean;
+  invert_mask?: boolean;
+  prior_reg?: boolean;
+  loss_multiplier?: number;
+  prefetch_factor?: number;
+  persistent_workers?: boolean;
+  num_workers?: number;
+  gpu_prefetch_batches?: number;
+  standardize_images?: boolean;
 }
 
 export interface AugmentationConfig {
@@ -177,6 +198,32 @@ export interface TrainConfig {
   max_denoising_steps?: number;
   max_grad_norm?: number;
   prompt_dropout_prob?: number;
+  // Advanced preservation
+  blank_prompt_preservation?: boolean;
+  blank_prompt_preservation_multiplier?: number;
+  inverted_mask_prior?: boolean;
+  inverted_mask_prior_multiplier?: number;
+  do_prior_divergence?: boolean;
+  // Differential guidance
+  do_differential_guidance?: boolean;
+  differential_guidance_scale?: number;
+  // Training control
+  train_refiner?: boolean;
+  skip_first_sample?: boolean;
+  force_first_sample?: boolean;
+  disable_sampling?: boolean;
+  // Advanced optimization
+  weight_jitter?: number;
+  train_turbo?: boolean;
+  learnable_snr_gos?: boolean;
+  correct_pred_norm?: boolean;
+  correct_pred_norm_multiplier?: number;
+  // Batch control
+  batch_size_warmup_steps?: number;
+  single_item_batching?: boolean;
+  // Additional settings
+  negative_prompt?: string;
+  unconditional_prompt?: string;
 }
 
 export interface QuantizeKwargsConfig {
@@ -201,6 +248,17 @@ export interface ModelConfig {
   assistant_lora_path?: string;
   inference_lora_path?: string;
   text_encoder_bits?: number;
+  // Advanced model options
+  dtype?: string;
+  refiner_name_or_path?: string;
+  lora_path?: string;
+  attn_masking?: boolean;
+  split_model_over_gpus?: boolean;
+  split_model_other_module_param_count_scale?: number;
+  use_text_encoder_1?: boolean;
+  use_text_encoder_2?: boolean;
+  experimental_xl?: boolean;
+  use_flux_cfg?: boolean;
 }
 
 export interface SampleItem {
