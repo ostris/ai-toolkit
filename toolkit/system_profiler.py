@@ -28,9 +28,9 @@ def detect_gpu():
         'isUnifiedMemory': False
     }
 
-    # Check for Apple Silicon
+    # Check for Apple Silicon (unified memory)
     if platform.system() == 'Darwin' and platform.processor() == 'arm':
-        gpu_info['type'] = 'apple_silicon'
+        gpu_info['type'] = 'unified_memory'
         gpu_info['name'] = 'Apple Silicon'
         gpu_info['isUnifiedMemory'] = True
         # VRAM will be set from unified memory
@@ -207,8 +207,8 @@ def get_system_profile():
     storage_info = detect_storage()
     cpu_info = detect_cpu()
 
-    # For Apple Silicon, set GPU VRAM to unified memory
-    if gpu_info['type'] == 'apple_silicon' and memory_info['unifiedMemory']:
+    # For unified memory systems (Apple Silicon, DGX Spark, Grace), set GPU VRAM to unified memory
+    if gpu_info['type'] == 'unified_memory' and memory_info['unifiedMemory']:
         gpu_info['vramGB'] = memory_info['unifiedMemory']
 
     return {

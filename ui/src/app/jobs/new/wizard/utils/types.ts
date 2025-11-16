@@ -5,7 +5,7 @@
 // System Profile Types
 export interface SystemProfile {
   gpu: {
-    type: 'nvidia' | 'amd' | 'apple_silicon' | 'cpu_only';
+    type: 'nvidia' | 'amd' | 'unified_memory' | 'cpu_only';
     name: string;
     vramGB: number;
     driverVersion?: string;
@@ -14,7 +14,7 @@ export interface SystemProfile {
   memory: {
     totalRAM: number;
     availableRAM: number;
-    unifiedMemory?: number; // Apple Silicon
+    unifiedMemory?: number; // Apple Silicon, DGX Spark, NVIDIA Grace, etc.
   };
   storage: {
     type: 'hdd' | 'ssd' | 'nvme';

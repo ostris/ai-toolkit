@@ -17,7 +17,7 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
   const [detectionError, setDetectionError] = useState<string | null>(null);
 
   // User overrides for hardware
-  const [gpuType, setGpuType] = useState<'nvidia' | 'amd' | 'apple_silicon' | 'cpu_only'>('nvidia');
+  const [gpuType, setGpuType] = useState<'nvidia' | 'amd' | 'unified_memory' | 'cpu_only'>('nvidia');
   const [gpuName, setGpuName] = useState('');
   const [vramGB, setVramGB] = useState(24);
   const [totalRAM, setTotalRAM] = useState(64);
@@ -69,12 +69,12 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
         type: gpuType,
         name: gpuName || 'Custom GPU',
         vramGB: vramGB,
-        isUnifiedMemory: gpuType === 'apple_silicon'
+        isUnifiedMemory: gpuType === 'unified_memory'
       },
       memory: {
         totalRAM: totalRAM,
         availableRAM: availableRAM,
-        unifiedMemory: gpuType === 'apple_silicon' ? totalRAM : undefined
+        unifiedMemory: gpuType === 'unified_memory' ? totalRAM : undefined
       },
       storage: {
         type: storageType,
@@ -125,19 +125,19 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
               )}
 
               {/* Unified Memory Suggestion when VRAM is 0 */}
-              {vramGB === 0 && gpuType !== 'apple_silicon' && gpuType !== 'cpu_only' && (
+              {vramGB === 0 && gpuType !== 'unified_memory' && gpuType !== 'cpu_only' && (
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-md mb-4">
                   <p className="text-blue-800 dark:text-blue-300 text-sm mb-2">
-                    <strong>GPU VRAM detected as 0.</strong> Are you using a unified memory system (Apple Silicon/M1/M2/M3)?
+                    <strong>GPU VRAM detected as 0.</strong> Are you using a unified memory system (Apple Silicon, NVIDIA Grace, DGX Spark)?
                   </p>
                   <button
                     onClick={() => {
-                      setGpuType('apple_silicon');
+                      setGpuType('unified_memory');
                       setVramGB(totalRAM); // Use total RAM as unified memory
                     }}
                     className="text-sm text-blue-600 dark:text-blue-400 underline hover:text-blue-800"
                   >
-                    Yes, switch to Apple Silicon
+                    Yes, switch to Unified Memory
                   </button>
                   <span className="text-gray-400 mx-2">|</span>
                   <button
@@ -166,16 +166,16 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                       value={gpuType}
                       onChange={(value: any) => setGpuType(value)}
                       options={[
-                        { value: 'nvidia', label: 'NVIDIA' },
+                        { value: 'nvidia', label: 'NVIDIA (Discrete)' },
                         { value: 'amd', label: 'AMD (ROCm)' },
-                        { value: 'apple_silicon', label: 'Apple Silicon' },
+                        { value: 'unified_memory', label: 'Unified Memory (Apple Silicon, DGX Spark, Grace)' },
                         { value: 'cpu_only', label: 'CPU Only' }
                       ]}
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-medium mb-1">
-                      {gpuType === 'apple_silicon' ? 'Unified Memory (GB)' : 'VRAM (GB)'}
+                      {gpuType === 'unified_memory' ? 'Unified Memory (GB)' : 'VRAM (GB)'}
                     </label>
                     <NumberInput
                       value={vramGB}
@@ -193,7 +193,7 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                   </p>
                 )}
 
-                {gpuType === 'apple_silicon' && (
+                {gpuType === 'unified_memory' && (
                   <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
                     Unified memory: GPU and CPU share the same memory pool
                   </p>
