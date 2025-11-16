@@ -140,6 +140,22 @@ export function setNestedValue<T>(obj: T, path: string, value: any): T {
 
 // Section definitions organized by wizard step
 export const sections: SectionConfig[] = [
+  // Model step sections
+  {
+    id: 'model_selection',
+    title: 'Model Selection',
+    description: 'Choose your base model and architecture',
+    step: 'model',
+    order: 1,
+  },
+  {
+    id: 'model_naming',
+    title: 'Model Naming',
+    description: 'Configure output model name and identifier',
+    step: 'model',
+    order: 2,
+  },
+
   // Quantization step sections
   {
     id: 'model_quantization',
@@ -436,10 +452,84 @@ export const sections: SectionConfig[] = [
     step: 'logging',
     order: 2,
   },
+
+  // Regularization step sections
+  {
+    id: 'lora_regularization',
+    title: 'LoRA Regularization',
+    description: 'Techniques to prevent overfitting during LoRA training',
+    step: 'regularization',
+    order: 1,
+  },
+  {
+    id: 'training_regularization',
+    title: 'Training Regularization',
+    description: 'General regularization techniques for stable training',
+    step: 'regularization',
+    order: 2,
+  },
 ];
 
 // Field definitions
 export const fields: FieldConfig[] = [
+  // === Model Step Fields ===
+
+  // Model selection fields
+  {
+    id: 'config.process[0].model.name_or_path',
+    label: 'Base Model',
+    description:
+      'Path or HuggingFace model ID of the base model to fine-tune. This determines the architecture and starting weights.',
+    type: 'string',
+    placeholder: 'e.g., black-forest-labs/FLUX.1-dev',
+    step: 'model',
+    section: 'model_selection',
+  },
+  {
+    id: 'config.process[0].model.arch',
+    label: 'Model Architecture',
+    description: 'The architecture type of the model. Auto-detected based on model selection.',
+    type: 'string',
+    placeholder: 'flux, sdxl, sd15, etc.',
+    step: 'model',
+    section: 'model_selection',
+  },
+
+  // Model naming fields
+  {
+    id: 'config.name',
+    label: 'Training Job Name',
+    description: 'Name for this training job. Used for logging and saving checkpoints.',
+    type: 'string',
+    placeholder: 'my_lora_v1',
+    step: 'model',
+    section: 'model_naming',
+  },
+  {
+    id: 'config.process[0].network.linear',
+    label: 'LoRA Rank',
+    description: 'Rank of the LoRA matrices. Higher values increase capacity but require more VRAM.',
+    type: 'number',
+    defaultValue: 16,
+    min: 1,
+    max: 256,
+    numberStep: 1,
+    step: 'model',
+    section: 'model_naming',
+  },
+  {
+    id: 'config.process[0].network.linear_alpha',
+    label: 'LoRA Alpha',
+    description: 'Scaling factor for LoRA. Typically set equal to rank for a learning rate multiplier of 1.0.',
+    type: 'number',
+    defaultValue: 16,
+    min: 1,
+    max: 256,
+    numberStep: 1,
+    step: 'model',
+    section: 'model_naming',
+  },
+
   // === Quantization Step Fields ===
 
   // Universal quantization fields
@@ -1383,6 +1473,83 @@ export const fields: FieldConfig[] = [
     min: 0,
     max: 1,
     numberStep: 0.01,
+  },
+
+  // === Regularization Step Fields ===
+  {
+    id: 'config.process[0].network.dropout',
+    label: 'LoRA Dropout',
+    description: 'Dropout rate for LoRA layers. Helps prevent overfitting. 0.0 = disabled, 0.1 typical.',
+    type: 'number',
+    defaultValue: 0.0,
+    step: 'regularization',
+    section: 'lora_regularization',
+    min: 0,
+    max: 1,
+    numberStep: 0.05,
+  },
+  {
+    id: 'config.process[0].train.weight_decay',
+    label: 'Weight Decay',
+    description: 'L2 regularization factor. Helps prevent large weights. 0.01 typical. 0 = disabled.',
+    type: 'number',
+    defaultValue: 0.01,
+    step: 'regularization',
+    section: 'training_regularization',
+    min: 0,
+    max: 1,
+    numberStep: 0.001,
+  },
+  {
+    id: 'config.process[0].train.gradient_clipping',
+    label: 'Gradient Clipping',
+    description: 'Maximum gradient norm. Prevents exploding gradients. 1.0 typical. 0 = disabled.',
+    type: 'number',
+    defaultValue: 1.0,
+    step: 'regularization',
+    section: 'training_regularization',
+    min: 0,
+    max: 10,
+    numberStep: 0.1,
+  },
+  {
+    id: 'config.process[0].train.min_snr_gamma',
+    label: 'Min SNR Gamma',
+    description:
+      'Min-SNR weighting gamma. Balances loss across noise levels. 5.0 recommended. 0 = disabled.',
+    type: 'number',
+    defaultValue: 5.0,
+    step: 'regularization',
+    section: 'training_regularization',
+    min: 0,
+    max: 20,
+    numberStep: 0.5,
+  },
+  {
+    id: 'config.process[0].train.ema_config.use_ema',
+    label: 'Use EMA',
+    description:
+      'Enable Exponential Moving Average of weights. Provides smoother, more stable results.',
+    type: 'boolean',
+    defaultValue: false,
+    step: 'regularization',
+    section: 'training_regularization',
+  },
+  {
+    id: 'config.process[0].train.ema_config.ema_decay',
+    label: 'EMA Decay',
+    description: 'Decay rate for EMA. Higher = more smoothing. 0.9999 typical.',
+    type: 'number',
+    defaultValue: 0.9999,
+    step: 'regularization',
+    section: 'training_regularization',
+    min: 0.9,
+    max: 1.0,
+    numberStep: 0.0001,
+    showWhen: {
+      field: 'config.process[0].train.ema_config.use_ema',
+      value: true,
+    },
   },
 
   // === Resolution Step Fields ===
