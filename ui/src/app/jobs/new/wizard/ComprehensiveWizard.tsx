@@ -674,14 +674,25 @@ export default function ComprehensiveWizard({
                 </FormGroup>
 
                 {/* VRAM Warning for high resolutions */}
-                {systemProfile && jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] >= 1536 && systemProfile.gpu.vramGB < 24 && (
-                  <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-md">
-                    <p className="text-yellow-800 dark:text-yellow-300 text-sm">
-                      <strong>Warning:</strong> Training at {jobConfig.config.process[0].datasets?.[0]?.resolution?.[0]}px requires significant VRAM.
-                      Your {systemProfile.gpu.vramGB}GB GPU may struggle. Consider reducing batch size or enabling gradient checkpointing.
-                    </p>
-                  </div>
-                )}
+                {systemProfile && jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] >= 1536 && (() => {
+                  // Use unified memory if available, otherwise use GPU VRAM
+                  const effectiveVRAM = systemProfile.gpu.isUnifiedMemory
+                    ? (systemProfile.memory.unifiedMemory || systemProfile.memory.totalRAM)
+                    : systemProfile.gpu.vramGB;
+                  const memoryType = systemProfile.gpu.isUnifiedMemory ? 'unified memory' : 'GPU';
+
+                  if (effectiveVRAM < 24) {
+                    return (
+                      <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-md">
+                        <p className="text-yellow-800 dark:text-yellow-300 text-sm">
+                          <strong>Warning:</strong> Training at {jobConfig.config.process[0].datasets?.[0]?.resolution?.[0]}px requires significant memory.
+                          Your {effectiveVRAM}GB {memoryType} may struggle. Consider reducing batch size or enabling gradient checkpointing.
+                        </p>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
 
                 <FormGroup label="Enable Bucket Sampling" tooltip="Allow different aspect ratios during training">
                   <Checkbox
