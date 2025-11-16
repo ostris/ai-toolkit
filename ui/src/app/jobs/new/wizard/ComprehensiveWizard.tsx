@@ -667,7 +667,7 @@ export default function ComprehensiveWizard({
                 <div className="grid grid-cols-2 gap-4">
                   <FormGroup label="Rank" tooltip="Higher rank = more learning capacity, larger file size">
                     <NumberInput
-                      value={jobConfig.config.process[0].network?.linear || 16}
+                      value={jobConfig.config.process[0].network?.linear ?? 16}
                       onChange={value => setJobConfig(value, 'config.process[0].network.linear')}
                       min={1}
                       max={128}
@@ -675,7 +675,7 @@ export default function ComprehensiveWizard({
                   </FormGroup>
                   <FormGroup label="Alpha" tooltip="Usually set equal to rank">
                     <NumberInput
-                      value={jobConfig.config.process[0].network?.linear_alpha || 16}
+                      value={jobConfig.config.process[0].network?.linear_alpha ?? 16}
                       onChange={value => setJobConfig(value, 'config.process[0].network.linear_alpha')}
                       min={1}
                       max={128}
@@ -827,7 +827,7 @@ export default function ComprehensiveWizard({
                     <div className="space-y-3">
                       <div className="flex items-center gap-3">
                         <NumberInput
-                          value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}
+                          value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] ?? 1024}
                           onChange={value => {
                             setJobConfig([value, value], 'config.process[0].datasets[0].resolution');
                           }}
@@ -912,7 +912,7 @@ export default function ComprehensiveWizard({
                   <div className="grid grid-cols-3 gap-4">
                     <FormGroup label="Initial">
                       <NumberInput
-                        value={jobConfig.config.process[0].train?.batch_size || 1}
+                        value={jobConfig.config.process[0].train?.batch_size ?? 1}
                         onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
                         min={1}
                         max={32}
@@ -920,7 +920,7 @@ export default function ComprehensiveWizard({
                     </FormGroup>
                     <FormGroup label="Min">
                       <NumberInput
-                        value={jobConfig.config.process[0].train?.min_batch_size || 1}
+                        value={jobConfig.config.process[0].train?.min_batch_size ?? 1}
                         onChange={value => setJobConfig(value, 'config.process[0].train.min_batch_size')}
                         min={1}
                         max={32}
@@ -928,7 +928,7 @@ export default function ComprehensiveWizard({
                     </FormGroup>
                     <FormGroup label="Max">
                       <NumberInput
-                        value={jobConfig.config.process[0].train?.max_batch_size || 8}
+                        value={jobConfig.config.process[0].train?.max_batch_size ?? 8}
                         onChange={value => setJobConfig(value, 'config.process[0].train.max_batch_size')}
                         min={1}
                         max={32}
@@ -938,7 +938,7 @@ export default function ComprehensiveWizard({
                 ) : (
                   <FormGroup label="Batch Size">
                     <NumberInput
-                      value={jobConfig.config.process[0].train?.batch_size || 1}
+                      value={jobConfig.config.process[0].train?.batch_size ?? 1}
                       onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
                       min={1}
                       max={32}
@@ -984,7 +984,7 @@ export default function ComprehensiveWizard({
 
                 <FormGroup label="Learning Rate" tooltip="Speed of learning">
                   <NumberInput
-                    value={jobConfig.config.process[0].train?.lr || 0.0001}
+                    value={jobConfig.config.process[0].train?.lr ?? 0.0001}
                     onChange={value => setJobConfig(value, 'config.process[0].train.lr')}
                     min={0.000001}
                     max={0.01}
@@ -1055,7 +1055,7 @@ export default function ComprehensiveWizard({
                   tooltip="Randomly drops captions during training to improve generalization. Higher values = more generalization but less prompt adherence."
                 >
                   <NumberInput
-                    value={jobConfig.config.process[0].datasets?.[0]?.caption_dropout_rate || 0.05}
+                    value={jobConfig.config.process[0].datasets?.[0]?.caption_dropout_rate ?? 0.05}
                     onChange={value => setJobConfig(value, 'config.process[0].datasets[0].caption_dropout_rate')}
                     min={0}
                     max={0.5}
@@ -1071,7 +1071,7 @@ export default function ComprehensiveWizard({
                   tooltip="L2 regularization strength. Prevents weights from growing too large."
                 >
                   <NumberInput
-                    value={jobConfig.config.process[0].train?.optimizer_params?.weight_decay || 0.0001}
+                    value={jobConfig.config.process[0].train?.optimizer_params?.weight_decay ?? 0.0001}
                     onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.weight_decay')}
                     min={0}
                     max={0.1}
@@ -1127,7 +1127,7 @@ export default function ComprehensiveWizard({
                   <div className="ml-6">
                     <FormGroup label="EMA Decay">
                       <NumberInput
-                        value={jobConfig.config.process[0].train?.ema_config?.ema_decay || 0.99}
+                        value={jobConfig.config.process[0].train?.ema_config?.ema_decay ?? 0.99}
                         onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
                         min={0.9}
                         max={0.9999}
@@ -1165,7 +1165,7 @@ export default function ComprehensiveWizard({
                   <div className="ml-6 space-y-3">
                     <FormGroup label="Preservation Strength">
                       <NumberInput
-                        value={jobConfig.config.process[0].train?.diff_output_preservation_multiplier || 1.0}
+                        value={jobConfig.config.process[0].train?.diff_output_preservation_multiplier ?? 1.0}
                         onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
                         min={0.1}
                         max={10}
@@ -1219,7 +1219,7 @@ export default function ComprehensiveWizard({
 
                 <FormGroup label="Training Steps">
                   <NumberInput
-                    value={jobConfig.config.process[0].train?.steps || 1000}
+                    value={jobConfig.config.process[0].train?.steps ?? 1000}
                     onChange={value => setJobConfig(value, 'config.process[0].train.steps')}
                     min={100}
                     max={50000}
@@ -1233,7 +1233,7 @@ export default function ComprehensiveWizard({
               <div className="space-y-4">
                 <FormGroup label="Sample Every N Steps" tooltip="Generate preview images during training">
                   <NumberInput
-                    value={jobConfig.config.process[0].sample?.sample_every || 250}
+                    value={jobConfig.config.process[0].sample?.sample_every ?? 250}
                     onChange={value => setJobConfig(value, 'config.process[0].sample.sample_every')}
                     min={50}
                     max={5000}
@@ -1247,7 +1247,7 @@ export default function ComprehensiveWizard({
               <div className="space-y-4">
                 <FormGroup label="Save Every N Steps">
                   <NumberInput
-                    value={jobConfig.config.process[0].save?.save_every || 500}
+                    value={jobConfig.config.process[0].save?.save_every ?? 500}
                     onChange={value => setJobConfig(value, 'config.process[0].save.save_every')}
                     min={100}
                     max={10000}
@@ -1269,7 +1269,7 @@ export default function ComprehensiveWizard({
                     />
                     {jobConfig.config.process[0].save?.max_step_saves_to_keep !== 0 && (
                       <NumberInput
-                        value={jobConfig.config.process[0].save?.max_step_saves_to_keep || 5}
+                        value={jobConfig.config.process[0].save?.max_step_saves_to_keep ?? 5}
                         onChange={value => setJobConfig(value, 'config.process[0].save.max_step_saves_to_keep')}
                         min={1}
                         max={100}
