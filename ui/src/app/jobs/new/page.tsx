@@ -17,10 +17,13 @@ import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
 import SimpleJob from './SimpleJob';
 import AdvancedJob from './AdvancedJob';
+import GuidedWizard from './GuidedWizard';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
 
 const isDev = process.env.NODE_ENV === 'development';
+
+type ViewMode = 'simple' | 'advanced' | 'guided';
 
 export default function TrainingForm() {
   const router = useRouter();
@@ -32,7 +35,7 @@ export default function TrainingForm() {
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
   const { datasets, status: datasetFetchStatus } = useDatasetList();
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
-  const [showAdvancedView, setShowAdvancedView] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('simple');
 
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
@@ -151,7 +154,7 @@ export default function TrainingForm() {
           <h1 className="text-lg">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
         </div>
         <div className="flex-1"></div>
-        {showAdvancedView && (
+        {viewMode === 'advanced' && (
           <>
             <div>
               <SelectInput
@@ -163,7 +166,7 @@ export default function TrainingForm() {
             <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
           </>
         )}
-        {!showAdvancedView && (
+        {viewMode === 'simple' && (
           <>
             <div>
               <SelectInput
@@ -196,26 +199,67 @@ export default function TrainingForm() {
           </>
         )}
 
-        <div className="pr-2">
+        <div className="pr-2 flex gap-2">
           <Button
-            className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
-            onClick={() => setShowAdvancedView(!showAdvancedView)}
+            className={`px-3 py-1 rounded-md ${
+              viewMode === 'guided'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-600 dark:bg-gray-700 text-gray-200'
+            }`}
+            onClick={() => setViewMode('guided')}
           >
-            {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
+            🧙 Guided
+          </Button>
+          <Button
+            className={`px-3 py-1 rounded-md ${
+              viewMode === 'simple'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-600 dark:bg-gray-700 text-gray-200'
+            }`}
+            onClick={() => setViewMode('simple')}
+          >
+            Simple
+          </Button>
+          <Button
+            className={`px-3 py-1 rounded-md ${
+              viewMode === 'advanced'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-600 dark:bg-gray-700 text-gray-200'
+            }`}
+            onClick={() => setViewMode('advanced')}
+          >
+            Advanced
           </Button>
         </div>
-        <div>
-          <Button
-            className="text-gray-200 bg-green-800 px-3 py-1 rounded-md"
-            onClick={() => saveJob()}
-            disabled={status === 'saving'}
-          >
-            {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
-          </Button>
-        </div>
+        {viewMode !== 'guided' && (
+          <div>
+            <Button
+              className="text-gray-200 bg-green-800 px-3 py-1 rounded-md"
+              onClick={() => saveJob()}
+              disabled={status === 'saving'}
+            >
+              {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+            </Button>
+          </div>
+        )}
       </TopBar>
 
-      {showAdvancedView ? (
+      {viewMode === 'guided' ? (
+        <MainContent>
+          <GuidedWizard
+            jobConfig={jobConfig}
+            setJobConfig={setJobConfig}
+            status={status}
+            handleSubmit={handleSubmit}
+            runId={runId}
+            gpuIDs={gpuIDs}
+            setGpuIDs={setGpuIDs}
+            gpuList={gpuList}
+            datasetOptions={datasetOptions}
+            onExit={() => setViewMode('simple')}
+          />
+        </MainContent>
+      ) : viewMode === 'advanced' ? (
         <div className="pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto">
           <AdvancedJob
             jobConfig={jobConfig}
