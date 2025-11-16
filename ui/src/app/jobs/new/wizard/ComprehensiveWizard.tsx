@@ -102,10 +102,10 @@ export default function ComprehensiveWizard({
   // Filter to image models
   const imageModels = useMemo(() => modelArchs.filter(m => m.group === 'image'), []);
 
-  const selectedModelArch = useMemo(
-    () => modelArchs.find(a => a.name === jobConfig.config.process[0].model?.arch),
-    [jobConfig.config.process[0].model?.arch]
-  );
+  const selectedModelArch = useMemo(() => {
+    const arch = jobConfig.config.process[0]?.model?.arch;
+    return arch ? modelArchs.find(a => a.name === arch) : undefined;
+  }, [jobConfig.config.process[0]?.model?.arch]);
 
   // Get model-specific resolution info
   const getModelResolutionInfo = (archName: string) => {
@@ -647,6 +647,265 @@ export default function ComprehensiveWizard({
                     />
                   </FormGroup>
                 )}
+
+                <FormGroup label="Layer Offloading" tooltip="Offload model layers to CPU to save VRAM (slower but uses less GPU memory)">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].model?.layer_offloading}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.layer_offloading')}
+                    label="Enable layer offloading (CPU ↔ GPU swapping)"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Moves layers between CPU and GPU as needed. Enables training larger models with limited VRAM but slower.
+                  </div>
+                </FormGroup>
+
+                {jobConfig.config.process[0].model?.layer_offloading && (
+                  <div className="ml-4 space-y-3 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
+                    <FormGroup label="Transformer Offload Percentage" tooltip="Percentage of transformer layers to offload to CPU">
+                      <NumberInput
+                        value={(jobConfig.config.process[0].model?.layer_offloading_transformer_percent ?? 1.0) * 100}
+                        onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].model.layer_offloading_transformer_percent')}
+                        min={0}
+                        max={100}
+                        step={10}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        % of transformer layers to offload (100% = all layers can be offloaded)
+                      </div>
+                    </FormGroup>
+                    <FormGroup label="Text Encoder Offload Percentage" tooltip="Percentage of text encoder layers to offload">
+                      <NumberInput
+                        value={(jobConfig.config.process[0].model?.layer_offloading_text_encoder_percent ?? 1.0) * 100}
+                        onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].model.layer_offloading_text_encoder_percent')}
+                        min={0}
+                        max={100}
+                        step={10}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        % of text encoder layers to offload
+                      </div>
+                    </FormGroup>
+                  </div>
+                )}
+
+                <FormGroup label="Model Compilation" tooltip="Use torch.compile() for faster training (requires PyTorch 2.0+)">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].model?.compile}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.compile')}
+                    label="Enable torch.compile() optimization"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    JIT compiles the model for faster execution. Increases startup time but faster per-step training.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Text Encoder Precision" tooltip="Quantization bits for text encoder (lower = less VRAM, potentially lower quality)">
+                  <SelectInput
+                    value={String(jobConfig.config.process[0].model?.text_encoder_bits ?? 16)}
+                    onChange={value => setJobConfig(parseInt(value), 'config.process[0].model.text_encoder_bits')}
+                    options={[
+                      { value: '16', label: '16-bit (Full Precision)' },
+                      { value: '8', label: '8-bit (Balanced)' },
+                      { value: '4', label: '4-bit (Maximum Savings)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Assistant LoRA Path" tooltip="Path to assistant LoRA for training (e.g., for Schnell training adapter)">
+                  <TextInput
+                    value={jobConfig.config.process[0].model?.assistant_lora_path || ''}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.assistant_lora_path')}
+                    placeholder="e.g., ostris/FLUX.1-schnell-training-adapter"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Optional: Path to LoRA that assists training (useful for distilled models like Schnell).
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Custom VAE Path" tooltip="Path to custom VAE model (leave empty for default)">
+                  <TextInput
+                    value={jobConfig.config.process[0].model?.vae_path || ''}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_path')}
+                    placeholder="Optional: path/to/custom/vae"
+                  />
+                </FormGroup>
+
+                <FormGroup label="Model Data Type" tooltip="Precision for model computation">
+                  <SelectInput
+                    value={jobConfig.config.process[0].model?.dtype || 'bf16'}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.dtype')}
+                    options={[
+                      { value: 'bf16', label: 'BFloat16 (recommended for modern GPUs)' },
+                      { value: 'float16', label: 'Float16 (wider compatibility)' },
+                      { value: 'float32', label: 'Float32 (full precision, slow)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Multi-GPU Options (Flux)" tooltip="Split large models across multiple GPUs">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].model?.split_model_over_gpus}
+                      onChange={value => setJobConfig(value, 'config.process[0].model.split_model_over_gpus')}
+                      label="Split model across GPUs (for Flux with 2+ GPUs)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].model?.attn_masking}
+                      onChange={value => setJobConfig(value, 'config.process[0].model.attn_masking')}
+                      label="Enable attention masking (Flux only, saves memory)"
+                    />
+                  </div>
+                </FormGroup>
+
+                {jobConfig.config.process[0].model?.split_model_over_gpus && (
+                  <FormGroup label="GPU Split Scale" tooltip="Scale factor for module parameter distribution">
+                    <NumberInput
+                      value={jobConfig.config.process[0].model?.split_model_other_module_param_count_scale ?? 0.3}
+                      onChange={value => setJobConfig(value, 'config.process[0].model.split_model_other_module_param_count_scale')}
+                      min={0.1}
+                      max={1}
+                      step={0.1}
+                    />
+                  </FormGroup>
+                )}
+
+                {/* SDXL-specific options */}
+                {(jobConfig.config.process[0].model?.arch === 'sdxl' || jobConfig.config.process[0].model?.arch?.includes('sdxl')) && (
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
+                    <h4 className="font-medium text-blue-800 dark:text-blue-200">SDXL-Specific Options</h4>
+
+                    <FormGroup label="Text Encoder Selection">
+                      <div className="space-y-2">
+                        <Checkbox
+                          checked={jobConfig.config.process[0].model?.use_text_encoder_1 ?? true}
+                          onChange={value => setJobConfig(value, 'config.process[0].model.use_text_encoder_1')}
+                          label="Use Text Encoder 1 (CLIP-L)"
+                        />
+                        <Checkbox
+                          checked={jobConfig.config.process[0].model?.use_text_encoder_2 ?? true}
+                          onChange={value => setJobConfig(value, 'config.process[0].model.use_text_encoder_2')}
+                          label="Use Text Encoder 2 (OpenCLIP-G)"
+                        />
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        SDXL uses two text encoders. Disabling one saves memory but reduces prompt understanding.
+                      </div>
+                    </FormGroup>
+
+                    <FormGroup label="Refiner Model Path" tooltip="Optional path to SDXL refiner model">
+                      <TextInput
+                        value={jobConfig.config.process[0].model?.refiner_name_or_path || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.refiner_name_or_path')}
+                        placeholder="Optional: stabilityai/stable-diffusion-xl-refiner-1.0"
+                      />
+                    </FormGroup>
+
+                    <FormGroup label="Experimental SDXL Features">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].model?.experimental_xl}
+                        onChange={value => setJobConfig(value, 'config.process[0].model.experimental_xl')}
+                        label="Enable experimental SDXL features (advanced)"
+                      />
+                    </FormGroup>
+                  </div>
+                )}
+
+                {/* Flux-specific options */}
+                {(jobConfig.config.process[0].model?.arch === 'flux1' || jobConfig.config.process[0].model?.arch === 'flex1' || jobConfig.config.process[0].model?.arch?.includes('flux')) && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg space-y-4">
+                    <h4 className="font-medium text-green-800 dark:text-green-200">Flux-Specific Options</h4>
+
+                    <FormGroup label="Flux CFG Mode">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].model?.use_flux_cfg}
+                        onChange={value => setJobConfig(value, 'config.process[0].model.use_flux_cfg')}
+                        label="Enable Flux CFG mode (for distillation)"
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        Enables classifier-free guidance mode for Flux models. Required for some training modes.
+                      </div>
+                    </FormGroup>
+                  </div>
+                )}
+
+                <FormGroup label="Base LoRA Path" tooltip="Path to existing LoRA to continue training from">
+                  <TextInput
+                    value={jobConfig.config.process[0].model?.lora_path || ''}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.lora_path')}
+                    placeholder="Optional: path/to/existing/lora.safetensors"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Continue training from an existing LoRA instead of starting fresh.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Custom UNet Path" tooltip="Path to custom UNet model (for modified architectures)">
+                  <TextInput
+                    value={jobConfig.config.process[0].model?.unet_path || ''}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.unet_path')}
+                    placeholder="Optional: path/to/custom/unet"
+                  />
+                </FormGroup>
+
+                {/* Device-Specific Overrides */}
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-red-800 dark:text-red-200">Device-Specific Overrides (Expert)</h4>
+                  <p className="text-xs text-red-600 dark:text-red-300">
+                    Override device and dtype for specific model components. Leave empty to use defaults.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormGroup label="VAE Device" tooltip="Device for VAE operations">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.vae_device || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_device')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'cuda', label: 'CUDA (GPU)' },
+                          { value: 'cpu', label: 'CPU' }
+                        ]}
+                      />
+                    </FormGroup>
+                    <FormGroup label="VAE Dtype" tooltip="Data type for VAE">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.vae_dtype || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_dtype')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'float16', label: 'Float16' },
+                          { value: 'bfloat16', label: 'BFloat16' },
+                          { value: 'float32', label: 'Float32' }
+                        ]}
+                      />
+                    </FormGroup>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormGroup label="Text Encoder Device" tooltip="Device for text encoder operations">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.te_device || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.te_device')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'cuda', label: 'CUDA (GPU)' },
+                          { value: 'cpu', label: 'CPU' }
+                        ]}
+                      />
+                    </FormGroup>
+                    <FormGroup label="Text Encoder Dtype" tooltip="Data type for text encoder">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.te_dtype || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.te_dtype')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'float16', label: 'Float16' },
+                          { value: 'bfloat16', label: 'BFloat16' },
+                          { value: 'float32', label: 'Float32' }
+                        ]}
+                      />
+                    </FormGroup>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -659,29 +918,113 @@ export default function ComprehensiveWizard({
                     onChange={value => setJobConfig(value, 'config.process[0].network.type')}
                     options={[
                       { value: 'lora', label: 'LoRA (Low-Rank Adaptation)' },
-                      { value: 'lokr', label: 'LoKr (Kronecker Product)' }
+                      { value: 'lokr', label: 'LoKr (Kronecker Product)' },
+                      { value: 'lorm', label: 'LoRM (Mixture of Ranks)' }
                     ]}
                   />
                 </FormGroup>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <FormGroup label="Rank" tooltip="Higher rank = more learning capacity, larger file size">
+                  <FormGroup label="Linear Rank" tooltip="Rank for linear layers - higher = more learning capacity, larger file">
                     <NumberInput
                       value={jobConfig.config.process[0].network?.linear ?? 16}
                       onChange={value => setJobConfig(value, 'config.process[0].network.linear')}
                       min={1}
-                      max={128}
+                      max={256}
                     />
                   </FormGroup>
-                  <FormGroup label="Alpha" tooltip="Usually set equal to rank">
+                  <FormGroup label="Linear Alpha" tooltip="Alpha scaling for linear layers - usually set equal to rank">
                     <NumberInput
                       value={jobConfig.config.process[0].network?.linear_alpha ?? 16}
                       onChange={value => setJobConfig(value, 'config.process[0].network.linear_alpha')}
                       min={1}
-                      max={128}
+                      max={256}
                     />
                   </FormGroup>
                 </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormGroup label="Conv Rank" tooltip="Rank for convolution layers (optional, for SD1.5/SDXL)">
+                    <NumberInput
+                      value={jobConfig.config.process[0].network?.conv ?? 0}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.conv')}
+                      min={0}
+                      max={256}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      0 = disabled. Training conv layers can improve detail but increases file size.
+                    </div>
+                  </FormGroup>
+                  <FormGroup label="Conv Alpha" tooltip="Alpha scaling for conv layers">
+                    <NumberInput
+                      value={jobConfig.config.process[0].network?.conv_alpha ?? 0}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.conv_alpha')}
+                      min={0}
+                      max={256}
+                    />
+                  </FormGroup>
+                </div>
+
+                <FormGroup label="Global Alpha Override" tooltip="Override alpha for all layers (optional)">
+                  <NumberInput
+                    value={jobConfig.config.process[0].network?.alpha ?? 0}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].network.alpha')}
+                    min={0}
+                    max={256}
+                    step={0.1}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Leave at 0 to use layer-specific alphas. Non-zero value overrides all layer alphas.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Network Dropout" tooltip="Dropout rate within LoRA layers for regularization">
+                  <NumberInput
+                    value={jobConfig.config.process[0].network?.dropout ?? 0}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].network.dropout')}
+                    min={0}
+                    max={0.5}
+                    step={0.05}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Adds dropout within LoRA weights. 0 = disabled, 0.1 = 10% dropout. Helps prevent overfitting.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Transformer Only" tooltip="Only train transformer/attention layers, skip other components">
+                  <Checkbox
+                    checked={jobConfig.config.process[0].network?.transformer_only ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].network.transformer_only')}
+                    label="Train only transformer layers (recommended for Flux/SD3)"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    For Flux and SD3 models, training only transformer layers is more efficient and stable.
+                  </div>
+                </FormGroup>
+
+                {jobConfig.config.process[0].network?.type === 'lokr' && (
+                  <div className="space-y-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-md">
+                    <h4 className="font-medium text-sm">LoKr-Specific Options</h4>
+                    <FormGroup label="LoKr Full Rank" tooltip="Use full rank decomposition for LoKr">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].network?.lokr_full_rank}
+                        onChange={value => setJobConfig(value, 'config.process[0].network.lokr_full_rank')}
+                        label="Enable full rank LoKr"
+                      />
+                    </FormGroup>
+                    <FormGroup label="LoKr Factor" tooltip="Factorization factor (-1 = auto)">
+                      <NumberInput
+                        value={jobConfig.config.process[0].network?.lokr_factor ?? -1}
+                        onChange={value => setJobConfig(value, 'config.process[0].network.lokr_factor')}
+                        min={-1}
+                        max={64}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        -1 = automatic factorization. Higher values = more compression.
+                      </div>
+                    </FormGroup>
+                  </div>
+                )}
               </div>
             )}
 
@@ -734,6 +1077,242 @@ export default function ComprehensiveWizard({
                     placeholder="e.g., ohwx, sks, or unique identifier"
                   />
                 </FormGroup>
+
+                <FormGroup label="Dataset Repeats" tooltip="Repeat the dataset N times per epoch">
+                  <NumberInput
+                    value={jobConfig.config.process[0].datasets?.[0]?.num_repeats ?? 1}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].num_repeats')}
+                    min={1}
+                    max={100}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Effectively multiplies your dataset size. Useful for small datasets. 1 = no repeat.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Keep Tokens" tooltip="Number of first tokens to always keep (not shuffle/drop)">
+                  <NumberInput
+                    value={jobConfig.config.process[0].datasets?.[0]?.keep_tokens ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].keep_tokens')}
+                    min={0}
+                    max={20}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Protects first N tokens from shuffling/dropout. Useful for preserving trigger words at start of captions.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Token Dropout Rate" tooltip="Randomly drop individual tokens from captions">
+                  <NumberInput
+                    value={jobConfig.config.process[0].datasets?.[0]?.token_dropout_rate ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].token_dropout_rate')}
+                    min={0}
+                    max={0.5}
+                    step={0.01}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Drops individual tokens from captions. 0 = disabled, 0.1 = 10% of tokens dropped. Improves generalization.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Shuffle Tokens" tooltip="Randomly shuffle token order in captions">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].datasets?.[0]?.shuffle_tokens}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].shuffle_tokens')}
+                    label="Enable token shuffling (helps generalization)"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Randomly reorders tokens in captions. Combined with keep_tokens to protect trigger words.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Default Caption" tooltip="Caption to use for images without caption files">
+                  <TextInput
+                    value={jobConfig.config.process[0].datasets?.[0]?.default_caption || ''}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].default_caption')}
+                    placeholder="Optional: default caption for uncaptioned images"
+                  />
+                </FormGroup>
+
+                {/* Advanced Dataset Configuration */}
+                <div className="p-4 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg space-y-4">
+                  <h4 className="font-medium">Advanced Dataset Options</h4>
+
+                  <FormGroup label="Caching Options" tooltip="Cache preprocessed data for faster training">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.cache_latents}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].cache_latents')}
+                        label="Cache latents in RAM (faster, uses more memory)"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.cache_latents_to_disk}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].cache_latents_to_disk')}
+                        label="Cache latents to disk (slower but saves RAM)"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.cache_text_embeddings}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].cache_text_embeddings')}
+                        label="Cache text embeddings"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.cache_clip_vision_to_disk}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].cache_clip_vision_to_disk')}
+                        label="Cache CLIP vision embeddings to disk"
+                      />
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Aspect Ratio Bucketing" tooltip="Group images by aspect ratio for efficient batching">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={jobConfig.config.process[0].datasets?.[0]?.buckets ?? true}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].buckets')}
+                        label="Enable aspect ratio bucketing"
+                      />
+                      {jobConfig.config.process[0].datasets?.[0]?.buckets !== false && (
+                        <div className="ml-4">
+                          <label className="text-xs text-gray-500">Bucket Tolerance (pixels)</label>
+                          <NumberInput
+                            value={jobConfig.config.process[0].datasets?.[0]?.bucket_tolerance ?? 64}
+                            onChange={value => setJobConfig(value, 'config.process[0].datasets[0].bucket_tolerance')}
+                            min={8}
+                            max={256}
+                            step={8}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Image Scaling" tooltip="Scale images before processing">
+                    <NumberInput
+                      value={jobConfig.config.process[0].datasets?.[0]?.scale ?? 1.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].scale')}
+                      min={0.1}
+                      max={4}
+                      step={0.1}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      1.0 = no scaling. 2.0 = double size, 0.5 = half size.
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Additional Augmentations">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.square_crop}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].square_crop')}
+                        label="Square crop (force square images)"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.standardize_images}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].standardize_images')}
+                        label="Standardize images to model stats"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.alpha_mask}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].alpha_mask')}
+                        label="Use alpha channel as mask"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.invert_mask}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].invert_mask')}
+                        label="Invert mask values"
+                      />
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Control Image Paths" tooltip="Paths to control images for ControlNet training">
+                    <div className="space-y-2">
+                      <TextInput
+                        value={jobConfig.config.process[0].datasets?.[0]?.control_path || ''}
+                        onChange={value => setJobConfig(value || null, 'config.process[0].datasets[0].control_path')}
+                        placeholder="Control image path (e.g., depth maps)"
+                      />
+                      <TextInput
+                        value={jobConfig.config.process[0].datasets?.[0]?.control_path_1 || ''}
+                        onChange={value => setJobConfig(value || null, 'config.process[0].datasets[0].control_path_1')}
+                        placeholder="Additional control path 1"
+                      />
+                      <TextInput
+                        value={jobConfig.config.process[0].datasets?.[0]?.control_path_2 || ''}
+                        onChange={value => setJobConfig(value || null, 'config.process[0].datasets[0].control_path_2')}
+                        placeholder="Additional control path 2"
+                      />
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Inpainting Path" tooltip="Path to inpainting masks">
+                    <TextInput
+                      value={jobConfig.config.process[0].datasets?.[0]?.inpaint_path || ''}
+                      onChange={value => setJobConfig(value || null, 'config.process[0].datasets[0].inpaint_path')}
+                      placeholder="Optional: path/to/inpaint/masks"
+                    />
+                  </FormGroup>
+
+                  <FormGroup label="CLIP Image Path" tooltip="Path to CLIP reference images (for IP-Adapter)">
+                    <TextInput
+                      value={jobConfig.config.process[0].datasets?.[0]?.clip_image_path || ''}
+                      onChange={value => setJobConfig(value || null, 'config.process[0].datasets[0].clip_image_path')}
+                      placeholder="Optional: path/to/clip/images"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets?.[0]?.clip_image_from_same_folder}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].clip_image_from_same_folder')}
+                      label="Get CLIP images from same folder as training images"
+                    />
+                  </FormGroup>
+
+                  <FormGroup label="Dataloader Performance">
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs text-gray-500">Prefetch Factor</label>
+                        <NumberInput
+                          value={jobConfig.config.process[0].datasets?.[0]?.prefetch_factor ?? 2}
+                          onChange={value => setJobConfig(value, 'config.process[0].datasets[0].prefetch_factor')}
+                          min={1}
+                          max={10}
+                        />
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          Number of batches to prefetch. Higher = more RAM usage but faster loading.
+                        </div>
+                      </div>
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.persistent_workers}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].persistent_workers')}
+                        label="Persistent workers (keep dataloader workers alive)"
+                      />
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Regularization Dataset">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.is_reg}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].is_reg')}
+                        label="This is a regularization dataset"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].datasets?.[0]?.prior_reg}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].prior_reg')}
+                        label="This is a prior regularization set"
+                      />
+                      {(jobConfig.config.process[0].datasets?.[0]?.is_reg || jobConfig.config.process[0].datasets?.[0]?.prior_reg) && (
+                        <div>
+                          <label className="text-xs text-gray-500">Loss Multiplier</label>
+                          <NumberInput
+                            value={jobConfig.config.process[0].datasets?.[0]?.loss_multiplier ?? 1.0}
+                            onChange={value => setJobConfig(value, 'config.process[0].datasets[0].loss_multiplier')}
+                            min={0.1}
+                            max={10}
+                            step={0.1}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </FormGroup>
+                </div>
               </div>
             )}
 
@@ -975,7 +1554,11 @@ export default function ComprehensiveWizard({
                     options={[
                       { value: 'adamw8bit', label: 'AdamW 8-bit (Recommended)' },
                       { value: 'adamw', label: 'AdamW (Full Precision)' },
-                      { value: 'adafactor', label: 'Adafactor (Memory Efficient)' }
+                      { value: 'adafactor', label: 'Adafactor (Memory Efficient)' },
+                      { value: 'lion', label: 'Lion (Memory Efficient, Fast)' },
+                      { value: 'lion8bit', label: 'Lion 8-bit' },
+                      { value: 'prodigy', label: 'Prodigy (Adaptive LR)' },
+                      { value: 'dadaptation', label: 'D-Adaptation (Adaptive)' }
                     ]}
                   />
                 </FormGroup>
@@ -987,6 +1570,91 @@ export default function ComprehensiveWizard({
                     min={0.000001}
                     max={0.01}
                   />
+                </FormGroup>
+
+                <FormGroup label="Gradient Accumulation Steps" tooltip="Effective batch size multiplier - accumulate gradients over N steps">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.gradient_accumulation ?? 1}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.gradient_accumulation')}
+                    min={1}
+                    max={64}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Effective batch size = batch_size × accumulation steps. Higher values simulate larger batches with less VRAM.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Max Gradient Norm" tooltip="Gradient clipping threshold to prevent exploding gradients">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.max_grad_norm ?? 1.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.max_grad_norm')}
+                    min={0.1}
+                    max={10}
+                    step={0.1}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Clips gradients to prevent training instability. 1.0 is standard, lower values are more conservative.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Separate Component Learning Rates" tooltip="Set different learning rates for UNet and Text Encoder">
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-sm font-medium">UNet Learning Rate (optional)</label>
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.unet_lr ?? 0}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].train.unet_lr')}
+                        min={0}
+                        max={0.01}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        Leave at 0 to use main LR. Set separately for fine-grained control.
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium">Text Encoder Learning Rate (optional)</label>
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.text_encoder_lr ?? 0}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].train.text_encoder_lr')}
+                        min={0}
+                        max={0.01}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        Usually lower than UNet LR (e.g., 1e-5 vs 1e-4). Only used if training text encoder.
+                      </div>
+                    </div>
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Model Components to Train">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.train_unet}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.train_unet')}
+                      label="Train UNet/Transformer (main diffusion model)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.train_text_encoder}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.train_text_encoder')}
+                      label="Train Text Encoder (improves prompt understanding)"
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Training text encoder can improve prompt adherence but uses more VRAM and may cause instability.
+                    </div>
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Prompt Dropout Probability" tooltip="Randomly drop entire prompts during training">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.prompt_dropout_prob ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.prompt_dropout_prob')}
+                    min={0}
+                    max={0.5}
+                    step={0.01}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Drops prompts before encoding. Helps with unconditional generation. 0 = disabled, 0.1 = 10% dropout.
+                  </div>
                 </FormGroup>
               </div>
             )}
@@ -1066,6 +1734,55 @@ export default function ComprehensiveWizard({
                   />
                   <div className="text-xs text-gray-500 dark:text-gray-400">
                     Values like 5.0 provide balanced training across noise levels. 0 = disabled.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="SNR Gamma" tooltip="Signal-to-noise ratio value for loss weighting">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.snr_gamma ?? 0}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].train.snr_gamma')}
+                    min={0}
+                    max={20}
+                    step={0.5}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Direct SNR gamma value (alternative to min_snr_gamma). 0 = disabled.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Timestep Type" tooltip="How to sample timesteps during training">
+                  <SelectInput
+                    value={jobConfig.config.process[0].train?.timestep_type || 'sigmoid'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.timestep_type')}
+                    options={[
+                      { value: 'sigmoid', label: 'Sigmoid - Balanced distribution (default)' },
+                      { value: 'linear', label: 'Linear - Uniform sampling' },
+                      { value: 'lognorm_blend', label: 'LogNorm Blend - Focus on mid-range' },
+                      { value: 'next_sample', label: 'Next Sample - For distillation' },
+                      { value: 'weighted', label: 'Weighted - Custom weighting' },
+                      { value: 'one_step', label: 'One Step - Single step training' }
+                    ]}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Sigmoid is recommended for most cases. Linear provides uniform coverage. LogNorm focuses on mid-noise levels.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Text Encoder Memory Management">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.cache_text_embeddings}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.cache_text_embeddings')}
+                      label="Cache text embeddings (faster, uses more RAM)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.unload_text_encoder}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.unload_text_encoder')}
+                      label="Unload text encoder to CPU (saves VRAM)"
+                    />
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Cache embeddings speeds up training. Unload TE frees VRAM but slower. Best used together.
                   </div>
                 </FormGroup>
 
@@ -1353,6 +2070,172 @@ export default function ComprehensiveWizard({
                     ]}
                   />
                 </FormGroup>
+
+                {/* Advanced Preservation Strategies */}
+                <div className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-purple-800 dark:text-purple-200">Advanced Preservation (Experimental)</h4>
+
+                  <FormGroup label="Blank Prompt Preservation" tooltip="Preserve model's understanding of blank/empty prompts">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.blank_prompt_preservation}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.blank_prompt_preservation')}
+                      label="Enable blank prompt preservation"
+                    />
+                    {jobConfig.config.process[0].train?.blank_prompt_preservation && (
+                      <div className="mt-2">
+                        <NumberInput
+                          value={jobConfig.config.process[0].train?.blank_prompt_preservation_multiplier ?? 1.0}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.blank_prompt_preservation_multiplier')}
+                          min={0.1}
+                          max={10}
+                          step={0.1}
+                        />
+                      </div>
+                    )}
+                  </FormGroup>
+
+                  <FormGroup label="Inverted Mask Prior" tooltip="Use inverted mask as regularization">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.inverted_mask_prior}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.inverted_mask_prior')}
+                      label="Enable inverted mask prior"
+                    />
+                    {jobConfig.config.process[0].train?.inverted_mask_prior && (
+                      <div className="mt-2">
+                        <NumberInput
+                          value={jobConfig.config.process[0].train?.inverted_mask_prior_multiplier ?? 0.5}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.inverted_mask_prior_multiplier')}
+                          min={0.1}
+                          max={5}
+                          step={0.1}
+                        />
+                      </div>
+                    )}
+                  </FormGroup>
+
+                  <FormGroup label="Prior Divergence">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.do_prior_divergence}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.do_prior_divergence')}
+                      label="Enable prior divergence (advanced)"
+                    />
+                  </FormGroup>
+
+                  <FormGroup label="Weight Jitter" tooltip="Add noise to weights for regularization">
+                    <NumberInput
+                      value={jobConfig.config.process[0].train?.weight_jitter ?? 0}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.weight_jitter')}
+                      min={0}
+                      max={0.1}
+                      step={0.001}
+                    />
+                  </FormGroup>
+                </div>
+
+                {/* Feature Extractors */}
+                <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-indigo-800 dark:text-indigo-200">Feature Extraction (Advanced)</h4>
+
+                  <FormGroup label="Latent Feature Extractor" tooltip="Path to model for extracting latent features">
+                    <TextInput
+                      value={jobConfig.config.process[0].train?.latent_feature_extractor_path || ''}
+                      onChange={value => setJobConfig(value || undefined, 'config.process[0].train.latent_feature_extractor_path')}
+                      placeholder="Optional: path/to/feature_extractor"
+                    />
+                    {jobConfig.config.process[0].train?.latent_feature_extractor_path && (
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-500">Feature Loss Weight</label>
+                        <NumberInput
+                          value={jobConfig.config.process[0].train?.latent_feature_loss_weight ?? 1.0}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.latent_feature_loss_weight')}
+                          min={0}
+                          max={10}
+                          step={0.1}
+                        />
+                      </div>
+                    )}
+                  </FormGroup>
+
+                  <FormGroup label="Diffusion Feature Extractor" tooltip="Path to diffusion-based feature extractor">
+                    <TextInput
+                      value={jobConfig.config.process[0].train?.diffusion_feature_extractor_path || ''}
+                      onChange={value => setJobConfig(value || undefined, 'config.process[0].train.diffusion_feature_extractor_path')}
+                      placeholder="Optional: path/to/diffusion_feature_extractor"
+                    />
+                    {jobConfig.config.process[0].train?.diffusion_feature_extractor_path && (
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-500">Diffusion Feature Weight</label>
+                        <NumberInput
+                          value={jobConfig.config.process[0].train?.diffusion_feature_extractor_weight ?? 1.0}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.diffusion_feature_extractor_weight')}
+                          min={0}
+                          max={10}
+                          step={0.1}
+                        />
+                      </div>
+                    )}
+                  </FormGroup>
+                </div>
+
+                {/* Advanced Noise & Training Modes */}
+                <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-orange-800 dark:text-orange-200">Advanced Training Modes</h4>
+
+                  <FormGroup label="Optimal Noise Pairing" tooltip="Number of noise samples to find optimal pairing">
+                    <NumberInput
+                      value={jobConfig.config.process[0].train?.optimal_noise_pairing_samples ?? 1}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.optimal_noise_pairing_samples')}
+                      min={1}
+                      max={16}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Higher values find better noise pairings but slower. 1 = disabled.
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Advanced Noise Options">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].train?.force_consistent_noise}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.force_consistent_noise')}
+                        label="Force consistent noise for same image at size"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].train?.blended_blur_noise}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.blended_blur_noise')}
+                        label="Blend blur with noise"
+                      />
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Turbo Training Mode">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].train?.train_turbo}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.train_turbo')}
+                        label="Enable turbo training mode (experimental)"
+                      />
+                      {jobConfig.config.process[0].train?.train_turbo && (
+                        <Checkbox
+                          checked={!!jobConfig.config.process[0].train?.show_turbo_outputs}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.show_turbo_outputs')}
+                          label="Show turbo outputs during training"
+                        />
+                      )}
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="FreeU Mode">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.free_u}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.free_u')}
+                      label="Enable FreeU training mode"
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      FreeU applies attention scaling to improve generation quality.
+                    </div>
+                  </FormGroup>
+                </div>
               </div>
             )}
 
@@ -1416,6 +2299,29 @@ export default function ComprehensiveWizard({
                   />
                 </FormGroup>
 
+                <FormGroup label="Sampling Control" tooltip="Control when and if sampling occurs">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.disable_sampling}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.disable_sampling')}
+                      label="Disable sampling entirely (faster training)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.skip_first_sample}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.skip_first_sample')}
+                      label="Skip first sample (start training immediately)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.force_first_sample}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.force_first_sample')}
+                      label="Force first sample (sample before any training)"
+                    />
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Skip first sample is recommended to start training faster. Disable sampling entirely if you only care about final weights.
+                  </div>
+                </FormGroup>
+
                 <FormGroup label="Sampler" tooltip="Algorithm for generating preview images">
                   <SelectInput
                     value={jobConfig.config.process[0].sample?.sampler || 'flowmatch'}
@@ -1467,6 +2373,93 @@ export default function ComprehensiveWizard({
                     label="Walk seed (increment for each sample)"
                   />
                 </FormGroup>
+
+                <FormGroup label="Preview Dimensions" tooltip="Custom width and height for preview images">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-500 dark:text-gray-400">Width</label>
+                      <NumberInput
+                        value={jobConfig.config.process[0].sample?.width ?? 1024}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.width')}
+                        min={256}
+                        max={2048}
+                        step={64}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 dark:text-gray-400">Height</label>
+                      <NumberInput
+                        value={jobConfig.config.process[0].sample?.height ?? 1024}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.height')}
+                        min={256}
+                        max={2048}
+                        step={64}
+                      />
+                    </div>
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Negative Prompt" tooltip="Default negative prompt for previews">
+                  <TextInput
+                    value={jobConfig.config.process[0].sample?.neg || ''}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.neg')}
+                    placeholder="Optional: blurry, low quality, distorted"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Note: Negative prompts only work for models that support them (SD1.5, SDXL). Flux ignores this.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Network Multiplier" tooltip="Strength of LoRA network during preview generation">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.network_multiplier ?? 1.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.network_multiplier')}
+                    min={0}
+                    max={2}
+                    step={0.1}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    1.0 = full strength. Lower values reduce LoRA influence. Useful for testing at different strengths.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Guidance Rescale" tooltip="Rescale guidance to prevent over-saturation">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.guidance_rescale ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.guidance_rescale')}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    0 = disabled. Values like 0.7 help reduce over-saturation from high guidance scales.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Preview Image Format" tooltip="File format for saved preview images">
+                  <SelectInput
+                    value={jobConfig.config.process[0].sample?.format || 'jpg'}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.format')}
+                    options={[
+                      { value: 'jpg', label: 'JPEG (smaller, lossy)' },
+                      { value: 'png', label: 'PNG (lossless, larger)' },
+                      { value: 'webp', label: 'WebP (modern, efficient)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Refiner Start (SDXL only)" tooltip="When to start refiner model (0.0-1.0)">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.refiner_start_at ?? 0.5}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.refiner_start_at')}
+                    min={0}
+                    max={1}
+                    step={0.1}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Only for SDXL with refiner. 0.5 = start refiner halfway through generation.
+                  </div>
+                </FormGroup>
               </div>
             )}
 
@@ -1505,6 +2498,68 @@ export default function ComprehensiveWizard({
                     )}
                   </div>
                 </FormGroup>
+
+                <FormGroup label="Save Format" tooltip="File format for saved LoRA weights">
+                  <SelectInput
+                    value={jobConfig.config.process[0].save?.save_format || 'safetensors'}
+                    onChange={value => setJobConfig(value, 'config.process[0].save.save_format')}
+                    options={[
+                      { value: 'safetensors', label: 'SafeTensors (recommended, safe & fast)' },
+                      { value: 'diffusers', label: 'Diffusers (HuggingFace compatible)' },
+                      { value: 'ckpt', label: 'Checkpoint (legacy, less secure)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Save Data Type" tooltip="Precision for saved weights">
+                  <SelectInput
+                    value={jobConfig.config.process[0].save?.dtype || 'bf16'}
+                    onChange={value => setJobConfig(value, 'config.process[0].save.dtype')}
+                    options={[
+                      { value: 'bf16', label: 'BFloat16 (recommended for modern GPUs)' },
+                      { value: 'float16', label: 'Float16 (smaller, wider compatibility)' },
+                      { value: 'float32', label: 'Float32 (full precision, largest)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg space-y-4">
+                  <h4 className="font-medium">HuggingFace Hub Integration</h4>
+
+                  <FormGroup label="Push to Hub" tooltip="Automatically upload LoRA to HuggingFace Hub">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].save?.push_to_hub}
+                      onChange={value => setJobConfig(value, 'config.process[0].save.push_to_hub')}
+                      label="Enable automatic upload to HuggingFace Hub"
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Requires HuggingFace Hub authentication. Run &apos;huggingface-cli login&apos; first.
+                    </div>
+                  </FormGroup>
+
+                  {jobConfig.config.process[0].save?.push_to_hub && (
+                    <div className="space-y-3 ml-4 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
+                      <FormGroup label="Repository ID" tooltip="HuggingFace repo in format username/repo-name">
+                        <TextInput
+                          value={jobConfig.config.process[0].save?.hf_repo_id || ''}
+                          onChange={value => setJobConfig(value, 'config.process[0].save.hf_repo_id')}
+                          placeholder="your-username/your-lora-name"
+                        />
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          Format: username/repository-name. Will be created if it doesn&apos;t exist.
+                        </div>
+                      </FormGroup>
+
+                      <FormGroup label="Private Repository">
+                        <Checkbox
+                          checked={!!jobConfig.config.process[0].save?.hf_private}
+                          onChange={value => setJobConfig(value, 'config.process[0].save.hf_private')}
+                          label="Make repository private (requires HF Pro)"
+                        />
+                      </FormGroup>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1643,7 +2698,7 @@ export default function ComprehensiveWizard({
                       >
                         <NumberInput
                           value={(jobConfig.config.process[0].monitoring?.memory_warning_threshold ?? 0.85) * 100}
-                          onChange={value => setJobConfig(value / 100, 'config.process[0].monitoring.memory_warning_threshold')}
+                          onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].monitoring.memory_warning_threshold')}
                           min={50}
                           max={95}
                         />
@@ -1656,7 +2711,7 @@ export default function ComprehensiveWizard({
                       >
                         <NumberInput
                           value={(jobConfig.config.process[0].monitoring?.memory_critical_threshold ?? 0.95) * 100}
-                          onChange={value => setJobConfig(value / 100, 'config.process[0].monitoring.memory_critical_threshold')}
+                          onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].monitoring.memory_critical_threshold')}
                           min={60}
                           max={99}
                         />
@@ -1748,7 +2803,7 @@ export default function ComprehensiveWizard({
             ) : (
               <Button
                 className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                onClick={handleSubmit as any}
+                onClick={() => handleSubmit({ preventDefault: () => {} } as React.FormEvent<HTMLFormElement>)}
                 disabled={status === 'saving'}
               >
                 <FaCheck className="inline mr-2" />

@@ -72,10 +72,11 @@ export interface NumberInputProps extends InputProps {
   onChange: (value: number | null) => void;
   min?: number;
   max?: number;
+  step?: number | string;
 }
 
 export const NumberInput = (props: NumberInputProps) => {
-  const { label, value, onChange, placeholder, required, min, max, docKey = null } = props;
+  const { label, value, onChange, placeholder, required, min, max, step = 'any', docKey = null } = props;
   let { doc } = props;
   if (!doc && docKey) {
     doc = getDoc(docKey);
@@ -138,7 +139,7 @@ export const NumberInput = (props: NumberInputProps) => {
         required={required}
         min={min}
         max={max}
-        step="any"
+        step={step}
       />
     </div>
   );
@@ -271,22 +272,25 @@ interface FormGroupProps {
   className?: string;
   docKey?: string | null;
   doc?: ConfigDoc | null;
+  tooltip?: string;
   children: React.ReactNode;
 }
 
 export const FormGroup: React.FC<FormGroupProps> = props => {
-  const { label, className, children, docKey = null } = props;
+  const { label, className, children, docKey = null, tooltip } = props;
   let { doc } = props;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
+  // If tooltip is provided but no doc, create a simple doc object
+  const effectiveDoc = doc || (tooltip ? { title: label || '', description: tooltip } : null);
   return (
     <div className={classNames(className)}>
       {label && (
         <label className={classNames(labelClasses, 'mb-2')}>
           {label}{' '}
-          {doc && (
-            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+          {effectiveDoc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(effectiveDoc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
             </div>
           )}

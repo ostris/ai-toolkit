@@ -65,10 +65,14 @@ export interface NetworkConfig {
   linear_alpha: number;
   conv: number;
   conv_alpha: number;
+  alpha?: number;
+  dropout?: number;
+  transformer_only?: boolean;
   lokr_full_rank: boolean;
   lokr_factor: number;
   network_kwargs: {
     ignore_if_contains: string[];
+    only_if_contains?: string[];
   };
 }
 
@@ -78,6 +82,8 @@ export interface SaveConfig {
   max_step_saves_to_keep: number;
   save_format: string;
   push_to_hub: boolean;
+  hf_repo_id?: string;
+  hf_private?: boolean;
 }
 
 export interface DatasetConfig {
@@ -92,6 +98,8 @@ export interface DatasetConfig {
   network_weight: number;
   cache_latents?: boolean;
   cache_latents_to_disk?: boolean;
+  cache_text_embeddings?: boolean;
+  cache_clip_vision_to_disk?: boolean;
   resolution: number[];
   controls: string[];
   control_path?: string | null;
@@ -102,6 +110,8 @@ export interface DatasetConfig {
   flip_y: boolean;
   random_crop?: boolean;
   random_scale?: boolean;
+  scale?: number;
+  square_crop?: boolean;
   num_repeats?: number;
   keep_tokens?: number;
   token_dropout_rate?: number;
@@ -109,6 +119,23 @@ export interface DatasetConfig {
   control_path_1?: string | null;
   control_path_2?: string | null;
   control_path_3?: string | null;
+  // Advanced dataset options
+  buckets?: boolean;
+  bucket_tolerance?: number;
+  enable_ar_bucket?: boolean;
+  inpaint_path?: string | null;
+  unconditional_path?: string | null;
+  clip_image_path?: string | null;
+  clip_image_from_same_folder?: boolean;
+  alpha_mask?: boolean;
+  invert_mask?: boolean;
+  prior_reg?: boolean;
+  loss_multiplier?: number;
+  prefetch_factor?: number;
+  persistent_workers?: boolean;
+  num_workers?: number;
+  gpu_prefetch_batches?: number;
+  standardize_images?: boolean;
 }
 
 export interface AugmentationConfig {
@@ -138,6 +165,8 @@ export interface TrainConfig {
   content_or_style: string;
   optimizer: string;
   lr: number;
+  unet_lr?: number;
+  text_encoder_lr?: number;
   lr_scheduler?: string;
   lr_scheduler_params?: Record<string, unknown>;
   ema_config?: EMAConfig;
@@ -167,6 +196,36 @@ export interface TrainConfig {
   snr_gamma?: number;
   min_denoising_steps?: number;
   max_denoising_steps?: number;
+  max_grad_norm?: number;
+  prompt_dropout_prob?: number;
+  // Advanced preservation
+  inverted_mask_prior?: boolean;
+  inverted_mask_prior_multiplier?: number;
+  do_prior_divergence?: boolean;
+  // Training control
+  train_refiner?: boolean;
+  // Advanced optimization
+  weight_jitter?: number;
+  train_turbo?: boolean;
+  learnable_snr_gos?: boolean;
+  correct_pred_norm?: boolean;
+  correct_pred_norm_multiplier?: number;
+  // Batch control
+  single_item_batching?: boolean;
+  // Additional settings
+  negative_prompt?: string;
+  unconditional_prompt?: string;
+  // Feature extractors
+  latent_feature_extractor_path?: string;
+  latent_feature_loss_weight?: number;
+  diffusion_feature_extractor_path?: string;
+  diffusion_feature_extractor_weight?: number;
+  // Advanced noise options
+  optimal_noise_pairing_samples?: number;
+  force_consistent_noise?: boolean;
+  blended_blur_noise?: boolean;
+  show_turbo_outputs?: boolean;
+  free_u?: boolean;
 }
 
 export interface QuantizeKwargsConfig {
@@ -186,6 +245,28 @@ export interface ModelConfig {
   layer_offloading?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
+  compile?: boolean;
+  vae_path?: string;
+  assistant_lora_path?: string;
+  inference_lora_path?: string;
+  text_encoder_bits?: number;
+  // Advanced model options
+  dtype?: string;
+  refiner_name_or_path?: string;
+  lora_path?: string;
+  attn_masking?: boolean;
+  split_model_over_gpus?: boolean;
+  split_model_other_module_param_count_scale?: number;
+  use_text_encoder_1?: boolean;
+  use_text_encoder_2?: boolean;
+  experimental_xl?: boolean;
+  use_flux_cfg?: boolean;
+  // Device-specific options
+  vae_device?: string;
+  vae_dtype?: string;
+  te_device?: string;
+  te_dtype?: string;
+  unet_path?: string;
 }
 
 export interface SampleItem {
@@ -217,9 +298,13 @@ export interface SampleConfig {
   seed: number;
   walk_seed: boolean;
   guidance_scale: number;
+  guidance_rescale?: number;
   sample_steps: number;
   num_frames: number;
   fps: number;
+  format?: string;
+  network_multiplier?: number;
+  refiner_start_at?: number;
 }
 
 export interface SliderConfig {

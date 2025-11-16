@@ -184,7 +184,7 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                     </label>
                     <NumberInput
                       value={vramGB}
-                      onChange={setVramGB}
+                      onChange={value => value !== null && setVramGB(value)}
                       min={0}
                       max={256}
                       step={1}
@@ -219,7 +219,7 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                       <label className="block text-sm font-medium mb-1">Total RAM (GB)</label>
                       <NumberInput
                         value={totalRAM}
-                        onChange={setTotalRAM}
+                        onChange={value => value !== null && setTotalRAM(value)}
                         min={4}
                         max={1024}
                         step={1}
@@ -229,7 +229,7 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                       <label className="block text-sm font-medium mb-1">Available RAM (GB)</label>
                       <NumberInput
                         value={availableRAM}
-                        onChange={setAvailableRAM}
+                        onChange={value => value !== null && setAvailableRAM(value)}
                         min={1}
                         max={totalRAM}
                         step={1}
@@ -264,7 +264,7 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                     <label className="block text-sm font-medium mb-1">CPU Cores</label>
                     <NumberInput
                       value={cpuCores}
-                      onChange={setCpuCores}
+                      onChange={value => value !== null && setCpuCores(value)}
                       min={1}
                       max={128}
                       step={1}
