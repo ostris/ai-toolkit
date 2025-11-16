@@ -124,6 +124,31 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                 </div>
               )}
 
+              {/* Unified Memory Suggestion when VRAM is 0 */}
+              {vramGB === 0 && gpuType !== 'apple_silicon' && gpuType !== 'cpu_only' && (
+                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700 rounded-md mb-4">
+                  <p className="text-blue-800 dark:text-blue-300 text-sm mb-2">
+                    <strong>GPU VRAM detected as 0.</strong> Are you using a unified memory system (Apple Silicon/M1/M2/M3)?
+                  </p>
+                  <button
+                    onClick={() => {
+                      setGpuType('apple_silicon');
+                      setVramGB(totalRAM); // Use total RAM as unified memory
+                    }}
+                    className="text-sm text-blue-600 dark:text-blue-400 underline hover:text-blue-800"
+                  >
+                    Yes, switch to Apple Silicon
+                  </button>
+                  <span className="text-gray-400 mx-2">|</span>
+                  <button
+                    onClick={() => setGpuType('cpu_only')}
+                    className="text-sm text-gray-600 dark:text-gray-400 underline hover:text-gray-800"
+                  >
+                    No, use CPU only
+                  </button>
+                </div>
+              )}
+
               {/* GPU Section */}
               <div className="border rounded-lg p-4 dark:border-gray-700">
                 <div className="flex items-center gap-2 mb-3">
