@@ -1520,9 +1520,6 @@ export default function ComprehensiveWizard({
                       min={1}
                       max={32}
                     />
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      Higher batch sizes improve training stability but require significantly more VRAM.
-                    </div>
                   </FormGroup>
                 )}
 
@@ -1811,7 +1808,7 @@ export default function ComprehensiveWizard({
                   )}
                 </FormGroup>
 
-                <FormGroup label="Data Augmentation" tooltip="Image transformations that artificially expand your dataset. Flipping effectively doubles your data but should be avoided for asymmetric subjects like faces or text. Works equally well for all model architectures (SD1.5, SDXL, Flux). No memory cost, minimal compute overhead.">
+                <FormGroup label="Data Augmentation" tooltip="Image transformations that artificially expand your dataset. Flipping effectively doubles your data but should be avoided for asymmetric subjects like faces or text. Works equally well for all model architectures (SD1.5, SDXL, Flux). Cost: No memory overhead, minimal compute impact.">
                   <div className="space-y-2">
                     <Checkbox
                       checked={!!jobConfig.config.process[0].datasets[0]?.flip_x}
@@ -1995,7 +1992,7 @@ export default function ComprehensiveWizard({
 
                 {jobConfig.config.process[0].train?.ema_config?.use_ema && (
                   <div className="ml-6">
-                    <FormGroup label="EMA Decay" tooltip="Controls how quickly the averaged weights adapt to new updates. Higher values (closer to 1.0) create smoother, more stable weights but respond slower to new learning. Lower values are more responsive but less smooth. Cost: Stores duplicate model weights (~200MB for SD1.5, ~2GB for SDXL, ~4GB for Flux). On unified memory systems, this reduces available shared RAM/VRAM pool.">
+                    <FormGroup label="EMA Decay" tooltip="Controls how quickly the averaged weights adapt to new updates. Higher values (closer to 1.0) create smoother, more stable weights but respond slower to new learning. Lower values are more responsive but less smooth. Cost: Stores duplicate LoRA weights (~20-150MB for SD1.5 LoRA, ~50-400MB for SDXL LoRA, ~100-800MB for Flux LoRA depending on rank). On unified memory systems, this reduces available shared RAM/VRAM pool.">
                       <NumberInput
                         value={jobConfig.config.process[0].train?.ema_config?.ema_decay ?? 0.99}
                         onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
@@ -2196,7 +2193,7 @@ export default function ComprehensiveWizard({
                     </div>
                   </FormGroup>
 
-                  <FormGroup label="Advanced Noise Options" tooltip="Fine-grained control over noise behavior during training. Consistent noise ensures reproducibility for debugging. Blended blur noise can help with fine detail learning. Works with all model architectures (SD1.5, SDXL, Flux). Minimal performance impact but may affect training dynamics.">
+                  <FormGroup label="Advanced Noise Options" tooltip="Fine-grained control over noise behavior during training. Consistent noise ensures reproducibility for debugging. Blended blur noise can help with fine detail learning. Works with all model architectures (SD1.5, SDXL, Flux). Cost: Minimal performance impact but may affect training dynamics.">
                     <div className="space-y-2">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].train?.force_consistent_noise}
@@ -2260,9 +2257,6 @@ export default function ComprehensiveWizard({
                     min={100}
                     max={50000}
                   />
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    More steps increase training time linearly. Monitor samples to avoid overtraining.
-                  </div>
                 </FormGroup>
 
                 <FormGroup label="Timestep Range" tooltip="Focus training on specific noise levels (0=clean, 999=pure noise)">
@@ -2479,9 +2473,6 @@ export default function ComprehensiveWizard({
                     min={100}
                     max={10000}
                   />
-                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Lower values = more checkpoints to choose from but more disk usage. 500 is a good balance.
-                  </div>
                 </FormGroup>
 
                 <FormGroup label="Max Checkpoints to Keep" tooltip="Set to 0 to keep all checkpoints">
@@ -2559,7 +2550,7 @@ export default function ComprehensiveWizard({
                         </div>
                       </FormGroup>
 
-                      <FormGroup label="Private Repository" tooltip="Set repository visibility on HuggingFace Hub. Private repos are only visible to you and require HuggingFace Pro subscription ($9/month). Public repos are free and allow others to use your LoRA. No performance or memory cost, only affects sharing. Upload speed depends on LoRA size: SD1.5 fastest, Flux slowest.">
+                      <FormGroup label="Private Repository" tooltip="Set repository visibility on HuggingFace Hub. Private repos are only visible to you and require HuggingFace Pro subscription ($9/month). Public repos are free and allow others to use your LoRA. Cost: No performance or memory overhead, only affects sharing. Upload speed depends on LoRA size: SD1.5 fastest, Flux slowest.">
                         <Checkbox
                           checked={!!jobConfig.config.process[0].save?.hf_private}
                           onChange={value => setJobConfig(value, 'config.process[0].save.hf_private')}
