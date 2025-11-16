@@ -49,8 +49,9 @@ export function calculateBatchDefaults(
     maxBatch = Math.min(4, initialBatch * 2);
   }
 
-  // Adjust based on priority
-  const autoScale = intent.priority !== 'quality'; // Quality prefers fixed batch
+  // Auto-scaling is always recommended - it finds optimal batch size without affecting quality
+  // Larger batches improve training stability and gradient accuracy
+  const autoScale = true;
 
   return {
     batch_size: initialBatch,
