@@ -302,6 +302,21 @@ export default function ComprehensiveWizard({
     Object.entries(defaults.network).forEach(([key, value]) => {
       setJobConfig(value, `config.process[0].network.${key}`);
     });
+
+    // Enable aspect ratio bucketing by default if model supports it and dataset has non-square images
+    if (selectedModelArch) {
+      const modelInfo = getModelResolutionInfo(selectedModelArch.name);
+      if (modelInfo.supportsAspect) {
+        // Check if dataset has non-square images
+        const hasNonSquareImages = dataset.most_common_resolution[0] !== dataset.most_common_resolution[1];
+        // Also enable if there are multiple resolutions (likely different aspect ratios)
+        const hasMultipleResolutions = Object.keys(dataset.resolutions).length > 1;
+
+        if (hasNonSquareImages || hasMultipleResolutions) {
+          setJobConfig(true, 'config.process[0].datasets[0].enable_ar_bucket');
+        }
+      }
+    }
   };
 
   // Analyze dataset
