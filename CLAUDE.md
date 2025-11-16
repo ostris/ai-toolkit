@@ -1,0 +1,1 @@
+- never make PRs against the fork origin, always repo origin (heathen711/ai-toolkit)
