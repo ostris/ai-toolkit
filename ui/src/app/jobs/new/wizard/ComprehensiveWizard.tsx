@@ -102,10 +102,10 @@ export default function ComprehensiveWizard({
   // Filter to image models
   const imageModels = useMemo(() => modelArchs.filter(m => m.group === 'image'), []);
 
-  const selectedModelArch = useMemo(
-    () => modelArchs.find(a => a.name === jobConfig.config.process[0].model?.arch),
-    [jobConfig.config.process[0].model?.arch]
-  );
+  const selectedModelArch = useMemo(() => {
+    const arch = jobConfig.config.process[0]?.model?.arch;
+    return arch ? modelArchs.find(a => a.name === arch) : undefined;
+  }, [jobConfig.config.process[0]?.model?.arch]);
 
   // Get model-specific resolution info
   const getModelResolutionInfo = (archName: string) => {
@@ -664,7 +664,7 @@ export default function ComprehensiveWizard({
                     <FormGroup label="Transformer Offload Percentage" tooltip="Percentage of transformer layers to offload to CPU">
                       <NumberInput
                         value={(jobConfig.config.process[0].model?.layer_offloading_transformer_percent ?? 1.0) * 100}
-                        onChange={value => setJobConfig(value / 100, 'config.process[0].model.layer_offloading_transformer_percent')}
+                        onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].model.layer_offloading_transformer_percent')}
                         min={0}
                         max={100}
                         step={10}
@@ -676,7 +676,7 @@ export default function ComprehensiveWizard({
                     <FormGroup label="Text Encoder Offload Percentage" tooltip="Percentage of text encoder layers to offload">
                       <NumberInput
                         value={(jobConfig.config.process[0].model?.layer_offloading_text_encoder_percent ?? 1.0) * 100}
-                        onChange={value => setJobConfig(value / 100, 'config.process[0].model.layer_offloading_text_encoder_percent')}
+                        onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].model.layer_offloading_text_encoder_percent')}
                         min={0}
                         max={100}
                         step={10}
@@ -2698,7 +2698,7 @@ export default function ComprehensiveWizard({
                       >
                         <NumberInput
                           value={(jobConfig.config.process[0].monitoring?.memory_warning_threshold ?? 0.85) * 100}
-                          onChange={value => setJobConfig(value / 100, 'config.process[0].monitoring.memory_warning_threshold')}
+                          onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].monitoring.memory_warning_threshold')}
                           min={50}
                           max={95}
                         />
@@ -2711,7 +2711,7 @@ export default function ComprehensiveWizard({
                       >
                         <NumberInput
                           value={(jobConfig.config.process[0].monitoring?.memory_critical_threshold ?? 0.95) * 100}
-                          onChange={value => setJobConfig(value / 100, 'config.process[0].monitoring.memory_critical_threshold')}
+                          onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].monitoring.memory_critical_threshold')}
                           min={60}
                           max={99}
                         />
@@ -2803,7 +2803,7 @@ export default function ComprehensiveWizard({
             ) : (
               <Button
                 className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-                onClick={handleSubmit as any}
+                onClick={() => handleSubmit({ preventDefault: () => {} } as React.FormEvent<HTMLFormElement>)}
                 disabled={status === 'saving'}
               >
                 <FaCheck className="inline mr-2" />

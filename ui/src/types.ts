@@ -199,19 +199,11 @@ export interface TrainConfig {
   max_grad_norm?: number;
   prompt_dropout_prob?: number;
   // Advanced preservation
-  blank_prompt_preservation?: boolean;
-  blank_prompt_preservation_multiplier?: number;
   inverted_mask_prior?: boolean;
   inverted_mask_prior_multiplier?: number;
   do_prior_divergence?: boolean;
-  // Differential guidance
-  do_differential_guidance?: boolean;
-  differential_guidance_scale?: number;
   // Training control
   train_refiner?: boolean;
-  skip_first_sample?: boolean;
-  force_first_sample?: boolean;
-  disable_sampling?: boolean;
   // Advanced optimization
   weight_jitter?: number;
   train_turbo?: boolean;
@@ -219,7 +211,6 @@ export interface TrainConfig {
   correct_pred_norm?: boolean;
   correct_pred_norm_multiplier?: number;
   // Batch control
-  batch_size_warmup_steps?: number;
   single_item_batching?: boolean;
   // Additional settings
   negative_prompt?: string;

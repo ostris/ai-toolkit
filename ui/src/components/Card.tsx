@@ -7,12 +7,13 @@ interface CardProps {
   children?: React.ReactNode;
   collapsible?: boolean;
   defaultOpen?: boolean;
+  className?: string;
 }
 
-const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen }) => {
+const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, className }) => {
   if (collapsible) {
     return (
-      <Disclosure as="section" className="space-y-2 px-4 pb-2 pt-2 bg-gray-900 rounded-lg" defaultOpen={defaultOpen}>
+      <Disclosure as="section" className={classNames("space-y-2 px-4 pb-2 pt-2 bg-gray-900 rounded-lg", className)} defaultOpen={defaultOpen}>
         {({ open }) => (
           <>
             <DisclosureButton className="w-full text-left flex items-center justify-between">
@@ -33,7 +34,7 @@ const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen }
     );
   }
   return (
-    <section className="space-y-2 px-4 pb-4 pt-2 bg-gray-900 rounded-lg">
+    <section className={classNames("space-y-2 px-4 pb-4 pt-2 bg-gray-900 rounded-lg", className)}>
       {title && <h2 className="text-lg mb-2 font-semibold uppercase text-gray-500">{title}</h2>}
       {children ?? null}
     </section>

@@ -972,8 +972,8 @@ export function estimateTrainingTime(
   stepTime *= batchSize;
 
   // Adjust for GPU type
-  if (profile.gpu.type === 'apple_silicon') {
-    stepTime *= 1.5; // Apple Silicon generally slower for ML
+  if (profile.gpu.isUnifiedMemory) {
+    stepTime *= 1.5; // Unified memory (Apple Silicon, etc.) generally slower for ML
   } else if (profile.gpu.vramGB >= 24) {
     stepTime *= 0.8; // High-end GPU
   }
