@@ -375,6 +375,276 @@ export function calculateLowVRAM(profile: SystemProfile): boolean {
 }
 
 /**
+ * Calculate optimal learning rate scheduler
+ *
+ * Different schedulers work better for different scenarios:
+ * - constant: Simple, good for fine-tuning
+ * - cosine: Smooth decay, great for quality
+ * - linear: Gradual decay, balanced
+ * - cosine_with_restarts: Helps escape local minima
+ */
+export interface LRSchedulerConfig {
+  lr_scheduler: string;
+  lr_scheduler_params: Record<string, unknown>;
+}
+
+export function calculateLRScheduler(
+  intent: UserIntent,
+  steps: number
+): LRSchedulerConfig {
+  if (intent.priority === 'speed') {
+    // Fast training: constant LR is simplest
+    return {
+      lr_scheduler: 'constant',
+      lr_scheduler_params: {}
+    };
+  }
+
+  if (intent.priority === 'quality') {
+    // Quality: cosine annealing with warmup
+    const warmupSteps = Math.min(100, Math.floor(steps * 0.1));
+    return {
+      lr_scheduler: 'cosine_with_restarts',
+      lr_scheduler_params: {
+        num_cycles: 3,
+        warmup_steps: warmupSteps,
+        min_lr_ratio: 0.1
+      }
+    };
+  }
+
+  // Balanced: linear decay with warmup
+  const warmupSteps = Math.min(50, Math.floor(steps * 0.05));
+  return {
+    lr_scheduler: 'linear',
+    lr_scheduler_params: {
+      warmup_steps: warmupSteps
+    }
+  };
+}
+
+/**
+ * Calculate optimal noise scheduler
+ *
+ * - ddpm: Default, stable training
+ * - euler: Faster convergence, good for fine-tuning
+ * - lms: Linear multi-step, memory efficient
+ */
+export function calculateNoiseScheduler(
+  intent: UserIntent,
+  modelArch: string
+): string {
+  // Modern models (Flux, SD3) work best with specific schedulers
+  if (modelArch === 'flux' || modelArch === 'flux_kontext') {
+    return 'euler'; // Flux uses flow matching
+  }
+  if (modelArch === 'sd3') {
+    return 'euler';
+  }
+
+  // For quality priority, use DDPM (most stable)
+  if (intent.priority === 'quality') {
+    return 'ddpm';
+  }
+
+  // For speed, euler converges faster
+  if (intent.priority === 'speed') {
+    return 'euler';
+  }
+
+  return 'ddpm'; // Default stable choice
+}
+
+/**
+ * Calculate optimal loss target
+ *
+ * - noise: Predict the noise (default, stable)
+ * - source: Predict the clean image (alternative approach)
+ * - differential_noise: Predict difference (advanced)
+ */
+export function calculateLossTarget(
+  intent: UserIntent,
+  modelArch: string
+): string {
+  // Some architectures have preferred targets
+  if (modelArch === 'flux' || modelArch === 'sd3') {
+    return 'noise'; // Flow models should predict noise
+  }
+
+  // For quality training, noise prediction is most stable
+  return 'noise';
+}
+
+/**
+ * Calculate CFG (Classifier-Free Guidance) training settings
+ *
+ * CFG training can improve quality but adds complexity
+ */
+export interface CFGConfig {
+  do_cfg: boolean;
+  cfg_scale: number;
+}
+
+export function calculateCFGTraining(
+  intent: UserIntent
+): CFGConfig {
+  // CFG training is advanced - only enable for quality priority + advanced users
+  if (intent.priority === 'quality' && intent.experienceLevel === 'advanced') {
+    return {
+      do_cfg: true,
+      cfg_scale: 3.0 // Moderate guidance during training
+    };
+  }
+
+  return {
+    do_cfg: false,
+    cfg_scale: 1.0
+  };
+}
+
+/**
+ * Calculate noise offset settings
+ *
+ * Noise offset helps with dark/bright images training
+ */
+export interface NoiseOffsetConfig {
+  noise_offset: number;
+  min_snr_gamma?: number;
+}
+
+export function calculateNoiseOffset(
+  intent: UserIntent,
+  datasetInfo: DatasetInfo
+): NoiseOffsetConfig {
+  // For quality, enable small noise offset to help with brightness range
+  if (intent.priority === 'quality') {
+    return {
+      noise_offset: 0.05, // Small offset improves dynamic range
+      min_snr_gamma: 5.0 // SNR weighting for stable training
+    };
+  }
+
+  // For speed/efficiency, skip the overhead
+  return {
+    noise_offset: 0.0,
+    min_snr_gamma: undefined
+  };
+}
+
+/**
+ * Calculate timestep range for training
+ *
+ * Limiting timestep range can focus training on specific noise levels
+ */
+export interface TimestepConfig {
+  min_denoising_steps: number;
+  max_denoising_steps: number;
+}
+
+export function calculateTimestepRange(
+  intent: UserIntent
+): TimestepConfig {
+  // Full range is usually best for general training
+  return {
+    min_denoising_steps: 0,
+    max_denoising_steps: 999
+  };
+  // Advanced users might want to focus on specific ranges, but defaults should be full
+}
+
+/**
+ * Calculate data augmentation settings
+ */
+export interface AugmentationDefaults {
+  flip_x: boolean;
+  flip_y: boolean;
+  random_crop: boolean;
+  random_scale: boolean;
+}
+
+export function calculateAugmentations(
+  intent: UserIntent,
+  datasetInfo: DatasetInfo
+): AugmentationDefaults {
+  // Horizontal flip is generally safe for styles/objects
+  const flipX = intent.trainingType !== 'person'; // Don't flip faces
+
+  // Vertical flip rarely makes sense
+  const flipY = false;
+
+  // Random crop/scale can help with generalization but risks quality
+  const randomCrop = intent.priority === 'quality' && datasetInfo.total_images < 100;
+  const randomScale = false; // Usually not helpful for LoRA
+
+  return {
+    flip_x: flipX,
+    flip_y: flipY,
+    random_crop: randomCrop,
+    random_scale: randomScale
+  };
+}
+
+/**
+ * Calculate logging defaults
+ */
+export interface LoggingDefaults {
+  use_wandb: boolean;
+  log_every: number;
+  verbose: boolean;
+}
+
+export function calculateLoggingDefaults(
+  intent: UserIntent
+): LoggingDefaults {
+  return {
+    use_wandb: false, // User needs to set up W&B first
+    log_every: intent.priority === 'quality' ? 50 : 100,
+    verbose: intent.experienceLevel === 'advanced'
+  };
+}
+
+/**
+ * Calculate sample/preview defaults
+ */
+export interface SampleDefaults {
+  sampler: string;
+  sample_steps: number;
+  guidance_scale: number;
+  seed: number;
+}
+
+export function calculateSampleDefaults(
+  modelArch: string
+): SampleDefaults {
+  // Different models have different optimal preview settings
+  if (modelArch === 'flux' || modelArch === 'flux_kontext') {
+    return {
+      sampler: 'euler',
+      sample_steps: 20,
+      guidance_scale: 3.5, // Flux uses lower guidance
+      seed: 42
+    };
+  }
+
+  if (modelArch === 'sd3') {
+    return {
+      sampler: 'euler',
+      sample_steps: 28,
+      guidance_scale: 7.0,
+      seed: 42
+    };
+  }
+
+  // SDXL and others
+  return {
+    sampler: 'ddpm',
+    sample_steps: 20,
+    guidance_scale: 7.0,
+    seed: 42
+  };
+}
+
+/**
  * Generate all smart defaults for a configuration
  */
 export function generateSmartDefaults(
@@ -394,15 +664,32 @@ export function generateSmartDefaults(
   const loraConfig = calculateLoraRank(intent, datasetInfo);
   const lowVRAM = calculateLowVRAM(profile);
 
+  // Advanced training options
+  const lrSchedulerConfig = calculateLRScheduler(intent, steps);
+  const noiseScheduler = calculateNoiseScheduler(intent, modelArch);
+  const lossTarget = calculateLossTarget(intent, modelArch);
+  const cfgConfig = calculateCFGTraining(intent);
+  const noiseOffsetConfig = calculateNoiseOffset(intent, datasetInfo);
+  const timestepConfig = calculateTimestepRange(intent);
+  const augmentationConfig = calculateAugmentations(intent, datasetInfo);
+  const loggingConfig = calculateLoggingDefaults(intent);
+  const sampleConfig = calculateSampleDefaults(modelArch);
+
   return {
     train: {
       ...batchConfig,
       lr: learningRate,
+      ...lrSchedulerConfig,
       steps,
       gradient_accumulation_steps: 1,
       optimizer: 'adamw8bit',
       dtype: profile.gpu.vramGB >= 16 ? 'bf16' : 'fp16',
-      gradient_checkpointing: profile.gpu.vramGB < 16
+      gradient_checkpointing: profile.gpu.vramGB < 16,
+      noise_scheduler: noiseScheduler,
+      loss_target: lossTarget,
+      ...cfgConfig,
+      ...noiseOffsetConfig,
+      ...timestepConfig
     },
     model: {
       low_vram: lowVRAM
@@ -411,6 +698,7 @@ export function generateSmartDefaults(
       ...cacheConfig,
       gpu_prefetch_batches: prefetchBatches,
       ...workerConfig,
+      ...augmentationConfig,
       resolution: [resolution, resolution]
     },
     network: {
@@ -418,8 +706,118 @@ export function generateSmartDefaults(
       linear: loraConfig.rank,
       linear_alpha: loraConfig.alpha
     },
-    advisorMessages: handleUnifiedMemory(profile)
+    sample: sampleConfig,
+    logging: loggingConfig,
+    advisorMessages: [
+      ...handleUnifiedMemory(profile),
+      ...generateAdvancedTrainingMessages(intent, lrSchedulerConfig, noiseScheduler, cfgConfig, noiseOffsetConfig, augmentationConfig)
+    ]
   };
+}
+
+/**
+ * Generate advisor messages for advanced training options
+ */
+export function generateAdvancedTrainingMessages(
+  intent: UserIntent,
+  lrScheduler: LRSchedulerConfig,
+  noiseScheduler: string,
+  cfgConfig: CFGConfig,
+  noiseOffset: NoiseOffsetConfig,
+  augmentations: AugmentationDefaults
+): AdvisorMessage[] {
+  const messages: AdvisorMessage[] = [];
+
+  // LR Scheduler explanation
+  if (lrScheduler.lr_scheduler === 'cosine_with_restarts') {
+    messages.push({
+      type: 'tip',
+      title: 'Cosine LR Schedule with Restarts',
+      message: 'Using cosine annealing with periodic restarts. This helps the model escape local minima and often produces better quality results. The learning rate will cycle through warm restarts to explore different optima.'
+    });
+  } else if (lrScheduler.lr_scheduler === 'linear') {
+    messages.push({
+      type: 'info',
+      title: 'Linear LR Decay',
+      message: 'Using linear learning rate decay. The learning rate will gradually decrease throughout training, providing stable convergence with a warmup period at the start.'
+    });
+  } else if (lrScheduler.lr_scheduler === 'constant') {
+    messages.push({
+      type: 'info',
+      title: 'Constant Learning Rate',
+      message: 'Using constant learning rate for simplicity. This is fastest but may not produce optimal results for longer training runs.'
+    });
+  }
+
+  // Noise scheduler explanation
+  if (noiseScheduler === 'euler') {
+    messages.push({
+      type: 'tip',
+      title: 'Euler Noise Scheduler',
+      message: 'Using Euler scheduler which provides faster convergence compared to DDPM. Particularly effective for flow-matching models like Flux and SD3.'
+    });
+  }
+
+  // CFG training
+  if (cfgConfig.do_cfg) {
+    messages.push({
+      type: 'tip',
+      title: 'Classifier-Free Guidance Training',
+      message: `CFG training enabled with scale ${cfgConfig.cfg_scale}. This teaches the model to respond to guidance during inference, potentially improving quality but increasing training complexity.`
+    });
+  }
+
+  // Noise offset
+  if (noiseOffset.noise_offset > 0) {
+    messages.push({
+      type: 'tip',
+      title: 'Noise Offset Enabled',
+      message: `Noise offset of ${noiseOffset.noise_offset} will help the model better handle dark and bright regions in images. This improves dynamic range preservation.`
+    });
+  }
+
+  // SNR gamma
+  if (noiseOffset.min_snr_gamma) {
+    messages.push({
+      type: 'info',
+      title: 'SNR Loss Weighting',
+      message: `Min SNR gamma of ${noiseOffset.min_snr_gamma} provides more balanced training across different noise levels, reducing the over-emphasis on high-noise timesteps.`
+    });
+  }
+
+  // Augmentations
+  if (augmentations.flip_x) {
+    messages.push({
+      type: 'info',
+      title: 'Horizontal Flip Enabled',
+      message: 'Horizontal flipping will double your effective dataset size. Disabled for person training to preserve facial features.'
+    });
+  }
+
+  if (augmentations.random_crop) {
+    messages.push({
+      type: 'tip',
+      title: 'Random Crop Enabled',
+      message: 'Random cropping helps the model learn from different image regions, improving generalization especially for small datasets.'
+    });
+  }
+
+  // Experience-based tips
+  if (intent.experienceLevel === 'beginner') {
+    messages.push({
+      type: 'info',
+      title: 'Smart Defaults Applied',
+      message: 'Advanced training parameters have been set to optimal values for your setup. You can adjust these settings as you gain experience, but the defaults should work well.'
+    });
+  } else if (intent.experienceLevel === 'advanced') {
+    messages.push({
+      type: 'tip',
+      title: 'Advanced Controls Available',
+      message: 'Fine-tune noise scheduling, timestep ranges, and loss functions to optimize training for your specific use case. Consider experimenting with different LR schedulers for better convergence.'
+    });
+  }
+
+  return messages;
 }
 
 /**

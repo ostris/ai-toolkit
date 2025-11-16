@@ -56,10 +56,12 @@ const wizardSteps: WizardStep[] = [
   { id: 'resolution', title: 'Resolution', description: 'Set training resolution and augmentation' },
   { id: 'memory', title: 'Memory', description: 'Batch size and caching configuration' },
   { id: 'optimizer', title: 'Optimizer', description: 'Learning rate and optimizer settings' },
+  { id: 'advanced', title: 'Advanced', description: 'Noise scheduler, loss function, and CFG settings' },
   { id: 'regularization', title: 'Regularization', description: 'Prevent overfitting', isOptional: true },
   { id: 'training', title: 'Training', description: 'Steps and timestep configuration' },
   { id: 'sampling', title: 'Sampling', description: 'Configure preview generation' },
   { id: 'save', title: 'Save', description: 'Checkpoint and save settings' },
+  { id: 'logging', title: 'Logging', description: 'W&B integration and logging settings' },
   { id: 'monitoring', title: 'Monitoring', description: 'Performance analysis and optimization' },
   { id: 'review', title: 'Review', description: 'Review and submit configuration' }
 ];
@@ -989,7 +991,159 @@ export default function ComprehensiveWizard({
               </div>
             )}
 
-            {/* Step 8: Regularization */}
+            {/* Step 8: Advanced Training */}
+            {currentStepDef.id === 'advanced' && (
+              <div className="space-y-4">
+                <FormGroup label="Learning Rate Scheduler" tooltip="How learning rate changes during training">
+                  <SelectInput
+                    value={jobConfig.config.process[0].train?.lr_scheduler || 'constant'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.lr_scheduler')}
+                    options={[
+                      { value: 'constant', label: 'Constant - Simple, no decay' },
+                      { value: 'linear', label: 'Linear - Gradual decay' },
+                      { value: 'cosine', label: 'Cosine - Smooth S-curve decay' },
+                      { value: 'cosine_with_restarts', label: 'Cosine with Restarts - Periodic warm restarts' },
+                      { value: 'polynomial', label: 'Polynomial - Configurable decay' }
+                    ]}
+                  />
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {jobConfig.config.process[0].train?.lr_scheduler === 'cosine_with_restarts' && (
+                      <span>Cosine with restarts helps escape local minima by periodically resetting the learning rate.</span>
+                    )}
+                    {jobConfig.config.process[0].train?.lr_scheduler === 'linear' && (
+                      <span>Linear decay provides stable convergence by gradually reducing learning rate.</span>
+                    )}
+                    {jobConfig.config.process[0].train?.lr_scheduler === 'constant' && (
+                      <span>Constant LR is simplest but may not produce optimal results for long training runs.</span>
+                    )}
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Noise Scheduler" tooltip="Algorithm for noise schedule during training">
+                  <SelectInput
+                    value={jobConfig.config.process[0].train?.noise_scheduler || 'ddpm'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.noise_scheduler')}
+                    options={[
+                      { value: 'ddpm', label: 'DDPM - Stable, default choice' },
+                      { value: 'euler', label: 'Euler - Faster convergence' },
+                      { value: 'lms', label: 'LMS - Linear multi-step' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Loss Target" tooltip="What the model learns to predict">
+                  <SelectInput
+                    value={jobConfig.config.process[0].train?.loss_target || 'noise'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.loss_target')}
+                    options={[
+                      { value: 'noise', label: 'Noise - Predict the noise (default, most stable)' },
+                      { value: 'source', label: 'Source - Predict the clean image' },
+                      { value: 'differential_noise', label: 'Differential Noise - Predict noise difference (advanced)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Noise Offset" tooltip="Helps with dark and bright images">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.noise_offset ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.noise_offset')}
+                    min={0}
+                    max={0.2}
+                    step={0.01}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Small values (0.02-0.1) help preserve dynamic range in very dark/bright images. 0 = disabled.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Min SNR Gamma" tooltip="Signal-to-noise ratio weighting for loss">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.min_snr_gamma ?? 0}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].train.min_snr_gamma')}
+                    min={0}
+                    max={20}
+                    step={0.5}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Values like 5.0 provide balanced training across noise levels. 0 = disabled.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Classifier-Free Guidance Training">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].train?.do_cfg}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.do_cfg')}
+                    label="Enable CFG training (advanced)"
+                  />
+                  {jobConfig.config.process[0].train?.do_cfg && (
+                    <div className="mt-2">
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.cfg_scale ?? 3.0}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.cfg_scale')}
+                        min={1}
+                        max={10}
+                        step={0.5}
+                      />
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        CFG scale during training (typically 2.0-5.0)
+                      </div>
+                    </div>
+                  )}
+                </FormGroup>
+
+                <FormGroup label="Data Augmentation">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets[0]?.flip_x}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].flip_x')}
+                      label="Horizontal flip (doubles dataset, avoid for faces)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets[0]?.flip_y}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].flip_y')}
+                      label="Vertical flip (rarely useful)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets[0]?.random_crop}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].random_crop')}
+                      label="Random crop (helps generalization for small datasets)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets[0]?.random_scale}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].random_scale')}
+                      label="Random scale (usually not helpful for LoRA)"
+                    />
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Latent Caching" tooltip="Cache encoded images for faster training">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets[0]?.cache_latents}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].datasets[0].cache_latents');
+                        if (value && jobConfig.config.process[0].datasets[0]?.cache_latents_to_disk) {
+                          setJobConfig(false, 'config.process[0].datasets[0].cache_latents_to_disk');
+                        }
+                      }}
+                      label="Cache latents in RAM (5-10x faster, uses memory)"
+                    />
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].datasets[0]?.cache_latents_to_disk}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].datasets[0].cache_latents_to_disk');
+                        if (value && jobConfig.config.process[0].datasets[0]?.cache_latents) {
+                          setJobConfig(false, 'config.process[0].datasets[0].cache_latents');
+                        }
+                      }}
+                      label="Cache latents to disk (slower but saves RAM)"
+                    />
+                  </div>
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 9: Regularization */}
             {currentStepDef.id === 'regularization' && (
               <div className="space-y-4">
                 <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
@@ -1276,7 +1430,74 @@ export default function ComprehensiveWizard({
               </div>
             )}
 
-            {/* Step 12: Monitoring */}
+            {/* Step 13: Logging */}
+            {currentStepDef.id === 'logging' && (
+              <div className="space-y-4">
+                <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
+                  Configure logging and experiment tracking to monitor training progress.
+                </p>
+
+                <FormGroup label="Weights & Biases Integration" tooltip="Log metrics to W&B for experiment tracking">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].logging?.use_wandb}
+                    onChange={value => setJobConfig(value, 'config.process[0].logging.use_wandb')}
+                    label="Enable W&B logging"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Requires W&B account and API key configured. Visit wandb.ai to set up.
+                  </div>
+                </FormGroup>
+
+                {jobConfig.config.process[0].logging?.use_wandb && (
+                  <div className="space-y-4 ml-4 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
+                    <FormGroup label="Project Name" tooltip="W&B project name">
+                      <input
+                        type="text"
+                        value={jobConfig.config.process[0].logging?.project_name || 'ai-toolkit'}
+                        onChange={e => setJobConfig(e.target.value, 'config.process[0].logging.project_name')}
+                        className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md"
+                        placeholder="ai-toolkit"
+                      />
+                    </FormGroup>
+
+                    <FormGroup label="Run Name" tooltip="Unique name for this training run">
+                      <input
+                        type="text"
+                        value={jobConfig.config.process[0].logging?.run_name || ''}
+                        onChange={e => setJobConfig(e.target.value, 'config.process[0].logging.run_name')}
+                        className="w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md"
+                        placeholder="Leave empty for auto-generated name"
+                      />
+                    </FormGroup>
+                  </div>
+                )}
+
+                <FormGroup label="Log Frequency" tooltip="How often to log metrics (every N steps)">
+                  <NumberInput
+                    value={jobConfig.config.process[0].logging?.log_every ?? 100}
+                    onChange={value => setJobConfig(value, 'config.process[0].logging.log_every')}
+                    min={1}
+                    max={1000}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Lower values provide more detail but may slow training slightly. 50-100 is typical.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Verbose Output">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].logging?.verbose}
+                    onChange={value => setJobConfig(value, 'config.process[0].logging.verbose')}
+                    label="Enable verbose logging (detailed output)"
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Prints additional debug information during training. Useful for troubleshooting.
+                  </div>
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 14: Monitoring */}
             {currentStepDef.id === 'monitoring' && (
               <div className="space-y-4">
                 <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
