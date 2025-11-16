@@ -10,9 +10,10 @@ import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
+import PerformanceAnalysis from './components/PerformanceAnalysis';
 import { Job } from '@prisma/client';
 
-type PageKey = 'overview' | 'samples' | 'config';
+type PageKey = 'overview' | 'samples' | 'analysis' | 'config';
 
 interface Page {
   name: string;
@@ -34,6 +35,12 @@ const pages: Page[] = [
     value: 'samples',
     component: SampleImages,
     menuItem: SampleImagesMenu,
+    mainCss: 'pt-24',
+  },
+  {
+    name: 'Performance',
+    value: 'analysis',
+    component: PerformanceAnalysis,
     mainCss: 'pt-24',
   },
   {

@@ -90,6 +90,7 @@ export interface DatasetConfig {
   shuffle_tokens?: boolean;
   is_reg: boolean;
   network_weight: number;
+  cache_latents?: boolean;
   cache_latents_to_disk?: boolean;
   resolution: number[];
   controls: string[];
@@ -99,9 +100,20 @@ export interface DatasetConfig {
   do_i2v: boolean;
   flip_x: boolean;
   flip_y: boolean;
+  random_crop?: boolean;
+  random_scale?: boolean;
+  num_repeats?: number;
+  keep_tokens?: number;
+  token_dropout_rate?: number;
+  augmentations?: AugmentationConfig[];
   control_path_1?: string | null;
   control_path_2?: string | null;
   control_path_3?: string | null;
+}
+
+export interface AugmentationConfig {
+  name: string;
+  params?: Record<string, unknown>;
 }
 
 export interface EMAConfig {
@@ -111,6 +123,10 @@ export interface EMAConfig {
 
 export interface TrainConfig {
   batch_size: number;
+  auto_scale_batch_size?: boolean;
+  min_batch_size?: number;
+  max_batch_size?: number;
+  batch_size_warmup_steps?: number;
   bypass_guidance_embedding?: boolean;
   steps: number;
   gradient_accumulation: number;
@@ -122,6 +138,8 @@ export interface TrainConfig {
   content_or_style: string;
   optimizer: string;
   lr: number;
+  lr_scheduler?: string;
+  lr_scheduler_params?: Record<string, unknown>;
   ema_config?: EMAConfig;
   dtype: string;
   unload_text_encoder: boolean;
@@ -139,8 +157,16 @@ export interface TrainConfig {
   blank_prompt_preservation_multiplier?: number;
   switch_boundary_every: number;
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
+  loss_target?: string;
   do_differential_guidance?: boolean;
   differential_guidance_scale?: number;
+  do_cfg?: boolean;
+  cfg_scale?: number;
+  noise_offset?: number;
+  min_snr_gamma?: number;
+  snr_gamma?: number;
+  min_denoising_steps?: number;
+  max_denoising_steps?: number;
 }
 
 export interface QuantizeKwargsConfig {
@@ -205,6 +231,23 @@ export interface SliderConfig {
   anchor_class?: string | null;
 }
 
+export interface MonitoringConfig {
+  enabled?: boolean;
+  sample_interval_seconds?: number;
+  track_per_process?: boolean;
+  analyze_on_complete?: boolean;
+  memory_warning_threshold?: number;
+  memory_critical_threshold?: number;
+}
+
+export interface LoggingConfig {
+  use_wandb?: boolean;
+  project_name?: string;
+  run_name?: string;
+  log_every?: number;
+  verbose?: boolean;
+}
+
 export interface ProcessConfig {
   type: string;
   sqlite_db_path?: string;
@@ -219,6 +262,8 @@ export interface ProcessConfig {
   train: TrainConfig;
   model: ModelConfig;
   sample: SampleConfig;
+  monitoring?: MonitoringConfig;
+  logging?: LoggingConfig;
 }
 
 export interface ConfigObject {

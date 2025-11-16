@@ -29,6 +29,16 @@ import platform
 def is_native_windows():
     return platform.system() == "Windows" and platform.release() != "2"
 
+
+def is_worker_process():
+    """
+    Detect if we're running in a PyTorch DataLoader worker process.
+    Returns True if in a worker, False if in main process.
+    """
+    worker_info = torch.utils.data.get_worker_info()
+    return worker_info is not None
+
+
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
     
@@ -569,7 +579,61 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 # handle cropping to a specific point of interest
                 # setup buckets every epoch
                 self.setup_buckets(quiet=True)
+
+        # Enable shared memory for cached data after caching completes
+        # This should be called every epoch in case new data was cached
+        self.enable_shared_memory()
+
         self.epoch_num += 1
+
+    def enable_shared_memory(self):
+        """
+        Enable shared memory for all cached tensors (latents, text embeddings, clip vision).
+        This prevents memory duplication when dataset is pickled to DataLoader workers.
+        Call this after all caching operations complete.
+        """
+        if not hasattr(self, 'file_list') or len(self.file_list) == 0:
+            return
+
+        # Count how many items have cached data
+        latents_count = 0
+        text_embeds_count = 0
+        clip_embeds_count = 0
+
+        for file_item in self.file_list:
+            # Enable shared memory for cached latents
+            if hasattr(file_item, '_encoded_latent') and file_item._encoded_latent is not None:
+                file_item._encoded_latent.share_memory_()
+                latents_count += 1
+
+            # Enable shared memory for cached text embeddings (PromptEmbeds)
+            if hasattr(file_item, 'prompt_embeds') and file_item.prompt_embeds is not None:
+                file_item.prompt_embeds.share_memory_()
+                text_embeds_count += 1
+
+            # Enable shared memory for cached clip vision embeddings (dict of tensors)
+            if hasattr(file_item, 'clip_image_embeds') and file_item.clip_image_embeds is not None:
+                for key, tensor in file_item.clip_image_embeds.items():
+                    if tensor is not None:
+                        tensor.share_memory_()
+                clip_embeds_count += 1
+
+            # Enable shared memory for unconditional clip embeddings
+            if hasattr(file_item, 'clip_image_embeds_unconditional') and file_item.clip_image_embeds_unconditional is not None:
+                for key, tensor in file_item.clip_image_embeds_unconditional.items():
+                    if tensor is not None:
+                        tensor.share_memory_()
+
+        # Only print if we actually enabled shared memory for something
+        if latents_count > 0 or text_embeds_count > 0 or clip_embeds_count > 0:
+            print_acc(f"Enabled shared memory for cached data:")
+            if latents_count > 0:
+                print_acc(f"  - Latents: {latents_count} items")
+            if text_embeds_count > 0:
+                print_acc(f"  - Text embeddings: {text_embeds_count} items")
+            if clip_embeds_count > 0:
+                print_acc(f"  - CLIP vision embeddings: {clip_embeds_count} items")
+            print_acc(f"  Workers will now share this memory instead of duplicating it")
 
     def __len__(self):
         if self.dataset_config.buckets:
@@ -595,6 +659,25 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         else:
             # Dataloader is batching
             return self._get_single_item(item)
+
+    def __getstate__(self):
+        """
+        Custom pickle state to exclude self.sd from being pickled to worker processes.
+        This saves ~19GB per worker for large models like Qwen-Image.
+        """
+        state = self.__dict__.copy()
+        # Remove the unpicklable sd reference to save memory in workers
+        # Workers don't need the model - they only load cached latents/embeddings
+        state['sd'] = None
+        return state
+
+    def __setstate__(self, state):
+        """
+        Restore state from pickle. self.sd will be None in workers.
+        """
+        self.__dict__.update(state)
+        # Note: self.sd is None in worker processes, which is expected
+        # Workers only need to load cached data, not encode new data
 
 
 def get_dataloader_from_datasets(
@@ -647,12 +730,15 @@ def get_dataloader_from_datasets(
     # check if is caching latents
 
     dataloader_kwargs = {}
-    
+
     if is_native_windows():
         dataloader_kwargs['num_workers'] = 0
     else:
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        # persistent_workers keeps workers alive between epochs (requires num_workers > 0)
+        if dataset_config_list[0].persistent_workers and dataset_config_list[0].num_workers > 0:
+            dataloader_kwargs['persistent_workers'] = True
 
     if has_buckets:
         # make sure they all have buckets
@@ -716,3 +802,43 @@ def get_dataloader_datasets(dataloader: DataLoader):
         return dataloader.dataset.datasets
     else:
         return [dataloader.dataset]
+
+
+def get_dataloader_with_prefetch(dataloader: DataLoader, device: str = 'cuda', prefetch_batches: int = 0):
+    """
+    Wrap a dataloader with GPU prefetching for reduced idle time.
+
+    If prefetch_batches > 0, returns a DataLoaderPrefetcher that asynchronously
+    moves batches to GPU while training is running. Otherwise returns the original dataloader.
+
+    Args:
+        dataloader: PyTorch DataLoader to potentially wrap
+        device: Target device for prefetching (default: 'cuda')
+        prefetch_batches: Number of batches to prefetch (0 = disabled)
+
+    Returns:
+        DataLoaderPrefetcher if prefetch_batches > 0, otherwise original dataloader
+
+    Example:
+        >>> dataloader = get_dataloader_from_datasets(dataset_options, batch_size=4)
+        >>> # Get prefetcher config from dataset
+        >>> datasets = get_dataloader_datasets(dataloader)
+        >>> prefetch_batches = datasets[0].dataset_config.gpu_prefetch_batches if datasets else 0
+        >>> # Wrap with prefetcher
+        >>> dataloader_or_prefetcher = get_dataloader_with_prefetch(
+        >>>     dataloader, device='cuda', prefetch_batches=prefetch_batches
+        >>> )
+        >>> # Use normally - iterator automatically handles prefetching
+        >>> for batch in dataloader_or_prefetcher:
+        >>>     train_step(batch)  # batch already on GPU if prefetching enabled
+    """
+    if prefetch_batches > 0:
+        from toolkit.cache_prefetcher import DataLoaderPrefetcher
+        return DataLoaderPrefetcher(
+            dataloader=dataloader,
+            device=device,
+            prefetch_batches=prefetch_batches,
+            enabled=True,
+        )
+    else:
+        return dataloader

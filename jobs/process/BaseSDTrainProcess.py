@@ -26,7 +26,7 @@ from toolkit.memory_management import MemoryManager
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
+from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch, get_dataloader_datasets, get_dataloader_with_prefetch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
@@ -65,6 +65,7 @@ from toolkit.logging_aitk import create_logger
 from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.print import print_acc
+from toolkit.batch_size_tuner import BatchSizeTuner
 from accelerate import Accelerator
 import transformers
 import diffusers
@@ -264,6 +265,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.current_boundary_index = 0
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
+
+        # Initialize batch size tuner
+        self.batch_size_tuner = None
+        if self.train_config.auto_scale_batch_size:
+            self.batch_size_tuner = BatchSizeTuner(
+                initial_batch_size=self.train_config.batch_size,
+                min_batch_size=self.train_config.min_batch_size,
+                max_batch_size=self.train_config.max_batch_size,
+                auto_scale=True,
+                warmup_steps=self.train_config.batch_size_warmup_steps,
+            )
+            print_acc(f"Batch size tuner enabled:")
+            print_acc(f"  Initial batch size: {self.batch_size_tuner.initial_batch_size}")
+            print_acc(f"  Min batch size: {self.batch_size_tuner.min_batch_size}")
+            print_acc(f"  Max batch size: {self.batch_size_tuner.max_batch_size}")
+            print_acc(f"  Warmup steps: {self.batch_size_tuner.warmup_steps}")
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -2027,14 +2044,30 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if self.data_loader is not None:
             dataloader = self.data_loader
-            dataloader_iterator = iter(dataloader)
+            # Wrap with GPU prefetcher if configured
+            datasets = get_dataloader_datasets(dataloader)
+            gpu_prefetch_batches = datasets[0].dataset_config.gpu_prefetch_batches if datasets else 0
+            if gpu_prefetch_batches > 0:
+                print_acc(f"Enabling GPU prefetching with {gpu_prefetch_batches} batches")
+            dataloader_or_prefetcher = get_dataloader_with_prefetch(
+                dataloader, device=self.device, prefetch_batches=gpu_prefetch_batches
+            )
+            dataloader_iterator = iter(dataloader_or_prefetcher)
         else:
             dataloader = None
             dataloader_iterator = None
 
         if self.data_loader_reg is not None:
             dataloader_reg = self.data_loader_reg
-            dataloader_iterator_reg = iter(dataloader_reg)
+            # Wrap with GPU prefetcher if configured
+            datasets_reg = get_dataloader_datasets(dataloader_reg)
+            gpu_prefetch_batches_reg = datasets_reg[0].dataset_config.gpu_prefetch_batches if datasets_reg else 0
+            if gpu_prefetch_batches_reg > 0:
+                print_acc(f"Enabling GPU prefetching for reg dataloader with {gpu_prefetch_batches_reg} batches")
+            dataloader_reg_or_prefetcher = get_dataloader_with_prefetch(
+                dataloader_reg, device=self.device, prefetch_batches=gpu_prefetch_batches_reg
+            )
+            dataloader_iterator_reg = iter(dataloader_reg_or_prefetcher)
         else:
             dataloader_reg = None
             dataloader_iterator_reg = None
@@ -2104,7 +2137,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 # hit the end of an epoch, reset
                                 if self.progress_bar is not None:
                                     self.progress_bar.pause()
-                                dataloader_iterator_reg = iter(dataloader_reg)
+                                dataloader_iterator_reg = iter(dataloader_reg_or_prefetcher)
                                 trigger_dataloader_setup_epoch(dataloader_reg)
 
                             with self.timer('get_batch:reg'):
@@ -2121,7 +2154,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 # hit the end of an epoch, reset
                                 if self.progress_bar is not None:
                                     self.progress_bar.pause()
-                                dataloader_iterator = iter(dataloader)
+                                dataloader_iterator = iter(dataloader_or_prefetcher)
                                 trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
                                 if self.train_config.gradient_accumulation_steps == -1:
@@ -2169,8 +2202,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     raise  # not an OOM; surface real errors
             if did_oom:
                 self.num_consecutive_oom += 1
-                if self.num_consecutive_oom > 3:
+
+                # Handle OOM with batch size tuner if enabled
+                if self.batch_size_tuner is not None:
+                    new_batch_size, should_abort = self.batch_size_tuner.handle_oom()
+                    if should_abort:
+                        raise RuntimeError("Batch size tuner: Cannot reduce batch size further, aborting")
+                    print_acc(f"Batch size tuner: Adjusted batch size to {new_batch_size}")
+                elif self.num_consecutive_oom > 3:
                     raise RuntimeError("OOM during training step 3 times in a row, aborting training")
+
                 optimizer.zero_grad(set_to_none=True)
                 flush()
                 torch.cuda.ipc_collect()
@@ -2182,6 +2223,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc("")
             else:
                 self.num_consecutive_oom = 0
+                # Track successful step with batch size tuner
+                if self.batch_size_tuner is not None:
+                    self.batch_size_tuner.handle_success()
             if self.torch_profiler is not None:
                 torch.cuda.synchronize()  # Make sure all CUDA ops are done
                 self.torch_profiler.stop()
@@ -2217,6 +2261,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     prog_bar_string = f"lr: {learning_rate:.1e}"
                     for key, value in loss_dict.items():
                         prog_bar_string += f" {key}: {value:.3e}"
+
+                    # Add batch size info if tuner is enabled
+                    if self.batch_size_tuner is not None:
+                        current_bs = self.batch_size_tuner.get_batch_size(step)
+                        prog_bar_string += f" bs: {current_bs}"
 
                     if self.progress_bar is not None:
                         self.progress_bar.set_postfix_str(prog_bar_string)

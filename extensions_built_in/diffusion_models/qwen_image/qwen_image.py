@@ -18,6 +18,7 @@ from toolkit.util.quantize import quantize, get_qtype, quantize_model
 import torch.nn.functional as F
 from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
+from toolkit.monitoring.samplers import is_unified_memory_system
 
 from diffusers import (
     QwenImagePipeline,
@@ -133,8 +134,11 @@ class QwenImageModel(BaseModel):
             )
 
         if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+            if is_unified_memory_system():
+                self.print_and_status_update("Skipping CPU offloading (unified memory system - CPU/GPU share RAM)")
+            else:
+                self.print_and_status_update("Moving transformer to CPU")
+                transformer.to("cpu")
 
         flush()
 

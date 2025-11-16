@@ -1,0 +1,299 @@
+=================================================================
+CRITICAL CONFIG GAPS: Backend vs Wizard
+=================================================================
+
+EXPOSURE SUMMARY:
+- Total backend config fields: 200+
+- Wizard-exposed fields: ~35
+- Hidden/gap fields: ~165+
+- Exposure rate: ~17%
+
+=================================================================
+HIGHEST IMPACT MISSING OPTIONS (That should be in wizard)
+=================================================================
+
+TIER 1: MAJOR TRAINING BEHAVIOR (Should be exposed)
+1. lr_scheduler - Controls learning rate schedule over time
+   - Impacts: Final model quality, training stability
+   - Current: Only constant LR
+   
+2. noise_scheduler - Fundamental to what model learns
+   - Impacts: Training speed, quality, convergence
+   - Current: Hidden, defaults to 'ddpm'
+
+3. cache_latents / cache_latents_to_disk - Training speed
+   - Impacts: 5-10x faster training possible
+   - Current: Both hidden, default False
+   - Note: Wizard indirectly enables caching in backend
+
+4. loss_target - What model predicts
+   - Options: noise, source, unaugmented, differential_noise
+   - Impacts: Training fundamentals
+   - Current: Hidden, hardcoded to 'noise'
+
+5. do_cfg / cfg_scale - Classifier-free guidance training
+   - Impacts: Quality, training behavior
+   - Current: Completely hidden
+
+6. augmentations - Data quality control
+   - Impacts: Generalization, overfitting prevention
+   - Current: Hidden, no UI for augmentation config
+
+TIER 2: OPTIMIZATION OPTIONS (Hidden but very useful)
+7. layer_offloading system - Memory optimization
+   - Saves VRAM by offloading layers to CPU
+   - Current: Hidden, no expose for fine-grained control
+
+8. lr_scheduler_params - Detailed learning schedule control
+   - Enables warmup, decay strategies
+   - Current: Hidden, defaults empty {}
+
+9. batch_size_warmup_steps - Gradient stability
+   - Affects batch size scaling ramp
+   - Current: Hidden, default 100
+
+10. noise_offset - Helps with dark/low-brightness images
+    - Current: Hidden, default 0.0
+
+11. min/max_denoising_steps - Training focus control
+    - Current: Hidden, defaults 0/999
+
+12. unload_text_encoder - Memory saving
+    - Current: Hidden, default False
+
+TIER 3: QUALITY FEATURES (Hidden advanced options)
+13. inverted_mask_prior - Masking strategy
+    - Current: Hidden
+
+14. blank_prompt_preservation - Preserve base model knowledge
+    - Current: Hidden
+
+15. learnable_snr_gos - Adaptive loss weighting
+    - Current: Hidden
+
+16. optimal_noise_pairing - Smart noise selection
+    - Current: Hidden
+
+17. force_consistent_noise - Deterministic noise
+    - Current: Hidden
+
+TIER 4: LOGGING & MONITORING (Completely hidden)
+18. use_wandb - Weights & Biases integration
+    - Current: Hidden, default False
+
+19. log_every - Log frequency control
+    - Current: Hidden, default 100
+
+20. verbose - Verbose output
+    - Current: Hidden, default False
+
+=================================================================
+DATASET CONFIG GAPS
+=================================================================
+
+MOST CRITICAL:
+1. augmentations - Complete Albumentations pipeline config
+   - Current: Hidden, no UI
+   
+2. cache_latents / cache_latents_to_disk - Major speed boost
+   - Current: Hidden
+   
+3. control_path / control_path_1-3 - Control image paths
+   - Current: Hidden
+   
+4. num_repeats - Dataset repetition
+   - Current: Hidden, default 1
+
+5. keep_tokens - Token protection
+   - Current: Hidden, default 0
+
+6. token_dropout_rate - Token level dropout
+   - Current: Hidden, default 0.0
+
+7. flip_x / flip_y - Flipping augmentation
+   - Current: Hidden, both False
+
+8. random_scale / random_crop - Scale/crop augmentation
+   - Current: Hidden, both False
+
+9. mask_path / alpha_mask / invert_mask - Masking
+   - Current: Hidden
+
+10. caption_ext - Custom caption file type
+    - Current: Hidden, auto-detected
+
+=================================================================
+MODEL CONFIG GAPS
+=================================================================
+
+OPTIMIZATION FEATURES (Hidden):
+1. low_vram - Enable low VRAM mode
+   - Current: Hidden, default False
+
+2. layer_offloading - CPU offloading
+   - Current: Hidden, default False
+
+3. attn_masking - Attention optimization (Flux)
+   - Current: Hidden, default False
+
+4. split_model_over_gpus - Multi-GPU split (Flux)
+   - Current: Hidden, default False
+
+5. compile - torch.compile() model
+   - Current: Hidden, default False
+
+VARIANT CONTROL (Hidden):
+6. vae_path - Custom VAE
+   - Current: Hidden
+
+7. refiner_name_or_path - Custom refiner (SDXL)
+   - Current: Hidden
+
+8. te_name_or_path - Custom text encoder
+   - Current: Hidden
+
+9. lora_path - Base LoRA preload
+   - Current: Hidden
+
+DEVICE/DTYPE CONTROL (Hidden):
+10. vae_device / vae_dtype - VAE placement
+    - Current: Hidden
+
+11. te_device / te_dtype - Text encoder placement
+    - Current: Hidden
+
+=================================================================
+SAMPLE/PREVIEW GAPS
+=================================================================
+
+1. sampler - Preview sampler algorithm
+   - Current: Hidden, default 'ddpm'
+
+2. sample_steps - Preview generation steps
+   - Current: Hidden, default 20
+
+3. guidance_scale - CFG for previews
+   - Current: Hidden, default 7
+
+4. seed - Preview seed control
+   - Current: Hidden, default 0
+
+5. width/height - Preview dimensions
+   - Current: Hidden, defaults 512x512
+
+=================================================================
+SAVE CONFIG GAPS
+=================================================================
+
+1. save_format - safetensors vs diffusers
+   - Current: Partially hidden (exposed but not in wizard UI)
+
+2. push_to_hub - HuggingFace Hub upload
+   - Current: Hidden, default False
+
+3. hf_repo_id - Hub repository ID
+   - Current: Hidden
+
+4. dtype - Saved weight precision
+   - Current: Hidden
+
+=================================================================
+LOGGING CONFIG GAPS (100% Hidden)
+=================================================================
+
+1. use_wandb - Weights & Biases integration
+2. project_name - W&B project name
+3. run_name - W&B run identifier
+4. log_every - Log frequency
+5. verbose - Verbose mode
+
+=================================================================
+ADAPTER CONFIG (Specialized - 30+ options, 100% hidden)
+=================================================================
+
+For IP-Adapter, ControlNet, iLoRA training:
+- type, channels, num_tokens, image_encoder_path
+- train_image_encoder, clip_layer
+- control_image_dropout, num_control_images
+- All completely hidden from wizard
+
+=================================================================
+BREAKDOWN BY IMPACT LEVEL
+=================================================================
+
+CRITICAL (directly affects final model):
+- noise_scheduler
+- lr_scheduler / lr_scheduler_params
+- loss_target
+- augmentations
+- cache_latents
+- do_cfg / cfg_scale
+
+HIGH (significantly affects training):
+- control_path
+- layer_offloading
+- unload_text_encoder
+- inverted_mask_prior
+- blank_prompt_preservation
+- noise_offset
+- min/max_denoising_steps
+
+MEDIUM (optimization/quality):
+- batch_size_warmup_steps
+- learnable_snr_gos
+- optimal_noise_pairing
+- stamp configurations
+- refiner options
+
+LOW (convenience/monitoring):
+- use_wandb, log_every
+- verbose mode
+- save format
+- Hub integration
+
+=================================================================
+RECOMMENDED PRIORITIES FOR WIZARD EXPOSURE
+=================================================================
+
+PHASE 1 (Most impactful):
+[x] Add lr_scheduler / lr_scheduler_params controls
+[x] Add noise_scheduler selection
+[x] Add cache_latents / cache_latents_to_disk toggle
+[x] Add augmentations UI
+[x] Add loss_target selection
+[x] Add do_cfg / cfg_scale controls
+
+PHASE 2 (Important):
+[ ] Add layer_offloading controls
+[ ] Add control_path for ControlNet
+[ ] Add min/max denoising steps
+[ ] Add unload_text_encoder toggle
+[ ] Add noise_offset slider
+
+PHASE 3 (Nice-to-have):
+[ ] Add W&B integration
+[ ] Add advanced sampler options
+[ ] Add custom VAE/LoRA paths
+[ ] Add feature extractor options
+[ ] Add adapter training options
+
+=================================================================
+HOW TO USE HIDDEN OPTIONS TODAY
+=================================================================
+
+Users can access these hidden options by:
+
+1. YAML Config File - Write YAML with all options:
+   train:
+     noise_scheduler: euler
+     lr_scheduler: linear
+     cache_latents: true
+     do_cfg: true
+   
+2. REST API - POST with full config JSON
+3. CLI - Pass config YAML file directly
+
+Example: Config files in /configs/training/ directory
+would allow users to leverage all 200+ options without
+wizard UI modification.
+

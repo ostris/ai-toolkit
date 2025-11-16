@@ -1,0 +1,65 @@
+# Example configuration showing persistent_workers feature
+#
+# persistent_workers keeps DataLoader workers alive between epochs
+# Benefits:
+# - Faster epoch transitions (no worker restart overhead)
+# - Better GPU utilization (less idle time between epochs)
+# - Particularly beneficial for multi-epoch training
+#
+# Requirements:
+# - num_workers must be > 0
+# - Python >= 3.7 (for PyTorch DataLoader persistent_workers support)
+
+job: extension
+config:
+  name: my_training_job
+  process:
+    - type: sd_trainer
+      training_folder: output
+
+      # Dataset configuration
+      datasets:
+        - folder_path: /path/to/dataset
+          caption_ext: .txt
+          resolution: 1024
+
+          # DataLoader worker settings
+          num_workers: 4              # Number of worker processes
+          prefetch_factor: 2          # Batches to prefetch per worker
+          persistent_workers: true    # Keep workers alive between epochs (NEW!)
+
+          # Caching settings (works great with persistent_workers)
+          cache_latents: true         # Or cache_latents_to_disk: true
+
+      # Network configuration
+      network:
+        type: lora
+        linear: 16
+        linear_alpha: 16
+
+      # Training settings
+      train:
+        batch_size: 1
+        steps: 1000
+        gradient_accumulation_steps: 1
+
+      # Optimizer
+      optimizer: adamw8bit
+      lr: 1e-4
+
+# Performance comparison:
+#
+# WITHOUT persistent_workers (default):
+# - Workers restart between each epoch
+# - Overhead: ~2-5 seconds per epoch (depends on dataset/workers)
+# - 10 epochs = 20-50 seconds wasted on worker restarts
+#
+# WITH persistent_workers: true:
+# - Workers stay alive across all epochs
+# - Near-zero overhead between epochs
+# - 10 epochs = smooth transitions, no restart delays
+#
+# Recommended for:
+# - Multi-epoch training (> 1 epoch)
+# - Large datasets (where worker startup is noticeable)
+# - When using num_workers >= 2

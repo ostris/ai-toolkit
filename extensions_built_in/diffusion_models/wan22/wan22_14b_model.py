@@ -28,6 +28,7 @@ from .wan22_5b_model import (
     time_text_monkeypatch,
 )
 from toolkit.memory_management import MemoryManager
+from toolkit.monitoring.samplers import is_unified_memory_system
 from safetensors.torch import load_file, save_file
 
 
@@ -304,8 +305,11 @@ class Wan2214bModel(Wan21):
             flush()
 
         if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer 1 to CPU")
-            transformer_1.to("cpu")
+            if is_unified_memory_system():
+                self.print_and_status_update("Skipping CPU offloading (unified memory system - CPU/GPU share RAM)")
+            else:
+                self.print_and_status_update("Moving transformer 1 to CPU")
+                transformer_1.to("cpu")
         else:
             transformer_1.to(self.device_torch)
 
@@ -334,8 +338,11 @@ class Wan2214bModel(Wan21):
             flush()
 
         if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer 2 to CPU")
-            transformer_2.to("cpu")
+            if is_unified_memory_system():
+                self.print_and_status_update("Skipping CPU offloading (unified memory system - CPU/GPU share RAM)")
+            else:
+                self.print_and_status_update("Moving transformer 2 to CPU")
+                transformer_2.to("cpu")
         else:
             transformer_2.to(self.device_torch)
     

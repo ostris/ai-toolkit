@@ -361,6 +361,13 @@ class TrainConfig:
         self.max_denoising_steps: int = kwargs.get('max_denoising_steps', 999)
         self.batch_size: int = kwargs.get('batch_size', 1)
         self.orig_batch_size: int = self.batch_size
+
+        # Batch size tuner settings
+        self.auto_scale_batch_size: bool = kwargs.get('auto_scale_batch_size', False)
+        self.min_batch_size: int = kwargs.get('min_batch_size', 1)
+        self.max_batch_size: int = kwargs.get('max_batch_size', 32)
+        self.batch_size_warmup_steps: int = kwargs.get('batch_size_warmup_steps', 100)
+
         self.dtype: str = kwargs.get('dtype', 'fp32')
         self.xformers = kwargs.get('xformers', False)
         self.sdp = kwargs.get('sdp', False)
@@ -936,6 +943,11 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        self.persistent_workers: bool = kwargs.get('persistent_workers', False)
+        # GPU prefetching: Number of batches to prefetch to GPU asynchronously (0 = disabled)
+        # Reduces GPU idle time by preparing next batch while current batch is training
+        # Recommended: 2 (prefetch 2 batches ahead)
+        self.gpu_prefetch_batches: int = kwargs.get('gpu_prefetch_batches', 0)
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
