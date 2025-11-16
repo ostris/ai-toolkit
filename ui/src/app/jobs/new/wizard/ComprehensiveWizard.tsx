@@ -287,8 +287,13 @@ export default function ComprehensiveWizard({
     const resolution = jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024;
     const defaults = generateSmartDefaults(profile, intent, dataset, resolution, 'lora');
 
+    console.log('[SmartDefaults] Generated defaults:', defaults);
+    console.log('[SmartDefaults] auto_scale_batch_size:', defaults.train.auto_scale_batch_size);
+    console.log('[SmartDefaults] User intent priority:', intent.priority);
+
     // Apply training defaults
     Object.entries(defaults.train).forEach(([key, value]) => {
+      console.log(`[SmartDefaults] Setting train.${key} =`, value);
       setJobConfig(value, `config.process[0].train.${key}`);
     });
 
@@ -724,6 +729,8 @@ export default function ComprehensiveWizard({
             {/* Step 6: Memory & Batch */}
             {currentStepDef.id === 'memory' && (
               <div className="space-y-4">
+                {console.log('[Render] Current auto_scale_batch_size:', jobConfig.config.process[0].train?.auto_scale_batch_size)}
+                {console.log('[Render] Full train config:', jobConfig.config.process[0].train)}
                 <FormGroup label="Auto-Scale Batch Size" tooltip="Automatically find optimal batch size">
                   <Checkbox
                     checked={!!jobConfig.config.process[0].train?.auto_scale_batch_size}
