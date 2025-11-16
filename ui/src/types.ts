@@ -111,6 +111,10 @@ export interface EMAConfig {
 
 export interface TrainConfig {
   batch_size: number;
+  auto_scale_batch_size?: boolean;
+  min_batch_size?: number;
+  max_batch_size?: number;
+  batch_size_warmup_steps?: number;
   bypass_guidance_embedding?: boolean;
   steps: number;
   gradient_accumulation: number;
