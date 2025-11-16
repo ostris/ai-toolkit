@@ -267,6 +267,74 @@ export default function ComprehensiveWizard({
       }
     }
 
+    // Regularization step recommendations
+    if (currentStepDef.id === 'regularization') {
+      const process = jobConfig.config.process[0];
+      const captionDropout = process.datasets?.[0]?.caption_dropout_rate || 0.05;
+      const weightDecay = process.train?.optimizer_params?.weight_decay || 0.0001;
+      const gradCheckpoint = process.train?.gradient_checkpointing;
+      const useEma = process.train?.ema_config?.use_ema;
+      const diffPreserve = process.train?.diff_output_preservation;
+
+      // Caption dropout recommendation
+      if (userIntent.trainingType === 'person') {
+        messages.push({
+          type: 'tip',
+          title: 'Person Training Tip',
+          message: `For training people/characters, a caption dropout of 0.05-0.1 helps the model generalize facial features. Current: ${captionDropout}`
+        });
+      } else if (userIntent.trainingType === 'style') {
+        messages.push({
+          type: 'tip',
+          title: 'Style Training Tip',
+          message: `For style training, lower caption dropout (0.02-0.05) keeps style consistent. Current: ${captionDropout}`
+        });
+      }
+
+      // Small dataset warning
+      if (datasetInfo && datasetInfo.total_images < 20) {
+        messages.push({
+          type: 'warning',
+          title: 'Small Dataset',
+          message: `With only ${datasetInfo.total_images} images, consider higher weight decay (0.01) and enabling EMA to prevent overfitting.`
+        });
+        if (weightDecay < 0.001) {
+          messages.push({
+            type: 'info',
+            title: 'Weight Decay Suggestion',
+            message: 'Increase weight decay to 0.001-0.01 for small datasets to prevent overfitting.'
+          });
+        }
+      }
+
+      // Gradient checkpointing for limited VRAM
+      if (!gradCheckpoint && systemProfile.gpu.vramGB < 16) {
+        messages.push({
+          type: 'warning',
+          title: 'Enable Gradient Checkpointing',
+          message: `With ${systemProfile.gpu.vramGB}GB VRAM, enable gradient checkpointing to avoid out-of-memory errors.`
+        });
+      }
+
+      // EMA recommendation
+      if (!useEma && userIntent.priority === 'quality') {
+        messages.push({
+          type: 'tip',
+          title: 'Consider EMA',
+          message: 'EMA smooths training noise and often produces more stable, higher-quality results. Recommended for quality-focused training.'
+        });
+      }
+
+      // Differential preservation for concept training
+      if (!diffPreserve && userIntent.trainingType === 'concept') {
+        messages.push({
+          type: 'tip',
+          title: 'Output Preservation',
+          message: 'For concept training, consider enabling differential output preservation to prevent the model from forgetting its general knowledge.'
+        });
+      }
+    }
+
     setAdvisorMessages(messages);
   }, [systemProfile, userIntent, currentStepDef, jobConfig, datasetInfo]);
 
