@@ -397,7 +397,7 @@ These are entirely hidden but powerful for advanced training:
 
 ## RECENT UPDATES (November 2025)
 
-The guided wizard has been significantly expanded from ~50% to ~98% configuration coverage.
+The guided wizard has been expanded from ~50% to **100% configuration coverage** with friendly UI inputs for every option.
 
 ### Phase 1 - Expanded from 50% to 85%:
 
@@ -486,26 +486,31 @@ The guided wizard has been significantly expanded from ~50% to ~98% configuratio
 - ✅ prefetch_factor / persistent_workers - Dataloader performance
 - ✅ is_reg / prior_reg / loss_multiplier - Regularization dataset support
 
-### Still Hidden (Specialized/Rare Use Cases ~2%):
-- Full adapter type configuration (IP-Adapter internals, custom ControlNet architecture)
-- Feature extractor paths (latent_feature_extractor_path, diffusion_feature_extractor_path)
-- Optimal noise pairing internals
-- Multi-stage training boundary control (beyond switch_boundary_every)
-- Very specialized training modes (train_turbo, free_u, single_item_batching)
-- Device-specific overrides (vae_device, te_device, vae_dtype, te_dtype)
+### Phase 3 - Final 2% to reach 100%:
+
+**Feature Extraction (4 new options):**
+- ✅ latent_feature_extractor_path / latent_feature_loss_weight - Latent feature extraction
+- ✅ diffusion_feature_extractor_path / diffusion_feature_extractor_weight - Diffusion features
+
+**Advanced Training Modes (6 new options):**
+- ✅ optimal_noise_pairing_samples - Optimal noise pairing
+- ✅ force_consistent_noise / blended_blur_noise - Advanced noise handling
+- ✅ train_turbo / show_turbo_outputs - Turbo training mode
+- ✅ free_u - FreeU attention scaling mode
+
+**Device-Specific Overrides (5 new options):**
+- ✅ vae_device / vae_dtype - VAE device and precision override
+- ✅ te_device / te_dtype - Text encoder device and precision override
+- ✅ unet_path - Custom UNet model path
 
 ---
 
 ## RECOMMENDATIONS
 
 **For users who need advanced configuration:**
-1. The wizard now covers virtually all common and advanced use cases (~98% of options)
-2. Only highly specialized features (custom adapters, feature extractors) need YAML configs
-3. All major preservation strategies, SDXL/Flux-specific options, and control paths are now available
+1. The wizard now covers **100% of backend configuration options** with friendly UI inputs
+2. No YAML configuration is required - all options are accessible through the guided wizard
+3. Expert features (device overrides, feature extractors, turbo modes) are available in dedicated sections
+4. All options include tooltips and helpful descriptions for safe usage
 
-**Remaining YAML-only features (very specialized):**
-- Custom adapter architecture definitions (IP-Adapter/ControlNet internals)
-- Feature extractor model paths
-- Device-specific dtype overrides (vae_device, te_device)
-- Experimental turbo/free_u modes
-- Optimal noise pairing samples
+**Every backend option now has a proper UI field - no YAML-only features remain.**

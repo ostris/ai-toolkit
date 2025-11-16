@@ -224,6 +224,17 @@ export interface TrainConfig {
   // Additional settings
   negative_prompt?: string;
   unconditional_prompt?: string;
+  // Feature extractors
+  latent_feature_extractor_path?: string;
+  latent_feature_loss_weight?: number;
+  diffusion_feature_extractor_path?: string;
+  diffusion_feature_extractor_weight?: number;
+  // Advanced noise options
+  optimal_noise_pairing_samples?: number;
+  force_consistent_noise?: boolean;
+  blended_blur_noise?: boolean;
+  show_turbo_outputs?: boolean;
+  free_u?: boolean;
 }
 
 export interface QuantizeKwargsConfig {
@@ -259,6 +270,12 @@ export interface ModelConfig {
   use_text_encoder_2?: boolean;
   experimental_xl?: boolean;
   use_flux_cfg?: boolean;
+  // Device-specific options
+  vae_device?: string;
+  vae_dtype?: string;
+  te_device?: string;
+  te_dtype?: string;
+  unet_path?: string;
 }
 
 export interface SampleItem {

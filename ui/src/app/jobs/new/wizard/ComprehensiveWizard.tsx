@@ -838,6 +838,74 @@ export default function ComprehensiveWizard({
                     Continue training from an existing LoRA instead of starting fresh.
                   </div>
                 </FormGroup>
+
+                <FormGroup label="Custom UNet Path" tooltip="Path to custom UNet model (for modified architectures)">
+                  <TextInput
+                    value={jobConfig.config.process[0].model?.unet_path || ''}
+                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.unet_path')}
+                    placeholder="Optional: path/to/custom/unet"
+                  />
+                </FormGroup>
+
+                {/* Device-Specific Overrides */}
+                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-red-800 dark:text-red-200">Device-Specific Overrides (Expert)</h4>
+                  <p className="text-xs text-red-600 dark:text-red-300">
+                    Override device and dtype for specific model components. Leave empty to use defaults.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormGroup label="VAE Device" tooltip="Device for VAE operations">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.vae_device || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_device')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'cuda', label: 'CUDA (GPU)' },
+                          { value: 'cpu', label: 'CPU' }
+                        ]}
+                      />
+                    </FormGroup>
+                    <FormGroup label="VAE Dtype" tooltip="Data type for VAE">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.vae_dtype || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_dtype')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'float16', label: 'Float16' },
+                          { value: 'bfloat16', label: 'BFloat16' },
+                          { value: 'float32', label: 'Float32' }
+                        ]}
+                      />
+                    </FormGroup>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormGroup label="Text Encoder Device" tooltip="Device for text encoder operations">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.te_device || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.te_device')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'cuda', label: 'CUDA (GPU)' },
+                          { value: 'cpu', label: 'CPU' }
+                        ]}
+                      />
+                    </FormGroup>
+                    <FormGroup label="Text Encoder Dtype" tooltip="Data type for text encoder">
+                      <SelectInput
+                        value={jobConfig.config.process[0].model?.te_dtype || ''}
+                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.te_dtype')}
+                        options={[
+                          { value: '', label: 'Default (auto)' },
+                          { value: 'float16', label: 'Float16' },
+                          { value: 'bfloat16', label: 'BFloat16' },
+                          { value: 'float32', label: 'Float32' }
+                        ]}
+                      />
+                    </FormGroup>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2061,6 +2129,111 @@ export default function ComprehensiveWizard({
                       max={0.1}
                       step={0.001}
                     />
+                  </FormGroup>
+                </div>
+
+                {/* Feature Extractors */}
+                <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-indigo-800 dark:text-indigo-200">Feature Extraction (Advanced)</h4>
+
+                  <FormGroup label="Latent Feature Extractor" tooltip="Path to model for extracting latent features">
+                    <TextInput
+                      value={jobConfig.config.process[0].train?.latent_feature_extractor_path || ''}
+                      onChange={value => setJobConfig(value || undefined, 'config.process[0].train.latent_feature_extractor_path')}
+                      placeholder="Optional: path/to/feature_extractor"
+                    />
+                    {jobConfig.config.process[0].train?.latent_feature_extractor_path && (
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-500">Feature Loss Weight</label>
+                        <NumberInput
+                          value={jobConfig.config.process[0].train?.latent_feature_loss_weight ?? 1.0}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.latent_feature_loss_weight')}
+                          min={0}
+                          max={10}
+                          step={0.1}
+                        />
+                      </div>
+                    )}
+                  </FormGroup>
+
+                  <FormGroup label="Diffusion Feature Extractor" tooltip="Path to diffusion-based feature extractor">
+                    <TextInput
+                      value={jobConfig.config.process[0].train?.diffusion_feature_extractor_path || ''}
+                      onChange={value => setJobConfig(value || undefined, 'config.process[0].train.diffusion_feature_extractor_path')}
+                      placeholder="Optional: path/to/diffusion_feature_extractor"
+                    />
+                    {jobConfig.config.process[0].train?.diffusion_feature_extractor_path && (
+                      <div className="mt-2">
+                        <label className="text-xs text-gray-500">Diffusion Feature Weight</label>
+                        <NumberInput
+                          value={jobConfig.config.process[0].train?.diffusion_feature_extractor_weight ?? 1.0}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.diffusion_feature_extractor_weight')}
+                          min={0}
+                          max={10}
+                          step={0.1}
+                        />
+                      </div>
+                    )}
+                  </FormGroup>
+                </div>
+
+                {/* Advanced Noise & Training Modes */}
+                <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg space-y-4">
+                  <h4 className="font-medium text-orange-800 dark:text-orange-200">Advanced Training Modes</h4>
+
+                  <FormGroup label="Optimal Noise Pairing" tooltip="Number of noise samples to find optimal pairing">
+                    <NumberInput
+                      value={jobConfig.config.process[0].train?.optimal_noise_pairing_samples ?? 1}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.optimal_noise_pairing_samples')}
+                      min={1}
+                      max={16}
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Higher values find better noise pairings but slower. 1 = disabled.
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Advanced Noise Options">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].train?.force_consistent_noise}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.force_consistent_noise')}
+                        label="Force consistent noise for same image at size"
+                      />
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].train?.blended_blur_noise}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.blended_blur_noise')}
+                        label="Blend blur with noise"
+                      />
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="Turbo Training Mode">
+                    <div className="space-y-2">
+                      <Checkbox
+                        checked={!!jobConfig.config.process[0].train?.train_turbo}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.train_turbo')}
+                        label="Enable turbo training mode (experimental)"
+                      />
+                      {jobConfig.config.process[0].train?.train_turbo && (
+                        <Checkbox
+                          checked={!!jobConfig.config.process[0].train?.show_turbo_outputs}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.show_turbo_outputs')}
+                          label="Show turbo outputs during training"
+                        />
+                      )}
+                    </div>
+                  </FormGroup>
+
+                  <FormGroup label="FreeU Mode">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.free_u}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.free_u')}
+                      label="Enable FreeU training mode"
+                    />
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      FreeU applies attention scaling to improve generation quality.
+                    </div>
                   </FormGroup>
                 </div>
               </div>
