@@ -40,10 +40,6 @@ export default function TrainingForm() {
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
-  // Debug log for auto_scale_batch_size
-  console.log('[PageInit] defaultJobConfig auto_scale_batch_size:', defaultJobConfig.config.process[0].train.auto_scale_batch_size);
-  console.log('[PageInit] jobConfig auto_scale_batch_size:', jobConfig.config.process[0].train?.auto_scale_batch_size);
-
   useEffect(() => {
     if (!isSettingsLoaded) return;
     if (datasetFetchStatus !== 'success') return;

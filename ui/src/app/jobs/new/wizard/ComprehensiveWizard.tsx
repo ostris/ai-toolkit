@@ -390,17 +390,10 @@ export default function ComprehensiveWizard({
       return; // Don't apply defaults without knowing the model
     }
 
-    console.log('[SmartDefaults] Using resolution for batch calculation:', resolution);
     const defaults = generateSmartDefaults(profile, intent, dataset, resolution, 'lora', modelArch);
-
-    console.log('[SmartDefaults] Generated defaults:', defaults);
-    console.log('[SmartDefaults] Model architecture:', modelArch);
-    console.log('[SmartDefaults] auto_scale_batch_size:', defaults.train.auto_scale_batch_size);
-    console.log('[SmartDefaults] User intent priority:', intent.priority);
 
     // Apply training defaults
     Object.entries(defaults.train).forEach(([key, value]) => {
-      console.log(`[SmartDefaults] Setting train.${key} =`, value);
       setJobConfig(value, `config.process[0].train.${key}`);
     });
 
@@ -409,7 +402,6 @@ export default function ComprehensiveWizard({
       if (key === 'resolution') {
         // Skip resolution - it's already set based on dataset analysis before this function is called
         // We don't want to overwrite the recommended resolution with a stale value
-        console.log('[SmartDefaults] Skipping resolution override to preserve dataset-based recommendation');
       } else {
         setJobConfig(value, `config.process[0].datasets[0].${key}`);
       }
@@ -472,8 +464,6 @@ export default function ComprehensiveWizard({
           recommendedRes = 768;
         }
 
-        console.log('[SmartDefaults] Dataset max res:', datasetMaxRes, 'Model max:', modelInfo.maxSupported);
-        console.log('[SmartDefaults] Setting recommended resolution:', recommendedRes);
         setJobConfig([recommendedRes, recommendedRes], 'config.process[0].datasets[0].resolution');
       }
 
@@ -899,8 +889,6 @@ export default function ComprehensiveWizard({
             {/* Step 6: Memory & Batch */}
             {currentStepDef.id === 'memory' && (
               <div className="space-y-4">
-                {console.log('[Render] Current auto_scale_batch_size:', jobConfig.config.process[0].train?.auto_scale_batch_size)}
-                {console.log('[Render] Full train config:', jobConfig.config.process[0].train)}
                 <FormGroup label="Auto-Scale Batch Size" tooltip="Automatically find optimal batch size">
                   <Checkbox
                     checked={!!jobConfig.config.process[0].train?.auto_scale_batch_size}
