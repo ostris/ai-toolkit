@@ -1375,6 +1375,32 @@ export default function ComprehensiveWizard({
                     max={50000}
                   />
                 </FormGroup>
+
+                <FormGroup label="Timestep Range" tooltip="Focus training on specific noise levels (0=clean, 999=pure noise)">
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500 dark:text-gray-400">Min Timestep</label>
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.min_denoising_steps ?? 0}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.min_denoising_steps')}
+                        min={0}
+                        max={998}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500 dark:text-gray-400">Max Timestep</label>
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.max_denoising_steps ?? 999}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.max_denoising_steps')}
+                        min={1}
+                        max={999}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Full range (0-999) is recommended for general training. Narrowing the range focuses learning on specific denoising stages.
+                  </div>
+                </FormGroup>
               </div>
             )}
 
@@ -1387,6 +1413,58 @@ export default function ComprehensiveWizard({
                     onChange={value => setJobConfig(value, 'config.process[0].sample.sample_every')}
                     min={50}
                     max={5000}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Sampler" tooltip="Algorithm for generating preview images">
+                  <SelectInput
+                    value={jobConfig.config.process[0].sample?.sampler || 'flowmatch'}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.sampler')}
+                    options={[
+                      { value: 'flowmatch', label: 'FlowMatch - Best for Flux/Flow models' },
+                      { value: 'ddpm', label: 'DDPM - Classic diffusion sampler' },
+                      { value: 'euler', label: 'Euler - Fast and efficient' },
+                      { value: 'euler_a', label: 'Euler Ancestral - More creative' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Sample Steps" tooltip="Number of denoising steps for previews">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.sample_steps ?? 25}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.sample_steps')}
+                    min={10}
+                    max={100}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Higher = better quality but slower previews. 20-30 is typical.
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Guidance Scale" tooltip="CFG scale for preview generation">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.guidance_scale ?? 4}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.guidance_scale')}
+                    min={1}
+                    max={20}
+                    step={0.5}
+                  />
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Higher = stronger prompt adherence. 3-7 is typical (Flux uses lower: 3-4, SDXL uses higher: 7-8).
+                  </div>
+                </FormGroup>
+
+                <FormGroup label="Preview Seed" tooltip="Random seed for reproducible previews">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.seed ?? 42}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.seed')}
+                    min={0}
+                    max={999999}
+                  />
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].sample?.walk_seed}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.walk_seed')}
+                    label="Walk seed (increment for each sample)"
                   />
                 </FormGroup>
               </div>
