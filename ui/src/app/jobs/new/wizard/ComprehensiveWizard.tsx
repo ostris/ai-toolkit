@@ -412,6 +412,13 @@ export default function ComprehensiveWizard({
       setJobConfig(value, `config.process[0].network.${key}`);
     });
 
+    // Apply model defaults (low_vram, etc.)
+    if (defaults.model) {
+      Object.entries(defaults.model).forEach(([key, value]) => {
+        setJobConfig(value, `config.process[0].model.${key}`);
+      });
+    }
+
     // Enable aspect ratio bucketing by default if model supports it and dataset has non-square images
     if (selectedModelArch) {
       const modelInfo = getModelResolutionInfo(selectedModelArch.name);

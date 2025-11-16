@@ -318,6 +318,11 @@ export function handleUnifiedMemory(profile: SystemProfile): AdvisorMessage[] {
     },
     {
       type: 'tip',
+      title: 'CPU Offloading Disabled',
+      message: 'low_vram mode is disabled for unified memory systems. Moving tensors to "CPU" doesn\'t save memory since CPU and GPU share the same physical RAM - it only adds overhead.'
+    },
+    {
+      type: 'tip',
       title: 'Worker Count Optimized',
       message: `Using ${workerConfig.num_workers} DataLoader workers instead of 8. Each worker uses ~8GB of memory. With ${workerConfig.num_workers} workers, you save ${(8 - workerConfig.num_workers) * 8}GB for larger batch sizes, which improves training stability.`
     },
@@ -346,6 +351,30 @@ export function handleUnifiedMemory(profile: SystemProfile): AdvisorMessage[] {
 }
 
 /**
+ * Calculate low_vram setting
+ *
+ * low_vram offloads model components to CPU when not in use.
+ * This is ONLY useful for discrete GPU systems with very limited VRAM.
+ * For unified memory systems, it's counterproductive (CPU and GPU share same RAM).
+ */
+export function calculateLowVRAM(profile: SystemProfile): boolean {
+  if (profile.gpu.isUnifiedMemory) {
+    // Unified memory: NEVER use low_vram - it's pointless and adds overhead
+    // CPU and GPU share the same physical memory
+    return false;
+  }
+
+  // Discrete GPU: Only enable for very low VRAM situations
+  // This is a last resort as it significantly slows training
+  const vramGB = profile.gpu.vramGB;
+  if (vramGB < 8) {
+    return true; // <8GB VRAM - need aggressive memory saving
+  }
+
+  return false;
+}
+
+/**
  * Generate all smart defaults for a configuration
  */
 export function generateSmartDefaults(
@@ -363,6 +392,7 @@ export function generateSmartDefaults(
   const learningRate = calculateLearningRate(intent, targetType);
   const steps = calculateSteps(datasetInfo, intent);
   const loraConfig = calculateLoraRank(intent, datasetInfo);
+  const lowVRAM = calculateLowVRAM(profile);
 
   return {
     train: {
@@ -373,6 +403,9 @@ export function generateSmartDefaults(
       optimizer: 'adamw8bit',
       dtype: profile.gpu.vramGB >= 16 ? 'bf16' : 'fp16',
       gradient_checkpointing: profile.gpu.vramGB < 16
+    },
+    model: {
+      low_vram: lowVRAM
     },
     dataset: {
       ...cacheConfig,
