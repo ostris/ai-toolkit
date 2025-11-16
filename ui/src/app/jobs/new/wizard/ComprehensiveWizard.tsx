@@ -1,0 +1,765 @@
+'use client';
+
+import { useState, useEffect, useMemo } from 'react';
+import { JobConfig } from '@/types';
+import { Button } from '@headlessui/react';
+import { FaChevronRight, FaChevronLeft, FaCheck } from 'react-icons/fa';
+import Card from '@/components/Card';
+import { TextInput, NumberInput, SelectInput, Checkbox, FormGroup } from '@/components/formInputs';
+import { modelArchs } from '../options';
+import { handleModelArchChange } from '../utils';
+import { apiClient } from '@/utils/api';
+
+// Wizard components
+import PreflightModal from './components/PreflightModal';
+import AdvisorPanel from './components/AdvisorPanel';
+import SummaryHeader from './components/SummaryHeader';
+
+// Types and utilities
+import {
+  SystemProfile,
+  UserIntent,
+  DatasetInfo,
+  WizardStep,
+  ConfigSummary,
+  AdvisorMessage,
+  PerformancePrediction
+} from './utils/types';
+import {
+  generateSmartDefaults,
+  estimateVRAMUsage,
+  estimateTrainingTime,
+  estimateDiskSpace,
+  handleUnifiedMemory
+} from './utils/smartDefaults';
+
+interface Props {
+  jobConfig: JobConfig;
+  setJobConfig: (value: any, key: string) => void;
+  status: 'idle' | 'saving' | 'success' | 'error';
+  handleSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  runId: string | null;
+  gpuIDs: string | null;
+  setGpuIDs: (value: string | null) => void;
+  gpuList: any;
+  datasetOptions: any;
+  onExit: () => void;
+}
+
+// Define all wizard steps
+const wizardSteps: WizardStep[] = [
+  { id: 'model', title: 'Model', description: 'Select base model architecture' },
+  { id: 'quantization', title: 'Quantization', description: 'Configure model precision', isAdaptive: true },
+  { id: 'target', title: 'Target', description: 'Configure LoRA/LoKr settings' },
+  { id: 'dataset', title: 'Dataset', description: 'Analyze and configure your dataset' },
+  { id: 'resolution', title: 'Resolution', description: 'Set training resolution and augmentation' },
+  { id: 'memory', title: 'Memory', description: 'Batch size and caching configuration' },
+  { id: 'optimizer', title: 'Optimizer', description: 'Learning rate and optimizer settings' },
+  { id: 'regularization', title: 'Regularization', description: 'Prevent overfitting', isOptional: true },
+  { id: 'training', title: 'Training', description: 'Steps and timestep configuration' },
+  { id: 'sampling', title: 'Sampling', description: 'Configure preview generation' },
+  { id: 'save', title: 'Save', description: 'Checkpoint and save settings' },
+  { id: 'review', title: 'Review', description: 'Review and submit configuration' }
+];
+
+export default function ComprehensiveWizard({
+  jobConfig,
+  setJobConfig,
+  handleSubmit,
+  status,
+  runId,
+  gpuIDs,
+  setGpuIDs,
+  gpuList,
+  datasetOptions,
+  onExit
+}: Props) {
+  // Pre-flight state
+  const [showPreflight, setShowPreflight] = useState(true);
+  const [systemProfile, setSystemProfile] = useState<SystemProfile | null>(null);
+  const [userIntent, setUserIntent] = useState<UserIntent | null>(null);
+
+  // Wizard navigation
+  const [currentStep, setCurrentStep] = useState(0);
+
+  // Dataset analysis
+  const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  // Advisor messages
+  const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([]);
+
+  const currentStepDef = wizardSteps[currentStep];
+
+  // Filter to image models
+  const imageModels = useMemo(() => modelArchs.filter(m => m.group === 'image'), []);
+
+  const selectedModelArch = useMemo(
+    () => modelArchs.find(a => a.name === jobConfig.config.process[0].model?.arch),
+    [jobConfig.config.process[0].model?.arch]
+  );
+
+  // Calculate config summary
+  const configSummary = useMemo<ConfigSummary>(() => {
+    const process = jobConfig.config.process[0];
+    const resolution = process.datasets?.[0]?.resolution?.[0];
+    const steps = process.train?.steps;
+    const batchSize = process.train?.batch_size || 1;
+
+    let estimatedVRAM = '~0 GB';
+    if (systemProfile && resolution && selectedModelArch) {
+      const vram = estimateVRAMUsage(
+        selectedModelArch.name,
+        resolution,
+        batchSize,
+        process.model?.quantize || null,
+        process.train?.gradient_checkpointing || false
+      );
+      estimatedVRAM = `~${vram.toFixed(1)} GB`;
+    }
+
+    const warnings: string[] = [];
+    if (!selectedModelArch) warnings.push('Model not selected');
+    if (!resolution) warnings.push('Resolution not set');
+    if (!steps) warnings.push('Steps not configured');
+    if (!datasetInfo) warnings.push('Dataset not analyzed');
+
+    return {
+      model: selectedModelArch?.label || '',
+      resolution: resolution ? `${resolution}px` : '',
+      steps: steps || null,
+      estimatedVRAM,
+      warnings
+    };
+  }, [jobConfig, systemProfile, selectedModelArch, datasetInfo]);
+
+  // Calculate performance predictions
+  const performancePrediction = useMemo<PerformancePrediction | undefined>(() => {
+    if (!systemProfile || !datasetInfo) return undefined;
+
+    const process = jobConfig.config.process[0];
+    const resolution = process.datasets?.[0]?.resolution?.[0] || 1024;
+    const steps = process.train?.steps || 0;
+    const batchSize = process.train?.batch_size || 1;
+    const saveEvery = process.save?.save_every || 500;
+    const cacheToDisK = process.datasets?.[0]?.cache_latents_to_disk || false;
+
+    if (!steps) return undefined;
+
+    const { stepTime, totalMinutes } = estimateTrainingTime(steps, batchSize, resolution, systemProfile);
+    const diskSpace = estimateDiskSpace(datasetInfo, steps, saveEvery, cacheToDisK);
+
+    const vram = selectedModelArch
+      ? estimateVRAMUsage(
+          selectedModelArch.name,
+          resolution,
+          batchSize,
+          process.model?.quantize || null,
+          process.train?.gradient_checkpointing || false
+        )
+      : 0;
+
+    return {
+      estimatedVRAM: `${vram.toFixed(1)} GB (of ${systemProfile.gpu.vramGB} GB)`,
+      estimatedStepTime: `~${stepTime.toFixed(2)} seconds`,
+      totalTrainingTime:
+        totalMinutes < 60
+          ? `~${Math.round(totalMinutes)} minutes`
+          : `~${(totalMinutes / 60).toFixed(1)} hours`,
+      diskSpaceNeeded: `${diskSpace.toFixed(1)} GB`,
+      memoryUsage: `~${Math.min(systemProfile.memory.availableRAM, datasetInfo.total_images * 0.1 + 8).toFixed(0)} GB RAM`
+    };
+  }, [jobConfig, systemProfile, datasetInfo, selectedModelArch]);
+
+  // Update advisor messages based on current configuration
+  useEffect(() => {
+    if (!systemProfile || !userIntent) return;
+
+    const messages: AdvisorMessage[] = [...handleUnifiedMemory(systemProfile)];
+
+    // Add step-specific recommendations
+    if (currentStepDef.id === 'memory' && datasetInfo) {
+      const process = jobConfig.config.process[0];
+      const batchSize = process.train?.batch_size || 1;
+      const resolution = process.datasets?.[0]?.resolution?.[0] || 1024;
+
+      if (batchSize > 1 && resolution >= 1024 && systemProfile.gpu.vramGB < 16) {
+        messages.push({
+          type: 'warning',
+          title: 'High VRAM Usage',
+          message: `Batch size ${batchSize} at ${resolution}px may exceed your ${systemProfile.gpu.vramGB}GB VRAM. Consider enabling auto-scale batch size.`
+        });
+      }
+    }
+
+    setAdvisorMessages(messages);
+  }, [systemProfile, userIntent, currentStepDef, jobConfig, datasetInfo]);
+
+  // Handle pre-flight completion
+  const handlePreflightComplete = (profile: SystemProfile, intent: UserIntent) => {
+    setSystemProfile(profile);
+    setUserIntent(intent);
+    setShowPreflight(false);
+
+    // Apply smart defaults if we have dataset info
+    if (datasetInfo) {
+      applySmartDefaults(profile, intent, datasetInfo);
+    }
+  };
+
+  // Apply smart defaults
+  const applySmartDefaults = (profile: SystemProfile, intent: UserIntent, dataset: DatasetInfo) => {
+    const resolution = jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024;
+    const defaults = generateSmartDefaults(profile, intent, dataset, resolution, 'lora');
+
+    // Apply training defaults
+    Object.entries(defaults.train).forEach(([key, value]) => {
+      setJobConfig(value, `config.process[0].train.${key}`);
+    });
+
+    // Apply dataset defaults
+    Object.entries(defaults.dataset).forEach(([key, value]) => {
+      if (key === 'resolution') {
+        setJobConfig(value, 'config.process[0].datasets[0].resolution');
+      } else {
+        setJobConfig(value, `config.process[0].datasets[0].${key}`);
+      }
+    });
+
+    // Apply network defaults
+    Object.entries(defaults.network).forEach(([key, value]) => {
+      setJobConfig(value, `config.process[0].network.${key}`);
+    });
+  };
+
+  // Analyze dataset
+  const analyzeDataset = async (path: string) => {
+    setIsAnalyzing(true);
+    setAnalysisError(null);
+
+    try {
+      const response = await apiClient.post('/api/dataset/analyze', { path });
+      setDatasetInfo(response.data);
+
+      // Auto-fill dataset config
+      setJobConfig(path, 'config.process[0].datasets[0].folder_path');
+      if (response.data.caption_ext) {
+        setJobConfig(response.data.caption_ext, 'config.process[0].datasets[0].caption_ext');
+      }
+
+      // Apply smart defaults if we have system profile
+      if (systemProfile && userIntent) {
+        applySmartDefaults(systemProfile, userIntent, response.data);
+      }
+    } catch (error: any) {
+      setAnalysisError(error.response?.data?.error || 'Failed to analyze dataset');
+      setDatasetInfo(null);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Navigation
+  const nextStep = () => {
+    if (currentStep < wizardSteps.length - 1) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const prevStep = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  const goToStep = (stepIndex: number) => {
+    if (stepIndex >= 0 && stepIndex < wizardSteps.length) {
+      setCurrentStep(stepIndex);
+    }
+  };
+
+  // Show pre-flight modal first
+  if (showPreflight) {
+    return <PreflightModal onComplete={handlePreflightComplete} onCancel={onExit} />;
+  }
+
+  return (
+    <div className="h-full flex flex-col">
+      {/* Progress Bar */}
+      <div className="bg-white dark:bg-gray-800 border-b dark:border-gray-700 p-4">
+        <div className="flex justify-between mb-2 overflow-x-auto">
+          {wizardSteps.map((s, idx) => (
+            <button
+              key={s.id}
+              onClick={() => goToStep(idx)}
+              className="flex flex-col items-center min-w-[60px] mx-1"
+            >
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-colors text-sm ${
+                  idx < currentStep
+                    ? 'bg-green-500 border-green-500 text-white'
+                    : idx === currentStep
+                    ? 'bg-blue-500 border-blue-500 text-white'
+                    : 'bg-gray-200 dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                }`}
+              >
+                {idx < currentStep ? <FaCheck className="text-xs" /> : idx + 1}
+              </div>
+              <div className="text-xs mt-1 text-center whitespace-nowrap">{s.title}</div>
+            </button>
+          ))}
+        </div>
+        <div className="h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-blue-500 transition-all duration-300"
+            style={{ width: `${((currentStep + 1) / wizardSteps.length) * 100}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Summary Header */}
+      <SummaryHeader summary={configSummary} />
+
+      {/* Main Content Area */}
+      <div className="flex-grow flex overflow-hidden">
+        {/* Step Content (70%) */}
+        <div className="flex-grow overflow-y-auto p-6">
+          <Card className="p-6">
+            <h2 className="text-2xl font-bold mb-2">{currentStepDef.title}</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">{currentStepDef.description}</p>
+
+            {/* Step 1: Model Selection */}
+            {currentStepDef.id === 'model' && (
+              <div className="space-y-4">
+                <FormGroup label="Base Model Architecture" tooltip="Select the model architecture to train on">
+                  <div className="grid grid-cols-2 gap-3">
+                    {imageModels.map(model => (
+                      <button
+                        key={model.name}
+                        onClick={() => {
+                          handleModelArchChange(
+                            jobConfig.config.process[0].model?.arch || '',
+                            model.name,
+                            jobConfig,
+                            setJobConfig
+                          );
+                        }}
+                        className={`p-4 rounded-lg border-2 transition-colors text-left ${
+                          jobConfig.config.process[0].model?.arch === model.name
+                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                            : 'border-gray-300 dark:border-gray-600 hover:border-gray-400'
+                        }`}
+                      >
+                        <div className="font-semibold">{model.label}</div>
+                        <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">{model.name}</div>
+                      </button>
+                    ))}
+                  </div>
+                </FormGroup>
+
+                {selectedModelArch && (
+                  <FormGroup label="Model Path" tooltip="Path to the model files or HuggingFace repo">
+                    <TextInput
+                      value={jobConfig.config.process[0].model?.name_or_path || ''}
+                      onChange={value => setJobConfig(value, 'config.process[0].model.name_or_path')}
+                      placeholder="e.g., black-forest-labs/FLUX.1-dev"
+                    />
+                  </FormGroup>
+                )}
+              </div>
+            )}
+
+            {/* Step 2: Quantization */}
+            {currentStepDef.id === 'quantization' && (
+              <div className="space-y-4">
+                <FormGroup label="Model Quantization" tooltip="Reduce model precision to save VRAM">
+                  <SelectInput
+                    value={String(jobConfig.config.process[0].model?.quantize || 'none')}
+                    onChange={(value: string) => setJobConfig(value === 'none' ? null : value, 'config.process[0].model.quantize')}
+                    options={[
+                      { value: 'none', label: 'No Quantization (Full Precision)' },
+                      { value: '8bit', label: '8-bit (Recommended for most cases)' },
+                      { value: '4bit', label: '4-bit (Maximum VRAM savings)' }
+                    ]}
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 3: Target Configuration */}
+            {currentStepDef.id === 'target' && (
+              <div className="space-y-4">
+                <FormGroup label="Training Target Type" tooltip="LoRA is recommended for most cases">
+                  <SelectInput
+                    value={jobConfig.config.process[0].network?.type || 'lora'}
+                    onChange={value => setJobConfig(value, 'config.process[0].network.type')}
+                    options={[
+                      { value: 'lora', label: 'LoRA (Low-Rank Adaptation)' },
+                      { value: 'lokr', label: 'LoKr (Kronecker Product)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormGroup label="Rank" tooltip="Higher rank = more learning capacity, larger file size">
+                    <NumberInput
+                      value={jobConfig.config.process[0].network?.linear || 16}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.linear')}
+                      min={1}
+                      max={128}
+                    />
+                  </FormGroup>
+                  <FormGroup label="Alpha" tooltip="Usually set equal to rank">
+                    <NumberInput
+                      value={jobConfig.config.process[0].network?.linear_alpha || 16}
+                      onChange={value => setJobConfig(value, 'config.process[0].network.linear_alpha')}
+                      min={1}
+                      max={128}
+                    />
+                  </FormGroup>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Dataset */}
+            {currentStepDef.id === 'dataset' && (
+              <div className="space-y-4">
+                <FormGroup label="Dataset Folder" tooltip="Path to your training images">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <SelectInput
+                        value={jobConfig.config.process[0].datasets?.[0]?.folder_path || ''}
+                        onChange={value => setJobConfig(value, 'config.process[0].datasets[0].folder_path')}
+                        options={datasetOptions}
+                      />
+                    </div>
+                    <Button
+                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                      onClick={() => analyzeDataset(jobConfig.config.process[0].datasets?.[0]?.folder_path || '')}
+                      disabled={isAnalyzing || !jobConfig.config.process[0].datasets?.[0]?.folder_path}
+                    >
+                      {isAnalyzing ? 'Analyzing...' : 'Analyze'}
+                    </Button>
+                  </div>
+                </FormGroup>
+
+                {analysisError && (
+                  <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-300 rounded-md">
+                    <p className="text-red-800 dark:text-red-300">{analysisError}</p>
+                  </div>
+                )}
+
+                {datasetInfo && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-300 rounded-md">
+                    <h3 className="font-semibold mb-2">Dataset Analysis</h3>
+                    <ul className="space-y-1 text-sm">
+                      <li>✓ Total images: {datasetInfo.total_images}</li>
+                      <li>
+                        ✓ Most common resolution: {datasetInfo.most_common_resolution[0]}x
+                        {datasetInfo.most_common_resolution[1]}
+                      </li>
+                      <li>✓ Captions: {datasetInfo.has_captions ? `Found (.${datasetInfo.caption_ext})` : 'Not found'}</li>
+                    </ul>
+                  </div>
+                )}
+
+                <FormGroup label="Trigger Word" tooltip="Word to use in prompts to activate your LoRA">
+                  <TextInput
+                    value={jobConfig.config.process[0].trigger_word || ''}
+                    onChange={value => setJobConfig(value, 'config.process[0].trigger_word')}
+                    placeholder="e.g., ohwx, sks, or unique identifier"
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 5: Resolution */}
+            {currentStepDef.id === 'resolution' && (
+              <div className="space-y-4">
+                <FormGroup label="Training Resolution" tooltip="Resolution for training (width)">
+                  <NumberInput
+                    value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}
+                    onChange={value => {
+                      setJobConfig([value, value], 'config.process[0].datasets[0].resolution');
+                    }}
+                    min={256}
+                    max={2048}
+                    step={64}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Enable Bucket Sampling" tooltip="Allow different aspect ratios during training">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].datasets?.[0]?.enable_ar_bucket}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].enable_ar_bucket')}
+                    label="Use aspect ratio bucketing (recommended for non-square images)"
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 6: Memory & Batch */}
+            {currentStepDef.id === 'memory' && (
+              <div className="space-y-4">
+                <FormGroup label="Auto-Scale Batch Size" tooltip="Automatically find optimal batch size">
+                  <Checkbox
+                    checked={!!jobConfig.config.process[0].train?.auto_scale_batch_size}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.auto_scale_batch_size')}
+                    label="Enable auto-scaling (recommended)"
+                  />
+                </FormGroup>
+
+                {jobConfig.config.process[0].train?.auto_scale_batch_size ? (
+                  <div className="grid grid-cols-3 gap-4">
+                    <FormGroup label="Initial">
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.batch_size || 1}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
+                        min={1}
+                        max={32}
+                      />
+                    </FormGroup>
+                    <FormGroup label="Min">
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.min_batch_size || 1}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.min_batch_size')}
+                        min={1}
+                        max={32}
+                      />
+                    </FormGroup>
+                    <FormGroup label="Max">
+                      <NumberInput
+                        value={jobConfig.config.process[0].train?.max_batch_size || 8}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.max_batch_size')}
+                        min={1}
+                        max={32}
+                      />
+                    </FormGroup>
+                  </div>
+                ) : (
+                  <FormGroup label="Batch Size">
+                    <NumberInput
+                      value={jobConfig.config.process[0].train?.batch_size || 1}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
+                      min={1}
+                      max={32}
+                    />
+                  </FormGroup>
+                )}
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FormGroup label="Workers" tooltip="Number of data loading workers">
+                    <NumberInput
+                      value={jobConfig.config.process[0].datasets?.[0]?.num_workers || 4}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].num_workers')}
+                      min={0}
+                      max={16}
+                    />
+                  </FormGroup>
+                  <FormGroup label="GPU Prefetch" tooltip="Batches to prefetch to GPU">
+                    <NumberInput
+                      value={jobConfig.config.process[0].datasets?.[0]?.gpu_prefetch_batches || 0}
+                      onChange={value => setJobConfig(value, 'config.process[0].datasets[0].gpu_prefetch_batches')}
+                      min={0}
+                      max={5}
+                    />
+                  </FormGroup>
+                </div>
+              </div>
+            )}
+
+            {/* Step 7: Optimizer */}
+            {currentStepDef.id === 'optimizer' && (
+              <div className="space-y-4">
+                <FormGroup label="Optimizer" tooltip="Algorithm for training">
+                  <SelectInput
+                    value={jobConfig.config.process[0].train?.optimizer || 'adamw8bit'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
+                    options={[
+                      { value: 'adamw8bit', label: 'AdamW 8-bit (Recommended)' },
+                      { value: 'adamw', label: 'AdamW (Full Precision)' },
+                      { value: 'adafactor', label: 'Adafactor (Memory Efficient)' }
+                    ]}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Learning Rate" tooltip="Speed of learning">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.lr || 0.0001}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.lr')}
+                    min={0.000001}
+                    max={0.01}
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 8: Regularization */}
+            {currentStepDef.id === 'regularization' && (
+              <div className="space-y-4">
+                <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
+                  Regularization helps prevent overfitting. These settings are optional but recommended.
+                </p>
+                {/* Placeholder for regularization settings */}
+                <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-md">
+                  <p className="text-sm text-gray-500">Advanced regularization settings coming soon...</p>
+                </div>
+              </div>
+            )}
+
+            {/* Step 9: Training Core */}
+            {currentStepDef.id === 'training' && (
+              <div className="space-y-4">
+                <FormGroup label="Training Name">
+                  <TextInput
+                    value={jobConfig.config.name}
+                    onChange={value => setJobConfig(value, 'config.name')}
+                    placeholder="my-lora-training"
+                  />
+                </FormGroup>
+
+                <FormGroup label="Training Steps">
+                  <NumberInput
+                    value={jobConfig.config.process[0].train?.steps || 1000}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.steps')}
+                    min={100}
+                    max={50000}
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 10: Sampling */}
+            {currentStepDef.id === 'sampling' && (
+              <div className="space-y-4">
+                <FormGroup label="Sample Every N Steps" tooltip="Generate preview images during training">
+                  <NumberInput
+                    value={jobConfig.config.process[0].sample?.sample_every || 250}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.sample_every')}
+                    min={50}
+                    max={5000}
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 11: Save Settings */}
+            {currentStepDef.id === 'save' && (
+              <div className="space-y-4">
+                <FormGroup label="Save Every N Steps">
+                  <NumberInput
+                    value={jobConfig.config.process[0].save?.save_every || 500}
+                    onChange={value => setJobConfig(value, 'config.process[0].save.save_every')}
+                    min={100}
+                    max={10000}
+                  />
+                </FormGroup>
+
+                <FormGroup label="Max Checkpoints to Keep">
+                  <NumberInput
+                    value={jobConfig.config.process[0].save?.max_step_saves_to_keep || 5}
+                    onChange={value => setJobConfig(value, 'config.process[0].save.max_step_saves_to_keep')}
+                    min={1}
+                    max={20}
+                  />
+                </FormGroup>
+              </div>
+            )}
+
+            {/* Step 12: Review */}
+            {currentStepDef.id === 'review' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <h3 className="font-semibold mb-2">Model</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{selectedModelArch?.label || 'Not selected'}</p>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-2">Training Name</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{jobConfig.config.name}</p>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-2">Dataset</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {datasetInfo ? `${datasetInfo.total_images} images` : 'Not analyzed'}
+                    </p>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-2">Resolution</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}x
+                      {jobConfig.config.process[0].datasets?.[0]?.resolution?.[1] || 1024}
+                    </p>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-2">Steps</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {jobConfig.config.process[0].train?.steps || 'Not set'}
+                    </p>
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-2">Batch Size</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      {jobConfig.config.process[0].train?.batch_size || 1}
+                      {jobConfig.config.process[0].train?.auto_scale_batch_size && ' (auto-scaling)'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Navigation */}
+          <div className="flex justify-between mt-6">
+            <div className="space-x-2">
+              <Button
+                className="px-4 py-2 bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-400"
+                onClick={onExit}
+              >
+                Exit Wizard
+              </Button>
+              {currentStep > 0 && (
+                <Button
+                  className="px-4 py-2 bg-gray-300 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md hover:bg-gray-400"
+                  onClick={prevStep}
+                >
+                  <FaChevronLeft className="inline mr-2" />
+                  Previous
+                </Button>
+              )}
+            </div>
+            {currentStep < wizardSteps.length - 1 ? (
+              <Button
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                onClick={nextStep}
+              >
+                Next
+                <FaChevronRight className="inline ml-2" />
+              </Button>
+            ) : (
+              <Button
+                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+                onClick={handleSubmit as any}
+                disabled={status === 'saving'}
+              >
+                <FaCheck className="inline mr-2" />
+                {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Advisor Panel (30%) */}
+        <div className="w-80 flex-shrink-0 hidden lg:block">
+          <AdvisorPanel
+            messages={advisorMessages}
+            experienceLevel={userIntent?.experienceLevel || 'beginner'}
+            performance={performancePrediction}
+            currentStepId={currentStepDef.id}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

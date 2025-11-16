@@ -4,10 +4,11 @@ import { JobConfig, SelectOption } from '@/types';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { Button } from '@headlessui/react';
-import { FaChevronRight, FaChevronLeft, FaCheck } from 'react-icons/fa';
+import { FaChevronRight, FaChevronLeft, FaCheck, FaMagic } from 'react-icons/fa';
 import { modelArchs, ModelArch } from './options';
 import { apiClient } from '@/utils/api';
 import { handleModelArchChange } from './utils';
+import ComprehensiveWizard from './wizard/ComprehensiveWizard';
 
 type Props = {
   jobConfig: JobConfig;
@@ -51,6 +52,7 @@ export default function GuidedWizard({
   datasetOptions,
   onExit,
 }: Props) {
+  const [useComprehensive, setUseComprehensive] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [datasetPath, setDatasetPath] = useState('');
   const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
@@ -58,6 +60,24 @@ export default function GuidedWizard({
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   const step = wizardSteps[currentStep];
+
+  // Show comprehensive wizard if enabled
+  if (useComprehensive) {
+    return (
+      <ComprehensiveWizard
+        jobConfig={jobConfig}
+        setJobConfig={setJobConfig}
+        status={status}
+        handleSubmit={handleSubmit}
+        runId={runId}
+        gpuIDs={gpuIDs}
+        setGpuIDs={setGpuIDs}
+        gpuList={gpuList}
+        datasetOptions={datasetOptions}
+        onExit={() => setUseComprehensive(false)}
+      />
+    );
+  }
 
   // Filter to image models only
   const imageModels = useMemo(() => {
@@ -523,25 +543,36 @@ export default function GuidedWizard({
             </Button>
           )}
         </div>
-        {currentStep < wizardSteps.length - 1 ? (
-          <Button
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-            onClick={nextStep}
-            disabled={step.id === 'dataset' && !datasetInfo}
-          >
-            Next
-            <FaChevronRight className="inline ml-2" />
-          </Button>
-        ) : (
-          <Button
-            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
-            onClick={handleSubmit as any}
-            disabled={status === 'saving'}
-          >
-            <FaCheck className="inline mr-2" />
-            {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {currentStep === 0 && (
+            <Button
+              className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+              onClick={() => setUseComprehensive(true)}
+            >
+              <FaMagic className="inline mr-2" />
+              Advanced Wizard
+            </Button>
+          )}
+          {currentStep < wizardSteps.length - 1 ? (
+            <Button
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              onClick={nextStep}
+              disabled={step.id === 'dataset' && !datasetInfo}
+            >
+              Next
+              <FaChevronRight className="inline ml-2" />
+            </Button>
+          ) : (
+            <Button
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+              onClick={handleSubmit as any}
+              disabled={status === 'saving'}
+            >
+              <FaCheck className="inline mr-2" />
+              {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

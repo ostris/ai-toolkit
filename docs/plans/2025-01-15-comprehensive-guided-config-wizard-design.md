@@ -1,8 +1,39 @@
 # Comprehensive Guided Config Wizard Design
 
 **Date:** 2025-01-15
-**Status:** Design Complete
+**Status:** Implementation In Progress
 **Author:** Claude (with user collaboration)
+
+## Implementation Status
+
+**Core Components Implemented:**
+- [x] System Profile API (`/api/system/profile`)
+- [x] Python System Profiler (`toolkit/system_profiler.py`)
+- [x] Pre-flight Modal (hardware detection + user intent questionnaire)
+- [x] Smart Defaults Engine (batch size, caching, prefetching, workers)
+- [x] Advisor Panel (educational content, recommendations, performance predictions)
+- [x] Summary Header (persistent config overview)
+- [x] Comprehensive Wizard with 12 steps
+- [x] Integration with existing GuidedWizard (toggle for advanced mode)
+
+**Files Created:**
+- `ui/src/app/api/system/profile/route.ts` - API endpoint for system detection
+- `toolkit/system_profiler.py` - Python script for hardware detection
+- `ui/src/app/jobs/new/wizard/utils/types.ts` - TypeScript type definitions
+- `ui/src/app/jobs/new/wizard/utils/smartDefaults.ts` - Smart defaults calculation engine
+- `ui/src/app/jobs/new/wizard/components/PreflightModal.tsx` - Pre-flight configuration modal
+- `ui/src/app/jobs/new/wizard/components/AdvisorPanel.tsx` - Side panel with real-time guidance
+- `ui/src/app/jobs/new/wizard/components/SummaryHeader.tsx` - Persistent config summary
+- `ui/src/app/jobs/new/wizard/ComprehensiveWizard.tsx` - Main wizard component
+
+**Remaining Work:**
+- Model-specific settings step (Step 12)
+- Advanced regularization options (DOP, BPP, EMA)
+- Validation endpoint (`/api/config/validate`)
+- Recommendation endpoint (`/api/config/recommend`)
+- Model info endpoint (`/api/models/{arch}/info`)
+- Comparison view in review step
+- Auto-fix functionality for validation errors
 
 ## Executive Summary
 
