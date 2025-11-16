@@ -90,6 +90,9 @@ export default function ComprehensiveWizard({
   // Advisor messages
   const [advisorMessages, setAdvisorMessages] = useState<AdvisorMessage[]>([]);
 
+  // Custom resolution mode
+  const [useCustomResolution, setUseCustomResolution] = useState(false);
+
   const currentStepDef = wizardSteps[currentStep];
 
   // Filter to image models
@@ -589,63 +592,85 @@ export default function ComprehensiveWizard({
 
                 {/* Resolution Presets */}
                 <FormGroup label="Training Resolution" tooltip="Select resolution based on model and dataset capabilities">
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    {getSmartResolutionOptions().map(res => {
-                      const isSelected = jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] === res;
-                      const isRecommended = datasetInfo && res === getRecommendedResolution();
-                      const modelInfo = selectedModelArch ? getModelResolutionInfo(selectedModelArch.name) : null;
-                      const isNative = modelInfo && res === modelInfo.native;
+                  {!useCustomResolution ? (
+                    <div className="grid grid-cols-3 gap-3">
+                      {getSmartResolutionOptions().map(res => {
+                        const isSelected = jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] === res;
+                        const isRecommended = datasetInfo && res === getRecommendedResolution();
+                        const modelInfo = selectedModelArch ? getModelResolutionInfo(selectedModelArch.name) : null;
+                        const isNative = modelInfo && res === modelInfo.native;
 
-                      let label = `${res}px`;
-                      let sublabel = '';
-                      if (isRecommended) {
-                        sublabel = 'Recommended';
-                      } else if (isNative) {
-                        sublabel = 'Native';
-                      } else if (res >= 1536) {
-                        sublabel = 'High-res';
-                      } else if (res <= 768) {
-                        sublabel = 'Faster';
-                      }
+                        let sublabel = '';
+                        if (isRecommended) {
+                          sublabel = 'Recommended';
+                        } else if (isNative) {
+                          sublabel = 'Native';
+                        } else if (res >= 1536) {
+                          sublabel = 'High-res';
+                        } else if (res <= 768) {
+                          sublabel = 'Faster';
+                        }
 
-                      return (
-                        <button
-                          key={res}
-                          onClick={() => setJobConfig([res, res], 'config.process[0].datasets[0].resolution')}
-                          className={`p-3 rounded-lg border-2 transition-colors text-center ${
-                            isSelected
-                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                              : isRecommended
-                              ? 'border-green-400 bg-green-50 dark:bg-green-900/10 hover:border-green-500'
-                              : 'border-gray-300 dark:border-gray-600 hover:border-gray-400'
-                          }`}
-                        >
-                          <div className="font-semibold">{label}</div>
-                          {sublabel && (
-                            <div className={`text-xs mt-1 ${
-                              isRecommended ? 'text-green-600 dark:text-green-400 font-medium' : 'text-gray-500 dark:text-gray-400'
-                            }`}>
-                              {sublabel}
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                        return (
+                          <button
+                            key={res}
+                            onClick={() => {
+                              setJobConfig([res, res], 'config.process[0].datasets[0].resolution');
+                              setUseCustomResolution(false);
+                            }}
+                            className={`p-3 rounded-lg border-2 transition-colors text-center ${
+                              isSelected
+                                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                                : isRecommended
+                                ? 'border-green-400 bg-green-50 dark:bg-green-900/10 hover:border-green-500'
+                                : 'border-gray-300 dark:border-gray-600 hover:border-gray-400'
+                            }`}
+                          >
+                            <div className="font-semibold">{res}px</div>
+                            {sublabel && (
+                              <div className={`text-xs mt-1 ${
+                                isRecommended ? 'text-green-600 dark:text-green-400 font-medium' : 'text-gray-500 dark:text-gray-400'
+                              }`}>
+                                {sublabel}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
 
-                  {/* Custom resolution input */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600 dark:text-gray-400">Custom:</span>
-                    <NumberInput
-                      value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}
-                      onChange={value => {
-                        setJobConfig([value, value], 'config.process[0].datasets[0].resolution');
-                      }}
-                      min={256}
-                      max={2048}
-                      step={64}
-                    />
-                  </div>
+                      {/* Custom button */}
+                      <button
+                        onClick={() => setUseCustomResolution(true)}
+                        className="p-3 rounded-lg border-2 transition-colors text-center border-gray-300 dark:border-gray-600 hover:border-gray-400"
+                      >
+                        <div className="font-semibold">Custom</div>
+                        <div className="text-xs mt-1 text-gray-500 dark:text-gray-400">
+                          Enter value
+                        </div>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <NumberInput
+                          value={jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024}
+                          onChange={value => {
+                            setJobConfig([value, value], 'config.process[0].datasets[0].resolution');
+                          }}
+                          min={256}
+                          max={2048}
+                          step={64}
+                        />
+                        <span className="text-sm text-gray-600 dark:text-gray-400">pixels</span>
+                      </div>
+                      <button
+                        onClick={() => setUseCustomResolution(false)}
+                        className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        ← Back to presets
+                      </button>
+                    </div>
+                  )}
                 </FormGroup>
 
                 {/* VRAM Warning for high resolutions */}
