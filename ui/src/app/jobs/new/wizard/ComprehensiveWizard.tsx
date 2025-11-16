@@ -14,6 +14,8 @@ import { apiClient } from '@/utils/api';
 import PreflightModal from './components/PreflightModal';
 import AdvisorPanel from './components/AdvisorPanel';
 import SummaryHeader from './components/SummaryHeader';
+import { StepRenderer } from './components/StepRenderer';
+import { setNestedValue as setNestedConfigValue } from './fieldConfig';
 
 // Types and utilities
 import {
@@ -378,6 +380,45 @@ export default function ComprehensiveWizard({
     // Apply smart defaults if we have dataset info
     if (datasetInfo) {
       applySmartDefaults(profile, intent, datasetInfo);
+    }
+  };
+
+  // Handle data-driven config changes from StepRenderer
+  const handleDataDrivenConfigChange = (newConfig: JobConfig) => {
+    // Apply all changes from the new config to the current config
+    // This works by comparing the new config with the old one and calling setJobConfig for each change
+    const processConfig = newConfig.config.process[0];
+
+    // Helper to recursively set nested object values
+    const setNestedObject = (obj: any, basePath: string) => {
+      Object.entries(obj).forEach(([key, value]) => {
+        const path = `${basePath}.${key}`;
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          setNestedObject(value, path);
+        } else {
+          setJobConfig(value, path);
+        }
+      });
+    };
+
+    // Apply model changes
+    if (processConfig.model) {
+      setNestedObject(processConfig.model, 'config.process[0].model');
+    }
+
+    // Apply network changes
+    if (processConfig.network) {
+      setNestedObject(processConfig.network, 'config.process[0].network');
+    }
+
+    // Apply train changes
+    if (processConfig.train) {
+      setNestedObject(processConfig.train, 'config.process[0].train');
+    }
+
+    // Apply dataset changes (first dataset)
+    if (processConfig.datasets && processConfig.datasets[0]) {
+      setNestedObject(processConfig.datasets[0], 'config.process[0].datasets[0]');
     }
   };
 
@@ -905,6 +946,20 @@ export default function ComprehensiveWizard({
                       />
                     </FormGroup>
                   </div>
+                </div>
+
+                {/* Data-driven model-specific options - proof of concept */}
+                <div className="mt-6 p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="text-sm font-medium text-gray-300">Model-Specific Options (Data-Driven)</span>
+                    <span className="text-xs bg-blue-600/20 text-blue-400 px-2 py-0.5 rounded">New</span>
+                  </div>
+                  <StepRenderer
+                    stepId="quantization"
+                    selectedModel={jobConfig.config.process[0].model?.arch || ''}
+                    jobConfig={jobConfig}
+                    onConfigChange={handleDataDrivenConfigChange}
+                  />
                 </div>
               </div>
             )}
