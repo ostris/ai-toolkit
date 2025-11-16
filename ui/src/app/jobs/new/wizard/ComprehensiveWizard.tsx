@@ -774,7 +774,7 @@ export default function ComprehensiveWizard({
                   <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
                     <h4 className="font-medium text-blue-800 dark:text-blue-200">SDXL-Specific Options</h4>
 
-                    <FormGroup label="Text Encoder Selection">
+                    <FormGroup label="Text Encoder Selection" tooltip="SDXL-specific: Uses two text encoders for prompts. CLIP-L (~400MB) handles basic concepts, OpenCLIP-G (~1.4GB) provides deeper understanding. Disabling one saves memory but reduces quality. On unified memory systems (Apple Silicon), disabling OpenCLIP-G frees significant shared RAM/VRAM.">
                       <div className="space-y-2">
                         <Checkbox
                           checked={jobConfig.config.process[0].model?.use_text_encoder_1 ?? true}
@@ -800,7 +800,7 @@ export default function ComprehensiveWizard({
                       />
                     </FormGroup>
 
-                    <FormGroup label="Experimental SDXL Features">
+                    <FormGroup label="Experimental SDXL Features" tooltip="SDXL-only: Enable bleeding-edge optimizations that are unstable and may not work with all configurations. Not applicable to SD1.5 or Flux models. Only enable if you understand the risks and are willing to troubleshoot potential issues.">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].model?.experimental_xl}
                         onChange={value => setJobConfig(value, 'config.process[0].model.experimental_xl')}
@@ -815,7 +815,7 @@ export default function ComprehensiveWizard({
                   <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg space-y-4">
                     <h4 className="font-medium text-green-800 dark:text-green-200">Flux-Specific Options</h4>
 
-                    <FormGroup label="Flux CFG Mode">
+                    <FormGroup label="Flux CFG Mode" tooltip="Flux-only: Enables classifier-free guidance for distillation and certain training workflows. Not applicable to SD1.5 or SDXL. Model learns both conditional and unconditional generation. Cost: ~30-50% more memory and training time due to dual path computation. On unified memory systems, this significantly increases shared RAM/VRAM usage.">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].model?.use_flux_cfg}
                         onChange={value => setJobConfig(value, 'config.process[0].model.use_flux_cfg')}
@@ -1198,7 +1198,7 @@ export default function ComprehensiveWizard({
                     </div>
                   </FormGroup>
 
-                  <FormGroup label="Additional Augmentations">
+                  <FormGroup label="Additional Augmentations" tooltip="Extra image preprocessing options. Square crop forces uniform aspect ratios (may lose image content). Standardization normalizes pixel values for model compatibility. Alpha masking uses transparency for selective training. Works with all models (SD1.5, SDXL, Flux). Cost: Minimal compute overhead, processed in CPU RAM before training. On unified memory systems, preprocessing shares the same memory pool.">
                     <div className="space-y-2">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].datasets?.[0]?.square_crop}
@@ -1264,7 +1264,7 @@ export default function ComprehensiveWizard({
                     />
                   </FormGroup>
 
-                  <FormGroup label="Dataloader Performance">
+                  <FormGroup label="Dataloader Performance" tooltip="Optimize data loading speed vs memory usage. Higher prefetch factor loads more batches ahead of time, using more system RAM (not VRAM) but preventing GPU idle time. Persistent workers keep processes alive between epochs, faster but uses ~500MB-1GB more RAM. IMPORTANT: On unified memory systems (Apple Silicon), this RAM usage competes with GPU memory from the same pool - use conservative settings (prefetch=2, no persistent workers) on systems with limited unified memory.">
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs text-gray-500">Prefetch Factor</label>
@@ -1286,7 +1286,7 @@ export default function ComprehensiveWizard({
                     </div>
                   </FormGroup>
 
-                  <FormGroup label="Regularization Dataset">
+                  <FormGroup label="Regularization Dataset" tooltip="Mark this dataset as regularization data to prevent overfitting. Regularization datasets contain generic class images (e.g., random people for face training) that help maintain model diversity. Most effective for SD1.5/SDXL; less commonly used for Flux due to different training dynamics. Cost: Increases training time proportionally to dataset size, no additional VRAM. Images loaded into system RAM during training.">
                     <div className="space-y-2">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].datasets?.[0]?.is_reg}
@@ -1487,7 +1487,7 @@ export default function ComprehensiveWizard({
 
                 {jobConfig.config.process[0].train?.auto_scale_batch_size ? (
                   <div className="grid grid-cols-3 gap-4">
-                    <FormGroup label="Initial">
+                    <FormGroup label="Initial" tooltip="Starting batch size for auto-scaling. The system will begin with this value and adjust based on available memory. For unified memory systems (Apple Silicon), available pool is shared between system and GPU.">
                       <NumberInput
                         value={jobConfig.config.process[0].train?.batch_size ?? 1}
                         onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
@@ -1495,7 +1495,7 @@ export default function ComprehensiveWizard({
                         max={32}
                       />
                     </FormGroup>
-                    <FormGroup label="Min">
+                    <FormGroup label="Min" tooltip="Minimum batch size to use. Auto-scaling won't go below this value. Lower values use less memory but train slower. Set to 1 for memory-constrained systems or large models like Flux.">
                       <NumberInput
                         value={jobConfig.config.process[0].train?.min_batch_size ?? 1}
                         onChange={value => setJobConfig(value, 'config.process[0].train.min_batch_size')}
@@ -1503,7 +1503,7 @@ export default function ComprehensiveWizard({
                         max={32}
                       />
                     </FormGroup>
-                    <FormGroup label="Max">
+                    <FormGroup label="Max" tooltip="Maximum batch size to attempt. Higher values require more memory but improve training stability. Each doubling roughly doubles memory usage. Recommended max: SD1.5=8, SDXL=4, Flux=2 (on 24GB VRAM).">
                       <NumberInput
                         value={jobConfig.config.process[0].train?.max_batch_size ?? 8}
                         onChange={value => setJobConfig(value, 'config.process[0].train.max_batch_size')}
@@ -1513,13 +1513,16 @@ export default function ComprehensiveWizard({
                     </FormGroup>
                   </div>
                 ) : (
-                  <FormGroup label="Batch Size">
+                  <FormGroup label="Batch Size" tooltip="Number of images processed per training step. Higher = faster training and better gradients but more memory usage. SD1.5: ~6GB base, +2GB per batch. SDXL: ~12GB base, +4GB per batch. Flux: ~16GB base, +6GB per batch. For unified memory systems (Apple Silicon), this uses shared RAM/VRAM pool.">
                     <NumberInput
                       value={jobConfig.config.process[0].train?.batch_size ?? 1}
                       onChange={value => setJobConfig(value, 'config.process[0].train.batch_size')}
                       min={1}
                       max={32}
                     />
+                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Higher batch sizes improve training stability but require significantly more VRAM.
+                    </div>
                   </FormGroup>
                 )}
 
@@ -1626,7 +1629,7 @@ export default function ComprehensiveWizard({
                   </div>
                 </FormGroup>
 
-                <FormGroup label="Model Components to Train">
+                <FormGroup label="Model Components to Train" tooltip="Choose which parts of the model to train. UNet/Transformer learns visual concepts while Text Encoder learns language understanding. Memory cost varies: SD1.5 TE adds ~1GB, SDXL TE adds ~3-5GB (two encoders), Flux TE adds ~8GB (T5-XXL). For unified memory systems, this directly reduces available system RAM.">
                   <div className="space-y-2">
                     <Checkbox
                       checked={!!jobConfig.config.process[0].train?.train_unet}
@@ -1768,7 +1771,7 @@ export default function ComprehensiveWizard({
                   </div>
                 </FormGroup>
 
-                <FormGroup label="Text Encoder Memory Management">
+                <FormGroup label="Text Encoder Memory Management" tooltip="Memory optimization strategies for text encoder. Caching uses RAM: SD1.5 ~500MB, SDXL ~1.5GB, Flux ~4GB. Unloading to CPU frees VRAM but adds latency. NOTE: On unified memory systems (Apple Silicon), unloading to CPU provides NO benefit as RAM/VRAM are shared - use caching instead. On discrete GPUs, both options are beneficial.">
                   <div className="space-y-2">
                     <Checkbox
                       checked={!!jobConfig.config.process[0].train?.cache_text_embeddings}
@@ -1786,7 +1789,7 @@ export default function ComprehensiveWizard({
                   </div>
                 </FormGroup>
 
-                <FormGroup label="Classifier-Free Guidance Training">
+                <FormGroup label="Classifier-Free Guidance Training" tooltip="Train with CFG to improve prompt adherence at inference. Doubles compute per step as model processes both conditional and unconditional paths. Cost: ~50% longer training time, ~30% more memory. Memory impact: SD1.5 +2GB, SDXL +5GB, Flux +8GB. For Flux models, consider using Flux CFG Mode in model settings instead. On unified memory systems, this significantly reduces available shared pool.">
                   <Checkbox
                     checked={!!jobConfig.config.process[0].train?.do_cfg}
                     onChange={value => setJobConfig(value, 'config.process[0].train.do_cfg')}
@@ -1808,7 +1811,7 @@ export default function ComprehensiveWizard({
                   )}
                 </FormGroup>
 
-                <FormGroup label="Data Augmentation">
+                <FormGroup label="Data Augmentation" tooltip="Image transformations that artificially expand your dataset. Flipping effectively doubles your data but should be avoided for asymmetric subjects like faces or text. Works equally well for all model architectures (SD1.5, SDXL, Flux). No memory cost, minimal compute overhead.">
                   <div className="space-y-2">
                     <Checkbox
                       checked={!!jobConfig.config.process[0].datasets[0]?.flip_x}
@@ -1992,7 +1995,7 @@ export default function ComprehensiveWizard({
 
                 {jobConfig.config.process[0].train?.ema_config?.use_ema && (
                   <div className="ml-6">
-                    <FormGroup label="EMA Decay">
+                    <FormGroup label="EMA Decay" tooltip="Controls how quickly the averaged weights adapt to new updates. Higher values (closer to 1.0) create smoother, more stable weights but respond slower to new learning. Lower values are more responsive but less smooth. Cost: Stores duplicate model weights (~200MB for SD1.5, ~2GB for SDXL, ~4GB for Flux). On unified memory systems, this reduces available shared RAM/VRAM pool.">
                       <NumberInput
                         value={jobConfig.config.process[0].train?.ema_config?.ema_decay ?? 0.99}
                         onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
@@ -2030,7 +2033,7 @@ export default function ComprehensiveWizard({
 
                 {jobConfig.config.process[0].train?.diff_output_preservation && (
                   <div className="ml-6 space-y-3">
-                    <FormGroup label="Preservation Strength">
+                    <FormGroup label="Preservation Strength" tooltip="Balance between preserving original model behavior vs learning new concepts. Higher values maintain more original capabilities but learn new concepts slower. Lower values learn faster but risk forgetting existing knowledge. Memory overhead is from parent feature (Differential Output Preservation) which stores original model outputs.">
                       <NumberInput
                         value={jobConfig.config.process[0].train?.diff_output_preservation_multiplier ?? 1.0}
                         onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_multiplier')}
@@ -2042,7 +2045,7 @@ export default function ComprehensiveWizard({
                       </p>
                     </FormGroup>
 
-                    <FormGroup label="Preservation Class">
+                    <FormGroup label="Preservation Class" tooltip="The general category of your training subject. Must match your concept type: 'person' for faces/portraits, 'dog'/'cat' for animals, 'style' for artistic styles, 'object' for items. Common for SD1.5/SDXL. For Flux models, this may have less impact due to different architecture.">
                       <TextInput
                         value={jobConfig.config.process[0].train?.diff_output_preservation_class ?? 'person'}
                         onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
@@ -2113,7 +2116,7 @@ export default function ComprehensiveWizard({
                     )}
                   </FormGroup>
 
-                  <FormGroup label="Prior Divergence">
+                  <FormGroup label="Prior Divergence" tooltip="Regularization technique that penalizes deviation from the original model's prior distribution. Helps prevent catastrophic forgetting. Most effective for SD1.5/SDXL models; experimental for Flux. Cost: ~15-20% slower training, minimal memory overhead. Works on both discrete GPUs and unified memory systems.">
                     <Checkbox
                       checked={!!jobConfig.config.process[0].train?.do_prior_divergence}
                       onChange={value => setJobConfig(value, 'config.process[0].train.do_prior_divergence')}
@@ -2193,7 +2196,7 @@ export default function ComprehensiveWizard({
                     </div>
                   </FormGroup>
 
-                  <FormGroup label="Advanced Noise Options">
+                  <FormGroup label="Advanced Noise Options" tooltip="Fine-grained control over noise behavior during training. Consistent noise ensures reproducibility for debugging. Blended blur noise can help with fine detail learning. Works with all model architectures (SD1.5, SDXL, Flux). Minimal performance impact but may affect training dynamics.">
                     <div className="space-y-2">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].train?.force_consistent_noise}
@@ -2208,7 +2211,7 @@ export default function ComprehensiveWizard({
                     </div>
                   </FormGroup>
 
-                  <FormGroup label="Turbo Training Mode">
+                  <FormGroup label="Turbo Training Mode" tooltip="Experimental accelerated training mode using specialized optimization for faster convergence. Primarily designed for SD1.5/SDXL; experimental support for Flux. May reduce training time by 30-50% but results can be less stable. Cost: Similar memory usage, potentially faster but less predictable results.">
                     <div className="space-y-2">
                       <Checkbox
                         checked={!!jobConfig.config.process[0].train?.train_turbo}
@@ -2225,7 +2228,7 @@ export default function ComprehensiveWizard({
                     </div>
                   </FormGroup>
 
-                  <FormGroup label="FreeU Mode">
+                  <FormGroup label="FreeU Mode" tooltip="Applies learned attention scaling factors during training to improve generation quality. Designed for UNet-based models (SD1.5, SDXL); NOT compatible with Flux transformer architecture. Cost: ~10% slower training, minimal memory overhead. Best for style and detail-focused training.">
                     <Checkbox
                       checked={!!jobConfig.config.process[0].train?.free_u}
                       onChange={value => setJobConfig(value, 'config.process[0].train.free_u')}
@@ -2242,7 +2245,7 @@ export default function ComprehensiveWizard({
             {/* Step 9: Training Core */}
             {currentStepDef.id === 'training' && (
               <div className="space-y-4">
-                <FormGroup label="Training Name">
+                <FormGroup label="Training Name" tooltip="Unique identifier for this training run. Used in output folder names, checkpoints, and logs. Choose a descriptive name to easily identify this training session later.">
                   <TextInput
                     value={jobConfig.config.name}
                     onChange={value => setJobConfig(value, 'config.name')}
@@ -2250,13 +2253,16 @@ export default function ComprehensiveWizard({
                   />
                 </FormGroup>
 
-                <FormGroup label="Training Steps">
+                <FormGroup label="Training Steps" tooltip="Total number of training iterations. More steps = longer training time but potentially better results. Cost varies by model: SD1.5 ~1-2 sec/step, SDXL ~3-5 sec/step, Flux ~5-10 sec/step. 1000-2000 steps typical for SD1.5, 2000-4000 for SDXL, 1500-3000 for Flux.">
                   <NumberInput
                     value={jobConfig.config.process[0].train?.steps ?? 1000}
                     onChange={value => setJobConfig(value, 'config.process[0].train.steps')}
                     min={100}
                     max={50000}
                   />
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    More steps increase training time linearly. Monitor samples to avoid overtraining.
+                  </div>
                 </FormGroup>
 
                 <FormGroup label="Timestep Range" tooltip="Focus training on specific noise levels (0=clean, 999=pure noise)">
@@ -2466,13 +2472,16 @@ export default function ComprehensiveWizard({
             {/* Step 11: Save Settings */}
             {currentStepDef.id === 'save' && (
               <div className="space-y-4">
-                <FormGroup label="Save Every N Steps">
+                <FormGroup label="Save Every N Steps" tooltip="How frequently to save checkpoint copies during training. More frequent saves let you recover from issues but use more disk space. Checkpoint sizes vary by model and rank: SD1.5 LoRA ~20-150MB, SDXL LoRA ~50-400MB, Flux LoRA ~100-800MB. Each save takes 5-30 seconds. Stored on local disk, not in GPU/unified memory.">
                   <NumberInput
                     value={jobConfig.config.process[0].save?.save_every ?? 500}
                     onChange={value => setJobConfig(value, 'config.process[0].save.save_every')}
                     min={100}
                     max={10000}
                   />
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Lower values = more checkpoints to choose from but more disk usage. 500 is a good balance.
+                  </div>
                 </FormGroup>
 
                 <FormGroup label="Max Checkpoints to Keep" tooltip="Set to 0 to keep all checkpoints">
@@ -2550,7 +2559,7 @@ export default function ComprehensiveWizard({
                         </div>
                       </FormGroup>
 
-                      <FormGroup label="Private Repository">
+                      <FormGroup label="Private Repository" tooltip="Set repository visibility on HuggingFace Hub. Private repos are only visible to you and require HuggingFace Pro subscription ($9/month). Public repos are free and allow others to use your LoRA. No performance or memory cost, only affects sharing. Upload speed depends on LoRA size: SD1.5 fastest, Flux slowest.">
                         <Checkbox
                           checked={!!jobConfig.config.process[0].save?.hf_private}
                           onChange={value => setJobConfig(value, 'config.process[0].save.hf_private')}
@@ -2617,7 +2626,7 @@ export default function ComprehensiveWizard({
                   </div>
                 </FormGroup>
 
-                <FormGroup label="Verbose Output">
+                <FormGroup label="Verbose Output" tooltip="Enable detailed logging that shows internal training metrics, gradient statistics, and debug information. Helpful for diagnosing training issues but creates larger log files. Cost: Minimal performance impact (~1-2% slower), ~10-50MB additional log storage per run. Useful for all model types (SD1.5, SDXL, Flux) when troubleshooting.">
                   <Checkbox
                     checked={!!jobConfig.config.process[0].logging?.verbose}
                     onChange={value => setJobConfig(value, 'config.process[0].logging.verbose')}
