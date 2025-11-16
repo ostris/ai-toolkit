@@ -735,10 +735,12 @@ def get_dataloader_from_datasets(
         dataloader_kwargs['num_workers'] = 0
     else:
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
-        dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
-        # persistent_workers keeps workers alive between epochs (requires num_workers > 0)
-        if dataset_config_list[0].persistent_workers and dataset_config_list[0].num_workers > 0:
-            dataloader_kwargs['persistent_workers'] = True
+        # prefetch_factor and persistent_workers only valid when num_workers > 0
+        if dataset_config_list[0].num_workers > 0:
+            dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+            # persistent_workers keeps workers alive between epochs
+            if dataset_config_list[0].persistent_workers:
+                dataloader_kwargs['persistent_workers'] = True
 
     if has_buckets:
         # make sure they all have buckets
