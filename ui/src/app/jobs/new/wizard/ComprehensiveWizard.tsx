@@ -676,10 +676,18 @@ export default function ComprehensiveWizard({
                 {/* VRAM Warning for high resolutions */}
                 {systemProfile && jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] >= 1536 && (() => {
                   // Use unified memory if available, otherwise use GPU VRAM
-                  const effectiveVRAM = systemProfile.gpu.isUnifiedMemory
-                    ? (systemProfile.memory.unifiedMemory || systemProfile.memory.totalRAM)
-                    : systemProfile.gpu.vramGB;
-                  const memoryType = systemProfile.gpu.isUnifiedMemory ? 'unified memory' : 'GPU';
+                  // If GPU VRAM is 0, it's likely unified memory or CPU-only, so use system RAM
+                  let effectiveVRAM: number;
+                  let memoryType: string;
+
+                  if (systemProfile.gpu.isUnifiedMemory || systemProfile.gpu.vramGB === 0) {
+                    // Unified memory or no discrete GPU - use system RAM
+                    effectiveVRAM = systemProfile.memory.unifiedMemory || systemProfile.memory.totalRAM;
+                    memoryType = systemProfile.gpu.isUnifiedMemory ? 'unified memory' : 'system memory';
+                  } else {
+                    effectiveVRAM = systemProfile.gpu.vramGB;
+                    memoryType = 'GPU';
+                  }
 
                   if (effectiveVRAM < 24) {
                     return (
