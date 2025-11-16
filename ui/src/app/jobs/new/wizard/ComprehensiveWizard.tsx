@@ -1076,13 +1076,28 @@ export default function ComprehensiveWizard({
                   />
                 </FormGroup>
 
-                <FormGroup label="Max Checkpoints to Keep">
-                  <NumberInput
-                    value={jobConfig.config.process[0].save?.max_step_saves_to_keep || 5}
-                    onChange={value => setJobConfig(value, 'config.process[0].save.max_step_saves_to_keep')}
-                    min={1}
-                    max={20}
-                  />
+                <FormGroup label="Max Checkpoints to Keep" tooltip="Set to 0 to keep all checkpoints">
+                  <div className="space-y-2">
+                    <Checkbox
+                      checked={jobConfig.config.process[0].save?.max_step_saves_to_keep === 0}
+                      onChange={checked => {
+                        if (checked) {
+                          setJobConfig(0, 'config.process[0].save.max_step_saves_to_keep');
+                        } else {
+                          setJobConfig(5, 'config.process[0].save.max_step_saves_to_keep');
+                        }
+                      }}
+                      label="Keep all checkpoints (uses more disk space)"
+                    />
+                    {jobConfig.config.process[0].save?.max_step_saves_to_keep !== 0 && (
+                      <NumberInput
+                        value={jobConfig.config.process[0].save?.max_step_saves_to_keep || 5}
+                        onChange={value => setJobConfig(value, 'config.process[0].save.max_step_saves_to_keep')}
+                        min={1}
+                        max={100}
+                      />
+                    )}
+                  </div>
                 </FormGroup>
               </div>
             )}
