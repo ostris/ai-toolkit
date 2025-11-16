@@ -949,7 +949,7 @@ export default function ComprehensiveWizard({
                 <div className="grid grid-cols-2 gap-4">
                   <FormGroup label="Workers" tooltip="Number of data loading workers">
                     <NumberInput
-                      value={jobConfig.config.process[0].datasets?.[0]?.num_workers || 4}
+                      value={jobConfig.config.process[0].datasets?.[0]?.num_workers ?? 4}
                       onChange={value => setJobConfig(value, 'config.process[0].datasets[0].num_workers')}
                       min={0}
                       max={16}
@@ -957,7 +957,7 @@ export default function ComprehensiveWizard({
                   </FormGroup>
                   <FormGroup label="GPU Prefetch" tooltip="Batches to prefetch to GPU">
                     <NumberInput
-                      value={jobConfig.config.process[0].datasets?.[0]?.gpu_prefetch_batches || 0}
+                      value={jobConfig.config.process[0].datasets?.[0]?.gpu_prefetch_batches ?? 0}
                       onChange={value => setJobConfig(value, 'config.process[0].datasets[0].gpu_prefetch_batches')}
                       min={0}
                       max={5}
