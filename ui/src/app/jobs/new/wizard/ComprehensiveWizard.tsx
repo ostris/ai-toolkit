@@ -60,6 +60,7 @@ const wizardSteps: WizardStep[] = [
   { id: 'training', title: 'Training', description: 'Steps and timestep configuration' },
   { id: 'sampling', title: 'Sampling', description: 'Configure preview generation' },
   { id: 'save', title: 'Save', description: 'Checkpoint and save settings' },
+  { id: 'monitoring', title: 'Monitoring', description: 'Performance analysis and optimization' },
   { id: 'review', title: 'Review', description: 'Review and submit configuration' }
 ];
 
@@ -1280,7 +1281,107 @@ export default function ComprehensiveWizard({
               </div>
             )}
 
-            {/* Step 12: Review */}
+            {/* Step 12: Monitoring */}
+            {currentStepDef.id === 'monitoring' && (
+              <div className="space-y-4">
+                <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
+                  Performance monitoring tracks memory usage, training metrics, and system health during training.
+                  After training completes, it provides optimization recommendations.
+                </p>
+
+                <FormGroup
+                  label="Performance Monitoring"
+                  tooltip="Automatically collect metrics during training for post-run analysis"
+                >
+                  <Checkbox
+                    checked={jobConfig.config.process[0].monitoring?.enabled ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].monitoring.enabled')}
+                    label="Enable performance monitoring (recommended)"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Monitors memory usage, training progress, and system health with minimal overhead.
+                  </p>
+                </FormGroup>
+
+                {jobConfig.config.process[0].monitoring?.enabled !== false && (
+                  <div className="space-y-4 ml-4 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
+                    <FormGroup
+                      label="Sample Interval (seconds)"
+                      tooltip="How often to collect system metrics"
+                    >
+                      <NumberInput
+                        value={jobConfig.config.process[0].monitoring?.sample_interval_seconds ?? 5}
+                        onChange={value => setJobConfig(value, 'config.process[0].monitoring.sample_interval_seconds')}
+                        min={1}
+                        max={60}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Lower = more detail, slightly higher overhead. 5 seconds is recommended.
+                      </p>
+                    </FormGroup>
+
+                    <FormGroup
+                      label="Track Process Memory"
+                      tooltip="Monitor memory usage of main process and workers separately"
+                    >
+                      <Checkbox
+                        checked={jobConfig.config.process[0].monitoring?.track_per_process ?? true}
+                        onChange={value => setJobConfig(value, 'config.process[0].monitoring.track_per_process')}
+                        label="Track per-process memory breakdown"
+                      />
+                    </FormGroup>
+
+                    <FormGroup
+                      label="Auto-Analyze on Complete"
+                      tooltip="Automatically generate optimization recommendations when training finishes"
+                    >
+                      <Checkbox
+                        checked={jobConfig.config.process[0].monitoring?.analyze_on_complete ?? true}
+                        onChange={value => setJobConfig(value, 'config.process[0].monitoring.analyze_on_complete')}
+                        label="Generate recommendations after training"
+                      />
+                    </FormGroup>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormGroup
+                        label="Warning Threshold"
+                        tooltip="Memory usage percentage that triggers warnings"
+                      >
+                        <NumberInput
+                          value={(jobConfig.config.process[0].monitoring?.memory_warning_threshold ?? 0.85) * 100}
+                          onChange={value => setJobConfig(value / 100, 'config.process[0].monitoring.memory_warning_threshold')}
+                          min={50}
+                          max={95}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">% memory usage</p>
+                      </FormGroup>
+
+                      <FormGroup
+                        label="Critical Threshold"
+                        tooltip="Memory usage percentage that indicates critical issues"
+                      >
+                        <NumberInput
+                          value={(jobConfig.config.process[0].monitoring?.memory_critical_threshold ?? 0.95) * 100}
+                          onChange={value => setJobConfig(value / 100, 'config.process[0].monitoring.memory_critical_threshold')}
+                          min={60}
+                          max={99}
+                        />
+                        <p className="text-xs text-gray-500 mt-1">% memory usage</p>
+                      </FormGroup>
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+                  <p className="text-sm text-blue-700 dark:text-blue-300">
+                    <strong>After training:</strong> View the Performance tab in your job details to see memory usage timeline,
+                    optimization recommendations, and any errors that occurred during training.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Step 13: Review */}
             {currentStepDef.id === 'review' && (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">

@@ -209,6 +209,15 @@ export interface SliderConfig {
   anchor_class?: string | null;
 }
 
+export interface MonitoringConfig {
+  enabled?: boolean;
+  sample_interval_seconds?: number;
+  track_per_process?: boolean;
+  analyze_on_complete?: boolean;
+  memory_warning_threshold?: number;
+  memory_critical_threshold?: number;
+}
+
 export interface ProcessConfig {
   type: string;
   sqlite_db_path?: string;
@@ -223,6 +232,7 @@ export interface ProcessConfig {
   train: TrainConfig;
   model: ModelConfig;
   sample: SampleConfig;
+  monitoring?: MonitoringConfig;
 }
 
 export interface ConfigObject {
