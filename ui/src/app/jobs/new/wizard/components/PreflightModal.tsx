@@ -64,17 +64,22 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
   };
 
   const handleComplete = () => {
+    // For unified memory systems, vramGB field contains the unified memory amount
+    // and totalRAM/availableRAM should match since it's all one pool
+    const isUnified = gpuType === 'unified_memory';
+
     const finalProfile: SystemProfile = {
       gpu: {
         type: gpuType,
         name: gpuName || 'Custom GPU',
         vramGB: vramGB,
-        isUnifiedMemory: gpuType === 'unified_memory'
+        isUnifiedMemory: isUnified
       },
       memory: {
-        totalRAM: totalRAM,
-        availableRAM: availableRAM,
-        unifiedMemory: gpuType === 'unified_memory' ? totalRAM : undefined
+        // For unified memory, use the vramGB value (which is the unified memory amount)
+        totalRAM: isUnified ? vramGB : totalRAM,
+        availableRAM: isUnified ? Math.floor(vramGB * 0.95) : availableRAM, // 95% available for unified
+        unifiedMemory: isUnified ? vramGB : undefined
       },
       storage: {
         type: storageType,
@@ -200,37 +205,39 @@ export default function PreflightModal({ onComplete, onCancel }: Props) {
                 )}
               </div>
 
-              {/* Memory Section */}
-              <div className="border rounded-lg p-4 dark:border-gray-700">
-                <div className="flex items-center gap-2 mb-3">
-                  <FaMemory className="text-purple-500" />
-                  <h3 className="font-semibold">System Memory</h3>
-                  <FaCheck className="text-green-500 ml-auto" />
-                </div>
+              {/* Memory Section - Only show for discrete GPU systems */}
+              {gpuType !== 'unified_memory' && (
+                <div className="border rounded-lg p-4 dark:border-gray-700">
+                  <div className="flex items-center gap-2 mb-3">
+                    <FaMemory className="text-purple-500" />
+                    <h3 className="font-semibold">System Memory</h3>
+                    <FaCheck className="text-green-500 ml-auto" />
+                  </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Total RAM (GB)</label>
-                    <NumberInput
-                      value={totalRAM}
-                      onChange={setTotalRAM}
-                      min={4}
-                      max={1024}
-                      step={1}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Available RAM (GB)</label>
-                    <NumberInput
-                      value={availableRAM}
-                      onChange={setAvailableRAM}
-                      min={1}
-                      max={totalRAM}
-                      step={1}
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Total RAM (GB)</label>
+                      <NumberInput
+                        value={totalRAM}
+                        onChange={setTotalRAM}
+                        min={4}
+                        max={1024}
+                        step={1}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Available RAM (GB)</label>
+                      <NumberInput
+                        value={availableRAM}
+                        onChange={setAvailableRAM}
+                        min={1}
+                        max={totalRAM}
+                        step={1}
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Storage Section */}
               <div className="border rounded-lg p-4 dark:border-gray-700">

@@ -52,6 +52,12 @@ export const handleModelArchChange = (
   // set new model
   setJobConfig(newArchName, 'config.process[0].model.arch');
 
+  // Set quantization to full precision by default (false = no quantization)
+  // User can change this in the quantization step
+  if (jobConfig.config.process[0].model?.quantize === undefined) {
+    setJobConfig(false, 'config.process[0].model.quantize');
+  }
+
   // update datasets
   const hasControlPath = newArch?.additionalSections?.includes('datasets.control_path') || false;
   const hasMultiControlPaths = newArch?.additionalSections?.includes('datasets.multi_control_paths') || false;

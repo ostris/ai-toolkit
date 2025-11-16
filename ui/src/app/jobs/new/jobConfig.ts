@@ -83,7 +83,7 @@ export const defaultJobConfig: JobConfig = {
             use_ema: false,
             ema_decay: 0.99,
           },
-          skip_first_sample: false,
+          skip_first_sample: true,
           force_first_sample: false,
           disable_sampling: false,
           dtype: 'bf16',

@@ -17,36 +17,113 @@ import {
 
 /**
  * Calculate optimal batch size configuration (TODO #9 Integration)
+ *
+ * Two separate formulas:
+ * 1. Discrete GPU: Only VRAM matters, RAM is separate
+ * 2. Unified Memory: Must account for model weights, optimizer states, workers, and OS overhead
  */
 export function calculateBatchDefaults(
   profile: SystemProfile,
   resolution: number,
-  intent: UserIntent
+  intent: UserIntent,
+  modelArch: string,
+  numWorkers: number
 ): BatchConfig {
-  // For unified memory (Apple Silicon), use 70% of total memory
-  const vramGB = profile.gpu.isUnifiedMemory
-    ? (profile.memory.unifiedMemory || profile.memory.totalRAM) * 0.7
-    : profile.gpu.vramGB;
-
   let initialBatch: number;
   let maxBatch: number;
 
-  // Calculate based on resolution and available VRAM
-  if (resolution <= 512) {
-    initialBatch = Math.min(16, Math.max(4, Math.floor(vramGB / 3)));
-    maxBatch = initialBatch * 2;
-  } else if (resolution <= 768) {
-    initialBatch = Math.min(8, Math.max(2, Math.floor(vramGB / 4)));
-    maxBatch = Math.min(16, initialBatch * 2);
-  } else if (resolution <= 1024) {
-    initialBatch = Math.min(4, Math.max(1, Math.floor(vramGB / 6)));
-    maxBatch = Math.min(8, initialBatch * 2);
-  } else if (resolution <= 1536) {
-    initialBatch = Math.min(2, Math.max(1, Math.floor(vramGB / 8)));
-    maxBatch = Math.min(4, initialBatch * 2);
+  if (profile.gpu.isUnifiedMemory) {
+    // UNIFIED MEMORY SYSTEMS (Apple Silicon, etc.)
+    // Everything shares the same memory pool - must be conservative
+
+    const totalMemoryGB = profile.memory.unifiedMemory || profile.memory.totalRAM;
+
+    // Reserve memory for:
+    // - OS and system processes: 8GB minimum
+    // - Model weights (base model in memory): varies by arch
+    // - Optimizer states (2x LoRA weights for AdamW): ~2GB for typical LoRA
+    // - EMA model (if enabled): ~1GB for LoRA
+    // - DataLoader workers: ~8GB each (they fork the Python process + dataset objects)
+    // - Safety margin: 10%
+
+    const modelMemoryGB: Record<string, number> = {
+      sd1: 8,
+      sd15: 8,
+      sd2: 10,
+      sdxl: 14,
+      sd3: 16,
+      flux: 24,
+      flux_kontext: 24,
+      flex1: 20,
+      flex2: 20,
+      chroma: 20,
+      lumina2: 22,
+      hidream: 24,
+      omnigen2: 24,
+      qwen_image: 28  // 14GB base + optimizer states + text encoder
+    };
+
+    const baseModelMemory = modelMemoryGB[modelArch] || 24;
+    const workerMemory = numWorkers * 8; // ~8GB per worker process (forks entire Python process + dataset objects)
+    const osReserve = 8;
+    const optimizerAndEMA = 4; // Optimizer states + EMA for LoRA
+
+    const reservedMemory = baseModelMemory + workerMemory + osReserve + optimizerAndEMA;
+    const availableForBatches = Math.max(0, totalMemoryGB - reservedMemory) * 0.9; // 10% safety margin
+
+    // Memory per sample at different resolutions (GB) - includes activations and gradients
+    const memoryPerSample = (resolution * resolution) / (1024 * 1024) * 4; // ~4GB at 1024px
+
+    if (availableForBatches <= 0) {
+      // Not enough memory - use minimum settings
+      initialBatch = 1;
+      maxBatch = 1;
+    } else {
+      initialBatch = Math.max(1, Math.floor(availableForBatches / memoryPerSample));
+      // Cap based on resolution - but allow reasonable batch sizes for training stability
+      // A batch size of 1 leads to very noisy gradients, so we prefer at least 2-4
+      if (resolution <= 512) {
+        initialBatch = Math.min(16, initialBatch);
+        maxBatch = Math.min(32, initialBatch * 2);
+      } else if (resolution <= 768) {
+        initialBatch = Math.min(8, initialBatch);
+        maxBatch = Math.min(16, initialBatch * 2);
+      } else if (resolution <= 1024) {
+        initialBatch = Math.min(4, initialBatch);
+        maxBatch = Math.min(8, initialBatch * 2);
+      } else if (resolution <= 1536) {
+        // Allow up to 4 for 1536px if memory permits - better gradient stability
+        initialBatch = Math.min(4, initialBatch);
+        maxBatch = Math.min(8, initialBatch * 2);
+      } else {
+        initialBatch = Math.min(2, initialBatch);
+        maxBatch = Math.min(4, initialBatch * 2);
+      }
+    }
   } else {
-    initialBatch = Math.min(2, Math.max(1, Math.floor(vramGB / 10)));
-    maxBatch = Math.min(4, initialBatch * 2);
+    // DISCRETE GPU SYSTEMS (NVIDIA, AMD)
+    // VRAM is dedicated, RAM is separate - can be more aggressive
+
+    const vramGB = profile.gpu.vramGB;
+
+    // Calculate based on resolution and available VRAM
+    // These assume model is loaded into VRAM with some overhead
+    if (resolution <= 512) {
+      initialBatch = Math.min(16, Math.max(4, Math.floor(vramGB / 3)));
+      maxBatch = initialBatch * 2;
+    } else if (resolution <= 768) {
+      initialBatch = Math.min(8, Math.max(2, Math.floor(vramGB / 4)));
+      maxBatch = Math.min(16, initialBatch * 2);
+    } else if (resolution <= 1024) {
+      initialBatch = Math.min(4, Math.max(1, Math.floor(vramGB / 6)));
+      maxBatch = Math.min(8, initialBatch * 2);
+    } else if (resolution <= 1536) {
+      initialBatch = Math.min(2, Math.max(1, Math.floor(vramGB / 10)));
+      maxBatch = Math.min(4, initialBatch * 2);
+    } else {
+      initialBatch = Math.min(2, Math.max(1, Math.floor(vramGB / 12)));
+      maxBatch = Math.min(4, initialBatch * 2);
+    }
   }
 
   // Auto-scaling is always recommended - it finds optimal batch size without affecting quality
@@ -128,14 +205,38 @@ export function calculatePrefetching(
 
 /**
  * Calculate optimal worker configuration (TODO #4 Integration)
+ *
+ * For unified memory systems, workers compete with training for memory.
+ * Each worker uses ~8GB, so we prioritize batch size over worker count.
+ * With cached latents, workers mostly just load pre-computed tensors,
+ * so 2-4 workers is usually sufficient.
  */
 export function calculateWorkers(profile: SystemProfile): WorkerConfig {
-  const baseWorkers = Math.floor(profile.memory.totalRAM / 8);
-  const numWorkers = Math.min(baseWorkers, profile.cpu.cores, 8);
+  let numWorkers: number;
+
+  if (profile.gpu.isUnifiedMemory) {
+    // Unified memory: Be conservative - workers steal memory from training
+    // 2-4 workers is plenty for cached latent loading
+    // This saves 32-48GB compared to 8 workers, allowing for larger batch sizes
+    const totalMemoryGB = profile.memory.unifiedMemory || profile.memory.totalRAM;
+
+    if (totalMemoryGB >= 128) {
+      numWorkers = 4; // Large unified memory can afford 4 workers
+    } else if (totalMemoryGB >= 64) {
+      numWorkers = 2; // Medium unified memory - prioritize batch size
+    } else {
+      numWorkers = 0; // Small unified memory - use main process only
+    }
+  } else {
+    // Discrete GPU: Workers use system RAM, not VRAM
+    // Can be more generous here
+    const baseWorkers = Math.floor(profile.memory.totalRAM / 8);
+    numWorkers = Math.min(baseWorkers, profile.cpu.cores, 8);
+  }
 
   return {
     num_workers: Math.max(0, numWorkers),
-    persistent_workers: numWorkers > 0 // TODO #4 - Keep workers alive
+    persistent_workers: numWorkers > 0 // Keep workers alive to avoid respawn overhead
   };
 }
 
@@ -206,11 +307,24 @@ export function calculateLoraRank(
 export function handleUnifiedMemory(profile: SystemProfile): AdvisorMessage[] {
   if (!profile.gpu.isUnifiedMemory) return [];
 
-  return [
+  const totalMemoryGB = profile.memory.unifiedMemory || profile.memory.totalRAM;
+  const workerConfig = calculateWorkers(profile);
+
+  const messages: AdvisorMessage[] = [
     {
       type: 'info',
       title: 'Unified Memory Detected',
-      message: `Your system uses unified memory (${profile.memory.unifiedMemory || profile.memory.totalRAM}GB shared between CPU and GPU). VRAM and RAM share the same pool, so batch size calculations account for this.`
+      message: `Your system uses unified memory (${totalMemoryGB}GB shared between CPU and GPU). VRAM and RAM share the same pool, so memory management is critical.`
+    },
+    {
+      type: 'tip',
+      title: 'Worker Count Optimized',
+      message: `Using ${workerConfig.num_workers} DataLoader workers instead of 8. Each worker uses ~8GB of memory. With ${workerConfig.num_workers} workers, you save ${(8 - workerConfig.num_workers) * 8}GB for larger batch sizes, which improves training stability.`
+    },
+    {
+      type: 'info',
+      title: 'Batch Size vs Workers Trade-off',
+      message: 'Larger batch sizes provide better gradient estimates and more stable training. Workers are mostly idle when latents are cached, so we prioritize batch size over worker count.'
     },
     {
       type: 'tip',
@@ -218,6 +332,17 @@ export function handleUnifiedMemory(profile: SystemProfile): AdvisorMessage[] {
       message: 'GPU prefetching provides less benefit on unified memory since there\'s no discrete GPU transfer. In-memory caching is always optimal for your setup.'
     }
   ];
+
+  // Add warning if memory is tight
+  if (totalMemoryGB < 64) {
+    messages.push({
+      type: 'warning',
+      title: 'Limited Memory',
+      message: `With ${totalMemoryGB}GB unified memory, you may experience OOM errors at higher resolutions. Consider using 768px or lower resolution, or enabling gradient checkpointing.`
+    });
+  }
+
+  return messages;
 }
 
 /**
@@ -228,12 +353,13 @@ export function generateSmartDefaults(
   intent: UserIntent,
   datasetInfo: DatasetInfo,
   resolution: number,
-  targetType: 'lora' | 'lokr' | 'full' = 'lora'
+  targetType: 'lora' | 'lokr' | 'full',
+  modelArch: string
 ) {
-  const batchConfig = calculateBatchDefaults(profile, resolution, intent);
+  const workerConfig = calculateWorkers(profile);
+  const batchConfig = calculateBatchDefaults(profile, resolution, intent, modelArch, workerConfig.num_workers);
   const cacheConfig = calculateCachingStrategy(profile, datasetInfo);
   const prefetchBatches = calculatePrefetching(profile, intent);
-  const workerConfig = calculateWorkers(profile);
   const learningRate = calculateLearningRate(intent, targetType);
   const steps = calculateSteps(datasetInfo, intent);
   const loraConfig = calculateLoraRank(intent, datasetInfo);
@@ -264,14 +390,75 @@ export function generateSmartDefaults(
 }
 
 /**
- * Calculate VRAM usage estimate
+ * Memory cost breakdown for regularization options
+ */
+export interface RegularizationMemoryCost {
+  ema: number;  // GB for EMA shadow weights
+  diffOutputPreservation: number;  // GB for preservation loss computation
+  gradientCheckpointingSavings: number;  // GB saved (negative = savings)
+}
+
+/**
+ * Calculate memory costs for regularization options
+ */
+export function calculateRegularizationMemoryCost(
+  modelArch: string,
+  useEma: boolean,
+  useDiffOutputPreservation: boolean,
+  gradientCheckpointing: boolean
+): RegularizationMemoryCost {
+  // EMA memory = copy of all trainable weights (model weights without optimizer states)
+  // For LoRA: ~1-2GB. For full model: much larger
+  const modelWeightsGB: Record<string, number> = {
+    sd1: 4,
+    sd15: 4,
+    sd2: 5,
+    sdxl: 7,
+    sd3: 8,
+    flux: 12,
+    flex1: 10,
+    flex2: 10,
+    chroma: 10,
+    lumina2: 11,
+    hidream: 12,
+    omnigen2: 12,
+    qwen_image: 14
+  };
+
+  const baseModelWeights = modelWeightsGB[modelArch] || 10;
+
+  // For LoRA training, EMA only copies the LoRA weights (small)
+  // For full model training, EMA copies entire model
+  const emaLoRA = 1; // ~1GB for LoRA EMA
+  const emaFullModel = baseModelWeights; // Full model weights for full fine-tuning
+
+  // Diff output preservation requires storing original model outputs
+  // during forward pass (~2-4GB depending on resolution and batch size)
+  const diffPreservationBase = 3; // ~3GB average
+
+  return {
+    ema: useEma ? emaLoRA : 0,
+    diffOutputPreservation: useDiffOutputPreservation ? diffPreservationBase : 0,
+    gradientCheckpointingSavings: gradientCheckpointing ? -baseModelWeights * 0.3 : 0 // Saves ~30% of activations
+  };
+}
+
+/**
+ * Calculate VRAM/Memory usage estimate
+ *
+ * For discrete GPUs: Returns VRAM usage
+ * For unified memory: Returns total system memory usage (more comprehensive)
  */
 export function estimateVRAMUsage(
   modelArch: string,
   resolution: number,
   batchSize: number,
   quantization: string | null,
-  gradientCheckpointing: boolean
+  gradientCheckpointing: boolean,
+  isUnifiedMemory: boolean = false,
+  numWorkers: number = 4,
+  useEma: boolean = false,
+  useDiffOutputPreservation: boolean = false
 ): number {
   // Base VRAM for model (rough estimates in GB)
   const modelVRAM: Record<string, number> = {
@@ -300,16 +487,39 @@ export function estimateVRAMUsage(
     baseVRAM *= 0.75;
   }
 
-  // Adjust for gradient checkpointing
+  // Calculate regularization costs
+  const regCosts = calculateRegularizationMemoryCost(
+    modelArch,
+    useEma,
+    useDiffOutputPreservation,
+    gradientCheckpointing
+  );
+
+  // Apply gradient checkpointing savings to base VRAM (reduces activation memory)
   if (gradientCheckpointing) {
     baseVRAM *= 0.7;
   }
 
   // Add batch size and resolution overhead
   const resolutionFactor = (resolution * resolution) / (1024 * 1024);
-  const batchOverhead = batchSize * resolutionFactor * 2; // ~2GB per batch at 1024px
+  const batchOverhead = batchSize * resolutionFactor * 4; // ~4GB per batch at 1024px (activations + gradients)
 
-  return baseVRAM + batchOverhead;
+  let totalMemory = baseVRAM + batchOverhead;
+
+  // Add regularization costs
+  totalMemory += regCosts.ema;
+  totalMemory += regCosts.diffOutputPreservation;
+
+  if (isUnifiedMemory) {
+    // For unified memory, add additional overheads that share the same memory pool
+    const optimizerStates = baseVRAM * 2; // AdamW momentum + variance (2x model weights)
+    const workerOverhead = numWorkers * 8; // Each worker forks Python process (~8GB each with large models)
+    const osReserve = 8; // OS and system processes
+
+    totalMemory += optimizerStates + workerOverhead + osReserve;
+  }
+
+  return totalMemory;
 }
 
 /**

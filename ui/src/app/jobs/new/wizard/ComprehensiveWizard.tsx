@@ -30,7 +30,8 @@ import {
   estimateVRAMUsage,
   estimateTrainingTime,
   estimateDiskSpace,
-  handleUnifiedMemory
+  handleUnifiedMemory,
+  calculateRegularizationMemoryCost
 } from './utils/smartDefaults';
 
 interface Props {
@@ -163,7 +164,10 @@ export default function ComprehensiveWizard({
     const datasetMaxRes = Math.max(datasetInfo.most_common_resolution[0], datasetInfo.most_common_resolution[1]);
 
     // If dataset has high-res images and model supports it, recommend higher resolution
-    if (datasetMaxRes >= 1536 && modelInfo.maxSupported >= 1536) {
+    // Check from highest to lowest
+    if (datasetMaxRes >= 2048 && modelInfo.maxSupported >= 2048) {
+      return 2048;
+    } else if (datasetMaxRes >= 1536 && modelInfo.maxSupported >= 1536) {
       return 1536;
     } else if (datasetMaxRes >= 1024 && modelInfo.maxSupported >= 1024) {
       return 1024;
@@ -177,17 +181,30 @@ export default function ComprehensiveWizard({
   // Calculate config summary
   const configSummary = useMemo<ConfigSummary>(() => {
     const process = jobConfig.config.process[0];
-    const resolution = process.datasets?.[0]?.resolution?.[0];
+    // Handle both new [width, height] format and old multi-res [512, 768, 1024] format
+    const resArray = process.datasets?.[0]?.resolution;
+    const resolution = resArray?.length === 2 ? resArray[0] : (resArray ? Math.max(...resArray) : undefined);
     const steps = process.train?.steps;
     const batchSize = process.train?.batch_size || 1;
 
     let estimatedVRAM = '~0 GB';
     if (systemProfile && resolution && selectedModelArch) {
+      // Convert boolean quantize + qtype to string format for estimation
+      let quantizationStr: string | null = null;
+      if (process.model?.quantize === true) {
+        const qtype = process.model?.qtype || 'qfloat8';
+        if (qtype.startsWith('uint4') || qtype.startsWith('uint3')) {
+          quantizationStr = '4bit';
+        } else {
+          quantizationStr = '8bit';
+        }
+      }
+
       const vram = estimateVRAMUsage(
         selectedModelArch.name,
         resolution,
         batchSize,
-        process.model?.quantize || null,
+        quantizationStr,
         process.train?.gradient_checkpointing || false
       );
       estimatedVRAM = `~${vram.toFixed(1)} GB`;
@@ -224,12 +241,23 @@ export default function ComprehensiveWizard({
     const { stepTime, totalMinutes } = estimateTrainingTime(steps, batchSize, resolution, systemProfile);
     const diskSpace = estimateDiskSpace(datasetInfo, steps, saveEvery, cacheToDisK);
 
+    // Convert boolean quantize + qtype to string format for estimation
+    let quantizationStr: string | null = null;
+    if (process.model?.quantize === true) {
+      const qtype = process.model?.qtype || 'qfloat8';
+      if (qtype.startsWith('uint4') || qtype.startsWith('uint3')) {
+        quantizationStr = '4bit';
+      } else {
+        quantizationStr = '8bit';
+      }
+    }
+
     const vram = selectedModelArch
       ? estimateVRAMUsage(
           selectedModelArch.name,
           resolution,
           batchSize,
-          process.model?.quantize || null,
+          quantizationStr,
           process.train?.gradient_checkpointing || false
         )
       : 0;
@@ -351,11 +379,21 @@ export default function ComprehensiveWizard({
   };
 
   // Apply smart defaults
-  const applySmartDefaults = (profile: SystemProfile, intent: UserIntent, dataset: DatasetInfo) => {
-    const resolution = jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024;
-    const defaults = generateSmartDefaults(profile, intent, dataset, resolution, 'lora');
+  const applySmartDefaults = (profile: SystemProfile, intent: UserIntent, dataset: DatasetInfo, recommendedResolution?: number) => {
+    // Use recommended resolution if provided (from dataset analysis), otherwise fall back to config
+    const resolution = recommendedResolution || jobConfig.config.process[0].datasets?.[0]?.resolution?.[0] || 1024;
+    const modelArch = jobConfig.config.process[0].model?.arch;
+
+    if (!modelArch) {
+      console.error('[SmartDefaults] Model architecture not set - cannot calculate optimal defaults');
+      return; // Don't apply defaults without knowing the model
+    }
+
+    console.log('[SmartDefaults] Using resolution for batch calculation:', resolution);
+    const defaults = generateSmartDefaults(profile, intent, dataset, resolution, 'lora', modelArch);
 
     console.log('[SmartDefaults] Generated defaults:', defaults);
+    console.log('[SmartDefaults] Model architecture:', modelArch);
     console.log('[SmartDefaults] auto_scale_batch_size:', defaults.train.auto_scale_batch_size);
     console.log('[SmartDefaults] User intent priority:', intent.priority);
 
@@ -365,10 +403,12 @@ export default function ComprehensiveWizard({
       setJobConfig(value, `config.process[0].train.${key}`);
     });
 
-    // Apply dataset defaults
+    // Apply dataset defaults (but NOT resolution - that's set separately based on dataset analysis)
     Object.entries(defaults.dataset).forEach(([key, value]) => {
       if (key === 'resolution') {
-        setJobConfig(value, 'config.process[0].datasets[0].resolution');
+        // Skip resolution - it's already set based on dataset analysis before this function is called
+        // We don't want to overwrite the recommended resolution with a stale value
+        console.log('[SmartDefaults] Skipping resolution override to preserve dataset-based recommendation');
       } else {
         setJobConfig(value, `config.process[0].datasets[0].${key}`);
       }
@@ -410,9 +450,36 @@ export default function ComprehensiveWizard({
         setJobConfig(response.data.caption_ext, 'config.process[0].datasets[0].caption_ext');
       }
 
+      // Calculate and set recommended resolution based on dataset and model
+      let recommendedRes: number | undefined;
+      if (selectedModelArch && response.data.most_common_resolution) {
+        const modelInfo = getModelResolutionInfo(selectedModelArch.name);
+        const datasetMaxRes = Math.max(
+          response.data.most_common_resolution[0],
+          response.data.most_common_resolution[1]
+        );
+
+        recommendedRes = modelInfo.native;
+        // Check from highest to lowest resolution
+        if (datasetMaxRes >= 2048 && modelInfo.maxSupported >= 2048) {
+          recommendedRes = 2048;
+        } else if (datasetMaxRes >= 1536 && modelInfo.maxSupported >= 1536) {
+          recommendedRes = 1536;
+        } else if (datasetMaxRes >= 1024 && modelInfo.maxSupported >= 1024) {
+          recommendedRes = 1024;
+        } else if (datasetMaxRes >= 768 && modelInfo.maxSupported >= 768) {
+          recommendedRes = 768;
+        }
+
+        console.log('[SmartDefaults] Dataset max res:', datasetMaxRes, 'Model max:', modelInfo.maxSupported);
+        console.log('[SmartDefaults] Setting recommended resolution:', recommendedRes);
+        setJobConfig([recommendedRes, recommendedRes], 'config.process[0].datasets[0].resolution');
+      }
+
       // Apply smart defaults if we have system profile
+      // Pass the recommended resolution so batch size is calculated correctly
       if (systemProfile && userIntent) {
-        applySmartDefaults(systemProfile, userIntent, response.data);
+        applySmartDefaults(systemProfile, userIntent, response.data, recommendedRes);
       }
     } catch (error: any) {
       setAnalysisError(error.response?.data?.error || 'Failed to analyze dataset');
@@ -537,8 +604,22 @@ export default function ComprehensiveWizard({
               <div className="space-y-4">
                 <FormGroup label="Model Quantization" tooltip="Reduce model precision to save VRAM">
                   <SelectInput
-                    value={String(jobConfig.config.process[0].model?.quantize || 'none')}
-                    onChange={(value: string) => setJobConfig(value === 'none' ? null : value, 'config.process[0].model.quantize')}
+                    value={
+                      jobConfig.config.process[0].model?.quantize === true
+                        ? (jobConfig.config.process[0].model?.qtype?.startsWith('uint4') || jobConfig.config.process[0].model?.qtype?.startsWith('uint3') ? '4bit' : '8bit')
+                        : 'none'
+                    }
+                    onChange={(value: string) => {
+                      if (value === 'none') {
+                        setJobConfig(false, 'config.process[0].model.quantize');
+                      } else if (value === '8bit') {
+                        setJobConfig(true, 'config.process[0].model.quantize');
+                        setJobConfig('qfloat8', 'config.process[0].model.qtype');
+                      } else if (value === '4bit') {
+                        setJobConfig(true, 'config.process[0].model.quantize');
+                        setJobConfig('uint4', 'config.process[0].model.qtype');
+                      }
+                    }}
                     options={[
                       { value: 'none', label: 'No Quantization (Full Precision)' },
                       { value: '8bit', label: '8-bit (Recommended for most cases)' },
@@ -546,6 +627,26 @@ export default function ComprehensiveWizard({
                     ]}
                   />
                 </FormGroup>
+
+                {jobConfig.config.process[0].model?.quantize === true && (
+                  <FormGroup label="Text Encoder Quantization" tooltip="Also quantize the text encoder to save more VRAM">
+                    <SelectInput
+                      value={jobConfig.config.process[0].model?.quantize_te === true ? 'yes' : 'no'}
+                      onChange={(value: string) => {
+                        if (value === 'yes') {
+                          setJobConfig(true, 'config.process[0].model.quantize_te');
+                          setJobConfig('qfloat8', 'config.process[0].model.qtype_te');
+                        } else {
+                          setJobConfig(false, 'config.process[0].model.quantize_te');
+                        }
+                      }}
+                      options={[
+                        { value: 'no', label: 'No (Full Precision Text Encoder)' },
+                        { value: 'yes', label: 'Yes (8-bit Text Encoder)' }
+                      ]}
+                    />
+                  </FormGroup>
+                )}
               </div>
             )}
 
@@ -899,6 +1000,55 @@ export default function ComprehensiveWizard({
                   Regularization helps prevent overfitting. These settings are optional but recommended.
                 </p>
 
+                {/* Memory impact summary */}
+                {systemProfile && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-4">
+                    <h4 className="font-medium text-blue-800 dark:text-blue-200 text-sm mb-2">Memory Impact Summary</h4>
+                    {(() => {
+                      const modelArch = jobConfig.config.process[0].model?.arch || 'flux';
+                      const useEma = !!jobConfig.config.process[0].train?.ema_config?.use_ema;
+                      const useDiffPreserve = !!jobConfig.config.process[0].train?.diff_output_preservation;
+                      const gradCheckpoint = !!jobConfig.config.process[0].train?.gradient_checkpointing;
+                      const costs = calculateRegularizationMemoryCost(modelArch, useEma, useDiffPreserve, gradCheckpoint);
+                      const totalCost = costs.ema + costs.diffOutputPreservation + costs.gradientCheckpointingSavings;
+
+                      return (
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span>EMA:</span>
+                            <span className={useEma ? 'text-orange-600 dark:text-orange-400 font-medium' : 'text-gray-500'}>
+                              {useEma ? `+${costs.ema}GB` : '0GB'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Output Preservation:</span>
+                            <span className={useDiffPreserve ? 'text-orange-600 dark:text-orange-400 font-medium' : 'text-gray-500'}>
+                              {useDiffPreserve ? `+${costs.diffOutputPreservation}GB` : '0GB'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Gradient Checkpointing:</span>
+                            <span className={gradCheckpoint ? 'text-green-600 dark:text-green-400 font-medium' : 'text-gray-500'}>
+                              {gradCheckpoint ? `${costs.gradientCheckpointingSavings.toFixed(1)}GB (saves memory)` : '0GB'}
+                            </span>
+                          </div>
+                          <div className="border-t border-blue-200 dark:border-blue-700 pt-1 mt-1 flex justify-between font-medium">
+                            <span>Net Impact:</span>
+                            <span className={totalCost > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-green-600 dark:text-green-400'}>
+                              {totalCost > 0 ? `+${totalCost.toFixed(1)}GB` : `${totalCost.toFixed(1)}GB`}
+                            </span>
+                          </div>
+                          {systemProfile.gpu.isUnifiedMemory && totalCost > 5 && (
+                            <p className="text-orange-600 dark:text-orange-400 mt-2">
+                              ⚠️ High memory usage for unified memory system. Consider disabling EMA or enabling gradient checkpointing.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
                 {/* Caption Dropout */}
                 <FormGroup
                   label="Caption Dropout Rate"
@@ -936,11 +1086,19 @@ export default function ComprehensiveWizard({
                   label="Gradient Checkpointing"
                   tooltip="Trades compute for memory. Allows training larger models with less VRAM."
                 >
-                  <Checkbox
-                    checked={!!jobConfig.config.process[0].train?.gradient_checkpointing}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.gradient_checkpointing')}
-                    label="Enable gradient checkpointing (recommended for limited VRAM)"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.gradient_checkpointing}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.gradient_checkpointing')}
+                      label="Enable gradient checkpointing"
+                    />
+                    <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">
+                      Saves ~30% memory
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Recommended for limited VRAM. Trades compute time for memory savings.
+                  </p>
                 </FormGroup>
 
                 {/* EMA */}
@@ -948,11 +1106,21 @@ export default function ComprehensiveWizard({
                   label="Exponential Moving Average (EMA)"
                   tooltip="Maintains a smoothed version of weights for more stable results"
                 >
-                  <Checkbox
-                    checked={!!jobConfig.config.process[0].train?.ema_config?.use_ema}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
-                    label="Enable EMA (reduces training noise)"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.ema_config?.use_ema}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.use_ema')}
+                      label="Enable EMA (reduces training noise)"
+                    />
+                    <span className="text-xs bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded">
+                      +1GB memory
+                    </span>
+                  </div>
+                  {systemProfile?.gpu.isUnifiedMemory && (
+                    <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
+                      ⚠️ EMA adds memory overhead. Consider disabling for unified memory systems with limited RAM.
+                    </p>
+                  )}
                 </FormGroup>
 
                 {jobConfig.config.process[0].train?.ema_config?.use_ema && (
@@ -976,11 +1144,21 @@ export default function ComprehensiveWizard({
                   label="Differential Output Preservation"
                   tooltip="Preserves model's original capabilities while learning new concepts"
                 >
-                  <Checkbox
-                    checked={!!jobConfig.config.process[0].train?.diff_output_preservation}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
-                    label="Enable output preservation (prevents catastrophic forgetting)"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={!!jobConfig.config.process[0].train?.diff_output_preservation}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
+                      label="Enable output preservation (prevents catastrophic forgetting)"
+                    />
+                    <span className="text-xs bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded">
+                      +3GB memory
+                    </span>
+                  </div>
+                  {systemProfile?.gpu.isUnifiedMemory && (
+                    <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
+                      ⚠️ Requires storing original model outputs. Significant memory overhead.
+                    </p>
+                  )}
                 </FormGroup>
 
                 {jobConfig.config.process[0].train?.diff_output_preservation && (
@@ -999,7 +1177,7 @@ export default function ComprehensiveWizard({
 
                     <FormGroup label="Preservation Class">
                       <TextInput
-                        value={jobConfig.config.process[0].train?.diff_output_preservation_class || 'person'}
+                        value={jobConfig.config.process[0].train?.diff_output_preservation_class ?? 'person'}
                         onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')}
                         placeholder="person"
                       />
