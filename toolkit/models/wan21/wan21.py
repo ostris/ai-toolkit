@@ -12,6 +12,7 @@ from toolkit.prompt_utils import PromptEmbeds
 from transformers import AutoTokenizer, UMT5EncoderModel
 from diffusers import  WanPipeline, WanTransformer3DModel, AutoencoderKL
 from .autoencoder_kl_wan import AutoencoderKLWan
+from toolkit.monitoring.samplers import is_unified_memory_system
 import os
 import sys
 
@@ -385,8 +386,11 @@ class Wan21(BaseModel):
             )
         
         if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to('cpu')
+            if is_unified_memory_system():
+                self.print_and_status_update("Skipping CPU offloading (unified memory system - CPU/GPU share RAM)")
+            else:
+                self.print_and_status_update("Moving transformer to CPU")
+                transformer.to('cpu')
 
         return transformer
 
