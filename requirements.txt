@@ -37,4 +37,3 @@ opencv-python
 pytorch-wavelets==1.3.0
 matplotlib==3.10.1
 setuptools==69.5.1
-sageattention>=2.0.0  # Optional: provides 2-3x speedup for Wan model training
