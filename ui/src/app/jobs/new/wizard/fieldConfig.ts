@@ -539,7 +539,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].network.linear',
     label: 'LoRA Rank',
-    description: 'Rank of the LoRA matrices. Higher values increase capacity but require more VRAM.',
+    description: 'How much your LoRA can learn. Higher = learns more details but bigger file size. 8-16 for styles, 16-32 for characters, 32+ for complex concepts.',
     type: 'number',
     defaultValue: 16,
     min: 1,
@@ -551,7 +551,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].network.linear_alpha',
     label: 'LoRA Alpha',
-    description: 'Scaling factor for LoRA. Typically set equal to rank for a learning rate multiplier of 1.0.',
+    description: 'Controls how strongly the LoRA affects the image. Usually set equal to rank. Higher alpha = stronger effect at same strength setting.',
     type: 'number',
     defaultValue: 16,
     min: 1,
@@ -1371,7 +1371,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.max_grad_norm',
     label: 'Max Gradient Norm',
-    description: 'Clip gradients to this max norm. Prevents exploding gradients. 1.0 is typical.',
+    description: 'Limits how much the model can change in one step. Prevents training from going crazy. 1.0 works well for most cases.',
     type: 'number',
     defaultValue: 1.0,
     step: 'optimizer',
@@ -1427,7 +1427,7 @@ export const fields: FieldConfig[] = [
     id: 'config.process[0].train.gradient_accumulation_steps',
     label: 'Gradient Accumulation Steps',
     description:
-      'Accumulate gradients over N steps before updating. Simulates larger batch size without VRAM cost. Effective batch = batch_size * accumulation.',
+      'Simulates training on more images at once without using extra VRAM. Set to 4 with batch size 1 to simulate batch size 4. Higher = more stable but slower.',
     type: 'number',
     defaultValue: 1,
     step: 'memory',
@@ -1439,7 +1439,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.gradient_checkpointing',
     label: 'Gradient Checkpointing',
-    description: 'Trade compute for memory. Recomputes activations during backward pass. Saves VRAM but slower.',
+    description: 'Saves VRAM by recalculating some data instead of storing it. Makes training ~20-30% slower but uses much less memory. Recommended for most users.',
     type: 'boolean',
     defaultValue: true,
     step: 'memory',
@@ -1448,7 +1448,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].cache_latents',
     label: 'Cache Latents to Disk',
-    description: 'Pre-encode images to latent space and cache. Faster training but uses disk space.',
+    description: 'Pre-processes your images once and saves the results. Makes training faster because it skips image processing each step. Highly recommended!',
     type: 'boolean',
     defaultValue: false,
     step: 'memory',
@@ -1457,7 +1457,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].cache_latents_to_disk',
     label: 'Save Cache to Disk',
-    description: 'Save cached latents to disk instead of RAM. Required for large datasets.',
+    description: 'Saves the processed images to disk instead of RAM. Turn on if you have more than 50-100 images. Uses ~4-8MB per image.',
     type: 'boolean',
     defaultValue: false,
     step: 'memory',
@@ -1482,7 +1482,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.pin_memory',
     label: 'Pin Memory',
-    description: 'Pin data to GPU memory for faster transfer. Uses more RAM but faster data loading.',
+    description: 'Speeds up moving data to your GPU. Uses a bit more RAM but makes training faster. Leave on unless you are running out of system RAM.',
     type: 'boolean',
     defaultValue: true,
     step: 'memory',
@@ -1523,7 +1523,7 @@ export const fields: FieldConfig[] = [
     id: 'config.process[0].train.snr_gamma',
     label: 'SNR Gamma',
     description:
-      'Signal-to-noise ratio weighting. Min-SNR weighting with gamma=5 often improves quality. 0 = disabled.',
+      'Balances how much the model learns from noisy vs clean versions of images. Set to 5 for better quality on most models. 0 = disabled.',
     type: 'number',
     defaultValue: 0,
     step: 'advanced',
@@ -1546,7 +1546,7 @@ export const fields: FieldConfig[] = [
     id: 'config.process[0].train.ema_decay',
     label: 'EMA Decay',
     description:
-      'Exponential moving average decay rate. 0 = disabled, 0.9999 typical. Smooths weights over training.',
+      'Creates a smoothed version of your LoRA by averaging weights over time. Reduces sudden quality spikes. 0.9999 typical, 0 = disabled.',
     type: 'number',
     defaultValue: 0,
     step: 'advanced',
@@ -1946,7 +1946,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].network.lokr_full_rank',
     label: 'LoKr Full Rank',
-    description: 'Use full rank for LoKr decomposition. Higher quality but more parameters.',
+    description: 'Sets how detailed the LoKr can be. Higher = better quality but larger file. Leave empty for automatic.',
     type: 'number',
     defaultValue: null,
     step: 'target',
@@ -1958,7 +1958,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].network.lokr_factor',
     label: 'LoKr Factor',
-    description: 'Kronecker factor for LoKr. Controls decomposition granularity.',
+    description: 'How the LoKr breaks down the model weights. -1 = automatic. Higher = more efficient but may lose detail.',
     type: 'number',
     defaultValue: null,
     step: 'target',
@@ -2419,7 +2419,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].alpha_mask',
     label: 'Alpha Mask',
-    description: 'Use alpha channel as loss weight mask for transparent images.',
+    description: 'For images with transparent backgrounds: focuses learning on the visible parts only. Ignores the transparent areas. Great for object/character training.',
     type: 'boolean',
     defaultValue: false,
     step: 'dataset',
@@ -2466,7 +2466,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].is_reg',
     label: 'Regularization Dataset',
-    description: 'Mark this dataset as regularization (class) images to prevent overfitting.',
+    description: 'These are example images of the general concept (like "a person" for character training). Helps prevent your LoRA from changing unrelated things in the model.',
     type: 'boolean',
     defaultValue: false,
     step: 'dataset',
@@ -2499,7 +2499,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].prior_reg',
     label: 'Prior Regularization',
-    description: 'Use prior preservation regularization for this dataset.',
+    description: 'Compare training results to the original model to preserve what it already knows. Helps avoid "forgetting" how to draw other things.',
     type: 'boolean',
     defaultValue: false,
     step: 'dataset',
@@ -2517,7 +2517,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].standardize_images',
     label: 'Standardize Images',
-    description: 'Normalize image values to standard range for consistent training.',
+    description: 'Adjusts all image colors/brightness to a consistent range. Recommended to leave on. Only disable if your images are already perfectly calibrated.',
     type: 'boolean',
     defaultValue: true,
     step: 'dataset',
@@ -2550,7 +2550,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].model.split_model_other_module_param_count_scale',
     label: 'Split Model Parameter Scale',
-    description: 'Scale factor for other module parameter count when splitting model.',
+    description: 'When splitting model across GPUs, this controls how much memory each GPU gets. Higher = more even distribution. Only change if you have unbalanced GPUs.',
     type: 'number',
     defaultValue: 1.0,
     step: 'quantization',
@@ -2562,7 +2562,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].model.te_device',
     label: 'Text Encoder Device',
-    description: 'Device for text encoder (cuda, cpu, or specific GPU like cuda:0).',
+    description: 'Where to run the text encoder. GPU is faster but uses more VRAM. CPU saves VRAM but is slower. Use CUDA:0/1 if you have multiple GPUs.',
     type: 'select',
     defaultValue: 'cuda',
     step: 'quantization',
@@ -2577,7 +2577,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].model.te_dtype',
     label: 'Text Encoder Data Type',
-    description: 'Precision for text encoder. Lower precision uses less VRAM.',
+    description: 'Number format for the text encoder. Float16 saves memory and works on most GPUs. BFloat16 is better on newer GPUs (RTX 30/40 series). Float32 uses more memory but is most accurate.',
     type: 'select',
     defaultValue: 'float16',
     step: 'quantization',
@@ -2591,7 +2591,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].model.vae_device',
     label: 'VAE Device',
-    description: 'Device for VAE encoder/decoder (cuda, cpu, or specific GPU).',
+    description: 'Where to run the image encoder/decoder. GPU is much faster. CPU saves ~1-2GB VRAM but slows down caching. Only move to CPU if desperate for VRAM.',
     type: 'select',
     defaultValue: 'cuda',
     step: 'quantization',
@@ -2606,7 +2606,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].model.vae_dtype',
     label: 'VAE Data Type',
-    description: 'Precision for VAE. Lower precision uses less VRAM.',
+    description: 'Number format for the image encoder/decoder. BFloat16 recommended for most cases. Float32 uses more memory but may produce slightly better colors.',
     type: 'select',
     defaultValue: 'bfloat16',
     step: 'quantization',
@@ -2622,7 +2622,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.blank_prompt_preservation',
     label: 'Blank Prompt Preservation',
-    description: 'Preserve model behavior for blank/empty prompts during training.',
+    description: 'Keeps the model working well even without prompts. Set to 0.1-0.3 to prevent your LoRA from breaking promptless generation. 0 = disabled.',
     type: 'number',
     defaultValue: 0,
     step: 'advanced',
@@ -2634,7 +2634,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.blended_blur_noise',
     label: 'Blended Blur Noise',
-    description: 'Apply blurred noise blending for smoother training.',
+    description: 'Softens the noise added during training. Can help produce smoother, less grainy results. Experimental feature.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2643,7 +2643,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.diff_output_preservation',
     label: 'Diff Output Preservation',
-    description: 'Preserve diffusion output characteristics during training.',
+    description: 'Helps maintain the original model style while learning new concepts. Higher values (0.1-0.5) reduce style drift. 0 = disabled.',
     type: 'number',
     defaultValue: 0,
     step: 'advanced',
@@ -2655,7 +2655,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.diffusion_feature_extractor_path',
     label: 'Diffusion Feature Extractor Path',
-    description: 'Path to diffusion feature extractor model for feature-based loss.',
+    description: 'Advanced: Path to a model that helps compare image features during training. Leave empty unless you know what this is.',
     type: 'string',
     defaultValue: '',
     step: 'advanced',
@@ -2665,7 +2665,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.do_prior_divergence',
     label: 'Prior Divergence Loss',
-    description: 'Enable prior divergence loss to prevent overfitting.',
+    description: 'Compares your trained model to the original to prevent forgetting existing knowledge. Helps avoid overfitting on small datasets.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2674,7 +2674,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.force_consistent_noise',
     label: 'Force Consistent Noise',
-    description: 'Use consistent noise patterns across training for stability.',
+    description: 'Uses the same random noise pattern throughout training. Can make training more stable but less diverse. Experimental.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2683,7 +2683,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.free_u',
     label: 'FreeU Enhancement',
-    description: 'Enable FreeU technique for improved image generation quality.',
+    description: 'A technique that can make generated images sharper and more detailed. May not work well with all models. Experimental.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2692,7 +2692,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.inverted_mask_prior',
     label: 'Inverted Mask Prior',
-    description: 'Use inverted masks for prior preservation regularization.',
+    description: 'For inpainting training: focuses learning on the area outside the mask instead of inside. Specialized use case.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2701,7 +2701,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.latent_feature_extractor_path',
     label: 'Latent Feature Extractor Path',
-    description: 'Path to latent feature extractor for latent-space loss computation.',
+    description: 'Advanced: Path to a model that compares compressed image representations. Leave empty unless you have a specific model.',
     type: 'string',
     defaultValue: '',
     step: 'advanced',
@@ -2711,7 +2711,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.max_denoising_steps',
     label: 'Max Denoising Steps',
-    description: 'Maximum number of denoising steps to sample during training.',
+    description: 'Training samples noise levels from 0 to this max. Default 1000 covers full range. Lower values focus on specific noise levels.',
     type: 'number',
     defaultValue: 1000,
     step: 'training',
@@ -2723,7 +2723,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.min_denoising_steps',
     label: 'Min Denoising Steps',
-    description: 'Minimum number of denoising steps to sample during training.',
+    description: 'Start sampling from this noise level instead of 0. Useful to skip very noisy steps. 0 = start from beginning.',
     type: 'number',
     defaultValue: 0,
     step: 'training',
@@ -2735,7 +2735,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.optimal_noise_pairing_samples',
     label: 'Optimal Noise Pairing Samples',
-    description: 'Number of samples for optimal noise pairing technique.',
+    description: 'Tries multiple noise patterns and picks the best one for each image. More samples = better quality but slower. 0 = disabled.',
     type: 'number',
     defaultValue: 0,
     step: 'advanced',
@@ -2759,7 +2759,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.show_turbo_outputs',
     label: 'Show Turbo Outputs',
-    description: 'Display turbo model outputs during training for debugging.',
+    description: 'Shows what the fast/distilled version of the model produces. Only useful if training turbo models. Leave off for normal training.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2768,7 +2768,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.train_turbo',
     label: 'Train Turbo Model',
-    description: 'Enable turbo/distilled model training mode.',
+    description: 'Trains a faster version of the model that generates images in fewer steps. Advanced feature - only enable if you understand distillation.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2777,7 +2777,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.weight_jitter',
     label: 'Weight Jitter',
-    description: 'Add small random noise to weights for regularization.',
+    description: 'Adds tiny random changes to LoRA weights during training. Can help prevent overfitting. Try 0.001-0.01. 0 = disabled.',
     type: 'number',
     defaultValue: 0,
     step: 'regularization',
