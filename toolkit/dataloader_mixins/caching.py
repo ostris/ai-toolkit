@@ -389,7 +389,8 @@ class CLIPCachingMixin:
 
             # make sure the adapter has attributes
             if self.sd.adapter is None:
-                raise Exception("Error: must have an adapter to cache clip vision to disk")
+                print_acc(" - WARNING: No adapter found, skipping CLIP vision caching (only works with IP-Adapter or similar)")
+                return
 
             clip_image_processor: CLIPImageProcessor = None
             if hasattr(self.sd.adapter, 'clip_image_processor'):

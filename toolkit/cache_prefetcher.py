@@ -161,8 +161,15 @@ class DataLoaderPrefetcher:
         try:
             # Create a CUDA stream for async transfers
             if self.enabled:
+                print("[Prefetch] Creating CUDA stream...")
+                import sys
+                sys.stdout.flush()
                 self.stream = torch.cuda.Stream(device=self.device)
+                print(f"[Prefetch] CUDA stream created successfully: {self.stream}")
+                sys.stdout.flush()
 
+            print("[Prefetch] Starting to iterate dataloader...")
+            sys.stdout.flush()
             for batch in self.dataloader:
                 if self.stop_event.is_set():
                     break

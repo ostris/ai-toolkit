@@ -308,7 +308,12 @@ class SDTrainer(BaseSDTrainProcess):
                 self.negative_prompt_pool = [self.train_config.negative_prompt]
 
         # handle unload text encoder
-        if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
+        should_unload = self.train_config.unload_text_encoder or self.is_caching_text_embeddings
+        # Don't unload if training the text encoder
+        if should_unload and self.train_config.train_text_encoder:
+            print_acc("WARNING: Cannot cache/unload text encoder while training it. Keeping text encoder loaded.")
+            should_unload = False
+        if should_unload:
             print_acc("Caching embeddings and unloading text encoder")
             with torch.no_grad():
                 if self.train_config.train_text_encoder:
@@ -1202,6 +1207,10 @@ class SDTrainer(BaseSDTrainProcess):
 
     def train_single_accumulation(self, batch: DataLoaderBatchDTO):
         with torch.no_grad():
+            if self.step_num == 0:
+                print("train_single_accumulation: starting preprocess_batch...")
+                import sys
+                sys.stdout.flush()
             self.timer.start('preprocess_batch')
             if isinstance(self.adapter, CustomAdapter):
                 batch = self.adapter.edit_batch_raw(batch)
@@ -1209,6 +1218,9 @@ class SDTrainer(BaseSDTrainProcess):
             if isinstance(self.adapter, CustomAdapter):
                 batch = self.adapter.edit_batch_processed(batch)
             dtype = get_torch_dtype(self.train_config.dtype)
+            if self.step_num == 0:
+                print(f"train_single_accumulation: dtype={dtype}, checking VAE/TE dtypes...")
+                sys.stdout.flush()
             # sanity check
             if self.sd.vae.dtype != self.sd.vae_torch_dtype:
                 self.sd.vae = self.sd.vae.to(self.sd.vae_torch_dtype)
@@ -1220,7 +1232,13 @@ class SDTrainer(BaseSDTrainProcess):
                 if self.sd.text_encoder.dtype != self.sd.te_torch_dtype:
                     self.sd.text_encoder.to(self.sd.te_torch_dtype)
 
+            if self.step_num == 0:
+                print("train_single_accumulation: calling process_general_training_batch...")
+                sys.stdout.flush()
             noisy_latents, noise, timesteps, conditioned_prompts, imgs = self.process_general_training_batch(batch)
+            if self.step_num == 0:
+                print(f"train_single_accumulation: got noisy_latents shape={noisy_latents.shape}, dtype={noisy_latents.dtype}")
+                sys.stdout.flush()
             if self.train_config.do_cfg or self.train_config.do_random_cfg:
                 # pick random negative prompts
                 if self.negative_prompt_pool is not None:
@@ -1947,6 +1965,10 @@ class SDTrainer(BaseSDTrainProcess):
                         prior_pred=prior_pred,
                     )
                 else:
+                    if self.step_num == 0:
+                        print("train_single_accumulation: about to call predict_noise (forward pass)...")
+                        import sys
+                        sys.stdout.flush()
                     with self.timer('predict_unet'):
                         noise_pred = self.predict_noise(
                             noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
@@ -1957,6 +1979,9 @@ class SDTrainer(BaseSDTrainProcess):
                             is_primary_pred=True,
                             **pred_kwargs
                         )
+                    if self.step_num == 0:
+                        print(f"train_single_accumulation: predict_noise returned! shape={noise_pred.shape}")
+                        sys.stdout.flush()
                     self.after_unet_predict()
 
                     with self.timer('calculate_loss'):
@@ -2038,7 +2063,14 @@ class SDTrainer(BaseSDTrainProcess):
         else:
             batch_list = [batch]
         total_loss = None
+        if self.step_num == 0:
+            print("hook_train_loop: zeroing gradients...")
+            import sys
+            sys.stdout.flush()
         self.optimizer.zero_grad()
+        if self.step_num == 0:
+            print("hook_train_loop: gradients zeroed, starting batch loop...")
+            sys.stdout.flush()
         for batch in batch_list:
             if self.sd.is_multistage:
                 # handle multistage switching
@@ -2052,7 +2084,13 @@ class SDTrainer(BaseSDTrainProcess):
                         if self.current_boundary_index in self.sd.trainable_multistage_boundaries:
                             # if this boundary is trainable, we can stop looking
                             break
+            if self.step_num == 0:
+                print("hook_train_loop: calling train_single_accumulation...")
+                sys.stdout.flush()
             loss = self.train_single_accumulation(batch)
+            if self.step_num == 0:
+                print(f"hook_train_loop: train_single_accumulation returned loss={loss}")
+                sys.stdout.flush()
             self.steps_this_boundary += 1
             if total_loss is None:
                 total_loss = loss

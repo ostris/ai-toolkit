@@ -328,6 +328,47 @@ python -m toolkit.diagnose_dataloader_memory config/your_config.yaml
 
 ### 🎯 Features
 
+#### 18. Wizard Support for Multiple Datasets (Regularization)
+**Impact:** Prevent common configuration mistake, enable proper regularization training
+
+**Current problem:**
+- Wizard only configures a single dataset
+- Users may accidentally set `is_reg: true` on their only dataset, causing training to fail with "NoneType has no attribute get_caption_list"
+- No way to add a second dataset for regularization (prevents overfitting)
+
+**Proposed solution:**
+Add wizard step to ask about regularization:
+```
+Do you have regularization images?
+  - Yes, I have a separate folder of general class images
+  - No, I only have my training images (most common)
+
+[If Yes]
+Enter path to regularization dataset:
+  /path/to/class/images (e.g., generic person photos for character training)
+```
+
+**Implementation:**
+1. Add wizard step/question about regularization datasets
+2. If user selects regularization:
+   - Ask for second dataset path
+   - Automatically set `is_reg: false` for primary dataset
+   - Automatically set `is_reg: true` for regularization dataset
+3. If user declines:
+   - Ensure `is_reg: false` (NEVER auto-enable)
+   - Warn if `is_reg: true` is manually set on only dataset
+4. Add validation: if only one dataset exists and `is_reg: true`, show error
+
+**Files to modify:**
+- `ui/src/app/jobs/new/wizard/`: Add dataset count/type step
+- `ui/src/app/jobs/new/wizard/fieldConfig.ts`: Add multi-dataset configuration fields
+- `ui/src/lib/configGenerator.ts`: Generate proper multi-dataset config
+
+**Complexity:** Medium
+**Estimated benefit:** Prevents common configuration error, enables proper regularization workflow
+
+---
+
 #### 9. Smart Batch Size Scaling (COMPLETED ✓)
 **Impact:** Better GPU utilization, automatic tuning
 

@@ -1,0 +1,65 @@
+FROM nvcr.io/nvidia/pytorch:25.10-py3
+
+WORKDIR /workspace/ai-toolkit
+
+# Install core ML/AI packages first (with version pins from requirements.txt)
+RUN pip install --no-cache-dir \
+    diffusers \
+    'transformers==4.52.4' \
+    accelerate \
+    peft \
+    'huggingface_hub>=0.30.0,<1.0' \
+    'optimum-quanto==0.2.4' \
+    sentencepiece \
+    tokenizers
+
+# Install utility packages
+RUN pip install --no-cache-dir \
+    flatten_json \
+    oyaml \
+    toml \
+    omegaconf \
+    python-dotenv \
+    python-slugify
+
+# Install vision/image packages
+RUN pip install --no-cache-dir \
+    opencv-python \
+    kornia \
+    'albumentations>=1.4.0,<1.5.0' \
+    'albucore>=0.0.16' \
+    invisible-watermark \
+    lpips \
+    pytorch_fid \
+    pytorch-wavelets
+
+# Install additional ML packages
+RUN pip install --no-cache-dir \
+    timm \
+    prodigyopt \
+    k-diffusion \
+    open-clip-torch
+
+# Install torchao and lycoris (pin torchao to match requirements.txt)
+RUN pip install --no-cache-dir \
+    'torchao==0.10.0' \
+    'lycoris-lora==1.8.3'
+
+# Install gradio for UI (if needed)
+RUN pip install --no-cache-dir gradio
+
+# Install bitsandbytes and hf_transfer
+RUN pip install --no-cache-dir \
+    bitsandbytes \
+    hf_transfer
+
+# Install matplotlib with specific version
+RUN pip install --no-cache-dir 'matplotlib>=3.10.0'
+
+# Set environment variables for optimal performance
+ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/root/.cache/huggingface
+
+WORKDIR /workspace/ai-toolkit
+
+CMD ["/bin/bash"]

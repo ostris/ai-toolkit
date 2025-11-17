@@ -2123,7 +2123,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].cache_text_embeddings',
     label: 'Cache Text Embeddings',
-    description: 'Pre-compute and cache text encoder outputs for faster training.',
+    description: 'Pre-compute and cache text encoder outputs for faster training. Note: Not compatible with "Train Text Encoder" - will be ignored if text encoder training is enabled.',
     type: 'boolean',
     defaultValue: false,
     step: 'memory',
@@ -2132,7 +2132,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].cache_clip_vision_to_disk',
     label: 'Cache CLIP Vision to Disk',
-    description: 'Cache CLIP vision encoder outputs to disk.',
+    description: 'Cache CLIP vision encoder outputs to disk. Only works with IP-Adapter or similar adapter models - leave disabled for standard LoRA training.',
     type: 'boolean',
     defaultValue: false,
     step: 'memory',
@@ -2227,7 +2227,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].train.cache_text_embeddings',
     label: 'Cache Text Embeddings (Train)',
-    description: 'Cache text encoder outputs during training to save computation.',
+    description: 'Cache text encoder outputs during training to save computation. Note: Not compatible with "Train Text Encoder" - will be ignored if text encoder training is enabled.',
     type: 'boolean',
     defaultValue: false,
     step: 'advanced',
@@ -2466,7 +2466,7 @@ export const fields: FieldConfig[] = [
   {
     id: 'config.process[0].datasets[0].is_reg',
     label: 'Regularization Dataset',
-    description: 'These are example images of the general concept (like "a person" for character training). Helps prevent your LoRA from changing unrelated things in the model.',
+    description: 'LEAVE THIS OFF for your primary training images. Only enable for a SECOND dataset containing generic class images (like "a person" for character training) to prevent overfitting. If enabled on your only dataset, training will fail with "NoneType has no attribute get_caption_list".',
     type: 'boolean',
     defaultValue: false,
     step: 'dataset',
