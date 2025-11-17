@@ -36,6 +36,15 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
+
+  // Add controlled internal state to handle rapid typing and avoid stale closure issues
+  const [inputValue, setInputValue] = React.useState<string>(value ?? '');
+
+  // Sync internal state with prop value when it changes externally
+  React.useEffect(() => {
+    setInputValue(value ?? '');
+  }, [value]);
+
   return (
     <div className={classNames(className)}>
       {label && (
@@ -51,9 +60,13 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
       <input
         ref={ref}
         type={type}
-        value={value}
+        value={inputValue}
         onChange={e => {
-          if (!disabled) onChange(e.target.value);
+          if (!disabled) {
+            const newValue = e.target.value;
+            setInputValue(newValue);
+            onChange(newValue);
+          }
         }}
         className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
         placeholder={placeholder}
