@@ -11,9 +11,10 @@ interface SectionRendererProps {
   selectedModel: string;
   jobConfig: JobConfig;
   onChange: (id: string, value: any) => void;
+  onCompoundChange?: (changes: { path: string; value: any }[]) => void;
 }
 
-export function SectionRenderer({ section, fields, selectedModel, jobConfig, onChange }: SectionRendererProps) {
+export function SectionRenderer({ section, fields, selectedModel, jobConfig, onChange, onCompoundChange }: SectionRendererProps) {
   // Filter to fields in this section that apply to the selected model
   const visibleFields = fields.filter(field => {
     // Check section match
@@ -48,7 +49,14 @@ export function SectionRenderer({ section, fields, selectedModel, jobConfig, onC
       </div>
       <div className="space-y-3">
         {visibleFields.map(field => (
-          <FieldRenderer key={field.id} field={field} value={getNestedValue(jobConfig, field.id)} onChange={onChange} />
+          <FieldRenderer
+            key={field.id}
+            field={field}
+            value={getNestedValue(jobConfig, field.id)}
+            onChange={onChange}
+            jobConfig={jobConfig}
+            onCompoundChange={onCompoundChange}
+          />
         ))}
       </div>
     </div>

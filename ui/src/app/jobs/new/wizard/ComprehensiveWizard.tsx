@@ -14,6 +14,8 @@ import { apiClient } from '@/utils/api';
 import PreflightModal from './components/PreflightModal';
 import AdvisorPanel from './components/AdvisorPanel';
 import SummaryHeader from './components/SummaryHeader';
+import { StepRenderer } from './components/StepRenderer';
+import { setNestedValue as setNestedConfigValue } from './fieldConfig';
 
 // Types and utilities
 import {
@@ -381,6 +383,66 @@ export default function ComprehensiveWizard({
     }
   };
 
+  // Handle config changes from StepRenderer (data-driven fields)
+  const handleStepRendererConfigChange = (newConfig: JobConfig) => {
+    // Apply all changes from the new config
+    // StepRenderer uses setNestedValue which returns a new config object
+    // We need to extract all the individual path changes and apply them
+    const processConfig = newConfig.config.process[0];
+
+    // Helper to recursively set nested object values
+    const setNestedObject = (obj: any, basePath: string) => {
+      Object.entries(obj).forEach(([key, value]) => {
+        const path = `${basePath}.${key}`;
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          setNestedObject(value, path);
+        } else {
+          setJobConfig(value, path);
+        }
+      });
+    };
+
+    // Apply model changes
+    if (processConfig.model) {
+      setNestedObject(processConfig.model, 'config.process[0].model');
+    }
+
+    // Apply network changes
+    if (processConfig.network) {
+      setNestedObject(processConfig.network, 'config.process[0].network');
+    }
+
+    // Apply train changes
+    if (processConfig.train) {
+      setNestedObject(processConfig.train, 'config.process[0].train');
+    }
+
+    // Apply dataset changes
+    if (processConfig.datasets && processConfig.datasets[0]) {
+      setNestedObject(processConfig.datasets[0], 'config.process[0].datasets[0]');
+    }
+
+    // Apply sample changes
+    if (processConfig.sample) {
+      setNestedObject(processConfig.sample, 'config.process[0].sample');
+    }
+
+    // Apply save changes
+    if (processConfig.save) {
+      setNestedObject(processConfig.save, 'config.process[0].save');
+    }
+
+    // Apply logging changes
+    if (processConfig.logging) {
+      setNestedObject(processConfig.logging, 'config.process[0].logging');
+    }
+
+    // Apply monitoring changes
+    if ((processConfig as any).monitoring) {
+      setNestedObject((processConfig as any).monitoring, 'config.process[0].monitoring');
+    }
+  };
+
   // Apply smart defaults
   const applySmartDefaults = (profile: SystemProfile, intent: UserIntent, dataset: DatasetInfo, recommendedResolution?: number) => {
     // Use recommended resolution if provided (from dataset analysis), otherwise fall back to config
@@ -602,310 +664,13 @@ export default function ComprehensiveWizard({
             {/* Step 2: Quantization */}
             {currentStepDef.id === 'quantization' && (
               <div className="space-y-4">
-                <FormGroup label="Model Quantization" tooltip="Reduce model precision to save VRAM">
-                  <SelectInput
-                    value={
-                      jobConfig.config.process[0].model?.quantize === true
-                        ? (jobConfig.config.process[0].model?.qtype?.startsWith('uint4') || jobConfig.config.process[0].model?.qtype?.startsWith('uint3') ? '4bit' : '8bit')
-                        : 'none'
-                    }
-                    onChange={(value: string) => {
-                      if (value === 'none') {
-                        setJobConfig(false, 'config.process[0].model.quantize');
-                      } else if (value === '8bit') {
-                        setJobConfig(true, 'config.process[0].model.quantize');
-                        setJobConfig('qfloat8', 'config.process[0].model.qtype');
-                      } else if (value === '4bit') {
-                        setJobConfig(true, 'config.process[0].model.quantize');
-                        setJobConfig('uint4', 'config.process[0].model.qtype');
-                      }
-                    }}
-                    options={[
-                      { value: 'none', label: 'No Quantization (Full Precision)' },
-                      { value: '8bit', label: '8-bit (Recommended for most cases)' },
-                      { value: '4bit', label: '4-bit (Maximum VRAM savings)' }
-                    ]}
-                  />
-                </FormGroup>
+                <StepRenderer
+                  stepId="quantization"
+                  selectedModel={jobConfig.config.process[0].model?.arch || ''}
+                  jobConfig={jobConfig}
+                  onConfigChange={handleStepRendererConfigChange}
+                />
 
-                {jobConfig.config.process[0].model?.quantize === true && (
-                  <FormGroup label="Text Encoder Quantization" tooltip="Also quantize the text encoder to save more VRAM">
-                    <SelectInput
-                      value={jobConfig.config.process[0].model?.quantize_te === true ? 'yes' : 'no'}
-                      onChange={(value: string) => {
-                        if (value === 'yes') {
-                          setJobConfig(true, 'config.process[0].model.quantize_te');
-                          setJobConfig('qfloat8', 'config.process[0].model.qtype_te');
-                        } else {
-                          setJobConfig(false, 'config.process[0].model.quantize_te');
-                        }
-                      }}
-                      options={[
-                        { value: 'no', label: 'No (Full Precision Text Encoder)' },
-                        { value: 'yes', label: 'Yes (8-bit Text Encoder)' }
-                      ]}
-                    />
-                  </FormGroup>
-                )}
-
-                <FormGroup label="Layer Offloading" tooltip="Offload model layers to CPU to save VRAM (slower but uses less GPU memory)">
-                  <Checkbox
-                    checked={!!jobConfig.config.process[0].model?.layer_offloading}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.layer_offloading')}
-                    label="Enable layer offloading (CPU ↔ GPU swapping)"
-                  />
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    Moves layers between CPU and GPU as needed. Enables training larger models with limited VRAM but slower.
-                  </div>
-                </FormGroup>
-
-                {jobConfig.config.process[0].model?.layer_offloading && (
-                  <div className="ml-4 space-y-3 border-l-2 border-gray-200 dark:border-gray-700 pl-4">
-                    <FormGroup label="Transformer Offload Percentage" tooltip="Percentage of transformer layers to offload to CPU">
-                      <NumberInput
-                        value={(jobConfig.config.process[0].model?.layer_offloading_transformer_percent ?? 1.0) * 100}
-                        onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].model.layer_offloading_transformer_percent')}
-                        min={0}
-                        max={100}
-                        step={10}
-                      />
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        % of transformer layers to offload (100% = all layers can be offloaded)
-                      </div>
-                    </FormGroup>
-                    <FormGroup label="Text Encoder Offload Percentage" tooltip="Percentage of text encoder layers to offload">
-                      <NumberInput
-                        value={(jobConfig.config.process[0].model?.layer_offloading_text_encoder_percent ?? 1.0) * 100}
-                        onChange={value => value !== null && setJobConfig(value / 100, 'config.process[0].model.layer_offloading_text_encoder_percent')}
-                        min={0}
-                        max={100}
-                        step={10}
-                      />
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        % of text encoder layers to offload
-                      </div>
-                    </FormGroup>
-                  </div>
-                )}
-
-                <FormGroup label="Model Compilation" tooltip="Use torch.compile() for faster training (requires PyTorch 2.0+)">
-                  <Checkbox
-                    checked={!!jobConfig.config.process[0].model?.compile}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.compile')}
-                    label="Enable torch.compile() optimization"
-                  />
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    JIT compiles the model for faster execution. Increases startup time but faster per-step training.
-                  </div>
-                </FormGroup>
-
-                <FormGroup label="Text Encoder Precision" tooltip="Quantization bits for text encoder (lower = less VRAM, potentially lower quality)">
-                  <SelectInput
-                    value={String(jobConfig.config.process[0].model?.text_encoder_bits ?? 16)}
-                    onChange={value => setJobConfig(parseInt(value), 'config.process[0].model.text_encoder_bits')}
-                    options={[
-                      { value: '16', label: '16-bit (Full Precision)' },
-                      { value: '8', label: '8-bit (Balanced)' },
-                      { value: '4', label: '4-bit (Maximum Savings)' }
-                    ]}
-                  />
-                </FormGroup>
-
-                <FormGroup label="Assistant LoRA Path" tooltip="Path to assistant LoRA for training (e.g., for Schnell training adapter)">
-                  <TextInput
-                    value={jobConfig.config.process[0].model?.assistant_lora_path || ''}
-                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.assistant_lora_path')}
-                    placeholder="e.g., ostris/FLUX.1-schnell-training-adapter"
-                  />
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    Optional: Path to LoRA that assists training (useful for distilled models like Schnell).
-                  </div>
-                </FormGroup>
-
-                <FormGroup label="Custom VAE Path" tooltip="Path to custom VAE model (leave empty for default)">
-                  <TextInput
-                    value={jobConfig.config.process[0].model?.vae_path || ''}
-                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_path')}
-                    placeholder="Optional: path/to/custom/vae"
-                  />
-                </FormGroup>
-
-                <FormGroup label="Model Data Type" tooltip="Precision for model computation">
-                  <SelectInput
-                    value={jobConfig.config.process[0].model?.dtype || 'bf16'}
-                    onChange={value => setJobConfig(value, 'config.process[0].model.dtype')}
-                    options={[
-                      { value: 'bf16', label: 'BFloat16 (recommended for modern GPUs)' },
-                      { value: 'float16', label: 'Float16 (wider compatibility)' },
-                      { value: 'float32', label: 'Float32 (full precision, slow)' }
-                    ]}
-                  />
-                </FormGroup>
-
-                <FormGroup label="Multi-GPU Options (Flux)" tooltip="Split large models across multiple GPUs">
-                  <div className="space-y-2">
-                    <Checkbox
-                      checked={!!jobConfig.config.process[0].model?.split_model_over_gpus}
-                      onChange={value => setJobConfig(value, 'config.process[0].model.split_model_over_gpus')}
-                      label="Split model across GPUs (for Flux with 2+ GPUs)"
-                    />
-                    <Checkbox
-                      checked={!!jobConfig.config.process[0].model?.attn_masking}
-                      onChange={value => setJobConfig(value, 'config.process[0].model.attn_masking')}
-                      label="Enable attention masking (Flux only, saves memory)"
-                    />
-                  </div>
-                </FormGroup>
-
-                {jobConfig.config.process[0].model?.split_model_over_gpus && (
-                  <FormGroup label="GPU Split Scale" tooltip="Scale factor for module parameter distribution">
-                    <NumberInput
-                      value={jobConfig.config.process[0].model?.split_model_other_module_param_count_scale ?? 0.3}
-                      onChange={value => setJobConfig(value, 'config.process[0].model.split_model_other_module_param_count_scale')}
-                      min={0.1}
-                      max={1}
-                      step={0.1}
-                    />
-                  </FormGroup>
-                )}
-
-                {/* SDXL-specific options */}
-                {(jobConfig.config.process[0].model?.arch === 'sdxl' || jobConfig.config.process[0].model?.arch?.includes('sdxl')) && (
-                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
-                    <h4 className="font-medium text-blue-800 dark:text-blue-200">SDXL-Specific Options</h4>
-
-                    <FormGroup label="Text Encoder Selection" tooltip="SDXL-specific: Uses two text encoders for prompts. CLIP-L (~400MB) handles basic concepts, OpenCLIP-G (~1.4GB) provides deeper understanding. Disabling one saves memory but reduces quality. On unified memory systems (Apple Silicon), disabling OpenCLIP-G frees significant shared RAM/VRAM.">
-                      <div className="space-y-2">
-                        <Checkbox
-                          checked={jobConfig.config.process[0].model?.use_text_encoder_1 ?? true}
-                          onChange={value => setJobConfig(value, 'config.process[0].model.use_text_encoder_1')}
-                          label="Use Text Encoder 1 (CLIP-L)"
-                        />
-                        <Checkbox
-                          checked={jobConfig.config.process[0].model?.use_text_encoder_2 ?? true}
-                          onChange={value => setJobConfig(value, 'config.process[0].model.use_text_encoder_2')}
-                          label="Use Text Encoder 2 (OpenCLIP-G)"
-                        />
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        SDXL uses two text encoders. Disabling one saves memory but reduces prompt understanding.
-                      </div>
-                    </FormGroup>
-
-                    <FormGroup label="Refiner Model Path" tooltip="Optional path to SDXL refiner model">
-                      <TextInput
-                        value={jobConfig.config.process[0].model?.refiner_name_or_path || ''}
-                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.refiner_name_or_path')}
-                        placeholder="Optional: stabilityai/stable-diffusion-xl-refiner-1.0"
-                      />
-                    </FormGroup>
-
-                    <FormGroup label="Experimental SDXL Features" tooltip="SDXL-only: Enable bleeding-edge optimizations that are unstable and may not work with all configurations. Not applicable to SD1.5 or Flux models. Only enable if you understand the risks and are willing to troubleshoot potential issues.">
-                      <Checkbox
-                        checked={!!jobConfig.config.process[0].model?.experimental_xl}
-                        onChange={value => setJobConfig(value, 'config.process[0].model.experimental_xl')}
-                        label="Enable experimental SDXL features (advanced)"
-                      />
-                    </FormGroup>
-                  </div>
-                )}
-
-                {/* Flux-specific options */}
-                {(jobConfig.config.process[0].model?.arch === 'flux1' || jobConfig.config.process[0].model?.arch === 'flex1' || jobConfig.config.process[0].model?.arch?.includes('flux')) && (
-                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg space-y-4">
-                    <h4 className="font-medium text-green-800 dark:text-green-200">Flux-Specific Options</h4>
-
-                    <FormGroup label="Flux CFG Mode" tooltip="Flux-only: Enables classifier-free guidance for distillation and certain training workflows. Not applicable to SD1.5 or SDXL. Model learns both conditional and unconditional generation. Cost: ~30-50% more memory and training time due to dual path computation. On unified memory systems, this significantly increases shared RAM/VRAM usage.">
-                      <Checkbox
-                        checked={!!jobConfig.config.process[0].model?.use_flux_cfg}
-                        onChange={value => setJobConfig(value, 'config.process[0].model.use_flux_cfg')}
-                        label="Enable Flux CFG mode (for distillation)"
-                      />
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        Enables classifier-free guidance mode for Flux models. Required for some training modes.
-                      </div>
-                    </FormGroup>
-                  </div>
-                )}
-
-                <FormGroup label="Base LoRA Path" tooltip="Path to existing LoRA to continue training from">
-                  <TextInput
-                    value={jobConfig.config.process[0].model?.lora_path || ''}
-                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.lora_path')}
-                    placeholder="Optional: path/to/existing/lora.safetensors"
-                  />
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    Continue training from an existing LoRA instead of starting fresh.
-                  </div>
-                </FormGroup>
-
-                <FormGroup label="Custom UNet Path" tooltip="Path to custom UNet model (for modified architectures)">
-                  <TextInput
-                    value={jobConfig.config.process[0].model?.unet_path || ''}
-                    onChange={value => setJobConfig(value || undefined, 'config.process[0].model.unet_path')}
-                    placeholder="Optional: path/to/custom/unet"
-                  />
-                </FormGroup>
-
-                {/* Device-Specific Overrides */}
-                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg space-y-4">
-                  <h4 className="font-medium text-red-800 dark:text-red-200">Device-Specific Overrides (Expert)</h4>
-                  <p className="text-xs text-red-600 dark:text-red-300">
-                    Override device and dtype for specific model components. Leave empty to use defaults.
-                  </p>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormGroup label="VAE Device" tooltip="Device for VAE operations">
-                      <SelectInput
-                        value={jobConfig.config.process[0].model?.vae_device || ''}
-                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_device')}
-                        options={[
-                          { value: '', label: 'Default (auto)' },
-                          { value: 'cuda', label: 'CUDA (GPU)' },
-                          { value: 'cpu', label: 'CPU' }
-                        ]}
-                      />
-                    </FormGroup>
-                    <FormGroup label="VAE Dtype" tooltip="Data type for VAE">
-                      <SelectInput
-                        value={jobConfig.config.process[0].model?.vae_dtype || ''}
-                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.vae_dtype')}
-                        options={[
-                          { value: '', label: 'Default (auto)' },
-                          { value: 'float16', label: 'Float16' },
-                          { value: 'bfloat16', label: 'BFloat16' },
-                          { value: 'float32', label: 'Float32' }
-                        ]}
-                      />
-                    </FormGroup>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormGroup label="Text Encoder Device" tooltip="Device for text encoder operations">
-                      <SelectInput
-                        value={jobConfig.config.process[0].model?.te_device || ''}
-                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.te_device')}
-                        options={[
-                          { value: '', label: 'Default (auto)' },
-                          { value: 'cuda', label: 'CUDA (GPU)' },
-                          { value: 'cpu', label: 'CPU' }
-                        ]}
-                      />
-                    </FormGroup>
-                    <FormGroup label="Text Encoder Dtype" tooltip="Data type for text encoder">
-                      <SelectInput
-                        value={jobConfig.config.process[0].model?.te_dtype || ''}
-                        onChange={value => setJobConfig(value || undefined, 'config.process[0].model.te_dtype')}
-                        options={[
-                          { value: '', label: 'Default (auto)' },
-                          { value: 'float16', label: 'Float16' },
-                          { value: 'bfloat16', label: 'BFloat16' },
-                          { value: 'float32', label: 'Float32' }
-                        ]}
-                      />
-                    </FormGroup>
-                  </div>
-                </div>
               </div>
             )}
 

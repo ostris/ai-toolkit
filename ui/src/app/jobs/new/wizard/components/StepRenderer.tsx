@@ -34,6 +34,15 @@ export function StepRenderer({ stepId, selectedModel, jobConfig, onConfigChange 
     onConfigChange(newConfig);
   };
 
+  // Handle compound field changes (multiple paths at once)
+  const handleCompoundChange = (changes: { path: string; value: any }[]) => {
+    let newConfig = jobConfig;
+    for (const { path, value } of changes) {
+      newConfig = setNestedValue(newConfig, path, value);
+    }
+    onConfigChange(newConfig);
+  };
+
   // If no sections are visible for this step, return null
   if (stepSections.length === 0) {
     return null;
@@ -49,6 +58,7 @@ export function StepRenderer({ stepId, selectedModel, jobConfig, onConfigChange 
           selectedModel={selectedModel}
           jobConfig={jobConfig}
           onChange={handleFieldChange}
+          onCompoundChange={handleCompoundChange}
         />
       ))}
     </div>

@@ -62,7 +62,7 @@ export type WizardStepId =
   | 'monitoring'
   | 'review';
 
-export type FieldType = 'boolean' | 'number' | 'string' | 'select' | 'slider';
+export type FieldType = 'boolean' | 'number' | 'string' | 'select' | 'slider' | 'compound';
 
 export interface FieldConfig {
   id: string; // config path: 'config.process[0].model.use_flux_cfg'
@@ -80,6 +80,14 @@ export interface FieldConfig {
   max?: number;
   numberStep?: number; // increment for number inputs
   placeholder?: string; // string
+
+  // Compound field support - single UI control sets multiple config values
+  compoundOptions?: {
+    value: any; // UI selection value
+    label: string;
+    sets: { path: string; value: any }[]; // config paths and values to set
+  }[];
+  compoundGetter?: (jobConfig: any) => any; // Function to derive UI value from config
 
   // Conditional visibility
   showWhen?: {
@@ -548,7 +556,70 @@ export const fields: FieldConfig[] = [
 
   // === Quantization Step Fields ===
 
-  // Universal quantization fields
+  // Compound quantization controls (combines multiple config paths into single UI)
+  {
+    id: 'compound_quantization_level',
+    label: 'Model Quantization',
+    description:
+      'Reduce model precision to save VRAM. 8-bit recommended for most cases. 4-bit for maximum savings.',
+    type: 'compound',
+    defaultValue: 'none',
+    step: 'quantization',
+    section: 'model_quantization',
+    compoundOptions: [
+      {
+        value: 'none',
+        label: 'No Quantization (Full Precision)',
+        sets: [{ path: 'config.process[0].model.quantize', value: false }],
+      },
+      {
+        value: '8bit',
+        label: '8-bit (Recommended for most cases)',
+        sets: [
+          { path: 'config.process[0].model.quantize', value: true },
+          { path: 'config.process[0].model.qtype', value: 'qfloat8' },
+        ],
+      },
+      {
+        value: '4bit',
+        label: '4-bit (Maximum VRAM savings)',
+        sets: [
+          { path: 'config.process[0].model.quantize', value: true },
+          { path: 'config.process[0].model.qtype', value: 'uint4' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'compound_te_quantization',
+    label: 'Text Encoder Quantization',
+    description: 'Also quantize the text encoder to save more VRAM.',
+    type: 'compound',
+    defaultValue: 'no',
+    step: 'quantization',
+    section: 'model_quantization',
+    compoundOptions: [
+      {
+        value: 'no',
+        label: 'No (Full Precision Text Encoder)',
+        sets: [{ path: 'config.process[0].model.quantize_te', value: false }],
+      },
+      {
+        value: 'yes',
+        label: 'Yes (8-bit Text Encoder)',
+        sets: [
+          { path: 'config.process[0].model.quantize_te', value: true },
+          { path: 'config.process[0].model.qtype_te', value: 'qfloat8' },
+        ],
+      },
+    ],
+    showWhen: {
+      field: 'config.process[0].model.quantize',
+      value: true,
+    },
+  },
+
+  // Individual quantization fields (for fine-grained control, not shown by default)
   {
     id: 'config.process[0].model.quantize',
     label: 'Quantize Transformer',
@@ -557,7 +628,7 @@ export const fields: FieldConfig[] = [
     type: 'boolean',
     defaultValue: false,
     step: 'quantization',
-    section: 'model_quantization',
+    section: 'advanced_quantization',
   },
   {
     id: 'config.process[0].model.qtype',
@@ -567,7 +638,7 @@ export const fields: FieldConfig[] = [
     type: 'select',
     defaultValue: 'qfloat8',
     step: 'quantization',
-    section: 'model_quantization',
+    section: 'advanced_quantization',
     options: [
       { value: 'qfloat8', label: 'float8 (default)' },
       { value: 'uint7', label: '7 bit' },
@@ -589,7 +660,7 @@ export const fields: FieldConfig[] = [
     type: 'boolean',
     defaultValue: false,
     step: 'quantization',
-    section: 'model_quantization',
+    section: 'advanced_quantization',
   },
   {
     id: 'config.process[0].model.dtype',
