@@ -187,6 +187,13 @@ export const sections: SectionConfig[] = [
     order: 3,
   },
   {
+    id: 'advanced_quantization',
+    title: 'Advanced Quantization',
+    description: 'Fine-grained quantization control for expert users',
+    step: 'quantization',
+    order: 4,
+  },
+  {
     id: 'model_paths',
     title: 'Model Paths',
     description: 'Custom model and component paths',
