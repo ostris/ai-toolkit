@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { memo, useCallback } from 'react';
 import { FieldConfig, getNestedValue } from '../fieldConfig';
 import { TextInput, NumberInput, SelectInput, Checkbox, SliderInput } from '@/components/formInputs';
 
@@ -12,7 +12,7 @@ interface FieldRendererProps {
   onCompoundChange?: (changes: { path: string; value: any }[]) => void; // For compound fields
 }
 
-export function FieldRenderer({ field, value, onChange, jobConfig, onCompoundChange }: FieldRendererProps) {
+function FieldRendererComponent({ field, value, onChange, jobConfig, onCompoundChange }: FieldRendererProps) {
   const handleChange = (newValue: any) => onChange(field.id, newValue);
 
   // Create a doc object from the description if provided
@@ -138,3 +138,24 @@ export function FieldRenderer({ field, value, onChange, jobConfig, onCompoundCha
       return null;
   }
 }
+
+// Memoize to prevent re-renders when props haven't changed
+// Custom comparison for better performance with complex objects
+export const FieldRenderer = memo(
+  FieldRendererComponent,
+  (prevProps: FieldRendererProps, nextProps: FieldRendererProps) => {
+    // Re-render if field definition changed
+    if (prevProps.field.id !== nextProps.field.id) return false;
+    // Re-render if value changed
+    if (prevProps.value !== nextProps.value) return false;
+    // Re-render if onChange reference changed (should be stable with useCallback)
+    if (prevProps.onChange !== nextProps.onChange) return false;
+    // For compound fields, check if relevant config paths changed
+    if (prevProps.field.type === 'compound' && prevProps.jobConfig !== nextProps.jobConfig) {
+      return false;
+    }
+    return true;
+  }
+);
+
+FieldRenderer.displayName = 'FieldRenderer';

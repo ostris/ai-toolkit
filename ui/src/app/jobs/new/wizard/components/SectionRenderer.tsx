@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import { SectionConfig, FieldConfig, getNestedValue } from '../fieldConfig';
 import { FieldRenderer } from './FieldRenderer';
 import { JobConfig } from '@/types';
@@ -14,7 +14,7 @@ interface SectionRendererProps {
   onCompoundChange?: (changes: { path: string; value: any }[]) => void;
 }
 
-export function SectionRenderer({ section, fields, selectedModel, jobConfig, onChange, onCompoundChange }: SectionRendererProps) {
+function SectionRendererComponent({ section, fields, selectedModel, jobConfig, onChange, onCompoundChange }: SectionRendererProps) {
   // Filter to fields in this section that apply to the selected model
   const visibleFields = fields.filter(field => {
     // Check section match
@@ -62,3 +62,8 @@ export function SectionRenderer({ section, fields, selectedModel, jobConfig, onC
     </div>
   );
 }
+
+// Memoize to prevent re-renders when section config hasn't changed
+export const SectionRenderer = memo(SectionRendererComponent);
+
+SectionRenderer.displayName = 'SectionRenderer';
