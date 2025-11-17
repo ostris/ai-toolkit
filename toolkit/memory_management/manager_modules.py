@@ -98,19 +98,13 @@ def _is_quantized_tensor(t: Optional[torch.Tensor]) -> bool:
 def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     if t is None:
         return None
-    # Check if quantized BEFORE moving to CPU, as some quantized tensor types
-    # (e.g., torchao's AffineQuantizedTensor) don't support the copy argument
-    is_quantized = _is_quantized_tensor(t)
-
     if t.device.type != "cpu":
-        # Use copy=True for regular tensors, but not for quantized tensors
-        if is_quantized:
-            t = t.to("cpu")
-        else:
+        try:
             t = t.to("cpu", copy=True)
-
+        except Exception:
+            t = t.to("cpu")
     # Don't attempt to pin quantized tensors; many backends don't support it
-    if is_quantized:
+    if _is_quantized_tensor(t):
         return t
     if torch.cuda.is_available():
         try:
