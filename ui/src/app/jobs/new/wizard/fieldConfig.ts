@@ -62,7 +62,7 @@ export type WizardStepId =
   | 'monitoring'
   | 'review';
 
-export type FieldType = 'boolean' | 'number' | 'string' | 'select' | 'slider' | 'compound';
+export type FieldType = 'boolean' | 'number' | 'string' | 'select' | 'slider' | 'compound' | 'sample_prompts_array';
 
 export interface FieldConfig {
   id: string; // config path: 'config.process[0].model.use_flux_cfg'
@@ -2280,6 +2280,15 @@ export const fields: FieldConfig[] = [
     defaultValue: false,
     step: 'sampling',
     section: 'sample_generation',
+  },
+  {
+    id: 'config.process[0].sample.samples',
+    label: 'Sample Prompts',
+    description: 'Prompts to generate sample images during training. Each prompt can have custom resolution and seed.',
+    type: 'sample_prompts_array',
+    defaultValue: [{ prompt: '' }],
+    step: 'sampling',
+    section: 'sample_prompts',
   },
   {
     id: 'config.process[0].sample.neg',
