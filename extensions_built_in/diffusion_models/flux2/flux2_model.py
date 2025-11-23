@@ -48,7 +48,7 @@ scheduler_config = {
 
 MISTRAL_PATH = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
 FLUX2_VAE_FILENAME = "flux2-vae.sft"
-FLUX2_TRANSFORMER_FILENAME = "flux-dev-dummy.sft"
+FLUX2_TRANSFORMER_FILENAME = "flux2-final-dev.sft"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 

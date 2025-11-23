@@ -471,7 +471,7 @@ export const modelArchs: ModelArch[] = [
     group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['ai-toolkit/f2-dummy', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['ostris/f2', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
