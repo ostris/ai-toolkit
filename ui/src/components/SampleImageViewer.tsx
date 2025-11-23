@@ -46,10 +46,21 @@ export default function SampleImageViewer({
   const onCancel = useCallback(() => setIsOpen(false), []);
 
   const imgInfo = useMemo(() => {
+    // handle windows C:\\Apps\\AI-Toolkit\\AI-Toolkit\\output\\LoRA-Name\\samples\\1763563000704__000004000_0.jpg
     const ii = { filename: '', step: 0, promptIdx: 0 };
     if (imgPath) {
-      const filename = imgPath.split('/').pop();
-      if (!filename) return ii;
+      // handle windows
+      let filename: string | null = null;
+      if (imgPath.includes('\\')) {
+        const parts = imgPath.split('\\');
+        filename = parts[parts.length - 1];
+      } else {
+        filename = imgPath.split('/').pop() || null;
+      }
+      if (!filename) {
+        console.error('Filename could not be determined from imgPath:', imgPath);
+        return ii;
+      }
       ii.filename = filename;
       const parts = filename
         .split('.')[0]
@@ -58,6 +69,8 @@ export default function SampleImageViewer({
       if (parts.length === 3) {
         ii.step = parseInt(parts[1]);
         ii.promptIdx = parseInt(parts[2]);
+      } else {
+        console.error('Unexpected filename format for sample image:', filename);
       }
     }
     return ii;
