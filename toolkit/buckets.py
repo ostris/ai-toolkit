@@ -62,13 +62,9 @@ def get_bucket_sizes(resolution: int = 512, divisibility: int = 8) -> List[Bucke
 
     bucket_size_list = []
     for bucket in resolutions_1024:
-        # must be divisible by 8
-        width = int(bucket["width"] * scaler)
-        height = int(bucket["height"] * scaler)
-        if width % divisibility != 0:
-            width = width - (width % divisibility)
-        if height % divisibility != 0:
-            height = height - (height % divisibility)
+        # must be divisible by `divisibility`
+        width = int(round((bucket["width"] * scaler) / divisibility) * divisibility)
+        height = int(round((bucket["height"] * scaler) / divisibility) * divisibility)
         bucket_size_list.append({"width": width, "height": height})
 
     return bucket_size_list
@@ -77,7 +73,7 @@ def get_bucket_sizes(resolution: int = 512, divisibility: int = 8) -> List[Bucke
 def get_resolution(width, height):
     num_pixels = width * height
     # determine same number of pixels for square image
-    square_resolution = int(num_pixels ** 0.5)
+    square_resolution = round(num_pixels ** 0.5)
     return square_resolution
 
 
@@ -114,10 +110,10 @@ def get_bucket_for_image_size(
         # To minimize pixels, we use the larger scale factor to minimize the amount that has to be cropped.
         scale = max(scale_w, scale_h)
 
-        new_width = int(width * scale)
-        new_height = int(height * scale)
+        new_width = round(width * scale)
+        new_height = round(height * scale)
 
-        removed_pixels = (new_width - bucket["width"]) * new_height + (new_height - bucket["height"]) * new_width
+        removed_pixels = (new_width * new_height) - (bucket["width"] * bucket["height"])
 
         if removed_pixels < min_removed_pixels:
             min_removed_pixels = removed_pixels
