@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
       bodySizeLimit: '100mb',
     },
   },
+  webpack: (config) => {
+    // Suppress osx-temperature-sensor warning on non-MacOS
+    config.resolve.alias['osx-temperature-sensor'] = false;
+    return config;
+  },
 };
 
 export default nextConfig;
