@@ -302,7 +302,7 @@ and I will answer when I can.
 
 ## Gradio UI
 
-To get started training locally with a with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
+To get started training locally with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
 
 ```bash
 cd ai-toolkit #in case you are not yet in the ai-toolkit folder
