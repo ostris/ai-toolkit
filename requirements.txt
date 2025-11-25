@@ -31,7 +31,7 @@ optimum-quanto==0.2.4
 sentencepiece
 huggingface_hub
 peft
-gradio
+gradio==5.24.0
 python-slugify
 opencv-python
 pytorch-wavelets==1.3.0
