@@ -2458,12 +2458,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         }
                     )
         dtype = "torch.bfloat16" if self.model_config.is_flux else "torch.float16"
+        # Build optional widget block
+        widgets_block = ""
+        if widgets:
+            # This guarantees that "widget" is a YAML list
+            widgets_block = "widget:\n" + yaml.dump(widgets, indent=4)
         # Construct the README content
         readme_content = f"""---
 tags:
 {yaml.dump(tags, indent=4).strip()}
-{"widget:" if os.path.isdir(samples_dir) else ""}
-{yaml.dump(widgets, indent=4).strip() if widgets else ""}
+{widgets_block}
 base_model: {base_model}
 {"instance_prompt: " + instance_prompt if instance_prompt else ""}
 license: {license}
