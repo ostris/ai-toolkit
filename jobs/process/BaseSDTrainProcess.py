@@ -527,7 +527,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
     def save(self, step=None):
         if not self.accelerator.is_main_process:
-            return
+            return []
         flush()
         if self.ema is not None:
             # always save params as ema
@@ -541,6 +541,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.last_save_step = step
             # zeropad 9 digits
             step_num = f"_{str(step).zfill(9)}"
+
+        # Track all saved files for returning
+        saved_files = []
 
         self.update_training_metadata()
         filename = f'model{step_num}.safetensors'
@@ -576,6 +579,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     metadata=save_meta,
                     extra_state_dict=embedding_dict
                 )
+                saved_files.append(file_path)
                 self.network.multiplier = prev_multiplier
                 # if we have an embedding as well, pair it with the network
 
@@ -591,6 +595,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # replace extension
                     emb_file_path = os.path.splitext(emb_file_path)[0] + ".pt"
                 self.embedding.save(emb_file_path)
+                saved_files.append(emb_file_path)
             
             if self.decorator is not None:
                 dec_filename = f'{self.job.name}{step_num}.safetensors'
@@ -604,6 +609,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     dec_file_path,
                     metadata=save_meta,
                 )
+                saved_files.append(dec_file_path)
 
             if self.adapter is not None and self.adapter_config.train:
                 adapter_name = self.job.name
@@ -631,6 +637,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         meta=save_meta,
                         dtype=get_torch_dtype(self.save_config.dtype)
                     )
+                    saved_files.append(file_path)
                 elif self.adapter_config.type == 'control_net':
                     # save in diffusers format
                     name_or_path = file_path.replace('.safetensors', '')
@@ -648,6 +655,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         yaml.dump(self.meta, f)
                     # move it back
                     self.adapter = self.adapter.to(orig_device, dtype=orig_dtype)
+                    # Add directory for control_net (directory-based save)
+                    saved_files.append(name_or_path)
                 else:
                     direct_save = False
                     if self.adapter_config.train_only_image_encoder:
@@ -661,6 +670,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         dtype=get_torch_dtype(self.save_config.dtype),
                         direct_save=direct_save
                     )
+                    saved_files.append(file_path)
         else:
             if self.save_config.save_format == "diffusers":
                 # saving as a folder path
@@ -672,18 +682,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # save refiner
                 refiner_name = self.job.name + '_refiner'
                 filename = f'{refiner_name}{step_num}.safetensors'
-                file_path = os.path.join(self.save_root, filename)
+                refiner_file_path = os.path.join(self.save_root, filename)
                 self.sd.save_refiner(
-                    file_path,
+                    refiner_file_path,
                     save_meta,
                     get_torch_dtype(self.save_config.dtype)
                 )
+                saved_files.append(refiner_file_path)
             if self.train_config.train_unet or self.train_config.train_text_encoder:
                 self.sd.save(
                     file_path,
                     save_meta,
                     get_torch_dtype(self.save_config.dtype)
                 )
+                saved_files.append(file_path)
 
         # save learnable params as json if we have thim
         if self.snr_gos:
@@ -696,6 +708,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             path_to_save = file_path = os.path.join(self.save_root, 'learnable_snr.json')
             with open(path_to_save, 'w') as f:
                 json.dump(json_data, f, indent=4)
+            saved_files.append(path_to_save)
         
         print_acc(f"Saved checkpoint to {file_path}")
 
@@ -703,13 +716,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.optimizer is not None:
             try:
                 filename = f'optimizer.pt'
-                file_path = os.path.join(self.save_root, filename)
+                optimizer_file_path = os.path.join(self.save_root, filename)
                 try:
                     state_dict = unwrap_model(self.optimizer).state_dict()
                 except Exception as e:
                     state_dict = self.optimizer.state_dict()
-                torch.save(state_dict, file_path)
-                print_acc(f"Saved optimizer to {file_path}")
+                torch.save(state_dict, optimizer_file_path)
+                saved_files.append(optimizer_file_path)
+                print_acc(f"Saved optimizer to {optimizer_file_path}")
             except Exception as e:
                 print_acc(e)
                 print_acc("Could not save optimizer")
@@ -720,6 +734,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.ema is not None:
             self.ema.train()
         flush()
+
+        return saved_files
 
     # Called before the model is loaded
     def hook_before_model_load(self):
@@ -2317,7 +2333,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
                         print_acc(f"\nSaving at step {self.step_num}")
-                        self.save(self.step_num)
+                        saved_files = self.save(self.step_num)
+
+                        # Save checkpoint to Oxen if enabled
+                        if self.oxen_logger and self.oxen_config.enabled:
+                            try:
+                                if saved_files:
+                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num)
+                            except Exception as e:
+                                print_acc(f"Warning: Failed to save checkpoint to Oxen: {e}")
+
                         self.ensure_params_requires_grad()
                         # clear any grads
                         optimizer.zero_grad()
@@ -2325,7 +2350,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         flush_next = True
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
-                            
+
                     if is_sample_step:
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
@@ -2335,37 +2360,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
 
+                        # Save checkpoint to Oxen on sample steps if enabled
+                        if self.oxen_logger and self.oxen_config.enabled and self.oxen_config.save_checkpoints_on_sample:
+                            try:
+                                print_acc(f"Saving checkpoint for sample step {self.step_num}")
+                                saved_files = self.save(self.step_num)
+                                if saved_files:
+                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num)
+                            except Exception as e:
+                                print_acc(f"Warning: Failed to save checkpoint to Oxen on sample step: {e}")
+
                         if self.train_config.unload_text_encoder:
                             # make sure the text encoder is unloaded
                             self.sd.text_encoder_to('cpu')
                         flush()
 
                         self.ensure_params_requires_grad()
-                        if self.progress_bar is not None:
-                            self.progress_bar.unpause()
-
-                    if is_save_step:
-                        self.accelerator
-                        # print above the progress bar
-                        if self.progress_bar is not None:
-                            self.progress_bar.pause()
-                        print_acc(f"\nSaving at step {self.step_num}")
-                        self.save(self.step_num)
-                        
-                        # Save checkpoint to Oxen if enabled
-                        if self.oxen_logger and self.oxen_config.enabled:
-                            try:
-                                checkpoint_path = os.path.join(self.save_root, f"step_{self.step_num}")
-                                if os.path.exists(checkpoint_path):
-                                    self.oxen_logger.save_checkpoint(checkpoint_path, self.step_num)
-                            except Exception as e:
-                                print_acc(f"Warning: Failed to save checkpoint to Oxen: {e}")
-                        
-                        self.ensure_params_requires_grad()
-                        # clear any grads
-                        optimizer.zero_grad()
-                        flush()
-                        flush_next = True
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
 

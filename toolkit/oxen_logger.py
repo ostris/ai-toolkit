@@ -153,29 +153,46 @@ class AIToolkitOxenLogger:
         except Exception as e:
             print(f"Main process: Error logging metrics to Oxen: {e}")
 
-    def save_checkpoint(self, checkpoint_path: str, step: int):
+    def save_checkpoint(self, checkpoint_files, step: int):
         """
         Save checkpoint files to Oxen workspace.
-        
+
         Args:
-            checkpoint_path: Path to the checkpoint file/directory
+            checkpoint_files: List of paths to checkpoint files/directories, or a single path string
             step: Current training step
         """
         if not self.enabled or not self.is_main_process or self.workspace is None:
             return
 
+        # Convert single path to list for uniform handling
+        if isinstance(checkpoint_files, str):
+            checkpoint_files = [checkpoint_files]
+
+        if not checkpoint_files:
+            return
+
         try:
-            print(f"Main process: Saving checkpoint at step {step}: {checkpoint_path}")
-            if os.path.isfile(checkpoint_path):
-                self.workspace.add(checkpoint_path, dst="checkpoints")
-            elif os.path.isdir(checkpoint_path):
-                for root, dirs, files in os.walk(checkpoint_path):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(file_path, checkpoint_path)
-                        self.workspace.add(file_path, dst=f"checkpoints/{rel_path}")
+            print(f"Main process: Saving {len(checkpoint_files)} checkpoint file(s) at step {step}")
+
+            # Create a step-specific directory in checkpoints
+            checkpoint_dst = f"checkpoints/step_{str(step).zfill(9)}"
+
+            for checkpoint_path in checkpoint_files:
+                if os.path.isfile(checkpoint_path):
+                    # Get just the filename for the destination
+                    filename = os.path.basename(checkpoint_path)
+                    self.workspace.add(checkpoint_path, dst=f"{checkpoint_dst}/{filename}")
+                elif os.path.isdir(checkpoint_path):
+                    # For directories, walk through and add all files
+                    dir_name = os.path.basename(checkpoint_path)
+                    for root, dirs, files in os.walk(checkpoint_path):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            rel_path = os.path.relpath(file_path, checkpoint_path)
+                            self.workspace.add(file_path, dst=f"{checkpoint_dst}/{dir_name}/{rel_path}")
+
             print(f"Main process: Checkpoint saved successfully")
-            
+
         except Exception as e:
             print(f"Main process: Error saving checkpoint to Oxen: {e}")
 

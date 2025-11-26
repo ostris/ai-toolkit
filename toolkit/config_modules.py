@@ -47,6 +47,7 @@ class OxenConfig:
         self.output_dir_base: str = kwargs.get('output_dir_base', 'experiments')
         self.fine_tune_id: Optional[str] = kwargs.get('fine_tune_id', None)
         self.log_every: int = kwargs.get('log_every', 100)
+        self.save_checkpoints_on_sample: bool = kwargs.get('save_checkpoints_on_sample', True)
 
 class SampleItem:
     def __init__(
