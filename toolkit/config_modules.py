@@ -81,6 +81,8 @@ class SampleItem:
                 print(f"Invalid network_multiplier {self.network_multiplier}, defaulting to 1.0")
                 self.network_multiplier = 1.0
         
+        # only for models that support it, (qwen image edit 2509 for now)
+        self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
 
 class SampleConfig:
     def __init__(self, **kwargs):
@@ -115,6 +117,8 @@ class SampleConfig:
         ]
         raw_samples = kwargs.get('samples', default_samples_kwargs)
         self.samples = [SampleItem(self, **item) for item in raw_samples]
+        # only for models that support it, (qwen image edit 2509 for now)
+        self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
         
     @property
     def prompts(self):
@@ -215,6 +219,9 @@ class NetworkConfig:
         
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
+        
+        # ramtorch, doesn't work yet
+        self.layer_offloading = kwargs.get('layer_offloading', False)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']
@@ -455,7 +462,11 @@ class TrainConfig:
         self.diff_output_preservation_multiplier = kwargs.get('diff_output_preservation_multiplier', 1.0)
         # If the trigger word is in the prompt, we will use this class name to replace it eg. "sks woman" -> "woman"
         self.diff_output_preservation_class = kwargs.get('diff_output_preservation_class', '')
-
+        
+        # blank prompt preservation will preserve the model's knowledge of a blank prompt
+        self.blank_prompt_preservation = kwargs.get('blank_prompt_preservation', False)
+        self.blank_prompt_preservation_multiplier = kwargs.get('blank_prompt_preservation_multiplier', 1.0)
+        
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
             self.match_adapter_chance = 1.0
@@ -541,10 +552,14 @@ class TrainConfig:
         # contrastive loss
         self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
         self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
+        self.do_guidance_loss_cfg_zero: bool = kwargs.get('do_guidance_loss_cfg_zero', False)
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
-        
+
+        self.do_differential_guidance = kwargs.get('do_differential_guidance', False)
+        self.differential_guidance_scale = kwargs.get('differential_guidance_scale', 3.0)
+
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
@@ -631,6 +646,21 @@ class ModelConfig:
         
         self.arch: ModelArch = kwargs.get("arch", None)
         
+        # auto memory management, only for some models
+        self.auto_memory = kwargs.get("auto_memory", False)
+        # auto memory is deprecated, use layer offloading instead
+        if self.auto_memory:
+            print("auto_memory is deprecated, use layer_offloading instead")
+        self.layer_offloading = kwargs.get("layer_offloading", self.auto_memory )
+        if self.layer_offloading and self.qtype == "qfloat8":
+            self.qtype = "float8"
+        if self.layer_offloading and self.qtype_te == "qfloat8":
+            self.qtype_te = "float8"
+        
+        # 0 is off and 1.0 is 100% of the layers
+        self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
+        self.layer_offloading_text_encoder_percent = kwargs.get("layer_offloading_text_encoder_percent", 1.0)
+
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for
         # 20 different model variants
@@ -657,6 +687,7 @@ class ModelConfig:
         
         if self.arch == "flex1":
             self.arch = "flux"
+            
         
         # handle migrating to new model arch
         if self.arch is not None:
@@ -1004,7 +1035,8 @@ class GenerateImageConfig:
             ctrl_img_3: Optional[str] = None,  # third control image for multi control model
             num_frames: int = 1,
             fps: int = 15,
-            ctrl_idx: int = 0
+            ctrl_idx: int = 0,
+            do_cfg_norm: bool = False,
     ):
         self.width: int = width
         self.height: int = height
@@ -1074,6 +1106,8 @@ class GenerateImageConfig:
         self.width = max(64, self.width - self.width % 8)  # round to divisible by 8
 
         self.logger = logger
+        
+        self.do_cfg_norm: bool = do_cfg_norm
 
     def set_gen_time(self, gen_time: int = None):
         if gen_time is not None:
@@ -1303,5 +1337,8 @@ def validate_configs(
     if model_config.arch == 'qwen_image_edit':
         if train_config.unload_text_encoder:
             raise ValueError("Cannot cache unload text encoder with qwen_image_edit model. Control images are encoded with text embeddings. You can cache the text embeddings though")
+    
+    if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
+        raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
 
     

@@ -1,5 +1,6 @@
 import React from 'react';
 import { ConfigDoc } from '@/types';
+import { IoFlaskSharp } from 'react-icons/io5';
 
 const docs: { [key: string]: ConfigDoc } = {
   'config.name': {
@@ -56,7 +57,7 @@ const docs: { [key: string]: ConfigDoc } = {
     description: (
       <>
         The control dataset needs to have files that match the filenames of your training dataset. They should be
-        matching file pairs. These images are fed as control/input images during training. The control images will be 
+        matching file pairs. These images are fed as control/input images during training. The control images will be
         resized to match the training images.
       </>
     ),
@@ -71,8 +72,8 @@ const docs: { [key: string]: ConfigDoc } = {
         <br />
         For multi control datasets, the controls will all be applied in the order they are listed. If the model does not
         require the images to be the same aspect ratios, such as with Qwen/Qwen-Image-Edit-2509, then the control images
-        do not need to match the aspect size or aspect ratio of the target image and they will be automatically resized to 
-        the ideal resolutions for the model / target images.
+        do not need to match the aspect size or aspect ratio of the target image and they will be automatically resized
+        to the ideal resolutions for the model / target images.
       </>
     ),
   },
@@ -110,13 +111,15 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Flip X and Flip Y',
     description: (
       <>
-        You can augment your dataset on the fly by flipping the x (horizontal) and/or y (vertical) axis. Flipping a single axis will effectively double your dataset.
-        It will result it training on normal images, and the flipped versions of the images. This can be very helpful, but keep in mind it can also
-        be destructive. There is no reason to train people upside down, and flipping a face can confuse the model as a person's right side does not
+        You can augment your dataset on the fly by flipping the x (horizontal) and/or y (vertical) axis. Flipping a
+        single axis will effectively double your dataset. It will result it training on normal images, and the flipped
+        versions of the images. This can be very helpful, but keep in mind it can also be destructive. There is no
+        reason to train people upside down, and flipping a face can confuse the model as a person's right side does not
         look identical to their left side. For text, obviously flipping text is not a good idea.
         <br />
         <br />
-        Control images for a dataset will also be flipped to match the images, so they will always match on the pixel level.
+        Control images for a dataset will also be flipped to match the images, so they will always match on the pixel
+        level.
       </>
     ),
   },
@@ -148,8 +151,8 @@ const docs: { [key: string]: ConfigDoc } = {
         Some models have multi stage networks that are trained and used separately in the denoising process. Most
         common, is to have 2 stages. One for high noise and one for low noise. You can choose to train both stages at
         once or train them separately. If trained at the same time, The trainer will alternate between training each
-        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the
-        trainer will only train that stage and output a single LoRA.
+        model every so many steps and will output 2 different LoRAs. If you choose to train only one stage, the trainer
+        will only train that stage and output a single LoRA.
       </>
     ),
   },
@@ -175,10 +178,102 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Force First Sample',
     description: (
       <>
-        This option will force the trainer to generate samples when it starts. The trainer will normally only generate a first sample
-        when nothing has been trained yet, but will not do a first sample when resuming from an existing checkpoint. This option
-        forces a first sample every time the trainer is started. This can be useful if you have changed sample prompts and want to see
-        the new prompts right away.
+        This option will force the trainer to generate samples when it starts. The trainer will normally only generate a
+        first sample when nothing has been trained yet, but will not do a first sample when resuming from an existing
+        checkpoint. This option forces a first sample every time the trainer is started. This can be useful if you have
+        changed sample prompts and want to see the new prompts right away.
+      </>
+    ),
+  },
+  'model.layer_offloading': {
+    title: (
+      <>
+        Layer Offloading{' '}
+        <span className="text-yellow-500">
+          ( <IoFlaskSharp className="inline text-yellow-500" name="Experimental" /> Experimental)
+        </span>
+      </>
+    ),
+    description: (
+      <>
+        This is an experimental feature based on{' '}
+        <a className="text-blue-500" href="https://github.com/lodestone-rock/RamTorch" target="_blank">
+          RamTorch
+        </a>
+        . This feature is early and will have many updates and changes, so be aware it may not work consistently from
+        one update to the next. It will also only work with certain models.
+        <br />
+        <br />
+        Layer Offloading uses the CPU RAM instead of the GPU ram to hold most of the model weights. This allows training
+        a much larger model on a smaller GPU, assuming you have enough CPU RAM. This is slower than training on pure GPU
+        RAM, but CPU RAM is cheaper and upgradeable. You will still need GPU RAM to hold the optimizer states and LoRA
+        weights, so a larger card is usually still needed.
+        <br />
+        <br />
+        You can also select the percentage of the layers to offload. It is generally best to offload as few as possible
+        (close to 0%) for best performance, but you can offload more if you need the memory.
+      </>
+    ),
+  },
+  'model.qie.match_target_res': {
+    title: 'Match Target Res',
+    description: (
+      <>
+        This setting will make the control images match the resolution of the target image. The official inference
+        example for Qwen-Image-Edit-2509 feeds the control image is at 1MP resolution, no matter what size you are
+        generating. Doing this makes training at lower res difficult because 1MP control images are fed in despite how
+        large your target image is. Match Target Res will match the resolution of your target to feed in the control
+        images allowing you to use less VRAM when training with smaller resolutions. You can still use different aspect
+        ratios, the image will just be resizes to match the amount of pixels in the target image.
+      </>
+    ),
+  },
+  'train.diff_output_preservation': {
+    title: 'Differential Output Preservation',
+    description: (
+      <>
+        Differential Output Preservation (DOP) is a technique to help preserve class of the trained concept during
+        training. For this, you must have a trigger word set to differentiate your concept from its class. For instance,
+        You may be training a woman named Alice. Your trigger word may be "Alice". The class is "woman", since Alice is
+        a woman. We want to teach the model to remember what it knows about the class "woman" while teaching it what is
+        different about Alice. During training, the trainer will make a prediction with your LoRA bypassed and your
+        trigger word in the prompt replaced with the class word. Making "photo of Alice" become "photo of woman". This
+        prediction is called the prior prediction. Each step, we will do the normal training step, but also do another
+        step with this prior prediction and the class prompt in order to teach our LoRA to preserve the knowledge of the
+        class. This should not only improve the performance of your trained concept, but also allow you to do things
+        like "Alice standing next to a woman" and not make both of the people look like Alice.
+      </>
+    ),
+  },
+  'train.blank_prompt_preservation': {
+    title: 'Blank Prompt Preservation',
+    description: (
+      <>
+        Blank Prompt Preservation (BPP) is a technique to help preserve the current models knowledge when unprompted.
+        This will not only help the model become more flexible, but will also help the quality of your concept during
+        inference, especially when a model uses CFG (Classifier Free Guidance) on inference. At each step during
+        training, a prior prediction is made with a blank prompt and with the LoRA disabled. This prediction is then
+        used as a target on an additional training step with a blank prompt, to preserve the model's knowledge when no
+        prompt is given. This helps the model to not overfit to the prompt and retain its generalization capabilities.
+      </>
+    ),
+  },
+  'train.do_differential_guidance': {
+    title: 'Differential Guidance',
+    description: (
+      <>
+        Differential Guidance will amplify the difference of the model prediction and the target during training to make
+        a new target. Differential Guidance Scale will be the multiplier for the difference. This is still experimental,
+        but in my tests, it makes the model train faster, and learns details better in every scenario I have tried with
+        it.
+        <br />
+        <br />
+        The idea is that normal training inches closer to the target but never actually gets there, because it is
+        limited by the learning rate. With differential guidance, we amplify the difference for a new target beyond the
+        actual target, this would make the model learn to hit or overshoot the target instead of falling short.
+        <br />
+        <br />
+        <img src="/imgs/diff_guidance.png" alt="Differential Guidance Diagram" className="max-w-full mx-auto" />
       </>
     ),
   },
