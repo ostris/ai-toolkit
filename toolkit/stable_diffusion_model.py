@@ -219,6 +219,10 @@ class StableDiffusion:
         
         # set true for models that encode control image into text embeddings
         self.encode_control_in_text_embeddings = False
+        # control images will come in as a list for encoding some things if true
+        self.has_multiple_control_images = False
+        # do not resize control images
+        self.use_raw_control_images = False
         
     # properties for old arch for backwards compatibility
     @property
@@ -2512,7 +2516,7 @@ class StableDiffusion:
 
         latent_list = []
         # Move to vae to device if on cpu
-        if self.vae.device == 'cpu':
+        if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
@@ -2554,7 +2558,7 @@ class StableDiffusion:
             dtype = self.torch_dtype
 
         # Move to vae to device if on cpu
-        if self.vae.device == 'cpu':
+        if self.vae.device == torch.device("cpu"):
             self.vae.to(self.device_torch)
         latents = latents.to(self.device_torch, dtype=self.torch_dtype)
         latents = (latents / self.vae.config['scaling_factor']) + self.vae.config['shift_factor']
@@ -2903,7 +2907,7 @@ class StableDiffusion:
                     try:
                         te_has_grad = encoder.text_model.final_layer_norm.weight.requires_grad
                     except:
-                        te_has_grad = encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+                        te_has_grad = False
                 self.device_state['text_encoder'].append({
                     'training': encoder.training,
                     'device': encoder.device,

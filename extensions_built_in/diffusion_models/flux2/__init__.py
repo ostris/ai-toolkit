@@ -1,0 +1,1 @@
+from .flux2_model import Flux2Model

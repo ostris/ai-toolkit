@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef, useEffect } from 'react';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
@@ -8,6 +8,8 @@ import { Button } from '@headlessui/react';
 import { FaDownload } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
+import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
+import SampleImageViewer from './SampleImageViewer';
 
 interface SampleImagesMenuProps {
   job?: Job | null;
@@ -66,18 +68,31 @@ interface SampleImagesProps {
 
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
+  const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const didFirstScroll = useRef(false);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
       const sampleConfig = jobConfig.config.process[0].sample;
-      if (sampleConfig.prompts) {
-        return sampleConfig.prompts.length;
-      } else {
-        return sampleConfig.samples.length;
-      }
+      const numPrompts = sampleConfig.prompts ? sampleConfig.prompts.length : 0;
+      const numSamples = sampleConfig.samples.length;
+      return Math.max(numPrompts, numSamples, 1);
     }
     return 10;
   }, [job]);
+
+  const scrollToBottom = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'instant' });
+    }
+  };
+
+  const scrollToTop = () => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  };
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -139,9 +154,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
     switch (cols) {
       case 1:
-        return 'grid-cols-1';
       case 2:
-        return 'grid-cols-2';
       case 3:
         return 'grid-cols-3';
       case 4:
@@ -219,27 +232,90 @@ export default function SampleImages({ job }: SampleImagesProps) {
       case 40:
         return 'grid-cols-40';
       default:
-        return 'grid-cols-1';
+        return 'grid-cols-3';
     }
   }, [numSamples]);
 
+  const sampleConfig = useMemo(() => {
+    if (job?.job_config) {
+      const jobConfig = JSON.parse(job.job_config) as JobConfig;
+      return jobConfig.config.process[0].sample;
+    }
+    return null;
+  }, [job]);
+
+  // scroll to bottom on first load of samples
+  useEffect(() => {
+    if (status === 'success' && sampleImages.length > 0 && !didFirstScroll.current) {
+      didFirstScroll.current = true;
+      setTimeout(() => {
+        scrollToBottom();
+      }, 100);
+    }
+  }, [status, sampleImages.length]);
+
   return (
-    <div>
+    <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
         {PageInfoContent}
         {sampleImages && (
           <div className={`grid ${gridColsClass} gap-1`}>
-            {sampleImages.map((sample: string) => (
-              <SampleImageCard
-                key={sample}
-                imageUrl={sample}
-                numSamples={numSamples}
-                sampleImages={sampleImages}
-                alt="Sample Image"
-              />
-            ))}
+            {sampleImages.map((sample: string, idx: number) => {
+              // Compute current group (groups are size = numSamples)
+              const groupIndex = Math.floor(idx / numSamples);
+              const groupStart = groupIndex * numSamples;
+              const groupEnd = Math.min(groupStart + numSamples, sampleImages.length);
+              const groupSize = groupEnd - groupStart;
+              const isEndOfGroup = idx === groupEnd - 1;
+
+              // Only enforce a MIN of 3 when the group's planned width is < 3
+              const MIN_COLS = 3;
+              const shouldPad = numSamples < MIN_COLS && groupSize < MIN_COLS;
+              const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
+
+              return (
+                <div key={sample} className="contents">
+                  <SampleImageCard
+                    imageUrl={sample}
+                    numSamples={numSamples}
+                    sampleImages={sampleImages}
+                    alt="Sample Image"
+                    onClick={() => setSelectedSamplePath(sample)}
+                    observerRoot={containerRef.current}
+                  />
+
+                  {isEndOfGroup &&
+                    padsNeeded > 0 &&
+                    Array.from({ length: padsNeeded }).map((_, i) => (
+                      <div key={`pad-${groupIndex}-${i}`} className="invisible" />
+                    ))}
+                </div>
+              );
+            })}
           </div>
         )}
+      </div>
+      <SampleImageViewer
+        imgPath={selectedSamplePath}
+        numSamples={numSamples}
+        sampleImages={sampleImages}
+        onChange={setPath => setSelectedSamplePath(setPath)}
+        sampleConfig={sampleConfig}
+        refreshSampleImages={refreshSampleImages}
+      />
+      <div
+        className="fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        onClick={scrollToTop}
+        title="Scroll to Top"
+      >
+        <FaCaretUp className="text-gray-500 dark:text-gray-400" />
+      </div>
+      <div
+        className="fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        onClick={scrollToBottom}
+        title="Scroll to Bottom"
+      >
+        <FaCaretDown className="text-gray-500 dark:text-gray-400" />
       </div>
     </div>
   );

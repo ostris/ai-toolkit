@@ -1,17 +1,18 @@
 import Link from 'next/link';
-import { Home, Settings, BrainCircuit, Images, Plus} from 'lucide-react';
-import { FaXTwitter, FaDiscord, FaYoutube } from "react-icons/fa6";
+import { Home, Settings, BrainCircuit, Images, Plus } from 'lucide-react';
+import { FaXTwitter, FaDiscord, FaYoutube } from 'react-icons/fa6';
 
 const Sidebar = () => {
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
     { name: 'New Job', href: '/jobs/new', icon: Plus },
-    { name: 'Training Jobs', href: '/jobs', icon: BrainCircuit },
+    { name: 'Training Queue', href: '/jobs', icon: BrainCircuit },
     { name: 'Datasets', href: '/datasets', icon: Images },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 
-  const socialsBoxClass = 'flex flex-col items-center justify-center p-1 hover:bg-gray-800 rounded-lg transition-colors';
+  const socialsBoxClass =
+    'flex flex-col items-center justify-center p-1 hover:bg-gray-800 rounded-lg transition-colors';
   const socialIconClass = 'w-5 h-5 text-gray-400 hover:text-white';
 
   return (
@@ -60,30 +61,15 @@ const Sidebar = () => {
       {/* Social links grid */}
       <div className="px-1 py-1 border-t border-gray-800">
         <div className="grid grid-cols-3 gap-4">
-          <a
-            href="https://discord.gg/VXmU2f5WEU"
-            target="_blank"
-            rel="noreferrer"
-            className={socialsBoxClass}
-          >
+          <a href="https://discord.gg/VXmU2f5WEU" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaDiscord className={socialIconClass} />
             {/* <span className="text-xs text-gray-500 mt-1">Discord</span> */}
           </a>
-          <a
-            href="https://www.youtube.com/@ostrisai"
-            target="_blank"
-            rel="noreferrer"
-            className={socialsBoxClass}
-          >
+          <a href="https://www.youtube.com/@ostrisai" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaYoutube className={socialIconClass} />
             {/* <span className="text-xs text-gray-500 mt-1">YouTube</span> */}
           </a>
-          <a
-            href="https://x.com/ostrisai"
-            target="_blank"
-            rel="noreferrer"
-            className={socialsBoxClass}
-          >
+          <a href="https://x.com/ostrisai" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaXTwitter className={socialIconClass} />
             {/* <span className="text-xs text-gray-500 mt-1">X</span> */}
           </a>
