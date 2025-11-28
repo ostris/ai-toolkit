@@ -72,7 +72,10 @@ class PromptEmbeds:
         if self.pooled_embeds is not None:
             prompt_embeds = PromptEmbeds([cloned_text_embeds, self.pooled_embeds.clone()])
         else:
-            prompt_embeds = PromptEmbeds(cloned_text_embeds)
+            if isinstance(cloned_text_embeds, list) or isinstance(cloned_text_embeds, tuple):
+                prompt_embeds = PromptEmbeds([cloned_text_embeds, None])
+            else:
+                prompt_embeds = PromptEmbeds(cloned_text_embeds)
 
         if self.attention_mask is not None:
             if isinstance(self.attention_mask, list) or isinstance(self.attention_mask, tuple):

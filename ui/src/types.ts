@@ -160,6 +160,7 @@ export interface ModelConfig {
   layer_offloading?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
+  assistant_lora_path?: string;
 }
 
 export interface SampleItem {

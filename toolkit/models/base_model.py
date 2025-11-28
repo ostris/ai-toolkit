@@ -805,7 +805,11 @@ class BaseModel:
 
         # check if batch size of embeddings matches batch size of latents
         if isinstance(text_embeddings.text_embeds, list):
-            te_batch_size = text_embeddings.text_embeds[0].shape[0]
+            if len(text_embeddings.text_embeds) == latents.shape[0]:
+                # handle list of embeddings
+                te_batch_size = len(text_embeddings.text_embeds)
+            else:
+                te_batch_size = text_embeddings.text_embeds[0].shape[0]
         else:
             te_batch_size = text_embeddings.text_embeds.shape[0]
         if latents.shape[0] == te_batch_size:
