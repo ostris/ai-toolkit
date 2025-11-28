@@ -1,0 +1,105 @@
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_qwen_image_edit_2509_lora_v1"
+  process:
+    - type: 'diffusion_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: cuda:0
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+      save:
+        dtype: float16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/folder"
+          # can do up to 3 control image folders, file names must match target file names, but aspect/size can be different
+          control_path:
+            - "/path/to/control/images/folder1"
+            - "/path/to/control/images/folder2"
+            - "/path/to/control/images/folder3"
+          caption_ext: "txt"
+          # default_caption: "a person" # if caching text embeddings, if you don't have captions, this will get cached
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          resolution: [ 512, 768, 1024 ]  # qwen image enjoys multiple resolutions
+          # a trigger word that can be cached with the text embeddings 
+          # trigger_word: "optional trigger word"
+      train:
+        batch_size: 1
+        # caching text embeddings is required for 32GB
+        cache_text_embeddings: true
+        # unload_text_encoder: true
+        
+        steps: 3000  # total number of steps to train 500 - 4000 is a good range
+        gradient_accumulation: 1
+        timestep_type: "weighted"
+        train_unet: true
+        train_text_encoder: false  # probably won't work with qwen image
+        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        noise_scheduler: "flowmatch" # for training only
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        # uncomment this to skip the pre training sample
+        # skip_first_sample: true
+        # uncomment to completely disable sampling
+        # disable_sampling: true
+        dtype: bf16
+      model:
+        # huggingface model name or path
+        name_or_path: "Qwen/Qwen-Image-Edit-2509"
+        arch: "qwen_image_edit_plus"
+        quantize: true
+        # to use the ARA use the | pipe to point to hf path, or a local path if you have one.
+        # 3bit is required for 32GB
+        qtype: "uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: true
+      sample:
+        sampler: "flowmatch" # must match train.noise_scheduler
+        sample_every: 250 # sample every this many steps
+        width: 1024
+        height: 1024
+        # you can provide up to 3 control images here
+        samples:
+          - prompt: "Do whatever with Image1 and Image2"
+            ctrl_img_1: "/path/to/image1.png"
+            ctrl_img_2: "/path/to/image2.png"
+            # ctrl_img_3: "/path/to/image3.png"
+          - prompt: "Do whatever with Image1 and Image2"
+            ctrl_img_1: "/path/to/image1.png"
+            ctrl_img_2: "/path/to/image2.png"
+            # ctrl_img_3: "/path/to/image3.png"
+          - prompt: "Do whatever with Image1 and Image2"
+            ctrl_img_1: "/path/to/image1.png"
+            ctrl_img_2: "/path/to/image2.png"
+            # ctrl_img_3: "/path/to/image3.png"
+          - prompt: "Do whatever with Image1 and Image2"
+            ctrl_img_1: "/path/to/image1.png"
+            ctrl_img_2: "/path/to/image2.png"
+            # ctrl_img_3: "/path/to/image3.png"
+          - prompt: "Do whatever with Image1 and Image2"
+            ctrl_img_1: "/path/to/image1.png"
+            ctrl_img_2: "/path/to/image2.png"
+            # ctrl_img_3: "/path/to/image3.png"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 3
+        sample_steps: 25
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

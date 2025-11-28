@@ -2,7 +2,6 @@ import { JobConfig, DatasetConfig, SliderConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
-  control_path: null,
   mask_path: null,
   mask_min_value: 0.1,
   default_caption: '',
@@ -26,7 +25,7 @@ export const defaultSliderConfig: SliderConfig = {
   positive_prompt: 'person who is happy',
   negative_prompt: 'person who is sad',
   target_class: 'person',
-  anchor_class: "",
+  anchor_class: '',
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -91,6 +90,7 @@ export const defaultJobConfig: JobConfig = {
           diff_output_preservation_multiplier: 1.0,
           diff_output_preservation_class: 'person',
           switch_boundary_every: 1,
+          loss_type: 'mse',
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
@@ -180,6 +180,12 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
   // upgrade job from ui_trainer to diffusion_trainer
   if (jobConfig?.config?.process && jobConfig.config.process[0]?.type === 'ui_trainer') {
     jobConfig.config.process[0].type = 'diffusion_trainer';
+  }
+
+  if ('auto_memory' in jobConfig.config.process[0].model) {
+    jobConfig.config.process[0].model.layer_offloading = (jobConfig.config.process[0].model.auto_memory ||
+      false) as boolean;
+    delete jobConfig.config.process[0].model.auto_memory;
   }
   return jobConfig;
 };

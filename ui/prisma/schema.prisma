@@ -13,26 +13,29 @@ model Settings {
   value String
 }
 
-model Job {
-  id         String   @id @default(uuid())
-  name       String   @unique
-  gpu_ids    String
-  job_config String // JSON string
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  status     String   @default("stopped")
-  stop       Boolean  @default(false)
-  step       Int      @default(0)
-  info       String   @default("")
-  speed_string String @default("")
+model Queue {
+  id         Int     @id @default(autoincrement())
+  gpu_ids    String  @unique
+  is_running Boolean @default(false)
+
+  @@index([gpu_ids])
 }
 
-model Queue {
-  id         String   @id @default(uuid())
-  channel    String
-  job_id     String
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
-  status     String   @default("waiting")
-  @@index([job_id, channel])
+model Job {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  gpu_ids         String
+  job_config      String // JSON string
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  status          String   @default("stopped")
+  stop            Boolean  @default(false)
+  return_to_queue Boolean  @default(false) // same as stop, but will be set to 'queued' when stopped
+  step            Int      @default(0)
+  info            String   @default("")
+  speed_string    String   @default("")
+  queue_position  Int      @default(0)
+
+  @@index([status])
+  @@index([gpu_ids])
 }
