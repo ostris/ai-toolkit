@@ -803,9 +803,8 @@ class BaseModel:
         # then we are doing it, otherwise we are not and takes half the time.
         do_classifier_free_guidance = True
 
-        # check if batch size of embeddings matches batch size of latents
         if isinstance(text_embeddings.text_embeds, list):
-            if len(text_embeddings.text_embeds) == latents.shape[0]:
+            if len(text_embeddings.text_embeds[0].shape) == 2:
                 # handle list of embeddings
                 te_batch_size = len(text_embeddings.text_embeds)
             else:

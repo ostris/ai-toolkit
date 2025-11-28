@@ -87,7 +87,10 @@ class PromptEmbeds:
     def expand_to_batch(self, batch_size):
         pe = self.clone()
         if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
-            current_batch_size = pe.text_embeds[0].shape[0]
+            if len(pe.text_embeds[0].shape) == 2:
+                current_batch_size = len(pe.text_embeds)
+            else:
+                current_batch_size = pe.text_embeds[0].shape[0]
         else:
             current_batch_size = pe.text_embeds.shape[0]
         if current_batch_size == batch_size:
@@ -95,7 +98,11 @@ class PromptEmbeds:
         if current_batch_size != 1:
             raise Exception("Can only expand batch size for batch size 1")
         if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
-            pe.text_embeds = [t.expand(batch_size, -1) for t in pe.text_embeds]
+            if len(pe.text_embeds[0].shape) == 2:
+                # batch is a list of tensors
+                pe.text_embeds = pe.text_embeds * batch_size
+            else:
+                pe.text_embeds = [t.expand(batch_size, -1) for t in pe.text_embeds]
         else:
             pe.text_embeds = pe.text_embeds.expand(batch_size, -1)
         if pe.pooled_embeds is not None:
