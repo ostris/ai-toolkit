@@ -492,6 +492,7 @@ export default function SimpleJob({
                   options={[
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'adafactor', label: 'Adafactor' },
+                    { value: 'focus', label: 'FOCUS' },
                   ]}
                 />
                 <NumberInput
@@ -549,6 +550,8 @@ export default function SimpleJob({
                     { value: 'mae', label: 'Mean Absolute Error' },
                     { value: 'wavelet', label: 'Wavelet' },
                     { value: 'stepped', label: 'Stepped Recovery' },
+                    { value: 'fft', label: 'FFT' },
+                    { value: 'fft_rand', label: 'FFT Random' },
                   ]}
                 />
               </div>

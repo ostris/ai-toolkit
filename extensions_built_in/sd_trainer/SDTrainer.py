@@ -39,7 +39,27 @@ import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
 from PIL import Image
 from torchvision.transforms import functional as TF
+from torch_frft.dfrft_module import dfrft
 
+def fft_loss_rand(pred, target, alpha):
+    fft_pred = dfrft(pred.float(), alpha)
+    fft_target = dfrft(target.float(), alpha)
+    batch_size, channels, height, width = fft_pred.shape
+    mask = torch.ones(width, dtype=torch.float32)
+    mask = torch.randn_like(mask)
+    mask = mask.to(fft_pred.device)
+    mask = mask.view(1, 1, 1, -1)
+    mask = mask.expand(batch_size, channels, height, width)
+    fft_pred = fft_pred * mask
+    fft_target = fft_target * mask
+    diff = fft_pred - fft_target 
+    return diff.real ** 2 + diff.imag ** 2
+
+def fft_loss(pred, target, alpha):
+    fft_pred = dfrft(pred.float(), alpha)
+    fft_target = dfrft(target.float(), alpha)
+    diff = fft_pred - fft_target 
+    return diff.real ** 2 + diff.imag ** 2
 
 def flush():
     torch.cuda.empty_cache()
@@ -759,6 +779,10 @@ class SDTrainer(BaseSDTrainProcess):
 
             if self.train_config.loss_type == "mae":
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
+            elif self.train_config.loss_type == "fft":
+                loss = fft_loss(pred, target, 1.0)
+            elif self.train_config.loss_type == "fft_rand":
+                loss = fft_loss_rand(pred, target, 1.0)
             elif self.train_config.loss_type == "wavelet":
                 loss = wavelet_loss(pred, batch.latents, noise)
             elif self.train_config.loss_type == "stepped":
