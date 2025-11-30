@@ -6,15 +6,21 @@ import { Loader2, AlertCircle, Download, Box, Brain } from 'lucide-react';
 export default function FilesWidget({ jobID }: { jobID: string }) {
   const { files, status, refreshFiles } = useFilesList(jobID, 5000);
 
-  const cleanSize = (size: number) => {
-    if (size < 1024) {
-      return `${size} B`;
-    } else if (size < 1024 * 1024) {
-      return `${(size / 1024).toFixed(1)} KB`;
-    } else if (size < 1024 * 1024 * 1024) {
-      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  const cleanSize = (size: number | string | undefined) => {
+    const numSize = typeof size === 'string' ? parseFloat(size) : size;
+
+    if (typeof numSize !== 'number' || isNaN(numSize) || numSize < 0) {
+      return 'N/A';
+    }
+
+    if (numSize < 1024) {
+      return `${numSize} B`;
+    } else if (numSize < 1024 * 1024) {
+      return `${(numSize / 1024).toFixed(1)} KB`;
+    } else if (numSize < 1024 * 1024 * 1024) {
+      return `${(numSize / (1024 * 1024)).toFixed(1)} MB`;
     } else {
-      return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      return `${(numSize / (1024 * 1024 * 1024)).toFixed(1)} GB`;
     }
   };
 

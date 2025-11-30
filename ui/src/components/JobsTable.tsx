@@ -43,8 +43,13 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
       title: 'Steps',
       key: 'steps',
       render: row => {
-        const jobConfig: JobConfig = JSON.parse(row.job_config);
-        const totalSteps = jobConfig.config.process[0].train.steps;
+        let totalSteps = 1000; // fallback value
+        try {
+          const jobConfig: JobConfig = JSON.parse(row.job_config);
+          totalSteps = jobConfig.config.process[0].train.steps;
+        } catch (error) {
+          console.error('Error parsing job config for steps:', error);
+        }
 
         return (
           <div>

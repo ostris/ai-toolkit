@@ -319,14 +319,18 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
 
   const clamp = (v: number) => (v < min ? min : v > max ? max : v);
   const snapToStep = (v: number) => {
-    if (!Number.isFinite(v)) return min;
+    // Ensure v is a finite number
+    if (typeof v !== 'number' || !Number.isFinite(v)) return min;
     const steps = Math.round((v - min) / step);
     const snapped = min + steps * step;
-    return clamp(Number(snapped.toFixed(6)));
+    // Convert to number and ensure it's finite before toFixed
+    const snappedNum = Number(snapped);
+    if (!Number.isFinite(snappedNum)) return min;
+    return clamp(Number(snappedNum.toFixed(6)));
   };
 
   const percent = React.useMemo(() => {
-    if (max === min) return 0;
+    if (max === min || typeof value !== 'number' || !Number.isFinite(value)) return 0;
     const p = ((value - min) / (max - min)) * 100;
     return p < 0 ? 0 : p > 100 ? 100 : p;
   }, [value, min, max]);
