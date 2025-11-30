@@ -165,23 +165,36 @@ _Last updated: 2025-10-20 15:52 UTC_
 
 Requirements:
 - python >3.10
-- Nvidia GPU with enough ram to do what you need
+- **GPU Options:**
+  - Nvidia GPU with CUDA support and enough VRAM for your training needs
+  - **OR** Apple Silicon Mac (M1/M2/M3/M4) with Metal Performance Shaders (MPS) support
 - python venv
 - git
 
 
-Linux:
+**For NVIDIA GPUs (Linux):**
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
-# install torch first
+# install torch with CUDA support first
 pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
-Windows:
+**For Apple Silicon Macs (M1/M2/M3/M4):**
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+python3 -m venv venv
+source venv/bin/activate
+# install PyTorch with MPS support
+pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0
+pip3 install -r requirements.txt
+```
+
+**Windows:**
 
 If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
 
@@ -190,10 +203,50 @@ git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python -m venv venv
 .\venv\Scripts\activate
+# install torch with CUDA support first
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
 
+## Device Configuration
+
+The AI Toolkit automatically detects and uses the best available accelerator. You can specify devices in your training configuration files:
+
+**Device Options:**
+- `cuda` or `cuda:0` - NVIDIA GPU (CUDA)
+- `mps` - Apple Silicon GPU (Metal Performance Shaders)
+- `cpu` - CPU (fallback, slower)
+
+**Example Configuration:**
+```yaml
+process:
+  - type: 'sd_trainer'
+    device: mps  # Use Apple Silicon
+    # device: cuda  # Use NVIDIA GPU
+    # device: cpu   # Use CPU
+```
+
+The toolkit will automatically fall back to CPU if your specified device is not available.
+
+## Apple Silicon (MPS) Performance Tips
+
+For optimal performance on Mac computers with Apple Silicon:
+
+1. **Use smaller batch sizes** (start with 1-2)
+2. **Enable gradient accumulation** to simulate larger batches
+3. **Use mixed precision** (bfloat16 recommended)
+4. **Enable gradient checkpointing** to save memory
+5. **Use bfloat16 precision** instead of float32 when possible
+
+Example optimized config for Apple Silicon:
+```yaml
+train:
+  batch_size: 1
+  gradient_accumulation_steps: 8
+  precision: "bfloat16"
+  mixed_precision: true
+  gradient_checkpointing: true
+```
 
 # AI Toolkit UI
 

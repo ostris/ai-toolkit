@@ -7,6 +7,12 @@ def get_optimizer(
         learning_rate=1e-6,
         optimizer_params=None
 ):
+    # Check if 8-bit optimizer is being used with MPS device
+    device = next(params[0].parameters()).device if params and hasattr(params[0], 'parameters') else None
+    if device and device.type == 'mps' and optimizer_type and '8bit' in optimizer_type.lower():
+        print(f"WARNING: 8-bit optimizer '{optimizer_type}' is not compatible with MPS device.")
+        print(f"Automatically switching to standard optimizer: {optimizer_type.replace('8bit', '')}")
+        optimizer_type = optimizer_type.replace('8bit', '')
     if optimizer_params is None:
         optimizer_params = {}
     lower_type = optimizer_type.lower()
