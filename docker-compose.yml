@@ -7,11 +7,11 @@ services:
     ports:
       - "8675:8675"
     volumes:
-      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub
-      - ./aitk_db.db:/app/ai-toolkit/aitk_db.db
-      - ./datasets:/app/ai-toolkit/datasets
-      - ./output:/app/ai-toolkit/output
-      - ./config:/app/ai-toolkit/config
+      - ~/.cache/huggingface/hub:/root/.cache/huggingface/hub:z
+      - ./aitk_db.db:/app/ai-toolkit/aitk_db.db:z
+      - ./datasets:/app/ai-toolkit/datasets:z
+      - ./output:/app/ai-toolkit/output:z
+      - ./config:/app/ai-toolkit/config:z
     environment:
       - AI_TOOLKIT_AUTH=${AI_TOOLKIT_AUTH:-password}
       - NODE_ENV=production
@@ -23,3 +23,5 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    security_opt:
+      - label=disable
