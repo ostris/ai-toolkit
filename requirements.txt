@@ -1,8 +1,8 @@
 torchao==0.10.0
 safetensors
 git+https://github.com/jaretburkett/easy_dwpose.git
-git+https://github.com/huggingface/diffusers@1448b035859dd57bbb565239dcdd79a025a85422
-transformers==4.52.4
+git+https://github.com/huggingface/diffusers@edf36f5128abf3e6ecf92b5145115514363c58e6
+transformers==4.57.3
 lycoris-lora==1.8.3
 flatten_json
 pyyaml
