@@ -2558,3 +2558,142 @@ For more details, including weighting, merging and fusing LoRAs, check the [docu
 
 """
         return readme_content
+
+    def cleanup_vram(self):
+        if hasattr(self, 'sd') and self.sd is not None:
+            try:
+                if hasattr(self.sd, 'unet') and self.sd.unet is not None:
+                    self.sd.unet.to('cpu')
+                    del self.sd.unet
+                    self.sd.unet = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'vae') and self.sd.vae is not None:
+                    self.sd.vae.to('cpu')
+                    del self.sd.vae
+                    self.sd.vae = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'text_encoder') and self.sd.text_encoder is not None:
+                    if isinstance(self.sd.text_encoder, list):
+                        for te in self.sd.text_encoder:
+                            if te is not None:
+                                te.to('cpu')
+                                del te
+                    else:
+                        self.sd.text_encoder.to('cpu')
+                        del self.sd.text_encoder
+                    self.sd.text_encoder = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'refiner_unet') and self.sd.refiner_unet is not None:
+                    self.sd.refiner_unet.to('cpu')
+                    del self.sd.refiner_unet
+                    self.sd.refiner_unet = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'network') and self.sd.network is not None:
+                    if hasattr(self.sd.network, 'to'):
+                        self.sd.network.to('cpu')
+                    del self.sd.network
+                    self.sd.network = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'adapter') and self.sd.adapter is not None:
+                    if hasattr(self.sd.adapter, 'to'):
+                        self.sd.adapter.to('cpu')
+                    del self.sd.adapter
+                    self.sd.adapter = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'decorator') and self.sd.decorator is not None:
+                    if hasattr(self.sd.decorator, 'to'):
+                        self.sd.decorator.to('cpu')
+                    del self.sd.decorator
+                    self.sd.decorator = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'assistant_lora') and self.sd.assistant_lora is not None:
+                    if hasattr(self.sd.assistant_lora, 'to'):
+                        self.sd.assistant_lora.to('cpu')
+                    del self.sd.assistant_lora
+                    self.sd.assistant_lora = None
+            except Exception:
+                pass
+
+            try:
+                if hasattr(self.sd, 'pipeline') and self.sd.pipeline is not None:
+                    del self.sd.pipeline
+                    self.sd.pipeline = None
+            except Exception:
+                pass
+
+            try:
+                del self.sd
+                self.sd = None
+            except Exception:
+                pass
+
+        if hasattr(self, 'optimizer') and self.optimizer is not None:
+            try:
+                del self.optimizer
+                self.optimizer = None
+            except Exception:
+                pass
+
+        if hasattr(self, 'lr_scheduler') and self.lr_scheduler is not None:
+            try:
+                del self.lr_scheduler
+                self.lr_scheduler = None
+            except Exception:
+                pass
+
+        if hasattr(self, 'network') and self.network is not None:
+            try:
+                if hasattr(self.network, 'to'):
+                    self.network.to('cpu')
+                del self.network
+                self.network = None
+            except Exception:
+                pass
+
+        if hasattr(self, 'adapter') and self.adapter is not None:
+            try:
+                if hasattr(self.adapter, 'to'):
+                    self.adapter.to('cpu')
+                del self.adapter
+                self.adapter = None
+            except Exception:
+                pass
+
+        if hasattr(self, 'embedding') and self.embedding is not None:
+            try:
+                del self.embedding
+                self.embedding = None
+            except Exception:
+                pass
+
+        if hasattr(self, 'decorator') and self.decorator is not None:
+            try:
+                if hasattr(self.decorator, 'to'):
+                    self.decorator.to('cpu')
+                del self.decorator
+                self.decorator = None
+            except Exception:
+                pass
+
+        flush()
