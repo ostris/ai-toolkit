@@ -97,9 +97,17 @@ detect_backend() {
                 print_info "Set PYTORCH_ROCM_ARCH=gfx1151"
             fi
             
+            # ROCBLAS_USE_HIPBLASLT can cause HIPBLAS_STATUS_INTERNAL_ERROR with quantized models
+            # Disable by default - can be enabled via environment variable if needed
             if [ -z "$ROCBLAS_USE_HIPBLASLT" ]; then
-                export ROCBLAS_USE_HIPBLASLT=1
-                print_info "Set ROCBLAS_USE_HIPBLASLT=1"
+                export ROCBLAS_USE_HIPBLASLT=0
+                print_info "Set ROCBLAS_USE_HIPBLASLT=0 (disabled to avoid quantized model crashes)"
+            fi
+            
+            # Reduce ROCBLAS logging overhead
+            if [ -z "$ROCBLAS_LOG_LEVEL" ]; then
+                export ROCBLAS_LOG_LEVEL=0
+                print_info "Set ROCBLAS_LOG_LEVEL=0 (disable verbose logging)"
             fi
             
             # Set AMD_SERIALIZE_KERNEL for better error reporting (as suggested by HIP errors)
@@ -380,8 +388,16 @@ main() {
     setup_venv
     
     # For setup and help modes, skip dependency verification
-    if [ "$MODE" != "setup" ] && [ "$MODE" != "help" ]; then
+    # For UI mode, skip detect_backend - let run.py set ROCm vars when jobs are spawned
+    if [ "$MODE" != "setup" ] && [ "$MODE" != "help" ] && [ "$MODE" != "ui" ]; then
         detect_backend
+        if ! verify_dependencies; then
+            print_error "Dependencies not satisfied. Run './start_toolkit.sh setup' to install them."
+            exit 1
+        fi
+    elif [ "$MODE" = "ui" ]; then
+        # For UI mode, only verify dependencies but don't set ROCm vars
+        # ROCm vars will be set by run.py when jobs are spawned
         if ! verify_dependencies; then
             print_error "Dependencies not satisfied. Run './start_toolkit.sh setup' to install them."
             exit 1
@@ -528,6 +544,19 @@ main() {
                 print_error "UI directory not found!"
                 exit 1
             fi
+            
+            # For UI mode, do NOT set ROCm environment variables
+            # They will be set by run.py when jobs are spawned
+            # Unset any ROCm vars that might have been set previously to avoid conflicts
+            unset AMD_SERIALIZE_KERNEL
+            unset TORCH_USE_HIP_DSA
+            unset HSA_ENABLE_SDMA
+            unset PYTORCH_ROCM_ALLOC_CONF
+            unset ROCBLAS_USE_HIPBLASLT
+            unset ROCBLAS_LOG_LEVEL
+            unset HSA_OVERRIDE_GFX_VERSION
+            # Note: We keep PYTORCH_ROCM_ARCH and HIP_LAUNCH_BLOCKING as they might be needed
+            # but run.py will override them if needed
             
             cd ui
             if [ ! -d "node_modules" ]; then

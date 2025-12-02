@@ -27,6 +27,15 @@ if os.environ.get("PYTORCH_ROCM_ALLOC_CONF") is None:
 # HIP_LAUNCH_BLOCKING can be set to "1" for debugging (synchronous kernels), but defaults to "0" for performance
 # HSA_OVERRIDE_GFX_VERSION and PYTORCH_ROCM_ARCH should be set by the user or startup script based on their GPU
 
+# Workaround for HIPBLAS errors with quantized models
+# ROCBLAS_USE_HIPBLASLT can cause HIPBLAS_STATUS_INTERNAL_ERROR with quantized GEMM operations
+# Disable it by default - can be re-enabled via environment variable if needed
+if os.environ.get("ROCBLAS_USE_HIPBLASLT") is None:
+    os.environ["ROCBLAS_USE_HIPBLASLT"] = "0"  # Disable HIPBLASLT to avoid quantized model crashes
+# Reduce ROCBLAS logging overhead
+if os.environ.get("ROCBLAS_LOG_LEVEL") is None:
+    os.environ["ROCBLAS_LOG_LEVEL"] = "0"  # Disable verbose logging
+
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     # set torch to trace mode
