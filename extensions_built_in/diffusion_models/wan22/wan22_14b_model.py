@@ -239,6 +239,10 @@ class Wan2214bModel(Wan21):
         self.model.transformer_2.condition_embedder.forward = partial(
             time_text_monkeypatch, self.model.transformer_2.condition_embedder
         )
+        
+        # Enable flash attention if requested
+        if self.model_config.model_kwargs.get('use_flash_attention', False):
+            self.enable_flash_attention()
 
     def get_bucket_divisibility(self):
         # 8x compression  and 2x2 patch size
