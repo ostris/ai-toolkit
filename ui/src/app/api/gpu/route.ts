@@ -11,29 +11,41 @@ export async function GET() {
     const platform = os.platform();
     const isWindows = platform === 'win32';
 
-    // Check if nvidia-smi is available
+    // Check for NVIDIA GPUs first
     const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
-
-    if (!hasNvidiaSmi) {
+    if (hasNvidiaSmi) {
+      const gpuStats = await getNvidiaGpuStats(isWindows);
       return NextResponse.json({
-        hasNvidiaSmi: false,
-        gpus: [],
-        error: 'nvidia-smi not found or not accessible',
+        hasNvidiaSmi: true,
+        hasRocmSmi: false,
+        gpus: gpuStats,
       });
     }
 
-    // Get GPU stats
-    const gpuStats = await getGpuStats(isWindows);
+    // Check for ROCm/AMD GPUs
+    const hasRocmSmi = await checkRocmSmi(isWindows);
+    if (hasRocmSmi) {
+      const gpuStats = await getRocmGpuStats(isWindows);
+      return NextResponse.json({
+        hasNvidiaSmi: false,
+        hasRocmSmi: true,
+        gpus: gpuStats,
+      });
+    }
 
+    // No GPU detection available
     return NextResponse.json({
-      hasNvidiaSmi: true,
-      gpus: gpuStats,
+      hasNvidiaSmi: false,
+      hasRocmSmi: false,
+      gpus: [],
+      error: 'Neither nvidia-smi nor rocm-smi found. GPU detection unavailable.',
     });
   } catch (error) {
-    console.error('Error fetching NVIDIA GPU stats:', error);
+    console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
       {
         hasNvidiaSmi: false,
+        hasRocmSmi: false,
         gpus: [],
         error: `Failed to fetch GPU stats: ${error instanceof Error ? error.message : String(error)}`,
       },
@@ -59,7 +71,22 @@ async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
   }
 }
 
-async function getGpuStats(isWindows: boolean) {
+async function checkRocmSmi(isWindows: boolean): Promise<boolean> {
+  try {
+    if (isWindows) {
+      // On Windows, try to run rocm-smi directly (may be in PATH or Program Files)
+      await execAsync('rocm-smi --version');
+    } else {
+      // Linux/macOS check
+      await execAsync('which rocm-smi');
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function getNvidiaGpuStats(isWindows: boolean) {
   // Command is the same for both platforms, but the path might be different
   const command =
     'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits';
@@ -120,4 +147,103 @@ async function getGpuStats(isWindows: boolean) {
     });
 
   return gpus;
+}
+
+async function getRocmGpuStats(isWindows: boolean) {
+  // Get GPU list using CSV format
+  const command =
+    'rocm-smi --showid --showproductname --showtemp --showuse --showmemuse --showmeminfo vram --showpower --showclocks --csv';
+
+  try {
+    const { stdout } = await execAsync(command);
+    const lines = stdout.trim().split('\n');
+    
+    // Skip header line
+    if (lines.length < 2) {
+      return [];
+    }
+
+    const gpus = lines.slice(1).map((line, idx) => {
+      const fields = line.split(',');
+      
+      // Parse device name (card0, card1, etc.) to get index
+      const deviceName = fields[0]?.trim() || '';
+      const index = deviceName.replace('card', '') ? parseInt(deviceName.replace('card', '')) : idx;
+      
+      // Extract fields - order: device,GPU ID,Temperature,mclk clock speed,mclk clock level,sclk clock speed,sclk clock level,socclk clock speed,socclk clock level,Power,GPU use,Memory Activity,VRAM Total Memory,VRAM Total Used Memory,Card series,Card model,Card vendor,Card SKU
+      const temperature = parseFloat(fields[2]?.trim() || '0');
+      const gpuUtil = parseFloat(fields[10]?.trim() || '0');
+      const memoryTotal = parseFloat(fields[12]?.trim() || '0');
+      const memoryUsed = parseFloat(fields[13]?.trim() || '0');
+      const memoryFree = memoryTotal - memoryUsed;
+      const powerDraw = parseFloat(fields[9]?.trim() || '0');
+      
+      // Parse clock speeds (format: "(1000Mhz)" -> 1000)
+      const mclkStr = fields[3]?.trim() || '(0Mhz)';
+      const sclkStr = fields[5]?.trim() || '(0Mhz)';
+      const clockGraphics = parseInt(mclkStr.replace(/[()Mhz]/g, '')) || 0;
+      const clockMemory = parseInt(sclkStr.replace(/[()Mhz]/g, '')) || 0;
+      
+      // Get GPU name from Card model or device name
+      const cardModel = fields[15]?.trim() || '';
+      const cardSeries = fields[14]?.trim() || '';
+      const name = cardModel || cardSeries || deviceName || `AMD GPU ${index}`;
+
+      return {
+        index,
+        name,
+        driverVersion: 'ROCm', // rocm-smi doesn't provide driver version in CSV
+        temperature: Math.round(temperature),
+        utilization: {
+          gpu: Math.round(gpuUtil),
+          memory: Math.round((memoryUsed / memoryTotal) * 100) || 0,
+        },
+        memory: {
+          total: Math.round(memoryTotal / (1024 * 1024 * 1024)), // Convert bytes to GB
+          free: Math.round(memoryFree / (1024 * 1024 * 1024)),
+          used: Math.round(memoryUsed / (1024 * 1024 * 1024)),
+        },
+        power: {
+          draw: powerDraw,
+          limit: 0, // rocm-smi CSV doesn't provide power limit
+        },
+        clocks: {
+          graphics: clockGraphics,
+          memory: clockMemory,
+        },
+        fan: {
+          speed: 0, // rocm-smi CSV doesn't provide fan speed
+        },
+      };
+    });
+
+    return gpus;
+  } catch (error) {
+    console.error('Error parsing rocm-smi output:', error);
+    // Fallback: try to detect number of devices
+    try {
+      if (isWindows) {
+        // On Windows, try to query via WMI or check for AMD devices
+        // For now, return empty array - Windows ROCm detection is limited
+        return [];
+      } else {
+        // Linux: try to detect via /dev/dri/renderD*
+        const { stdout } = await execAsync('ls -1 /dev/dri/renderD* 2>/dev/null | wc -l');
+        const deviceCount = parseInt(stdout.trim()) || 0;
+        return Array.from({ length: deviceCount }, (_, i) => ({
+          index: i,
+          name: `AMD GPU ${i}`,
+          driverVersion: 'ROCm',
+          temperature: 0,
+          utilization: { gpu: 0, memory: 0 },
+          memory: { total: 0, free: 0, used: 0 },
+          power: { draw: 0, limit: 0 },
+          clocks: { graphics: 0, memory: 0 },
+          fan: { speed: 0 },
+        }));
+      }
+    } catch (fallbackError) {
+      return [];
+    }
+  }
 }
