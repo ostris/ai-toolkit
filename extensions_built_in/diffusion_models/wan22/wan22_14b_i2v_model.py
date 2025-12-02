@@ -119,20 +119,66 @@ class Wan2214bI2VModel(Wan2214bModel):
         # videos come in (bs, num_frames, channels, height, width)
         # images come in (bs, channels, height, width)
         with torch.no_grad():
-            frames = batch.tensor
-            if len(frames.shape) == 4:
-                first_frames = frames
-            elif len(frames.shape) == 5:
-                first_frames = frames[:, 0]
+            # Check if we have frames/tensor data for i2v conditioning
+            # If batch.tensor is None (e.g., when latents are cached), try to use cached first frames
+            if batch.tensor is not None and batch.dataset_config.do_i2v:
+                frames = batch.tensor
+                if len(frames.shape) == 4:
+                    first_frames = frames
+                elif len(frames.shape) == 5:
+                    first_frames = frames[:, 0]
+                else:
+                    raise ValueError(f"Unknown frame shape {frames.shape}")
+                
+                # Ensure VAE is on the correct device before encoding
+                target_device = latent_model_input.device
+                vae_was_on_cpu = next(self.vae.parameters()).device.type == 'cpu'
+                if vae_was_on_cpu:
+                    self.vae.to(target_device)
+                
+                # Add conditioning using the standalone function
+                conditioned_latent = add_first_frame_conditioning(
+                    latent_model_input=latent_model_input,
+                    first_frame=first_frames,
+                    vae=self.vae
+                )
+                
+                # Move VAE back to CPU if it was there before (to save memory)
+                if vae_was_on_cpu:
+                    self.vae.to('cpu')
+            elif batch.first_frame_tensor is not None and batch.dataset_config.do_i2v:
+                # Use cached first frames when batch.tensor is None (latents are cached)
+                first_frames = batch.first_frame_tensor
+                
+                # Ensure VAE is on the correct device before encoding
+                target_device = latent_model_input.device
+                vae_was_on_cpu = next(self.vae.parameters()).device.type == 'cpu'
+                if vae_was_on_cpu:
+                    self.vae.to(target_device)
+                
+                # Add conditioning using the standalone function
+                conditioned_latent = add_first_frame_conditioning(
+                    latent_model_input=latent_model_input,
+                    first_frame=first_frames,
+                    vae=self.vae
+                )
+                
+                # Move VAE back to CPU if it was there before (to save memory)
+                if vae_was_on_cpu:
+                    self.vae.to('cpu')
+            elif batch.dataset_config.do_i2v:
+                # i2v is enabled but no frames are available - this is an error
+                raise ValueError(
+                    "i2v conditioning requires either batch.tensor or batch.first_frame_tensor, "
+                    "but both are None. This usually means:\n"
+                    "1. Latents were cached before first frame caching was implemented, OR\n"
+                    "2. First frames failed to cache. Please re-cache latents to also cache first frames.\n"
+                    "To fix: Delete the _latent_cache folder or set cache_latents_to_disk: false temporarily, "
+                    "then re-enable caching to regenerate caches with first frames included."
+                )
             else:
-                raise ValueError(f"Unknown frame shape {frames.shape}")
-            
-            # Add conditioning using the standalone function
-            conditioned_latent = add_first_frame_conditioning(
-                latent_model_input=latent_model_input,
-                first_frame=first_frames,
-                vae=self.vae
-            )
+                # i2v not enabled - use latent_model_input as-is
+                conditioned_latent = latent_model_input
         
         noise_pred = self.model(
             hidden_states=conditioned_latent,
