@@ -165,12 +165,12 @@ _Last updated: 2025-10-20 15:52 UTC_
 
 Requirements:
 - python >3.10
-- Nvidia GPU with enough ram to do what you need
-- python venv
+- GPU with enough ram to do what you need (NVIDIA with CUDA, or AMD with ROCm)
+- python venv (or uv for ROCm)
 - git
 
 
-Linux:
+### Linux (NVIDIA GPU with CUDA):
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
@@ -181,7 +181,32 @@ pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 -
 pip3 install -r requirements.txt
 ```
 
-Windows:
+### Linux (AMD GPU with ROCm):
+For AMD GPUs using ROCm, we recommend using [uv](https://github.com/astral-sh/uv) for virtual environment management:
+
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+# Create virtual environment with uv (creates .venv directory)
+uv venv
+source .venv/bin/activate
+
+# Install PyTorch with ROCm support for your GPU architecture
+# For gfx1151 (e.g., Radeon RX 7900 XTX):
+uv pip install --upgrade --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ --pre torch torchaudio torchvision
+
+# Install remaining requirements
+uv pip install -r requirements.txt
+```
+
+**Note:** Replace `gfx1151` in the index URL with your GPU's architecture if different. Common architectures:
+- `gfx1151` - Radeon RX 7900 XTX, RX 7900 XT
+- `gfx1100` - Radeon RX 6900 XT, RX 6800 XT
+- `gfx1030` - Radeon RX 6700 XT, RX 6600 XT
+
+Check your GPU architecture with: `rocm-smi --showproductname`
+
+### Windows (NVIDIA GPU with CUDA):
 
 If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
 
