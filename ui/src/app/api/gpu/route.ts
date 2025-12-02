@@ -184,10 +184,20 @@ async function getRocmGpuStats(isWindows: boolean) {
       const clockGraphics = parseInt(mclkStr.replace(/[()Mhz]/g, '')) || 0;
       const clockMemory = parseInt(sclkStr.replace(/[()Mhz]/g, '')) || 0;
       
-      // Get GPU name from Card model or device name
+      // Get GPU name from Card SKU (most descriptive), then Card model, then fallback
+      // CSV fields: device,GPU ID,Temperature,...,Card series,Card model,Card vendor,Card SKU
+      const cardSku = fields[17]?.trim() || '';
       const cardModel = fields[15]?.trim() || '';
-      const cardSeries = fields[14]?.trim() || '';
-      const name = cardModel || cardSeries || deviceName || `AMD GPU ${index}`;
+      const cardVendor = fields[16]?.trim() || '';
+      // Use Card SKU if available and not a hex ID, otherwise use a descriptive name
+      let name = '';
+      if (cardSku && !cardSku.startsWith('0x')) {
+        name = cardSku;
+      } else if (cardVendor && cardVendor.includes('AMD')) {
+        name = `AMD GPU ${index}`;
+      } else {
+        name = `GPU ${index}`;
+      }
 
       return {
         index,
