@@ -37,33 +37,33 @@ class Wan2214bI2VModel(Wan2214bModel):
 
         height = gen_config.height
         width = gen_config.width
-        first_frame_n1p1 = None
+        
+        d = self.get_bucket_divisibility()
+        
+        # make sure they are divisible by d
+        height = height // d * d
+        width = width // d * d
+        
+        # 5. Prepare latent variables
+        # num_channels_latents = self.transformer.config.in_channels
+        num_channels_latents = 16
+        latents = pipeline.prepare_latents(
+            1,
+            num_channels_latents,
+            height,
+            width,
+            gen_config.num_frames,
+            torch.float32,
+            self.device_torch,
+            generator,
+            None,
+        ).to(self.torch_dtype)
+        
         if gen_config.ctrl_img is not None:
             control_img = Image.open(gen_config.ctrl_img).convert("RGB")
-
-            d = self.get_bucket_divisibility()
-
-            # make sure they are divisible by d
-            height = height // d * d
-            width = width // d * d
-
+            
             # resize the control image
             control_img = control_img.resize((width, height), Image.LANCZOS)
-
-            # 5. Prepare latent variables
-            # num_channels_latents = self.transformer.config.in_channels
-            num_channels_latents = 16
-            latents = pipeline.prepare_latents(
-                1,
-                num_channels_latents,
-                height,
-                width,
-                gen_config.num_frames,
-                torch.float32,
-                self.device_torch,
-                generator,
-                None,
-            ).to(self.torch_dtype)
 
             first_frame_n1p1 = (
                 TF.to_tensor(control_img)
@@ -72,13 +72,23 @@ class Wan2214bI2VModel(Wan2214bModel):
                 * 2.0
                 - 1.0
             )  # normalize to [-1, 1]
-            
-            # Add conditioning using the standalone function
-            gen_config.latents = add_first_frame_conditioning(
-                latent_model_input=latents,
-                first_frame=first_frame_n1p1,
-                vae=self.vae
-            )
+        else:
+            # Generate dummy first frame when no control image is provided
+            # Use a solid gray color (0.0 in [-1, 1] range) instead of random noise
+            # This allows baseline sampling to work without requiring a control image
+            # and produces a more reasonable starting point than pure noise
+            # Create on CPU first (safer) then move to device
+            first_frame_n1p1 = torch.zeros(
+                1, 3, height, width,
+                dtype=self.torch_dtype
+            ).to(self.device_torch)  # Gray color (0.0 in [-1, 1] range)
+        
+        # Add conditioning using the standalone function
+        gen_config.latents = add_first_frame_conditioning(
+            latent_model_input=latents,
+            first_frame=first_frame_n1p1,
+            vae=self.vae
+        )
 
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
