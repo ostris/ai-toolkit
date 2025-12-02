@@ -1,6 +1,9 @@
+import gc
 import threading
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import torch
 
 from api_server.training_session import TrainingSession
 
@@ -56,3 +59,29 @@ class TrainingSessionManager:
             self._sessions.clear()
         for _, session in sessions:
             session.dispose()
+
+    def free_all_vram(self) -> Dict[str, Any]:
+        freed_sessions: List[str] = []
+        failed_sessions: List[str] = []
+
+        with self._lock:
+            sessions = list(self._sessions.items())
+
+        for sid, session in sessions:
+            try:
+                if session.free_vram():
+                    freed_sessions.append(sid)
+                else:
+                    failed_sessions.append(sid)
+            except Exception:
+                failed_sessions.append(sid)
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        return {
+            'freed_sessions': freed_sessions,
+            'failed_sessions': failed_sessions,
+        }

@@ -304,5 +304,13 @@ class TrainingSession:
         self.abort()
         self.wait_until_stopped(timeout=10)
         self.join(timeout=2)
-        # Ensure consumers exit
         self.log_queue.put(None)
+
+    def free_vram(self) -> bool:
+        if hasattr(self.trainer, 'cleanup_vram'):
+            try:
+                self.trainer.cleanup_vram()
+                return True
+            except Exception:
+                pass
+        return False

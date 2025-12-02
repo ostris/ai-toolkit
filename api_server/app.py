@@ -119,6 +119,16 @@ def delete_session(session_id: str):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='session not found')
 
 
+@app.post('/free')
+def free_vram():
+    result = manager.free_all_vram()
+    return {
+        'status': 'success',
+        'freed_sessions': result['freed_sessions'],
+        'failed_sessions': result['failed_sessions'],
+    }
+
+
 @app.get('/sessions/{session_id}/logs')
 def get_logs(session_id: str, limit: Optional[int] = None):
     try:
