@@ -86,6 +86,13 @@ const startAndWatchJob = (job: Job) => {
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
+      // ROCm environment variables for better HIP error handling and performance
+      AMD_SERIALIZE_KERNEL: process.env.AMD_SERIALIZE_KERNEL || '3', // Better error reporting
+      TORCH_USE_HIP_DSA: process.env.TORCH_USE_HIP_DSA || '1', // Device-side assertions
+      HSA_ENABLE_SDMA: process.env.HSA_ENABLE_SDMA || '0', // Disable SDMA for APU compatibility
+      PYTORCH_ROCM_ALLOC_CONF: process.env.PYTORCH_ROCM_ALLOC_CONF || 'max_split_size_mb:768,garbage_collect=1', // Better VRAM fragmentation
+      // HIP_LAUNCH_BLOCKING can be set to "1" for debugging, but defaults to "0" for performance
+      HIP_LAUNCH_BLOCKING: process.env.HIP_LAUNCH_BLOCKING || '0',
     };
 
     // HF_TOKEN
