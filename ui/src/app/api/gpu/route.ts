@@ -189,10 +189,12 @@ async function getRocmGpuStats(isWindows: boolean) {
       const cardSku = fields[17]?.trim() || '';
       const cardModel = fields[15]?.trim() || '';
       const cardVendor = fields[16]?.trim() || '';
-      // Use Card SKU if available and not a hex ID, otherwise use a descriptive name
+      // Use Card SKU if available and not a hex ID, otherwise prefer Card model, then fallback
       let name = '';
-      if (cardSku && !cardSku.startsWith('0x')) {
+      if (cardSku && !cardSku.startsWith('0x') && cardSku.length > 0) {
         name = cardSku;
+      } else if (cardModel && cardModel.length > 0) {
+        name = cardModel;
       } else if (cardVendor && cardVendor.includes('AMD')) {
         name = `AMD GPU ${index}`;
       } else {
