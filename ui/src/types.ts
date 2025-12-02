@@ -51,6 +51,7 @@ export interface CpuInfo {
 
 export interface GPUApiResponse {
   hasNvidiaSmi: boolean;
+  hasMps?: boolean; // Apple Silicon MPS support
   gpus: GpuInfo[];
   error?: string;
 }
