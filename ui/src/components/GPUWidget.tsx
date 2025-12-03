@@ -24,7 +24,7 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
       <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <h2 className="font-semibold text-gray-100">{gpu.name}</h2>
-          <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {gpu.index}</span>
+          <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 whitespace-nowrap"># {gpu.index}</span>
         </div>
       </div>
 
