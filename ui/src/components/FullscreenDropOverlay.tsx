@@ -151,9 +151,9 @@ export default function FullscreenDropOverlay({
       <div className="absolute inset-0 flex items-center justify-center p-6">
         <div
           className={`w-full max-w-2xl rounded-2xl border-2 border-dashed px-8 py-10 text-center shadow-2xl backdrop-blur-sm
-          ${isDragActive ? 'border-blue-400 bg-white/10' : 'border-white/30 bg-white/5'}`}
+          ${isDragActive ? 'border-blue-400 bg-white/10' : 'border-white/30 bg-gray-900/90'}`}
         >
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center gap-4 text-white">
             <FaUpload className="size-10 opacity-80" />
             {!isUploading ? (
               <>
