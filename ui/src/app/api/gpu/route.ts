@@ -178,14 +178,24 @@ async function getRocmGpuStats(isWindows: boolean) {
     }
 
     const gpus = lines.slice(1).map((line, idx) => {
-      const fields = line.split(',');
+      // Parse CSV line - rocm-smi CSV is simple comma-separated, no quotes in our case
+      // But handle cases where vendor name might have commas by being more careful
+      const fields = line.split(',').map(f => f.trim());
       
       // Parse device name (card0, card1, etc.) to get index
       const deviceName = fields[0]?.trim() || '';
-      const index = deviceName.replace('card', '') ? parseInt(deviceName.replace('card', '')) : idx;
+      // Extract numeric part from device name (e.g., "card0" -> 0)
+      const deviceMatch = deviceName.match(/\d+/);
+      const index = deviceMatch ? parseInt(deviceMatch[0]) : idx;
       
       // Extract fields - order: device,GPU ID,Temperature,mclk clock speed,mclk clock level,sclk clock speed,sclk clock level,socclk clock speed,socclk clock level,Power,GPU use,Memory Activity,VRAM Total Memory,VRAM Total Used Memory,Card series,Card model,Card vendor,Card SKU
-      const temperature = parseFloat(fields[2]?.trim() || '0') || 0;
+      const tempStr = fields[2]?.trim() || '';
+      // Only parse temperature if it's a valid number, otherwise use null/0
+      let temperature = 0;
+      if (tempStr && !isNaN(parseFloat(tempStr)) && parseFloat(tempStr) > 0) {
+        temperature = parseFloat(tempStr);
+      }
+      
       let gpuUtil = parseFloat(fields[10]?.trim() || '0') || 0;
       // rocm-smi GPU use is already a percentage, but validate and clamp to 0-100
       gpuUtil = Math.max(0, Math.min(100, gpuUtil));
@@ -200,29 +210,65 @@ async function getRocmGpuStats(isWindows: boolean) {
       if (memoryUsed > memoryTotal) memoryUsed = memoryTotal; // Clamp used to total
       
       const memoryFree = Math.max(0, memoryTotal - memoryUsed);
-      const powerDraw = parseFloat(fields[9]?.trim() || '0') || 0;
+      const powerDrawStr = fields[9]?.trim() || '';
+      // Parse power draw, handle cases where it might be in different formats
+      let powerDraw = 0;
+      if (powerDrawStr && !isNaN(parseFloat(powerDrawStr))) {
+        powerDraw = parseFloat(powerDrawStr);
+      }
       
       // Parse clock speeds (format: "(1000Mhz)" -> 1000)
       const mclkStr = fields[3]?.trim() || '(0Mhz)';
       const sclkStr = fields[5]?.trim() || '(0Mhz)';
-      const clockGraphics = parseInt(mclkStr.replace(/[()Mhz]/g, '')) || 0;
-      const clockMemory = parseInt(sclkStr.replace(/[()Mhz]/g, '')) || 0;
+      // Extract numeric value from clock strings like "(1000Mhz)" or "1000Mhz"
+      const mclkMatch = mclkStr.match(/(\d+)/);
+      const sclkMatch = sclkStr.match(/(\d+)/);
+      const clockGraphics = mclkMatch ? parseInt(mclkMatch[1]) : 0;
+      const clockMemory = sclkMatch ? parseInt(sclkMatch[1]) : 0;
       
       // Get GPU name from Card SKU (most descriptive), then Card model, then fallback
       // CSV fields: device,GPU ID,Temperature,...,Card series,Card model,Card vendor,Card SKU
-      const cardSku = fields[17]?.trim() || '';
-      const cardModel = fields[15]?.trim() || '';
-      const cardVendor = fields[16]?.trim() || '';
-      // Use Card SKU if available and not a hex ID, otherwise prefer Card model, then fallback
+      // Make sure we have enough fields (should be 18 fields: 0-17)
+      const cardSku = fields.length > 17 ? (fields[17]?.trim() || '') : '';
+      const cardModel = fields.length > 15 ? (fields[15]?.trim() || '') : '';
+      const cardVendor = fields.length > 16 ? (fields[16]?.trim() || '') : '';
+      const gpuId = fields[1]?.trim() || '';
+      
+      // Debug: log field counts and values to help diagnose parsing issues
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[GPU ${index}] Fields count: ${fields.length}, Card SKU: "${cardSku}", Card Model: "${cardModel}", Card Vendor: "${cardVendor}"`);
+      }
+      
+      // Use Card SKU if available and not a hex ID or numeric ID, otherwise prefer Card model, then fallback
       let name = '';
-      if (cardSku && !cardSku.startsWith('0x') && cardSku.length > 0) {
+      // Check Card SKU first - it should be a descriptive name like "STRXLGEN"
+      if (cardSku && 
+          cardSku.length > 0 &&
+          !cardSku.startsWith('0x') && 
+          !/^\d+$/.test(cardSku) && 
+          cardSku !== gpuId &&
+          cardSku !== memoryTotal.toString() &&
+          cardSku !== memoryUsed.toString()) {
+        // Card SKU is valid and not a numeric/hex ID
         name = cardSku;
-      } else if (cardModel && cardModel.length > 0) {
+      } else if (cardModel && 
+                 cardModel.length > 0 && 
+                 cardModel !== gpuId && 
+                 !cardModel.startsWith('0x') &&
+                 cardModel !== memoryTotal.toString()) {
+        // Only use card model if it's not a hex ID or numeric value
         name = cardModel;
-      } else if (cardVendor && cardVendor.includes('AMD')) {
+      } else if (cardVendor && (cardVendor.includes('AMD') || cardVendor.includes('Advanced Micro Devices'))) {
+        // Fallback to vendor-based name
         name = `AMD GPU ${index}`;
       } else {
+        // Final fallback
         name = `GPU ${index}`;
+      }
+      
+      // Safety check: ensure name is never a numeric memory value
+      if (name === memoryTotal.toString() || name === memoryUsed.toString() || /^\d+$/.test(name)) {
+        name = `AMD GPU ${index}`;
       }
 
       // Convert memory from bytes to MB (rocm-smi reports in bytes)
@@ -257,11 +303,15 @@ async function getRocmGpuStats(isWindows: boolean) {
         ? Math.max(0, Math.min(100, Math.round((memoryUsedMB / memoryTotalMB) * 100)))
         : 0;
 
+      // Validate temperature - only show if it's in a reasonable range (10-200°C)
+      // Temperatures below 10°C are likely invalid readings, above 200°C is impossible
+      const validTemperature = temperature >= 10 && temperature <= 200 ? temperature : 0;
+
       return {
         index: isNaN(index) ? idx : index,
         name,
         driverVersion: 'ROCm', // rocm-smi doesn't provide driver version in CSV
-        temperature: Math.max(0, Math.min(200, Math.round(temperature))), // Clamp temp to reasonable range
+        temperature: validTemperature > 0 ? Math.round(validTemperature) : 0, // Use 0 if invalid, will be handled in UI
         utilization: {
           gpu: Math.round(gpuUtil),
           memory: memoryUtilPercent,
@@ -273,7 +323,7 @@ async function getRocmGpuStats(isWindows: boolean) {
         },
         power: {
           draw: Math.max(0, powerDraw), // Ensure non-negative
-          limit: 0, // rocm-smi CSV doesn't provide power limit
+          limit: 0, // rocm-smi CSV doesn't provide power limit (0 indicates unavailable)
         },
         clocks: {
           graphics: Math.max(0, clockGraphics),

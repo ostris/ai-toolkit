@@ -33,17 +33,21 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <div className="flex items-center space-x-2">
-              <Thermometer className={`w-4 h-4 ${getTemperatureColor(gpu.temperature)}`} />
+              <Thermometer className={`w-4 h-4 ${getTemperatureColor(gpu.temperature || 0)}`} />
               <div>
                 <p className="text-xs text-gray-400">Temperature</p>
-                <p className={`text-sm font-medium ${getTemperatureColor(gpu.temperature)}`}>{gpu.temperature}°C</p>
+                <p className={`text-sm font-medium ${gpu.temperature && gpu.temperature > 0 ? getTemperatureColor(gpu.temperature) : 'text-gray-500'}`}>
+                  {gpu.temperature && gpu.temperature > 0 ? `${gpu.temperature}°C` : 'N/A'}
+                </p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
               <Fan className="w-4 h-4 text-blue-400" />
               <div>
                 <p className="text-xs text-gray-400">Fan Speed</p>
-                <p className="text-sm font-medium text-blue-400">{gpu.fan.speed}%</p>
+                <p className="text-sm font-medium text-blue-400">
+                  {gpu.fan.speed && gpu.fan.speed > 0 ? `${gpu.fan.speed}%` : 'N/A'}
+                </p>
               </div>
             </div>
           </div>
@@ -105,7 +109,9 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <Clock className="w-4 h-4 text-purple-400" />
             <div>
               <p className="text-xs text-gray-400">Clock Speed</p>
-              <p className="text-sm text-gray-200">{gpu.clocks.graphics} MHz</p>
+              <p className="text-sm text-gray-200">
+                {gpu.clocks.graphics && gpu.clocks.graphics > 0 ? `${gpu.clocks.graphics} MHz` : 'N/A'}
+              </p>
             </div>
           </div>
           <div className="flex items-start space-x-2">
@@ -113,8 +119,12 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <div>
               <p className="text-xs text-gray-400">Power Draw</p>
               <p className="text-sm text-gray-200">
-                {gpu.power.draw?.toFixed(1)}W
-                <span className="text-gray-400 text-xs"> / {gpu.power.limit?.toFixed(1) || ' ? '}W</span>
+                {gpu.power.draw && gpu.power.draw > 0 ? `${gpu.power.draw.toFixed(1)}W` : 'N/A'}
+                {gpu.power.limit && gpu.power.limit > 0 ? (
+                  <span className="text-gray-400 text-xs"> / {gpu.power.limit.toFixed(1)}W</span>
+                ) : (
+                  <span className="text-gray-400 text-xs"> / N/A</span>
+                )}
               </p>
             </div>
           </div>
