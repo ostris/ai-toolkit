@@ -83,14 +83,14 @@ export default function AddImagesModal() {
   });
 
   return (
-    <Dialog open={open} onClose={onCancel} className="relative z-10">
+    <Dialog open={open} onClose={onCancel} className="relative z-[100]">
       <DialogBackdrop
         transition
         className="fixed inset-0 bg-gray-900/75 transition-opacity data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in"
       />
 
-      <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
-        <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+      <div className="fixed inset-0 z-[100] w-screen overflow-y-auto">
+        <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
           <DialogPanel
             transition
             className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 sm:w-full sm:max-w-lg data-closed:sm:translate-y-0 data-closed:sm:scale-95"
@@ -103,12 +103,12 @@ export default function AddImagesModal() {
                 <div className="w-full">
                   <div
                     {...getRootProps()}
-                    className={`h-40 w-full flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200
+                    className={`h-40 w-full flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200 px-4
                       ${isDragActive ? 'border-blue-500 bg-blue-50/10' : 'border-gray-600'}`}
                   >
                     <input {...getInputProps()} />
                     <FaUpload className="size-8 mb-3 text-gray-400" />
-                    <p className="text-sm text-gray-200 text-center">
+                    <p className="text-sm text-gray-200 text-center px-2">
                       {isDragActive ? 'Drop the files here...' : 'Drag & drop files here, or click to select files'}
                     </p>
                   </div>
