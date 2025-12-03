@@ -51,25 +51,46 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <div className="flex items-center space-x-2 mb-1">
               <Cpu className="w-4 h-4 text-gray-400" />
               <p className="text-xs text-gray-400">GPU Load</p>
-              <span className="text-xs text-gray-300 ml-auto">{gpu.utilization.gpu}%</span>
+              <span className="text-xs text-gray-300 ml-auto">
+                {isNaN(gpu.utilization.gpu) || gpu.utilization.gpu < 0 || gpu.utilization.gpu > 100 
+                  ? '0%' 
+                  : `${Math.max(0, Math.min(100, gpu.utilization.gpu))}%`}
+              </span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
               <div
-                className={`h-1 rounded-full transition-all ${getUtilizationColor(gpu.utilization.gpu)}`}
-                style={{ width: `${gpu.utilization.gpu}%` }}
+                className={`h-1 rounded-full transition-all ${getUtilizationColor(Math.max(0, Math.min(100, gpu.utilization.gpu || 0)))}`}
+                style={{ width: `${Math.max(0, Math.min(100, gpu.utilization.gpu || 0))}%` }}
               />
             </div>
             <div className="flex items-center space-x-2 mb-1 mt-3">
               <HardDrive className="w-4 h-4 text-blue-400" />
               <p className="text-xs text-gray-400">Memory</p>
               <span className="text-xs text-gray-300 ml-auto">
-                {((gpu.memory.used / gpu.memory.total) * 100).toFixed(1)}%
+                {(() => {
+                  const total = gpu.memory.total || 0;
+                  const used = gpu.memory.used || 0;
+                  if (total <= 0 || isNaN(total) || isNaN(used)) {
+                    return '0%';
+                  }
+                  const percent = Math.max(0, Math.min(100, (used / total) * 100));
+                  return `${percent.toFixed(1)}%`;
+                })()}
               </span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
               <div
                 className="h-1 rounded-full bg-blue-500 transition-all"
-                style={{ width: `${(gpu.memory.used / gpu.memory.total) * 100}%` }}
+                style={{ 
+                  width: `${(() => {
+                    const total = gpu.memory.total || 0;
+                    const used = gpu.memory.used || 0;
+                    if (total <= 0 || isNaN(total) || isNaN(used)) {
+                      return 0;
+                    }
+                    return Math.max(0, Math.min(100, (used / total) * 100));
+                  })()}%` 
+                }}
               />
             </div>
             <p className="text-xs text-gray-400 mt-0.5">

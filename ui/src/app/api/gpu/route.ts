@@ -118,30 +118,44 @@ async function getNvidiaGpuStats(isWindows: boolean) {
         fanSpeed,
       ] = line.split(', ').map(item => item.trim());
 
+      // Validate and clamp values to prevent astronomical numbers and NaN
+      const indexNum = parseInt(index) || 0;
+      const tempNum = parseInt(temperature) || 0;
+      const gpuUtilNum = parseInt(gpuUtil) || 0;
+      const memoryUtilNum = parseInt(memoryUtil) || 0;
+      const memoryTotalNum = parseInt(memoryTotal) || 0;
+      const memoryFreeNum = parseInt(memoryFree) || 0;
+      const memoryUsedNum = parseInt(memoryUsed) || 0;
+      const powerDrawNum = parseFloat(powerDraw) || 0;
+      const powerLimitNum = parseFloat(powerLimit) || 0;
+      const clockGraphicsNum = parseInt(clockGraphics) || 0;
+      const clockMemoryNum = parseInt(clockMemory) || 0;
+      const fanSpeedNum = parseInt(fanSpeed) || 0;
+
       return {
-        index: parseInt(index),
-        name,
-        driverVersion,
-        temperature: parseInt(temperature),
+        index: indexNum,
+        name: name || `GPU ${indexNum}`,
+        driverVersion: driverVersion || 'Unknown',
+        temperature: Math.max(0, Math.min(200, tempNum)), // Clamp to reasonable range
         utilization: {
-          gpu: parseInt(gpuUtil),
-          memory: parseInt(memoryUtil),
+          gpu: Math.max(0, Math.min(100, gpuUtilNum)), // Clamp to 0-100%
+          memory: Math.max(0, Math.min(100, memoryUtilNum)), // Clamp to 0-100%
         },
         memory: {
-          total: parseInt(memoryTotal),
-          free: parseInt(memoryFree),
-          used: parseInt(memoryUsed),
+          total: Math.max(0, memoryTotalNum), // Ensure non-negative
+          free: Math.max(0, Math.min(memoryTotalNum, memoryFreeNum)), // Clamp to total
+          used: Math.max(0, Math.min(memoryTotalNum, memoryUsedNum)), // Clamp to total
         },
         power: {
-          draw: parseFloat(powerDraw),
-          limit: parseFloat(powerLimit),
+          draw: Math.max(0, powerDrawNum), // Ensure non-negative
+          limit: Math.max(0, powerLimitNum), // Ensure non-negative
         },
         clocks: {
-          graphics: parseInt(clockGraphics),
-          memory: parseInt(clockMemory),
+          graphics: Math.max(0, clockGraphicsNum), // Ensure non-negative
+          memory: Math.max(0, clockMemoryNum), // Ensure non-negative
         },
         fan: {
-          speed: parseInt(fanSpeed) || 0, // Some GPUs might not report fan speed, default to 0
+          speed: Math.max(0, Math.min(100, fanSpeedNum)), // Clamp to 0-100%
         },
       };
     });
@@ -171,12 +185,22 @@ async function getRocmGpuStats(isWindows: boolean) {
       const index = deviceName.replace('card', '') ? parseInt(deviceName.replace('card', '')) : idx;
       
       // Extract fields - order: device,GPU ID,Temperature,mclk clock speed,mclk clock level,sclk clock speed,sclk clock level,socclk clock speed,socclk clock level,Power,GPU use,Memory Activity,VRAM Total Memory,VRAM Total Used Memory,Card series,Card model,Card vendor,Card SKU
-      const temperature = parseFloat(fields[2]?.trim() || '0');
-      const gpuUtil = parseFloat(fields[10]?.trim() || '0');
-      const memoryTotal = parseFloat(fields[12]?.trim() || '0');
-      const memoryUsed = parseFloat(fields[13]?.trim() || '0');
-      const memoryFree = memoryTotal - memoryUsed;
-      const powerDraw = parseFloat(fields[9]?.trim() || '0');
+      const temperature = parseFloat(fields[2]?.trim() || '0') || 0;
+      let gpuUtil = parseFloat(fields[10]?.trim() || '0') || 0;
+      // rocm-smi GPU use is already a percentage, but validate and clamp to 0-100
+      gpuUtil = Math.max(0, Math.min(100, gpuUtil));
+      
+      // Memory values from rocm-smi are in bytes, but check if they're valid
+      let memoryTotal = parseFloat(fields[12]?.trim() || '0') || 0;
+      let memoryUsed = parseFloat(fields[13]?.trim() || '0') || 0;
+      
+      // Validate memory values - ensure they're positive and used <= total
+      if (memoryTotal < 0 || isNaN(memoryTotal)) memoryTotal = 0;
+      if (memoryUsed < 0 || isNaN(memoryUsed)) memoryUsed = 0;
+      if (memoryUsed > memoryTotal) memoryUsed = memoryTotal; // Clamp used to total
+      
+      const memoryFree = Math.max(0, memoryTotal - memoryUsed);
+      const powerDraw = parseFloat(fields[9]?.trim() || '0') || 0;
       
       // Parse clock speeds (format: "(1000Mhz)" -> 1000)
       const mclkStr = fields[3]?.trim() || '(0Mhz)';
@@ -201,27 +225,59 @@ async function getRocmGpuStats(isWindows: boolean) {
         name = `GPU ${index}`;
       }
 
+      // Convert memory from bytes to MB (rocm-smi reports in bytes)
+      // Check if values are already in MB/GB by checking magnitude
+      let memoryTotalMB = 0;
+      let memoryUsedMB = 0;
+      let memoryFreeMB = 0;
+      
+      if (memoryTotal > 0) {
+        // If value is very large (> 1TB), assume bytes and convert to MB
+        // If value is reasonable (< 1000), assume already in GB and convert to MB
+        if (memoryTotal > 1024 * 1024 * 1024) {
+          // Bytes - convert to MB
+          memoryTotalMB = Math.round(memoryTotal / (1024 * 1024));
+          memoryUsedMB = Math.round(memoryUsed / (1024 * 1024));
+          memoryFreeMB = Math.round(memoryFree / (1024 * 1024));
+        } else if (memoryTotal > 1000) {
+          // Already in MB
+          memoryTotalMB = Math.round(memoryTotal);
+          memoryUsedMB = Math.round(memoryUsed);
+          memoryFreeMB = Math.round(memoryFree);
+        } else {
+          // Assume GB, convert to MB
+          memoryTotalMB = Math.round(memoryTotal * 1024);
+          memoryUsedMB = Math.round(memoryUsed * 1024);
+          memoryFreeMB = Math.round(memoryFree * 1024);
+        }
+      }
+
+      // Calculate memory utilization percentage safely
+      const memoryUtilPercent = memoryTotalMB > 0 
+        ? Math.max(0, Math.min(100, Math.round((memoryUsedMB / memoryTotalMB) * 100)))
+        : 0;
+
       return {
-        index,
+        index: isNaN(index) ? idx : index,
         name,
         driverVersion: 'ROCm', // rocm-smi doesn't provide driver version in CSV
-        temperature: Math.round(temperature),
+        temperature: Math.max(0, Math.min(200, Math.round(temperature))), // Clamp temp to reasonable range
         utilization: {
           gpu: Math.round(gpuUtil),
-          memory: Math.round((memoryUsed / memoryTotal) * 100) || 0,
+          memory: memoryUtilPercent,
         },
         memory: {
-          total: Math.round(memoryTotal / (1024 * 1024 * 1024)), // Convert bytes to GB
-          free: Math.round(memoryFree / (1024 * 1024 * 1024)),
-          used: Math.round(memoryUsed / (1024 * 1024 * 1024)),
+          total: memoryTotalMB,
+          free: memoryFreeMB,
+          used: memoryUsedMB,
         },
         power: {
-          draw: powerDraw,
+          draw: Math.max(0, powerDraw), // Ensure non-negative
           limit: 0, // rocm-smi CSV doesn't provide power limit
         },
         clocks: {
-          graphics: clockGraphics,
-          memory: clockMemory,
+          graphics: Math.max(0, clockGraphics),
+          memory: Math.max(0, clockMemory),
         },
         fan: {
           speed: 0, // rocm-smi CSV doesn't provide fan speed
