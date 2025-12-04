@@ -1,0 +1,14 @@
+# You need to use Python 3.11, the easiest way to get this on DGX OS without impacting the system version of Python is to create an environment with miniconda.
+
+# specific dependency versions needed on DGX OS devices:
+scipy==1.16.0
+tifffile==2025.6.11
+imageio==2.37.0
+scikit_image==0.25.2
+clean_fid==0.1.35
+pywavelets==1.9.0
+contourpy==1.3.3
+opencv_python_headless==4.11.0.86
+
+# we include the base requirements.txt for the remaining dependencies:
+-r requirements.txt
