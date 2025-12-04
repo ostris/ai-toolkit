@@ -164,34 +164,152 @@ _Last updated: 2025-10-20 15:52 UTC_
 ## Installation
 
 Requirements:
-- python >3.10
-- Nvidia GPU with enough ram to do what you need
-- python venv
-- git
+- Python 3.10 or higher
+- GPU with enough RAM (NVIDIA with CUDA, or AMD with ROCm)
+- Git
 
+### Quick Start (Recommended)
 
-Linux:
+We provide setup scripts that automatically detect your system and install the correct dependencies:
+
+#### Linux:
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+chmod +x setup.sh start_toolkit.sh
+./setup.sh
+```
+
+#### Windows (PowerShell):
+```powershell
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+.\setup.ps1
+```
+
+The setup script will:
+- Create a virtual environment (using `uv` if available, otherwise `venv`)
+- Detect your GPU (ROCm or CUDA)
+- Install PyTorch with the correct backend
+- Install all required dependencies
+- Verify the installation
+
+### Manual Installation
+
+If you prefer to install manually or the setup script doesn't work for your system:
+
+#### Linux (NVIDIA GPU with CUDA):
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
-# install torch first
+# Install torch first
 pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
-Windows:
-
-If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
+#### Linux (AMD GPU with ROCm):
+For AMD GPUs using ROCm, we recommend using [uv](https://github.com/astral-sh/uv) for virtual environment management:
 
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
+# Create virtual environment with uv (creates .venv directory)
+uv venv
+source .venv/bin/activate
+
+# Install PyTorch with ROCm support for your GPU architecture
+# For gfx1151 (e.g., Radeon RX 7900 XTX):
+uv pip install --upgrade --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ --pre torch torchaudio torchvision
+
+# Install remaining requirements
+uv pip install -r requirements.txt
+```
+
+**Note:** Replace `gfx1151` in the index URL with your GPU's architecture if different. Common architectures:
+- `gfx1151` - Radeon RX 7900 XTX, RX 7900 XT
+- `gfx1100` - Radeon RX 6900 XT, RX 6800 XT
+- `gfx1030` - Radeon RX 6700 XT, RX 6600 XT
+
+Check your GPU architecture with: `rocm-smi --showproductname`
+
+#### Windows (NVIDIA GPU with CUDA):
+
+If you are having issues with Windows, we recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
+
+Or manually:
+```powershell
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
 python -m venv venv
-.\venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
+```
+
+## Running the Toolkit
+
+After installation, you can use the startup script to run the toolkit:
+
+### Linux:
+```bash
+# Start the web UI
+./start_toolkit.sh ui
+
+# Start the web UI in development mode (with hot reload)
+./start_toolkit.sh ui --dev
+
+# Run a training job
+./start_toolkit.sh train config/examples/train_lora_wan22_14b_24gb.yaml
+
+# Setup/validate the toolkit
+./start_toolkit.sh setup
+```
+
+### Windows (PowerShell):
+```powershell
+# Start the web UI
+.\start_toolkit.ps1 ui
+
+# Start the web UI in development mode (with hot reload)
+.\start_toolkit.ps1 ui --dev
+
+# Run a training job
+.\start_toolkit.ps1 train config\examples\train_lora_wan22_14b_24gb.yaml
+
+# Setup/validate the toolkit
+.\start_toolkit.ps1 setup
+```
+
+### Startup Script Options:
+
+- `setup` - Setup/validate the toolkit environment
+- `train <config_file>` - Run training job(s) with config file(s)
+- `ui` - Launch web UI (production mode)
+- `ui --dev` - Launch web UI (development mode with hot reload)
+- `gradio` - Launch Gradio UI for FLUX training
+
+Training options:
+- `-r, --recover` - Continue running additional jobs if one fails
+- `-n, --name NAME` - Name to replace [name] tag in config
+- `-l, --log FILE` - Log file to write output to
+
+UI options:
+- `-p, --port PORT` - Port for web UI (default: 8675)
+
+### Direct Python Execution:
+
+You can also run directly without the startup script:
+
+```bash
+# Linux
+source venv/bin/activate  # or source .venv/bin/activate for uv
+python run.py config/your_config.yaml
+
+# Windows
+.\venv\Scripts\Activate.ps1
+python run.py config\your_config.yaml
 ```
 
 

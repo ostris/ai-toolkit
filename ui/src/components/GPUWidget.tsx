@@ -33,17 +33,21 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <div className="flex items-center space-x-2">
-              <Thermometer className={`w-4 h-4 ${getTemperatureColor(gpu.temperature)}`} />
+              <Thermometer className={`w-4 h-4 ${getTemperatureColor(gpu.temperature || 0)}`} />
               <div>
                 <p className="text-xs text-gray-400">Temperature</p>
-                <p className={`text-sm font-medium ${getTemperatureColor(gpu.temperature)}`}>{gpu.temperature}°C</p>
+                <p className={`text-sm font-medium ${gpu.temperature && gpu.temperature > 0 ? getTemperatureColor(gpu.temperature) : 'text-gray-500'}`}>
+                  {gpu.temperature && gpu.temperature > 0 ? `${gpu.temperature}°C` : 'N/A'}
+                </p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
               <Fan className="w-4 h-4 text-blue-400" />
               <div>
                 <p className="text-xs text-gray-400">Fan Speed</p>
-                <p className="text-sm font-medium text-blue-400">{gpu.fan.speed}%</p>
+                <p className="text-sm font-medium text-blue-400">
+                  {gpu.fan.speed && gpu.fan.speed > 0 ? `${gpu.fan.speed}%` : 'N/A'}
+                </p>
               </div>
             </div>
           </div>
@@ -51,25 +55,46 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <div className="flex items-center space-x-2 mb-1">
               <Cpu className="w-4 h-4 text-gray-400" />
               <p className="text-xs text-gray-400">GPU Load</p>
-              <span className="text-xs text-gray-300 ml-auto">{gpu.utilization.gpu}%</span>
+              <span className="text-xs text-gray-300 ml-auto">
+                {isNaN(gpu.utilization.gpu) || gpu.utilization.gpu < 0 || gpu.utilization.gpu > 100 
+                  ? '0%' 
+                  : `${Math.max(0, Math.min(100, gpu.utilization.gpu))}%`}
+              </span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
               <div
-                className={`h-1 rounded-full transition-all ${getUtilizationColor(gpu.utilization.gpu)}`}
-                style={{ width: `${gpu.utilization.gpu}%` }}
+                className={`h-1 rounded-full transition-all ${getUtilizationColor(Math.max(0, Math.min(100, gpu.utilization.gpu || 0)))}`}
+                style={{ width: `${Math.max(0, Math.min(100, gpu.utilization.gpu || 0))}%` }}
               />
             </div>
             <div className="flex items-center space-x-2 mb-1 mt-3">
               <HardDrive className="w-4 h-4 text-blue-400" />
               <p className="text-xs text-gray-400">Memory</p>
               <span className="text-xs text-gray-300 ml-auto">
-                {((gpu.memory.used / gpu.memory.total) * 100).toFixed(1)}%
+                {(() => {
+                  const total = gpu.memory.total || 0;
+                  const used = gpu.memory.used || 0;
+                  if (total <= 0 || isNaN(total) || isNaN(used)) {
+                    return '0%';
+                  }
+                  const percent = Math.max(0, Math.min(100, (used / total) * 100));
+                  return `${percent.toFixed(1)}%`;
+                })()}
               </span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
               <div
                 className="h-1 rounded-full bg-blue-500 transition-all"
-                style={{ width: `${(gpu.memory.used / gpu.memory.total) * 100}%` }}
+                style={{ 
+                  width: `${(() => {
+                    const total = gpu.memory.total || 0;
+                    const used = gpu.memory.used || 0;
+                    if (total <= 0 || isNaN(total) || isNaN(used)) {
+                      return 0;
+                    }
+                    return Math.max(0, Math.min(100, (used / total) * 100));
+                  })()}%` 
+                }}
               />
             </div>
             <p className="text-xs text-gray-400 mt-0.5">
@@ -84,7 +109,9 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <Clock className="w-4 h-4 text-purple-400" />
             <div>
               <p className="text-xs text-gray-400">Clock Speed</p>
-              <p className="text-sm text-gray-200">{gpu.clocks.graphics} MHz</p>
+              <p className="text-sm text-gray-200">
+                {gpu.clocks.graphics && gpu.clocks.graphics > 0 ? `${gpu.clocks.graphics} MHz` : 'N/A'}
+              </p>
             </div>
           </div>
           <div className="flex items-start space-x-2">
@@ -92,8 +119,12 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <div>
               <p className="text-xs text-gray-400">Power Draw</p>
               <p className="text-sm text-gray-200">
-                {gpu.power.draw?.toFixed(1)}W
-                <span className="text-gray-400 text-xs"> / {gpu.power.limit?.toFixed(1) || ' ? '}W</span>
+                {gpu.power.draw && gpu.power.draw > 0 ? `${gpu.power.draw.toFixed(1)}W` : 'N/A'}
+                {gpu.power.limit && gpu.power.limit > 0 ? (
+                  <span className="text-gray-400 text-xs"> / {gpu.power.limit.toFixed(1)}W</span>
+                ) : (
+                  <span className="text-gray-400 text-xs"> / N/A</span>
+                )}
               </p>
             </div>
           </div>
