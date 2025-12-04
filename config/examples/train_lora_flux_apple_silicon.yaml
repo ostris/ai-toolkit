@@ -1,0 +1,90 @@
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_flux_lora_v1_mps"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: mps  # Use Apple Silicon Metal Performance Shaders (MPS)
+      # Alternative device options:
+      # device: mps:0      # Specific MPS device (same as mps on Apple Silicon)
+      # device: cuda       # NVIDIA GPU (CUDA)
+      # device: cpu        # CPU (slower but universal)
+      # if a trigger word is specified, it will be added to captions of training data if it does not already exist
+      # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
+#      trigger_word: "p3r5on"
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+      save:
+        dtype: float16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+        push_to_hub: false #change this to True to push your trained model to Hugging Face.
+        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in
+#       hf_repo_id: your-username/your-model-slug
+#       hf_private: true #whether the repo is private or public
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        - folder_path: "/path/to/images"
+          caption_ext: ".txt"
+          caption_data: true # captions are in separate .txt files
+          # If you have a JSON file with captions, you can use:
+          # caption_file: "/path/to/captions.json"
+          # caption_data: false
+          # You can also use this option to create captions from filenames:
+          # caption_data: "filename" # will use the filename as caption
+          # Or specify a fixed caption:
+          # caption_data: "a photo of [trigger]"
+
+      # Apple Silicon MPS Training Settings (Optimized for M1/M2/M3 Macs)
+      # Lower batch sizes and mixed precision recommended for Macs
+      train:
+        batch_size: 1        # MPS handles memory differently, start with 1
+        gradient_accumulation_steps: 8  # Accumulate to simulate larger batch
+        precision: "bfloat16"  # Recommended for MPS, or use "float16"
+        mixed_precision: true
+
+        # Training schedule
+        steps: 1000
+        lr: 1e-4
+        optimizer: "adamw"
+        lr_scheduler: "constant"
+
+        # MPS-specific optimizations
+        gradient_checkpointing: true  # Saves memory on Apple Silicon
+
+      # Model configuration
+      model:
+        # Use a smaller FLUX model for Apple Silicon
+        model_path: "black-forest-labs/FLUX.1-dev"
+        attn_slicing: true  # Memory optimization for attention
+
+      # Memory management (important for Apple Silicon)
+      memory:
+        # Enable memory optimization
+        attention_slice_size: 1
+        vae_slicing: true
+
+      # Sample settings
+      sample:
+        sampler: "flowmatch" # FLUX uses flowmatch sampling
+        sample_every: 100    # Sample every N steps
+        sample_steps: 4      # Number of sampling steps (4 for schnell, more for dev)
+        width: 512
+        height: 512
+        prompts:
+          - "a photo of [trigger]"  # Will be replaced with trigger word if specified
+          - "a beautiful landscape with [trigger]"
+          - "[trigger] in a cinematic scene"
+
+      # Validation (optional but recommended)
+      validation:
+        validation_prompt: "a photo of [trigger]"
+        validation_steps: 200  # Validate every N steps

@@ -658,8 +658,9 @@ class LearnableSNRGamma:
     This is a trainer for learnable snr gamma
     It will adapt to the dataset and attempt to adjust the snr multiplier to balance the loss over the timesteps
     """
-    def __init__(self, noise_scheduler: Union['DDPMScheduler'], device='cuda'):
-        self.device = device
+    def __init__(self, noise_scheduler: Union['DDPMScheduler'], device=None):
+        from .device_utils import get_optimal_device
+        self.device = get_optimal_device(device)
         self.noise_scheduler: Union['DDPMScheduler'] = noise_scheduler
         self.offset_1 = torch.nn.Parameter(torch.tensor(0.0, dtype=torch.float32, device=device))
         self.offset_2 = torch.nn.Parameter(torch.tensor(0.777, dtype=torch.float32, device=device))
