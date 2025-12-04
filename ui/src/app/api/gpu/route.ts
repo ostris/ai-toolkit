@@ -13,8 +13,9 @@ export async function GET() {
 
     // Check if nvidia-smi is available
     const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
+    const hasAmdSmi = await checkAMDSmi(isWindows);
 
-    if (!hasNvidiaSmi) {
+    if (!hasNvidiaSmi && !hasAmdSmi) {
       return NextResponse.json({
         hasNvidiaSmi: false,
         gpus: [],
@@ -23,14 +24,22 @@ export async function GET() {
     }
 
     // Get GPU stats
-    const gpuStats = await getGpuStats(isWindows);
+    if (hasNvidiaSmi) {
+      const gpuStats = await getGpuStats(isWindows);
+      return NextResponse.json({
+        hasNvidiaSmi: true,
+        gpus: gpuStats,
+      });
+    } else {
+      const gpuStats = await getAMDGpuStats(isWindows);
+      return NextResponse.json({
+        hasNvidiaSmi: true,
+        gpus: gpuStats,
+      });
+    }
 
-    return NextResponse.json({
-      hasNvidiaSmi: true,
-      gpus: gpuStats,
-    });
   } catch (error) {
-    console.error('Error fetching NVIDIA GPU stats:', error);
+    console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
       {
         hasNvidiaSmi: false,
@@ -52,6 +61,17 @@ async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
     } else {
       // Linux/macOS check
       await execAsync('which nvidia-smi');
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+async function checkAMDSmi(isWindows: boolean): Promise<boolean> {
+  try {
+    if (!isWindows) {
+      // Linux/macOS check
+      await execAsync('which amd-smi');
     }
     return true;
   } catch (error) {
@@ -118,6 +138,57 @@ async function getGpuStats(isWindows: boolean) {
         },
       };
     });
+
+  return gpus;
+}
+
+async function getAMDGpuStats(isWindows: boolean) {
+  // Execute command
+  const command = 'amd-smi static --json && echo ";" && amd-smi metric --json';
+  // Execute command
+  const { stdout } = await execAsync(command, {
+    env: { ...process.env, CUDA_DEVICE_ORDER: 'PCI_BUS_ID' },
+  });
+  var data = stdout.split(';');
+
+  const sdata = JSON.parse(data[0]);
+  const mdata = JSON.parse(data[1]);
+
+  var gpus = sdata["gpu_data"].map(d => {
+    const i = parseInt(d["gpu"]);
+    const gpu_data = mdata["gpu_data"][i];
+    const mem_total = parseFloat(gpu_data["mem_usage"]["total_vram"]["value"]);
+    const mem_used =  parseFloat(gpu_data["mem_usage"]["used_vram"]["value"]);
+    const mem_free =  parseFloat(gpu_data["mem_usage"]["free_visible_vram"]["value"]);
+    const mem_utilization = ((1.0 - (mem_total - mem_free)) / mem_total) * 100;
+
+    return {
+      index: i,
+      name: d["asic"]["market_name"],
+      driverVersion: d["driver"]["version"],
+      temperature: parseInt(gpu_data["temperature"]["hotspot"]["value"]),
+      utilization: {
+        gpu: parseInt(gpu_data["usage"]["gfx_activity"]["value"]),
+        memory: mem_utilization,
+      },
+      memory: {
+        total: mem_total,
+        used:  mem_used,
+        free:  mem_free,
+      },
+      power: {
+        draw: parseFloat(gpu_data["power"]["socket_power"]["value"]),
+        limit: parseFloat(d["limit"]["max_power"]["value"]),
+      },
+      clocks: {
+        graphics: parseInt(gpu_data["clock"]["gfx_0"]["clk"]["value"]),
+        memory: parseInt(gpu_data["clock"]["mem_0"]["clk"]["value"]),
+      },
+      fan: {
+        speed: parseFloat(gpu_data["fan"]["usage"]["value"]), // Some GPUs might not report fan speed, default to 0
+      }
+    };
+  });
 
   return gpus;
 }
