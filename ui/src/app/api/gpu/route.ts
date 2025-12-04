@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
+import path from 'path';
+import fs from 'fs';
 
 const execAsync = promisify(exec);
 
@@ -17,17 +19,19 @@ export async function GET() {
       const gpuStats = await getNvidiaGpuStats(isWindows);
       return NextResponse.json({
         hasNvidiaSmi: true,
+        hasAmdSmi: false,
         hasRocmSmi: false,
         gpus: gpuStats,
       });
     }
 
-    // Check for ROCm/AMD GPUs
+    // Check for ROCm/AMD GPUs - use rocm-smi directly
     const hasRocmSmi = await checkRocmSmi(isWindows);
     if (hasRocmSmi) {
       const gpuStats = await getRocmGpuStats(isWindows);
       return NextResponse.json({
         hasNvidiaSmi: false,
+        hasAmdSmi: false,
         hasRocmSmi: true,
         gpus: gpuStats,
       });
@@ -36,15 +40,17 @@ export async function GET() {
     // No GPU detection available
     return NextResponse.json({
       hasNvidiaSmi: false,
+      hasAmdSmi: false,
       hasRocmSmi: false,
       gpus: [],
-      error: 'Neither nvidia-smi nor rocm-smi found. GPU detection unavailable.',
+      error: 'Neither nvidia-smi, amd-smi, nor rocm-smi found. GPU detection unavailable.',
     });
   } catch (error) {
     console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
       {
         hasNvidiaSmi: false,
+        hasAmdSmi: false,
         hasRocmSmi: false,
         gpus: [],
         error: `Failed to fetch GPU stats: ${error instanceof Error ? error.message : String(error)}`,
@@ -64,6 +70,21 @@ async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
     } else {
       // Linux/macOS check
       await execAsync('which nvidia-smi');
+    }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function checkAmdSmi(isWindows: boolean): Promise<boolean> {
+  try {
+    if (isWindows) {
+      // On Windows, try to run amd-smi directly (may be in PATH or Program Files)
+      await execAsync('amd-smi --help');
+    } else {
+      // Linux/macOS check
+      await execAsync('which amd-smi');
     }
     return true;
   } catch (error) {
@@ -163,24 +184,329 @@ async function getNvidiaGpuStats(isWindows: boolean) {
   return gpus;
 }
 
+// Helper function to get venv PATH
+function getVenvPath(isWindows: boolean): NodeJS.ProcessEnv {
+  const projectRoot = path.resolve(process.cwd(), '..');
+  let env: NodeJS.ProcessEnv = { ...process.env };
+  
+  // Check for venv and add its bin directory to PATH
+  const venvPaths = [
+    path.join(projectRoot, '.venv', 'bin'),
+    path.join(projectRoot, 'venv', 'bin'),
+  ];
+  
+  for (const venvBin of venvPaths) {
+    if (fs.existsSync(venvBin)) {
+      const currentPath = process.env.PATH || '';
+      // Use appropriate path separator for the platform
+      const pathSeparator = isWindows ? ';' : ':';
+      env.PATH = `${venvBin}${pathSeparator}${currentPath}`;
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[AMD-SMI] Using venv PATH: ${venvBin}`);
+      }
+      break;
+    }
+  }
+  
+  return env;
+}
+
+// Helper function to parse N/A values
+function parseValue(value: string | undefined, defaultValue: number = 0): number {
+  if (!value || value === 'N/A' || value.trim() === '') {
+    return defaultValue;
+  }
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? defaultValue : parsed;
+}
+
+async function getAmdSmiGpuStats(isWindows: boolean) {
+  try {
+    const env = getVenvPath(isWindows);
+    
+    // First, get list of GPUs
+    const listCommand = 'amd-smi list --json';
+    const { stdout: listStdout } = await execAsync(listCommand, { env });
+    
+    let gpuList: Array<{ gpu: number }> = [];
+    try {
+      const listData = JSON.parse(listStdout);
+      if (Array.isArray(listData)) {
+        gpuList = listData;
+      } else if (listData && Array.isArray(listData.gpu_data)) {
+        gpuList = listData.gpu_data;
+      }
+    } catch (parseError) {
+      console.error('[AMD-SMI] Failed to parse GPU list JSON:', parseError);
+      return [];
+    }
+    
+    if (gpuList.length === 0) {
+      console.warn('[AMD-SMI] No GPUs found in list');
+      return [];
+    }
+    
+    // Get metrics for each GPU using CSV format
+    const gpus = await Promise.all(
+      gpuList.map(async (gpuInfo) => {
+        const gpuId = gpuInfo.gpu;
+        const metricCommand = `amd-smi metric --gpu ${gpuId} --csv`;
+        
+        try {
+          const { stdout: metricStdout } = await execAsync(metricCommand, { env });
+          const lines = metricStdout.trim().split('\n').filter(line => line.trim().length > 0);
+          
+          if (lines.length < 2) {
+            console.warn(`[AMD-SMI] No data for GPU ${gpuId}`);
+            return null;
+          }
+          
+          // Parse CSV header to find field indices
+          const header = lines[0].split(',');
+          const dataLine = lines[1].split(',');
+          
+          // Find field indices dynamically
+          const getFieldIndex = (fieldName: string): number => {
+            return header.findIndex(h => h.toLowerCase().includes(fieldName.toLowerCase()));
+          };
+          
+          const gpuIndex = getFieldIndex('gpu');
+          const usageIndex = getFieldIndex('usage');
+          const edgeIndex = getFieldIndex('edge');
+          const totalVramIndex = getFieldIndex('total_vram');
+          const usedVramIndex = getFieldIndex('used_vram');
+          const freeVramIndex = getFieldIndex('free_vram');
+          const socketPowerIndex = getFieldIndex('socket_power');
+          const fanMaxIndex = getFieldIndex('max');
+          const fanRpmIndex = getFieldIndex('rpm');
+          
+          // Find first available graphics clock (gfx_0_clk, gfx_1_clk, etc.)
+          let gfxClkIndex = -1;
+          for (let i = 0; i < header.length; i++) {
+            if (header[i].toLowerCase().startsWith('gfx_') && header[i].toLowerCase().endsWith('_clk')) {
+              gfxClkIndex = i;
+              break;
+            }
+          }
+          
+          // Find memory clock (mem_0_clk)
+          const memClkIndex = getFieldIndex('mem_0_clk');
+          
+          // Parse values
+          const index = gpuIndex >= 0 ? parseInt(dataLine[gpuIndex] || '0') || gpuId : gpuId;
+          const usage = usageIndex >= 0 ? parseValue(dataLine[usageIndex]) : 0;
+          const temperature = edgeIndex >= 0 ? parseValue(dataLine[edgeIndex]) : 0;
+          const memoryTotalMB = totalVramIndex >= 0 ? parseValue(dataLine[totalVramIndex]) : 0;
+          const memoryUsedMB = usedVramIndex >= 0 ? parseValue(dataLine[usedVramIndex]) : 0;
+          const memoryFreeMB = freeVramIndex >= 0 ? parseValue(dataLine[freeVramIndex]) : (memoryTotalMB - memoryUsedMB);
+          const powerDraw = socketPowerIndex >= 0 ? parseValue(dataLine[socketPowerIndex]) : 0;
+          const clockGraphics = gfxClkIndex >= 0 ? parseValue(dataLine[gfxClkIndex]) : 0;
+          const clockMemory = memClkIndex >= 0 ? parseValue(dataLine[memClkIndex]) : 0;
+          
+          // Parse fan speed - prefer percentage (max) over RPM
+          let fanSpeed = 0;
+          if (fanMaxIndex >= 0 && dataLine[fanMaxIndex] && dataLine[fanMaxIndex] !== 'N/A') {
+            fanSpeed = parseValue(dataLine[fanMaxIndex]);
+          } else if (fanRpmIndex >= 0 && dataLine[fanRpmIndex] && dataLine[fanRpmIndex] !== 'N/A') {
+            // If we have RPM but not percentage, we can't convert without max RPM, so leave as 0
+            // In the future, we could store RPM separately if needed
+            fanSpeed = 0;
+          }
+          
+          // Get GPU name from static info
+          let name = `AMD GPU ${index}`;
+          try {
+            const staticCommand = `amd-smi static --gpu ${gpuId} --json`;
+            const { stdout: staticStdout } = await execAsync(staticCommand, { env });
+            const staticData = JSON.parse(staticStdout);
+            if (staticData && staticData.gpu_data && staticData.gpu_data[0]) {
+              const gpuData = staticData.gpu_data[0];
+              if (gpuData.asic && gpuData.asic.market_name) {
+                name = gpuData.asic.market_name;
+              }
+            }
+          } catch (staticError) {
+            // If static info fails, use default name
+            if (process.env.NODE_ENV === 'development') {
+              console.warn(`[AMD-SMI] Failed to get static info for GPU ${gpuId}:`, staticError);
+            }
+          }
+          
+          // Calculate memory utilization
+          const memoryUtilPercent = memoryTotalMB > 0 
+            ? Math.max(0, Math.min(100, Math.round((memoryUsedMB / memoryTotalMB) * 100)))
+            : 0;
+          
+          // Validate values
+          const validTemperature = temperature >= 0 && temperature <= 200 ? temperature : 0;
+          const validUsage = Math.max(0, Math.min(100, usage));
+          const validFanSpeed = Math.max(0, Math.min(100, fanSpeed));
+          
+          // Check if we have sufficient data
+          // We need at least temperature OR memory
+          // But if critical performance metrics (usage, power, clocks) are all missing, 
+          // we should fallback to rocm-smi which likely has them
+          const hasBasicData = validTemperature > 0 || memoryTotalMB > 0;
+          const hasPerformanceData = validUsage > 0 || powerDraw > 0 || clockGraphics > 0 || clockMemory > 0;
+          // If we have basic data but no performance data, it's better to use rocm-smi
+          const hasSufficientData = hasBasicData && hasPerformanceData;
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[AMD-SMI GPU ${index}] temp=${validTemperature}°C, mem=${memoryTotalMB}MB, usage=${validUsage}%, power=${powerDraw}W, gfxClk=${clockGraphics}MHz, memClk=${clockMemory}MHz, hasData=${hasSufficientData}`);
+          }
+          
+          return {
+            index,
+            name,
+            driverVersion: 'ROCm',
+            temperature: validTemperature > 0 ? Math.round(validTemperature) : 0,
+            utilization: {
+              gpu: Math.round(validUsage),
+              memory: memoryUtilPercent,
+            },
+            memory: {
+              total: Math.max(0, Math.round(memoryTotalMB)),
+              free: Math.max(0, Math.round(memoryFreeMB)),
+              used: Math.max(0, Math.round(memoryUsedMB)),
+            },
+            power: {
+              draw: Math.max(0, powerDraw),
+              limit: 0, // amd-smi doesn't provide power limit in metric output
+            },
+            clocks: {
+              graphics: Math.max(0, Math.round(clockGraphics)),
+              memory: Math.max(0, Math.round(clockMemory)),
+            },
+            fan: {
+              speed: validFanSpeed > 0 ? Math.round(validFanSpeed) : 0,
+            },
+            _hasSufficientData: hasSufficientData, // Internal flag for fallback logic
+          };
+        } catch (error) {
+          console.error(`[AMD-SMI] Error getting metrics for GPU ${gpuId}:`, error);
+          return null;
+        }
+      })
+    );
+    
+    // Filter out null results
+    const validGpus = gpus.filter((gpu): gpu is NonNullable<typeof gpu> => gpu !== null);
+    
+    // Check if we have sufficient data - if not, return empty to trigger fallback
+    const hasAnyData = validGpus.some(gpu => gpu._hasSufficientData);
+    if (!hasAnyData && validGpus.length > 0) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[AMD-SMI] Insufficient data from amd-smi (missing usage/power/clocks), will fallback to rocm-smi');
+        validGpus.forEach(gpu => {
+          console.log(`[AMD-SMI] GPU ${gpu.index}: usage=${gpu.utilization.gpu}%, power=${gpu.power.draw}W, gfxClk=${gpu.clocks.graphics}MHz, memClk=${gpu.clocks.memory}MHz`);
+        });
+      }
+      return [];
+    }
+    
+    // Remove internal flag before returning
+    const result = validGpus.map(({ _hasSufficientData, ...gpu }) => gpu);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[AMD-SMI] Returning ${result.length} GPU(s) with data`);
+      result.forEach(gpu => {
+        console.log(`[AMD-SMI] GPU ${gpu.index}: usage=${gpu.utilization.gpu}%, power=${gpu.power.draw}W, gfxClk=${gpu.clocks.graphics}MHz, memClk=${gpu.clocks.memory}MHz`);
+      });
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('[AMD-SMI] Error getting GPU stats:', error);
+    return [];
+  }
+}
+
 async function getRocmGpuStats(isWindows: boolean) {
   // Get GPU list using CSV format
   const command =
     'rocm-smi --showid --showproductname --showtemp --showuse --showmemuse --showmeminfo vram --showpower --showclocks --csv';
 
   try {
-    const { stdout } = await execAsync(command);
-    const lines = stdout.trim().split('\n');
+    const env = getVenvPath(isWindows);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[ROCm] Executing: ${command}`);
+      console.log(`[ROCm] PATH: ${env.PATH?.substring(0, 200)}`);
+    }
+    const { stdout, stderr } = await execAsync(command, { env });
     
-    // Skip header line
-    if (lines.length < 2) {
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[ROCm] stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
+      console.log(`[ROCm] First 500 chars of stdout:`, stdout.substring(0, 500));
+    }
+    
+    // Filter out error messages and empty lines, keep only CSV data
+    const lines = stdout
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0 && !line.startsWith('Exception') && !line.startsWith('Error'));
+    
+    // Find the header line (should contain "device,GPU ID")
+    const headerIndex = lines.findIndex(line => line.includes('device,GPU ID') || line.startsWith('device,'));
+    
+    if (headerIndex === -1 || lines.length < headerIndex + 2) {
+      console.error('[ROCm] No valid CSV header found or no data lines');
+      console.error('[ROCm] Available lines:', lines.slice(0, 5));
       return [];
     }
 
-    const gpus = lines.slice(1).map((line, idx) => {
-      // Parse CSV line - rocm-smi CSV is simple comma-separated, no quotes in our case
-      // But handle cases where vendor name might have commas by being more careful
-      const fields = line.split(',').map(f => f.trim());
+    // Helper function to parse CSV line properly (handles quoted fields)
+    function parseCSVLine(line: string): string[] {
+      const fields: string[] = [];
+      let current = '';
+      let inQuotes = false;
+      
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === ',' && !inQuotes) {
+          fields.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      fields.push(current.trim()); // Add last field
+      return fields;
+    }
+
+    // Skip header line and process data lines
+    const gpus = lines.slice(headerIndex + 1).map((line, idx) => {
+      // Parse CSV line - rocm-smi CSV format has changed!
+      // New format (25 fields): device,Device Name,Device ID,Device Rev,Subsystem ID,GUID,Temperature (Sensor edge) (C),mclk clock speed:,mclk clock level:,sclk clock speed:,sclk clock level:,socclk clock speed:,socclk clock level:,Current Socket Graphics Package Power (W),GPU use (%),GPU Memory Allocated (VRAM%),Memory Activity,VRAM Total Memory (B),VRAM Total Used Memory (B),Card Series,Card Model,Card Vendor,Card SKU,Node ID,GFX Version
+      // Old format (18 fields): device,GPU ID,Temperature,mclk clock speed,mclk level,sclk clock speed,sclk level,socclk speed,socclk level,Power,GPU use,Memory Activity,VRAM Total,VRAM Used,Card series,Card model,Card vendor,Card SKU
+      const fields = parseCSVLine(line);
+      
+      // Detect format based on field count
+      const isNewFormat = fields.length >= 25;
+      const isOldFormat = fields.length >= 18 && fields.length < 25;
+      
+      if (!isNewFormat && !isOldFormat) {
+        console.error(`[ROCm GPU ${idx}] Unexpected field count: got ${fields.length}, expected 18 (old) or 25 (new)`);
+        console.error(`[ROCm GPU ${idx}] Line: ${line.substring(0, 200)}`);
+        console.error(`[ROCm GPU ${idx}] Parsed fields:`, fields);
+        // Pad with empty strings to prevent index errors
+        while (fields.length < 25) {
+          fields.push('');
+        }
+      }
+      
+      // Debug logging in development - log ALL fields to diagnose
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm] Parsing line with ${fields.length} fields (format: ${isNewFormat ? 'NEW' : 'OLD'})`);
+        console.log(`[ROCm] Raw line: ${line.substring(0, 200)}`);
+        console.log(`[ROCm] All fields:`, fields.map((f, i) => `[${i}]="${f}"`).join(', '));
+        if (isNewFormat) {
+          console.log(`[ROCm] Key fields - [1]Device Name="${fields[1]}", [6]Temp="${fields[6]}", [7]mclk="${fields[7]}", [9]sclk="${fields[9]}", [13]Power="${fields[13]}", [14]Usage="${fields[14]}"`);
+        } else {
+          console.log(`[ROCm] Key fields - [1]GPU ID="${fields[1]}", [2]Temp="${fields[2]}", [3]mclk="${fields[3]}", [5]sclk="${fields[5]}", [9]Power="${fields[9]}", [10]Usage="${fields[10]}"`);
+        }
+      }
       
       // Parse device name (card0, card1, etc.) to get index
       const deviceName = fields[0]?.trim() || '';
@@ -188,21 +514,78 @@ async function getRocmGpuStats(isWindows: boolean) {
       const deviceMatch = deviceName.match(/\d+/);
       const index = deviceMatch ? parseInt(deviceMatch[0]) : idx;
       
-      // Extract fields - order: device,GPU ID,Temperature,mclk clock speed,mclk clock level,sclk clock speed,sclk clock level,socclk clock speed,socclk clock level,Power,GPU use,Memory Activity,VRAM Total Memory,VRAM Total Used Memory,Card series,Card model,Card vendor,Card SKU
-      const tempStr = fields[2]?.trim() || '';
-      // Only parse temperature if it's a valid number, otherwise use null/0
+      // Extract fields based on format
+      // New format: Temperature at field 6, mclk at field 7, sclk at field 9, Power at field 13, Usage at field 14, Memory Total at field 17, Memory Used at field 18
+      // Old format: Temperature at field 2, mclk at field 3, sclk at field 5, Power at field 9, Usage at field 10, Memory Total at field 12, Memory Used at field 13
+      const tempFieldIdx = isNewFormat ? 6 : 2;
+      const mclkFieldIdx = isNewFormat ? 7 : 3;
+      const sclkFieldIdx = isNewFormat ? 9 : 5;
+      const powerFieldIdx = isNewFormat ? 13 : 9;
+      const usageFieldIdx = isNewFormat ? 14 : 10;
+      const memTotalFieldIdx = isNewFormat ? 17 : 12;
+      const memUsedFieldIdx = isNewFormat ? 18 : 13;
+      const cardSkuFieldIdx = isNewFormat ? 22 : 17;
+      const cardModelFieldIdx = isNewFormat ? 20 : 15;
+      const cardNameFieldIdx = isNewFormat ? 1 : -1; // Device Name in new format
+      
+      const tempStr = fields[tempFieldIdx]?.trim() || '';
+      // Parse temperature - rocm-smi provides temperature in Celsius
       let temperature = 0;
-      if (tempStr && !isNaN(parseFloat(tempStr)) && parseFloat(tempStr) > 0) {
-        temperature = parseFloat(tempStr);
+      if (tempStr && tempStr !== 'N/A' && !isNaN(parseFloat(tempStr))) {
+        const tempValue = parseFloat(tempStr);
+        // Validate temperature is in reasonable range (0-200°C)
+        if (tempValue >= 0 && tempValue <= 200) {
+          temperature = tempValue;
+        }
       }
       
-      let gpuUtil = parseFloat(fields[10]?.trim() || '0') || 0;
+      // Debug logging in development
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${index}] Format: ${isNewFormat ? 'NEW (25 fields)' : 'OLD (18 fields)'}`);
+        console.log(`[ROCm GPU ${index}] Temperature raw (field[${tempFieldIdx}]): "${tempStr}", parsed: ${temperature}`);
+      }
+      
+      // GPU use (%) - field index depends on format
+      if (fields.length < usageFieldIdx + 1) {
+        console.error(`[ROCm GPU ${index}] ERROR: Not enough fields for usage! Expected at least ${usageFieldIdx + 1}, got ${fields.length}`);
+      }
+      const gpuUtilStr = fields[usageFieldIdx]?.trim() || '0';
+      let gpuUtil = 0;
+      if (gpuUtilStr && gpuUtilStr !== 'N/A' && !isNaN(parseFloat(gpuUtilStr))) {
+        const parsed = parseFloat(gpuUtilStr);
+        // Validate it's a reasonable percentage (0-100)
+        if (parsed >= 0 && parsed <= 100) {
+          gpuUtil = parsed;
+        } else {
+          console.error(`[ROCm GPU ${index}] ERROR: Invalid usage value "${gpuUtilStr}" (parsed as ${parsed})`);
+        }
+      } else {
+        console.error(`[ROCm GPU ${index}] ERROR: Could not parse usage from field[10]="${gpuUtilStr}"`);
+      }
       // rocm-smi GPU use is already a percentage, but validate and clamp to 0-100
       gpuUtil = Math.max(0, Math.min(100, gpuUtil));
       
+      // Debug logging in development
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${index}] Usage - field[${usageFieldIdx}]="${gpuUtilStr}", parsed=${gpuUtil}%`);
+      }
+      
       // Memory values from rocm-smi are in bytes, but check if they're valid
-      let memoryTotal = parseFloat(fields[12]?.trim() || '0') || 0;
-      let memoryUsed = parseFloat(fields[13]?.trim() || '0') || 0;
+      // Field indices depend on format
+      if (fields.length < memUsedFieldIdx + 1) {
+        console.error(`[ROCm GPU ${index}] Insufficient fields: expected at least ${memUsedFieldIdx + 1}, got ${fields.length}`);
+      }
+      
+      const memoryTotalStr = fields[memTotalFieldIdx]?.trim() || '0';
+      const memoryUsedStr = fields[memUsedFieldIdx]?.trim() || '0';
+      let memoryTotal = parseFloat(memoryTotalStr) || 0;
+      let memoryUsed = parseFloat(memoryUsedStr) || 0;
+      
+      // Debug logging in development
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${index}] Memory raw: total (field[${memTotalFieldIdx}])="${memoryTotalStr}", used (field[${memUsedFieldIdx}])="${memoryUsedStr}"`);
+        console.log(`[ROCm GPU ${index}] Memory parsed: total=${memoryTotal}, used=${memoryUsed}`);
+      }
       
       // Validate memory values - ensure they're positive and used <= total
       if (memoryTotal < 0 || isNaN(memoryTotal)) memoryTotal = 0;
@@ -210,27 +593,80 @@ async function getRocmGpuStats(isWindows: boolean) {
       if (memoryUsed > memoryTotal) memoryUsed = memoryTotal; // Clamp used to total
       
       const memoryFree = Math.max(0, memoryTotal - memoryUsed);
-      const powerDrawStr = fields[9]?.trim() || '';
+      // Power draw - field index depends on format
+      if (fields.length < powerFieldIdx + 1) {
+        console.error(`[ROCm GPU ${index}] ERROR: Not enough fields for power! Expected at least ${powerFieldIdx + 1}, got ${fields.length}`);
+      }
+      const powerDrawStr = fields[powerFieldIdx]?.trim() || '';
       // Parse power draw, handle cases where it might be in different formats
       let powerDraw = 0;
-      if (powerDrawStr && !isNaN(parseFloat(powerDrawStr))) {
-        powerDraw = parseFloat(powerDrawStr);
+      if (powerDrawStr && powerDrawStr !== 'N/A' && !isNaN(parseFloat(powerDrawStr))) {
+        const parsed = parseFloat(powerDrawStr);
+        // Validate it's a reasonable power value (0-1000W)
+        if (parsed >= 0 && parsed <= 1000) {
+          powerDraw = parsed;
+        } else {
+          console.error(`[ROCm GPU ${index}] ERROR: Invalid power value "${powerDrawStr}" (parsed as ${parsed})`);
+        }
+      } else {
+        console.error(`[ROCm GPU ${index}] ERROR: Could not parse power from field[9]="${powerDrawStr}"`);
+      }
+      
+      // Debug logging in development
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${index}] Power - field[${powerFieldIdx}]="${powerDrawStr}", parsed=${powerDraw}W`);
       }
       
       // Parse clock speeds (format: "(1000Mhz)" -> 1000)
-      const mclkStr = fields[3]?.trim() || '(0Mhz)';
-      const sclkStr = fields[5]?.trim() || '(0Mhz)';
+      // mclk = memory clock, sclk = graphics/core clock
+      // Field indices depend on format
+      const mclkStr = fields[mclkFieldIdx]?.trim() || '(0Mhz)';
+      const sclkStr = fields[sclkFieldIdx]?.trim() || '(0Mhz)';
+      
+      // Debug logging to verify we're reading the right fields
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${index}] Format: ${isNewFormat ? 'NEW (25 fields)' : 'OLD (18 fields)'}`);
+        console.log(`[ROCm GPU ${index}] Raw clock fields - field[${mclkFieldIdx}]="${fields[mclkFieldIdx]}", field[${sclkFieldIdx}]="${fields[sclkFieldIdx]}"`);
+        console.log(`[ROCm GPU ${index}] Parsed clock strings - mclkStr="${mclkStr}", sclkStr="${sclkStr}"`);
+      }
+      
       // Extract numeric value from clock strings like "(1000Mhz)" or "1000Mhz"
       const mclkMatch = mclkStr.match(/(\d+)/);
       const sclkMatch = sclkStr.match(/(\d+)/);
-      const clockGraphics = mclkMatch ? parseInt(mclkMatch[1]) : 0;
-      const clockMemory = sclkMatch ? parseInt(sclkMatch[1]) : 0;
+      // Graphics clock is sclk (system/core clock), memory clock is mclk
+      let clockGraphics = sclkMatch ? parseInt(sclkMatch[1]) : 0;
+      let clockMemory = mclkMatch ? parseInt(mclkMatch[1]) : 0;
       
-      // Get GPU name from Card SKU (most descriptive), then Card model, then fallback
-      // CSV fields: device,GPU ID,Temperature,...,Card series,Card model,Card vendor,Card SKU
-      // Make sure we have enough fields (should be 18 fields: 0-17)
-      const cardSku = fields.length > 17 ? (fields[17]?.trim() || '') : '';
-      const cardModel = fields.length > 15 ? (fields[15]?.trim() || '') : '';
+      // Validate clock speeds are reasonable (0-5000 MHz for graphics, 0-3000 MHz for memory)
+      if (clockGraphics > 5000 || clockGraphics < 0) {
+        console.error(`[ROCm GPU ${index}] ERROR: Invalid graphics clock ${clockGraphics}MHz from field[5]="${fields[5]}"`);
+        clockGraphics = 0;
+      }
+      if (clockMemory > 3000 || clockMemory < 0) {
+        console.error(`[ROCm GPU ${index}] ERROR: Invalid memory clock ${clockMemory}MHz from field[3]="${fields[3]}"`);
+        clockMemory = 0;
+      }
+      
+      // Debug logging in development
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${index}] Clocks parsed - mclk: ${clockMemory}MHz, sclk: ${clockGraphics}MHz`);
+        console.log(`[ROCm GPU ${index}] All field values:`, {
+          field0: fields[0],
+          field1: fields[1],
+          field2: fields[2],
+          field3: fields[3],
+          field4: fields[4],
+          field5: fields[5],
+          field9: fields[9],
+          field10: fields[10],
+        });
+      }
+      
+      // Get GPU name from Card SKU (most descriptive), then Card model, then Device Name (new format), then fallback
+      // Field indices depend on format
+      const cardSku = fields.length > cardSkuFieldIdx ? (fields[cardSkuFieldIdx]?.trim() || '') : '';
+      const cardModel = fields.length > cardModelFieldIdx ? (fields[cardModelFieldIdx]?.trim() || '') : '';
+      const deviceNameField = cardNameFieldIdx >= 0 && fields.length > cardNameFieldIdx ? (fields[cardNameFieldIdx]?.trim() || '') : '';
       const cardVendor = fields.length > 16 ? (fields[16]?.trim() || '') : '';
       const gpuId = fields[1]?.trim() || '';
       
@@ -303,15 +739,11 @@ async function getRocmGpuStats(isWindows: boolean) {
         ? Math.max(0, Math.min(100, Math.round((memoryUsedMB / memoryTotalMB) * 100)))
         : 0;
 
-      // Validate temperature - only show if it's in a reasonable range (10-200°C)
-      // Temperatures below 10°C are likely invalid readings, above 200°C is impossible
-      const validTemperature = temperature >= 10 && temperature <= 200 ? temperature : 0;
-
-      return {
+      const gpuData = {
         index: isNaN(index) ? idx : index,
         name,
         driverVersion: 'ROCm', // rocm-smi doesn't provide driver version in CSV
-        temperature: validTemperature > 0 ? Math.round(validTemperature) : 0, // Use 0 if invalid, will be handled in UI
+        temperature: temperature > 0 ? Math.round(temperature) : 0, // Temperature already validated above
         utilization: {
           gpu: Math.round(gpuUtil),
           memory: memoryUtilPercent,
@@ -333,6 +765,13 @@ async function getRocmGpuStats(isWindows: boolean) {
           speed: 0, // rocm-smi CSV doesn't provide fan speed
         },
       };
+      
+      // Debug logging in development
+      if (process.env.NODE_ENV === 'development' && idx === 0) {
+        console.log(`[ROCm GPU ${gpuData.index}] Final values: usage=${gpuData.utilization.gpu}%, power=${gpuData.power.draw}W, gfxClk=${gpuData.clocks.graphics}MHz, memClk=${gpuData.clocks.memory}MHz`);
+      }
+      
+      return gpuData;
     });
 
     return gpus;
