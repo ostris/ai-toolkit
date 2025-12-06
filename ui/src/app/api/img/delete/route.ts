@@ -14,11 +14,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
     }
 
-    // make sure it is an image
-    if (!/\.(jpg|jpeg|png|bmp|gif|tiff|webp)$/i.test(imgPath.toLowerCase())) {
-      return NextResponse.json({ error: 'Not an image' }, { status: 400 });
-    }
-
     // if img doesnt exist, ignore
     if (!fs.existsSync(imgPath)) {
       return NextResponse.json({ success: true });
