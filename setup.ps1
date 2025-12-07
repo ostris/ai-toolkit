@@ -89,9 +89,76 @@ try {
 
 if ($hasRocm) {
     Write-Info "ROCm detected. Installing PyTorch with ROCm support..."
-    Write-Warning "ROCm on Windows requires manual PyTorch installation. Please install PyTorch with ROCm support manually."
-    Write-Info "For Windows, we recommend using CUDA instead. Installing PyTorch with CUDA support..."
-    & $pythonCmd -m pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+    
+    # Function to map GPU architecture to ROCm directory name
+    function Map-GpuArchToRocmDir {
+        param([string]$detectedArch)
+        
+        # Map gfx110X variants to gfx110X-all (RDNA 3 architecture)
+        if ($detectedArch -match "gfx110[0-3]") {
+            return "gfx110X-all"
+        }
+        
+        # Direct mappings for architectures that match their directory names
+        switch ($detectedArch) {
+            { $_ -in @("gfx1151", "gfx1030", "gfx90a", "gfx906", "gfx908", "gfx941", "gfx942") } {
+                return $detectedArch
+            }
+            default {
+                # For unknown architectures, try the detected name first
+                return $detectedArch
+            }
+        }
+    }
+    
+    # Get GPU architecture
+    if (-not $env:PYTORCH_ROCM_ARCH) {
+        Write-Info "Detecting GPU architecture..."
+        try {
+            $gpuInfo = rocm-smi --showproductname 2>&1 | Out-String
+            
+            # Extract gfx architecture code from rocm-smi output
+            $detectedArch = ""
+            if ($gpuInfo -match "gfx\d+") {
+                $detectedArch = $matches[0]
+            }
+            
+            if ($detectedArch) {
+                $rocmArch = Map-GpuArchToRocmDir $detectedArch
+                Write-Info "Detected GPU architecture: $detectedArch"
+                Write-Info "Mapped to ROCm directory: $rocmArch"
+                $env:PYTORCH_ROCM_ARCH = $rocmArch
+            } else {
+                Write-Warning "Could not auto-detect GPU architecture from rocm-smi output"
+                Write-Info "Common architectures:"
+                Write-Info "  - gfx1151 (RDNA 3.5 - Strix Point Halo APU)"
+                Write-Info "  - gfx110X-all (RDNA 3 - RX 7900/7800/7700 series, gfx1100/gfx1101/gfx1102/gfx1103)"
+                Write-Info "  - gfx1030 (RDNA 2 - RX 6900/6800/6700 series)"
+                Write-Info "  - gfx90a (CDNA 2 - Instinct MI200 series)"
+                $userInput = Read-Host "Enter your GPU architecture [gfx1151]"
+                $env:PYTORCH_ROCM_ARCH = if ($userInput) { $userInput } else { "gfx1151" }
+            }
+        } catch {
+            Write-Warning "Failed to detect GPU architecture: $_"
+            Write-Info "Common architectures:"
+            Write-Info "  - gfx1151 (RDNA 3.5 - Strix Point Halo APU)"
+            Write-Info "  - gfx110X-all (RDNA 3 - RX 7900/7800/7700 series)"
+            Write-Info "  - gfx1030 (RDNA 2 - RX 6900/6800/6700 series)"
+            $userInput = Read-Host "Enter your GPU architecture [gfx1151]"
+            $env:PYTORCH_ROCM_ARCH = if ($userInput) { $userInput } else { "gfx1151" }
+        }
+        
+        Write-Info "Using GPU architecture: $env:PYTORCH_ROCM_ARCH"
+        
+        # Install PyTorch with ROCm
+        Write-Info "Installing PyTorch with ROCm support..."
+        $indexUrl = "https://rocm.nightlies.amd.com/v2/$($env:PYTORCH_ROCM_ARCH)/"
+        & $pythonCmd -m pip install --upgrade --index-url $indexUrl --pre torch torchaudio torchvision
+    } else {
+        Write-Info "Using GPU architecture from environment: $env:PYTORCH_ROCM_ARCH"
+        $indexUrl = "https://rocm.nightlies.amd.com/v2/$($env:PYTORCH_ROCM_ARCH)/"
+        & $pythonCmd -m pip install --upgrade --index-url $indexUrl --pre torch torchaudio torchvision
+    }
 } else {
     Write-Info "Installing PyTorch with CUDA support..."
     & $pythonCmd -m pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126

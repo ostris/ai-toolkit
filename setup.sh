@@ -88,6 +88,34 @@ else
     $PYTHON_CMD -m pip install --upgrade pip
 fi
 
+# Function to map GPU architecture to ROCm directory name
+# ROCm nightlies use specific directory names that may differ from the detected architecture
+map_gpu_arch_to_rocm_dir() {
+    local detected_arch="$1"
+    
+    # Map gfx110X variants to gfx110X-all (RDNA 3 architecture)
+    # This includes gfx1100, gfx1101, gfx1102, gfx1103
+    if echo "$detected_arch" | grep -qE "gfx110[0-3]"; then
+        echo "gfx110X-all"
+        return
+    fi
+    
+    # Direct mappings for architectures that match their directory names
+    # gfx1151 (RDNA 3.5), gfx1030 (RDNA 2), gfx90a (CDNA 2), gfx906 (Vega), etc.
+    case "$detected_arch" in
+        gfx1151|gfx1030|gfx90a|gfx906|gfx908|gfx941|gfx942)
+            echo "$detected_arch"
+            return
+            ;;
+        *)
+            # For unknown architectures, try the detected name first
+            # User can override if it doesn't work
+            echo "$detected_arch"
+            return
+            ;;
+    esac
+}
+
 # Detect GPU backend
 print_info "Detecting GPU backend..."
 if command -v rocm-smi &> /dev/null; then
@@ -97,15 +125,27 @@ if command -v rocm-smi &> /dev/null; then
     if [ -z "$PYTORCH_ROCM_ARCH" ]; then
         print_info "Detecting GPU architecture..."
         GPU_INFO=$(rocm-smi --showproductname 2>/dev/null || echo "")
-        if echo "$GPU_INFO" | grep -q "gfx1151"; then
-            ROCM_ARCH="gfx1151"
-        elif echo "$GPU_INFO" | grep -q "gfx1100"; then
-            ROCM_ARCH="gfx1100"
-        elif echo "$GPU_INFO" | grep -q "gfx1030"; then
-            ROCM_ARCH="gfx1030"
+        
+        # Extract gfx architecture code from rocm-smi output
+        # rocm-smi output format varies, try to extract gfx#### pattern
+        DETECTED_ARCH=""
+        if echo "$GPU_INFO" | grep -qE "gfx[0-9]+"; then
+            # Extract the first gfx#### pattern found
+            DETECTED_ARCH=$(echo "$GPU_INFO" | grep -oE "gfx[0-9]+" | head -1)
+        fi
+        
+        if [ -n "$DETECTED_ARCH" ]; then
+            ROCM_ARCH=$(map_gpu_arch_to_rocm_dir "$DETECTED_ARCH")
+            print_info "Detected GPU architecture: $DETECTED_ARCH"
+            print_info "Mapped to ROCm directory: $ROCM_ARCH"
         else
-            print_warning "Could not auto-detect GPU architecture"
-            read -p "Enter your GPU architecture (gfx1151/gfx1100/gfx1030) [gfx1151]: " ROCM_ARCH
+            print_warning "Could not auto-detect GPU architecture from rocm-smi output"
+            print_info "Common architectures:"
+            print_info "  - gfx1151 (RDNA 3.5 - Strix Point Halo APU)"
+            print_info "  - gfx110X-all (RDNA 3 - RX 7900/7800/7700 series, gfx1100/gfx1101/gfx1102/gfx1103)"
+            print_info "  - gfx1030 (RDNA 2 - RX 6900/6800/6700 series)"
+            print_info "  - gfx90a (CDNA 2 - Instinct MI200 series)"
+            read -p "Enter your GPU architecture [gfx1151]: " ROCM_ARCH
             ROCM_ARCH=${ROCM_ARCH:-gfx1151}
         fi
         export PYTORCH_ROCM_ARCH=$ROCM_ARCH

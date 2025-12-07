@@ -220,17 +220,25 @@ uv venv
 source .venv/bin/activate
 
 # Install PyTorch with ROCm support for your GPU architecture
-# For gfx1151 (e.g., Radeon RX 7900 XTX):
+# The setup script will auto-detect your GPU architecture, but you can also specify manually:
 uv pip install --upgrade --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ --pre torch torchaudio torchvision
 
 # Install remaining requirements
 uv pip install -r requirements.txt
 ```
 
-**Note:** Replace `gfx1151` in the index URL with your GPU's architecture if different. Common architectures:
-- `gfx1151` - Radeon RX 7900 XTX, RX 7900 XT
-- `gfx1100` - Radeon RX 6900 XT, RX 6800 XT
-- `gfx1030` - Radeon RX 6700 XT, RX 6600 XT
+**Note:** The setup script automatically detects your GPU architecture and maps it to the correct ROCm directory. Common architectures and their mappings:
+
+- **`gfx1151`** - RDNA 3.5 architecture (Strix Point Halo APU)
+- **`gfx110X-all`** - RDNA 3 architecture (maps from gfx1100, gfx1101, gfx1102, gfx1103)
+  - Radeon RX 7900 XTX, RX 7900 XT, RX 7800 XT, RX 7700 XT
+- **`gfx1030`** - RDNA 2 architecture
+  - Radeon RX 6900 XT, RX 6800 XT, RX 6700 XT, RX 6600 XT
+- **`gfx90a`** - CDNA 2 architecture (Instinct MI200 series)
+- **`gfx906`** - Vega 7nm (Instinct MI50)
+- **`gfx908`** - CDNA 1 (Instinct MI100)
+
+**Important:** The ROCm nightlies directory structure uses `gfx110X-all` for all RDNA 3 GPUs (gfx1100-gfx1103), not the individual architecture codes. The setup script automatically handles this mapping.
 
 Check your GPU architecture with: `rocm-smi --showproductname`
 
