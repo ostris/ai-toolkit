@@ -5,7 +5,7 @@ import { FaChevronLeft } from 'react-icons/fa';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
-import SampleImages, { SampleImagesMenu } from '@/components/SampleImages';
+import SampleImages, {SampleImagesMenu} from '@/components/SampleImages';
 import JobOverview from '@/components/JobOverview';
 import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
@@ -73,7 +73,6 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             afterDelete={() => {
               redirect('/jobs');
             }}
-            autoStartQueue={true}
           />
         )}
       </TopBar>
@@ -99,12 +98,15 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             {page.name}
           </Button>
         ))}
-        {page?.menuItem && (
-          <>
-            <div className="flex-grow"></div>
-            <page.menuItem job={job} />
-          </>
-        )}
+        {
+          page?.menuItem && (
+            <>
+            <div className='flex-grow'>
+            </div>
+              <page.menuItem job={job} />
+            </>
+          )
+        }
       </div>
     </>
   );

@@ -47,7 +47,6 @@ def unload_text_encoder(model: "BaseModel"):
             if hasattr(pipe, "text_encoder"):
                 te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
                 text_encoder_list.append(te)
-                pipe.text_encoder.to('cpu')
                 pipe.text_encoder = te
 
             i = 2

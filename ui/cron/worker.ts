@@ -1,4 +1,3 @@
-import processQueue from './actions/processQueue';
 class CronWorker {
   interval: number;
   is_running: boolean;
@@ -24,9 +23,7 @@ class CronWorker {
     this.is_running = false;
   }
 
-  async loop() {
-    await processQueue();
-  }
+  async loop() {}
 }
 
 // it automatically starts the loop

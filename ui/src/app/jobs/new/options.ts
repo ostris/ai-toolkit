@@ -9,21 +9,15 @@ type DisableableSections =
   | 'network.conv'
   | 'trigger_word'
   | 'train.diff_output_preservation'
-  | 'train.blank_prompt_preservation'
-  | 'train.unload_text_encoder'
   | 'slider';
 
 type AdditionalSections =
   | 'datasets.control_path'
-  | 'datasets.multi_control_paths'
   | 'datasets.do_i2v'
   | 'sample.ctrl_img'
-  | 'sample.multi_ctrl_imgs'
   | 'datasets.num_frames'
   | 'model.multistage'
-  | 'model.layer_offloading'
-  | 'model.low_vram'
-  | 'model.qie.match_target_res';
+  | 'model.low_vram';
 type ModelGroup = 'image' | 'instruction' | 'video';
 
 export interface ModelArch {
@@ -227,7 +221,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage', 'model.layer_offloading'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage'],
     accuracyRecoveryAdapters: {
       // '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint3.safetensors',
       '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint4.safetensors',
@@ -258,13 +252,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.ctrl_img',
-      'datasets.num_frames',
-      'model.low_vram',
-      'model.multistage',
-      'model.layer_offloading',
-    ],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'model.multistage'],
     accuracyRecoveryAdapters: {
       '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_i2v_torchao_uint4.safetensors',
     },
@@ -321,7 +309,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    additionalSections: ['model.low_vram'],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors',
     },
@@ -342,43 +330,9 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram', 'model.layer_offloading'],
+    additionalSections: ['datasets.control_path', 'sample.ctrl_img', 'model.low_vram'],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_torchao_uint3.safetensors',
-    },
-  },
-  {
-    name: 'qwen_image_edit_plus',
-    label: 'Qwen-Image-Edit-2509',
-    group: 'instruction',
-    defaults: {
-      // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit-2509', defaultNameOrPath],
-      'config.process[0].model.quantize': [true, false],
-      'config.process[0].model.quantize_te': [true, false],
-      'config.process[0].model.low_vram': [true, false],
-      'config.process[0].train.unload_text_encoder': [false, false],
-      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
-      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
-      'config.process[0].model.model_kwargs': [
-        {
-          match_target_res: false,
-        },
-        {},
-      ],
-    },
-    disableSections: ['network.conv', 'train.unload_text_encoder'],
-    additionalSections: [
-      'datasets.multi_control_paths',
-      'sample.multi_ctrl_imgs',
-      'model.low_vram',
-      'model.layer_offloading',
-      'model.qie.match_target_res',
-    ],
-    accuracyRecoveryAdapters: {
-      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors',
     },
   },
   {
@@ -398,9 +352,6 @@ export const modelArchs: ModelArch[] = [
     },
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram'],
-    accuracyRecoveryAdapters: {
-      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/hidream_i1_full_torchao_uint3.safetensors',
-    },
   },
   {
     name: 'hidream_e1',
@@ -465,37 +416,6 @@ export const modelArchs: ModelArch[] = [
     disableSections: ['network.conv'],
     additionalSections: ['datasets.control_path', 'sample.ctrl_img'],
   },
-  {
-    name: 'flux2',
-    label: 'FLUX.2',
-    group: 'image',
-    defaults: {
-      // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.2-dev', defaultNameOrPath],
-      'config.process[0].model.quantize': [true, false],
-      'config.process[0].model.quantize_te': [true, false],
-      'config.process[0].model.low_vram': [true, false],
-      'config.process[0].train.unload_text_encoder': [false, false],
-      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
-      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
-      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
-      'config.process[0].model.model_kwargs': [
-        {
-          match_target_res: false,
-        },
-        {},
-      ],
-    },
-    disableSections: ['network.conv'],
-    additionalSections: [
-      'datasets.multi_control_paths',
-      'sample.multi_ctrl_imgs',
-      'model.low_vram',
-      'model.layer_offloading',
-      'model.qie.match_target_res',
-    ],
-  },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
@@ -517,6 +437,7 @@ export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc
 export const quantizationOptions: SelectOption[] = [
   { value: '', label: '- NONE -' },
   { value: 'qfloat8', label: 'float8 (default)' },
+  { value: 'uint8', label: '8 bit' },
   { value: 'uint7', label: '7 bit' },
   { value: 'uint6', label: '6 bit' },
   { value: 'uint5', label: '5 bit' },
