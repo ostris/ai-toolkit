@@ -11,6 +11,9 @@ export interface GpuMemory {
   total: number;
   free: number;
   used: number;
+  gttTotal?: number;
+  gttUsed?: number;
+  gttFree?: number;
 }
 
 export interface GpuPower {

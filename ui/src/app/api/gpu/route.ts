@@ -3,9 +3,12 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
 import fs from 'fs';
+import path from 'path';
 
 const execAsync = promisify(exec);
 const statAsync = promisify(fs.stat);
+const readFileAsync = promisify(fs.readFile);
+const readdirAsync = promisify(fs.readdir);
 
 export async function GET() {
   try {
@@ -14,14 +17,14 @@ export async function GET() {
     const isWindows = platform === 'win32';
 
 
-    // Check for GPU monitor (nvidia-smi or rocm-smi)
+    // Check for GPU monitor (nvidia-smi, amd-smi or rocm-smi)
     const monitor = await checkGpuMonitor(isWindows);
 
     if (!monitor) {
       return NextResponse.json({
         hasGpuMonitor: false,
         gpus: [],
-        error: "Unable to load 'nvidia-smi' or 'rocm-smi' - ensure the correct GPU monitoring tool is installed",
+        error: "Unable to load 'nvidia-smi', 'amd-smi' or 'rocm-smi' - ensure the correct GPU monitoring tool is installed",
       });
     }
 
@@ -46,7 +49,7 @@ export async function GET() {
 }
 
 interface MonitorInfo {
-  type: 'nvidia' | 'amd';
+  type: 'nvidia' | 'amd-smi' | 'rocm-smi';
   path: string;
 }
 
@@ -65,7 +68,21 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
       }
     }
   } catch (error) {
-    // continue to check rocm-smi
+    // continue to check amd/rocm
+  }
+
+  // Check amd-smi (prioritize over rocm-smi as it is newer)
+  try {
+    if (!isWindows) {
+      try {
+        await execAsync('which amd-smi');
+        return { type: 'amd-smi', path: 'amd-smi' };
+      } catch {
+        // failed
+      }
+    }
+  } catch (error) {
+    // continue
   }
 
   // Check rocm-smi
@@ -75,7 +92,7 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
       // 1. Check path (which rocm-smi)
       try {
         await execAsync('which rocm-smi');
-        return { type: 'amd', path: 'rocm-smi' };
+        return { type: 'rocm-smi', path: 'rocm-smi' };
       } catch {
         // failed
       }
@@ -85,7 +102,7 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
         try {
           const manualPath = `${process.env.ROCM_PATH}/bin/rocm-smi`;
           await statAsync(manualPath);
-          return { type: 'amd', path: manualPath };
+          return { type: 'rocm-smi', path: manualPath };
         } catch {
           // failed
         }
@@ -95,7 +112,7 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
       try {
         const manualPath = '/usr/bin/rocm-smi';
         await statAsync(manualPath);
-        return { type: 'amd', path: manualPath };
+        return { type: 'rocm-smi', path: manualPath };
       } catch {
         // failed
       }
@@ -104,7 +121,7 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
       try {
         const manualPath = '/opt/rocm/bin/rocm-smi';
         await statAsync(manualPath);
-        return { type: 'amd', path: manualPath };
+        return { type: 'rocm-smi', path: manualPath };
       } catch {
         // failed
       }
@@ -117,7 +134,7 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
           const basePath = process.env.HIP_PATH.replace(/\\$/, '');
           const manualPath = `${basePath}\\bin\\hipinfo.exe`;
           await statAsync(manualPath);
-          return { type: 'amd', path: manualPath };
+          return { type: 'rocm-smi', path: manualPath }; // Treat hidden hipinfo as rocm-smi/amd generic
         } catch {
           // failed
         }
@@ -127,15 +144,10 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
       try {
         // 'where' is windows equivalent of 'which'
         await execAsync('where hipinfo.exe');
-        return { type: 'amd', path: 'hipinfo.exe' };
+        return { type: 'rocm-smi', path: 'hipinfo.exe' };
       } catch {
         // failed
       }
-
-      // 3. Check common default location C:\Program Files\AMD\ROCm\*\bin\hipInfo.exe
-      // Since we can't easily glob, checking a likely default version or just skipping. 
-      // The user provided C:\AMD\ROCm\6.2\bin in their prompt example, so maybe check C:\AMD\ROCm ?
-      // Given the variability, reliance on PATH or HIP_PATH is best for now.
     }
   } catch (error) {
     return null;
@@ -147,11 +159,14 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
 async function getGpuStats(monitor: MonitorInfo, isWindows: boolean) {
   if (monitor.type === 'nvidia') {
     return getNvidiaStats(monitor.path, isWindows);
+  } else if (monitor.type === 'amd-smi') {
+    return getAmdSmiStats(monitor.path);
   } else {
+    // rocm-smi or hipinfo
     if (monitor.path.toLowerCase().includes('hipinfo')) {
       return getHipStats(monitor.path);
     }
-    return getAmdStats(monitor.path);
+    return getRocmStats(monitor.path);
   }
 }
 
@@ -299,7 +314,218 @@ async function getHipStats(path: string) {
   });
 }
 
-async function getAmdStats(path: string) {
+// Helper to read Sysfs values safely
+async function readSysfs(path: string): Promise<string | null> {
+  try {
+    const data = await readFileAsync(path, 'utf8');
+    return data.trim();
+  } catch {
+    return null;
+  }
+}
+
+async function getAmdSmiStats(toolPath: string) {
+  try {
+    // 1. Get Static Info (Name, Driver)
+    // amd-smi static --asic --driver --json
+    const staticCmd = `${toolPath} static --asic --driver --json`;
+    const { stdout: staticStdout } = await execAsync(staticCmd);
+    const staticData = JSON.parse(staticStdout);
+
+    // 2. Get Metrics (Usage, Power, Clock, Temp, Fan, Mem)
+    // amd-smi metric --usage --mem-usage --power --fan --clock --temperature --json
+    const metricCmd = `${toolPath} metric --usage --mem-usage --power --fan --clock --temperature --json`;
+    const { stdout: metricStdout } = await execAsync(metricCmd);
+    const metricData = JSON.parse(metricStdout);
+
+    // Map by GPU ID
+    // Assumption: Both commands return gpu_data array with corresponding "gpu" indices.
+    const staticGpus = staticData.gpu_data || [];
+    const metricGpus = metricData.gpu_data || [];
+
+    // Use traditional for-loop to support await
+    const gpus = await Promise.all(staticGpus.map(async (staticInfo: any) => {
+      const gpuId = staticInfo.gpu;
+      const metrics = metricGpus.find((m: any) => m.gpu === gpuId) || {};
+
+      const name = staticInfo.asic?.market_name || `AMD GPU ${gpuId}`;
+      const driverVersion = staticInfo.driver?.version || 'Unknown';
+
+      const parseVal = (val: any) => {
+        if (typeof val === 'number') return val;
+        if (typeof val === 'string' && val !== 'N/A') return parseFloat(val);
+        return 0;
+      };
+
+      const parseUnitVal = (obj: any) => {
+        if (!obj || obj === 'N/A' || !obj.value || obj.value === 'N/A') return null;
+        return parseFloat(obj.value);
+      };
+
+      // --- Try amd-smi values first, then fallback to sysfs ---
+
+      const sysfsCardPath = `/sys/class/drm/card${gpuId}/device`;
+      let hwmonPath: string | null = null;
+
+      const getHwmonPath = async () => {
+        if (hwmonPath) return hwmonPath;
+        try {
+          const files = await readdirAsync(`${sysfsCardPath}/hwmon`);
+          // Usually just one hwmon folder, pick first
+          if (files.length > 0) {
+            hwmonPath = `${sysfsCardPath}/hwmon/${files[0]}`;
+            return hwmonPath;
+          }
+        } catch { }
+        return null;
+      }
+
+
+      // -- Temperature --
+      let temp = parseUnitVal(metrics.temperature?.edge);
+      if (temp === null) {
+        // Fallback: cat $HWMON_PATH/temp1_input (millidegrees)
+        const hwmon = await getHwmonPath();
+        if (hwmon) {
+          const t = await readSysfs(`${hwmon}/temp1_input`);
+          if (t) temp = parseInt(t) / 1000;
+        }
+      }
+      temp = temp || 0;
+
+      // -- GPU Utilization --
+      let gpuUtil = parseUnitVal(metrics.usage?.gfx_activity);
+      if (gpuUtil === null) {
+        // Fallback: cat $CARD_PATH/gpu_busy_percent
+        const busyp = await readSysfs(`${sysfsCardPath}/gpu_busy_percent`);
+        if (busyp) gpuUtil = parseInt(busyp);
+      }
+      gpuUtil = gpuUtil || 0;
+
+      // -- Memory (Used/Total) --
+      let memVramTotalMB = parseUnitVal(metrics.mem_usage?.total_vram);
+      let memVramUsedMB = parseUnitVal(metrics.mem_usage?.used_vram);
+
+      if (memVramUsedMB === null) {
+        // Fallback: cat $CARD_PATH/mem_info_vram_used (bytes)
+        const used = await readSysfs(`${sysfsCardPath}/mem_info_vram_used`);
+        if (used) memVramUsedMB = parseInt(used) / 1024 / 1024;
+      }
+
+      // If total VRAM is missing, might be trickier from sysfs (mem_info_vram_total)
+      if (memVramTotalMB === null) {
+        const total = await readSysfs(`${sysfsCardPath}/mem_info_vram_total`);
+        if (total) memVramTotalMB = parseInt(total) / 1024 / 1024;
+      }
+
+      // -- GTT Memory (Used/Total) --
+      let memGttTotalMB = parseUnitVal(metrics.mem_usage?.total_gtt);
+      let memGttUsedMB = parseUnitVal(metrics.mem_usage?.used_gtt);
+
+      if (memGttUsedMB === null) {
+        // Fallback: cat $CARD_PATH/mem_info_gtt_used (bytes)
+        const used = await readSysfs(`${sysfsCardPath}/mem_info_gtt_used`);
+        if (used) memGttUsedMB = parseInt(used) / 1024 / 1024;
+      }
+
+      if (memGttTotalMB === null) {
+        const total = await readSysfs(`${sysfsCardPath}/mem_info_gtt_total`);
+        if (total) memGttTotalMB = parseInt(total) / 1024 / 1024;
+      }
+
+      // Keep VRAM and GTT separate
+      const memTotalMB = memVramTotalMB || 0;
+      const memUsedMB = memVramUsedMB || 0;
+
+      const gttTotalMB = memGttTotalMB || 0;
+      const gttUsedMB = memGttUsedMB || 0;
+
+      // Default free calculation based on VRAM only
+      const memFreeMB = parseUnitVal(metrics.mem_usage?.free_vram) || (memTotalMB - memUsedMB);
+
+      let memUtil = 0;
+      if (memTotalMB > 0) {
+        memUtil = Math.round((memUsedMB / memTotalMB) * 100);
+      }
+
+      // -- Power --
+      let powerDraw = parseUnitVal(metrics.power?.socket_power);
+      if (powerDraw === null) {
+        // Fallback: cat $HWMON_PATH/power1_average (microwatts)
+        const hwmon = await getHwmonPath();
+        if (hwmon) {
+          const p = await readSysfs(`${hwmon}/power1_average`);
+          if (p) powerDraw = parseInt(p) / 1000000;
+        }
+      }
+      const powerLimit = 0; // Usually not easily available in sysfs without digging
+
+      // -- Clocks --
+      let sclk = parseUnitVal(metrics.clock?.gfx_0?.clk);
+      let mclk = parseUnitVal(metrics.clock?.mem_0?.clk);
+
+      if (sclk === null) {
+        // Fallback: cat $HWMON_PATH/freq1_input (Hz)
+        const hwmon = await getHwmonPath();
+        if (hwmon) {
+          const c = await readSysfs(`${hwmon}/freq1_input`);
+          if (c) sclk = parseInt(c) / 1000 / 1000;
+        }
+      }
+      if (mclk === null) {
+        // Fallback: cat $HWMON_PATH/freq2_input (Hz)
+        const hwmon = await getHwmonPath();
+        if (hwmon) {
+          const c = await readSysfs(`${hwmon}/freq2_input`);
+          if (c) mclk = parseInt(c) / 1000 / 1000;
+        }
+      }
+
+      // -- Fan --
+      const fanSpeed = parseUnitVal(metrics.fan?.usage) || 0;
+      // iGPUs usually don't have own fans anyway, so 0 is fine. Dedicated likely has amd-smi working.
+
+      return {
+        index: gpuId,
+        name,
+        driverVersion,
+        temperature: Math.round(temp as number),
+        utilization: {
+          gpu: Math.round(gpuUtil as number),
+          memory: Math.round(memUtil),
+        },
+        memory: {
+          total: Math.round(memTotalMB),
+          free: Math.round(memFreeMB),
+          used: Math.round(memUsedMB),
+          gttTotal: Math.round(gttTotalMB),
+          gttUsed: Math.round(gttUsedMB),
+          gttFree: Math.round(gttTotalMB - gttUsedMB),
+        },
+        power: {
+          draw: powerDraw || 0,
+          limit: powerLimit,
+        },
+        clocks: {
+          graphics: Math.round(sclk || 0),
+          memory: Math.round(mclk || 0),
+        },
+        fan: {
+          speed: Math.round(fanSpeed),
+        },
+      };
+    }));
+
+    return gpus;
+
+  } catch (e) {
+    console.error('Failed to run/parse amd-smi', e);
+    // Fallback? Or just throw.
+    throw e;
+  }
+}
+
+async function getRocmStats(path: string) {
   // Use rocm-smi with json output
   // We request all relevant details
   // flags: --showproductname --showdriverversion --showtemp --showuse --showmeminfo --showpower --showclocks --showfan --json
