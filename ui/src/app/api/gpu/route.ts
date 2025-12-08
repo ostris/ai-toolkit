@@ -206,73 +206,78 @@ async function getAmdStats(path: string) {
     }
 
     const data = JSON.parse(jsonStr);
+
     // rocm-smi returns object with keys like "card0", "card1"
-    const gpus = Object.keys(data).map((cardKey, idx) => {
-      const card = data[cardKey];
+    // It also includes "system" which we should ignore
+    const gpus = Object.keys(data)
+      .filter(key => key.startsWith('card'))
+      .map((cardKey, idx) => {
+        const card = data[cardKey];
 
-      // Parse values. Note: keys might vary slightly by version, trying to be robust
-      // Typical keys: "Temperature (Sensor edge) (C)", "GPU use (%)", "Average Graphics Package Power (W)", "System Clock (MHz)"
+        // Parse values. Note: keys might vary slightly by version, trying to be robust
+        // Typical keys: "Temperature (Sensor edge) (C)", "GPU use (%)", "Average Graphics Package Power (W)", "System Clock (MHz)"
 
-      const getVal = (keys: string[], defaultVal: any = 0) => {
-        for (const k of keys) {
-          if (card[k] !== undefined) return card[k];
-        }
-        return defaultVal;
-      };
+        const getVal = (keys: string[], defaultVal: any = 0) => {
+          for (const k of keys) {
+            if (card[k] !== undefined) return card[k];
+          }
+          return defaultVal;
+        };
 
-      const name = getVal(['Card Series', 'Card Model', 'Device ID'], `AMD GPU ${idx}`);
-      const driverVersion = getVal(['Driver version'], 'Unknown');
+        const name = getVal(['Card Series', 'Card Model', 'Device ID'], `AMD GPU ${idx}`);
+        const driverVersion = getVal(['Driver version'], 'Unknown');
 
-      const temp = parseFloat(getVal(['Temperature (Sensor edge) (C)', 'Temperature (Junction) (C)'], '0'));
-      const gpuUtil = parseFloat(getVal(['GPU use (%)'], '0'));
-      const memUtil = parseFloat(getVal(['GPU Memory use (%)', 'Memory Activity'], '0'));
+        const temp = parseFloat(getVal(['Temperature (Sensor edge) (C)', 'Temperature (Junction) (C)'], '0'));
+        const gpuUtil = parseFloat(getVal(['GPU use (%)'], '0'));
+        const memUtil = parseFloat(getVal(['GPU Memory use (%)', 'Memory Activity'], '0'));
 
-      const memTotal = parseFloat(getVal(['VRAM Total Memory (B)', 'VRAM Total Memory (MB)', 'VRAM Total Memory (kB)'], '0')); // careful with units
-      const memUsed = parseFloat(getVal(['VRAM Total Used Memory (B)', 'VRAM Total Used Memory (MB)', 'VRAM Total Used Memory (kB)'], '0'));
+        const memTotal = parseFloat(getVal(['VRAM Total Memory (B)', 'VRAM Total Memory (MB)', 'VRAM Total Memory (kB)'], '0')); // careful with units
+        const memUsed = parseFloat(getVal(['VRAM Total Used Memory (B)', 'VRAM Total Used Memory (MB)', 'VRAM Total Used Memory (kB)'], '0'));
 
-      // Normalize memory to MB
-      // rocm-smi usually reports bytes if (B) is in key
-      let memTotalMB = memTotal;
-      let memUsedMB = memUsed;
+        // Normalize memory to MB
+        // rocm-smi usually reports bytes if (B) is in key
+        let memTotalMB = memTotal;
+        let memUsedMB = memUsed;
 
-      if (card['VRAM Total Memory (B)']) memTotalMB = memTotal / 1024 / 1024;
-      if (card['VRAM Total Used Memory (B)']) memUsedMB = memUsed / 1024 / 1024;
+        if (card['VRAM Total Memory (B)']) memTotalMB = memTotal / 1024 / 1024;
+        if (card['VRAM Total Used Memory (B)']) memUsedMB = memUsed / 1024 / 1024;
 
-      const powerDraw = parseFloat(getVal(['Average Graphics Package Power (W)', 'Average SOC Power (W)'], '0'));
-      const powerLimit = parseFloat(getVal(['Max Graphics Package Power (W)', 'Socket Power Limit (W)'], '0'));
+        const powerDraw = parseFloat(getVal(['Average Graphics Package Power (W)', 'Average SOC Power (W)'], '0'));
+        const powerLimit = parseFloat(getVal(['Max Graphics Package Power (W)', 'Socket Power Limit (W)'], '0'));
 
-      const sclk = parseFloat(getVal(['System Clock (MHz)', 'sclk_0 (MHz)'], '0'));
-      const mclk = parseFloat(getVal(['Memory Clock (MHz)', 'mclk_0 (MHz)'], '0'));
+        const sclk = parseFloat(getVal(['System Clock (MHz)', 'sclk_0 (MHz)'], '0'));
+        const mclk = parseFloat(getVal(['Memory Clock (MHz)', 'mclk_0 (MHz)'], '0'));
 
-      const fan = parseFloat(getVal(['Fan Speed (%)'], '0'));
+        const fan = parseFloat(getVal(['Fan Speed (%)'], '0'));
 
-      return {
-        index: idx,
-        name,
-        driverVersion,
-        temperature: Math.round(temp),
-        utilization: {
-          gpu: Math.round(gpuUtil),
-          memory: Math.round(memUtil),
-        },
-        memory: {
-          total: Math.round(memTotalMB),
-          free: Math.round(memTotalMB - memUsedMB),
-          used: Math.round(memUsedMB),
-        },
-        power: {
-          draw: powerDraw,
-          limit: powerLimit,
-        },
-        clocks: {
-          graphics: Math.round(sclk),
-          memory: Math.round(mclk),
-        },
-        fan: {
-          speed: Math.round(fan),
-        },
-      };
-    });
+        return {
+          index: idx,
+          name,
+          driverVersion,
+          temperature: Math.round(temp),
+          utilization: {
+            gpu: Math.round(gpuUtil),
+            memory: Math.round(memUtil),
+          },
+          memory: {
+            total: Math.round(memTotalMB),
+            free: Math.round(memTotalMB - memUsedMB),
+            used: Math.round(memUsedMB),
+          },
+          power: {
+            draw: powerDraw,
+            limit: powerLimit,
+          },
+          clocks: {
+            graphics: Math.round(sclk),
+            memory: Math.round(mclk),
+          },
+          fan: {
+            speed: Math.round(fan),
+          },
+        };
+      })
+      .filter(gpu => gpu.memory.total > 0); // Filter out devices with 0 VRAM (e.g. dummy devices or NPUs with no VRAM reporting)
 
     return gpus;
   } catch (e) {
