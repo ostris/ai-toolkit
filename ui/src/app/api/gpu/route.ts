@@ -108,6 +108,34 @@ async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> 
       } catch {
         // failed
       }
+    } else {
+      // Windows - check for hipinfo.exe
+      // 1. Check HIP_PATH
+      if (process.env.HIP_PATH) {
+        try {
+          // HIP_PATH usually ends with trailing slash, but ensure reliable join
+          const basePath = process.env.HIP_PATH.replace(/\\$/, '');
+          const manualPath = `${basePath}\\bin\\hipinfo.exe`;
+          await statAsync(manualPath);
+          return { type: 'amd', path: manualPath };
+        } catch {
+          // failed
+        }
+      }
+
+      // 2. Check path
+      try {
+        // 'where' is windows equivalent of 'which'
+        await execAsync('where hipinfo.exe');
+        return { type: 'amd', path: 'hipinfo.exe' };
+      } catch {
+        // failed
+      }
+
+      // 3. Check common default location C:\Program Files\AMD\ROCm\*\bin\hipInfo.exe
+      // Since we can't easily glob, checking a likely default version or just skipping. 
+      // The user provided C:\AMD\ROCm\6.2\bin in their prompt example, so maybe check C:\AMD\ROCm ?
+      // Given the variability, reliance on PATH or HIP_PATH is best for now.
     }
   } catch (error) {
     return null;
@@ -120,6 +148,9 @@ async function getGpuStats(monitor: MonitorInfo, isWindows: boolean) {
   if (monitor.type === 'nvidia') {
     return getNvidiaStats(monitor.path, isWindows);
   } else {
+    if (monitor.path.toLowerCase().includes('hipinfo')) {
+      return getHipStats(monitor.path);
+    }
     return getAmdStats(monitor.path);
   }
 }
@@ -185,6 +216,87 @@ async function getNvidiaStats(path: string, isWindows: boolean) {
     });
 
   return gpus;
+}
+
+async function getHipStats(path: string) {
+  const { stdout } = await execAsync(`"${path}"`);
+
+  // Parse hipinfo output
+  // Output format is block-based per device#
+  const devices = stdout.split('device#').slice(1); // skip preamble if any
+
+  return devices.map((deviceBlock, idx) => {
+    const lines = deviceBlock.split('\n');
+    const getVal = (key: string) => {
+      const line = lines.find(l => l.trim().startsWith(key));
+      if (!line) return null;
+      // split by first colon
+      const parts = line.split(':');
+      if (parts.length < 2) return null;
+      return parts.slice(1).join(':').trim();
+    };
+
+    const name = getVal('Name') || `AMD GPU ${idx}`;
+    // clockRate: 2162 Mhz
+    const clockRateStr = getVal('clockRate');
+    const clockRate = clockRateStr ? parseFloat(clockRateStr.split(' ')[0]) : 0;
+
+    const memClockStr = getVal('memoryClockRate');
+    const memClock = memClockStr ? parseFloat(memClockStr.split(' ')[0]) : 0;
+
+    // memInfo.total: 0.16 GB
+    // memInfo.free: 0.02 GB (14%)
+    const memTotalStr = getVal('memInfo.total');
+    let memTotalMB = 0;
+    if (memTotalStr) {
+      if (memTotalStr.includes('GB')) {
+        memTotalMB = parseFloat(memTotalStr.split(' ')[0]) * 1024;
+      } else if (memTotalStr.includes('MB')) {
+        memTotalMB = parseFloat(memTotalStr.split(' ')[0]);
+      }
+    }
+
+    const memFreeStr = getVal('memInfo.free');
+    let memFreeMB = 0;
+    if (memFreeStr) {
+      // extract number before unit
+      const val = parseFloat(memFreeStr.split(' ')[0]);
+      if (memFreeStr.includes('GB')) {
+        memFreeMB = val * 1024;
+      } else if (memFreeStr.includes('MB')) {
+        memFreeMB = val;
+      }
+    }
+
+    const memUsedMB = memTotalMB - memFreeMB;
+
+    return {
+      index: idx,
+      name,
+      driverVersion: 'Unknown', // hipinfo doesn't seem to show driver ver easily in this block
+      temperature: 0, // Not available
+      utilization: {
+        gpu: 0, // Not available
+        memory: memTotalMB > 0 ? Math.round((memUsedMB / memTotalMB) * 100) : 0,
+      },
+      memory: {
+        total: Math.round(memTotalMB),
+        free: Math.round(memFreeMB),
+        used: Math.round(memUsedMB),
+      },
+      power: {
+        draw: 0, // Not available
+        limit: 0, // Not available
+      },
+      clocks: {
+        graphics: Math.round(clockRate),
+        memory: Math.round(memClock),
+      },
+      fan: {
+        speed: 0, // Not available
+      },
+    };
+  });
 }
 
 async function getAmdStats(path: string) {
