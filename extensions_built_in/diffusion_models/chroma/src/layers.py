@@ -403,7 +403,6 @@ class Approximator(nn.Module):
         return next(self.parameters()).device
 
     def forward(self, x: Tensor) -> Tensor:
-        x = x.to(self.in_proj.weight.dtype)
         x = self.in_proj(x)
 
         for layer, norms in zip(self.layers, self.norms):

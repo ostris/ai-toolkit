@@ -56,11 +56,6 @@ class SampleItem:
         self.num_frames: int = kwargs.get('num_frames', sample_config.num_frames)
         self.ctrl_img: Optional[str] = kwargs.get('ctrl_img', None)
         self.ctrl_idx: int = kwargs.get('ctrl_idx', 0)
-        # for multi control image models
-        self.ctrl_img_1: Optional[str] = kwargs.get('ctrl_img_1', self.ctrl_img)
-        self.ctrl_img_2: Optional[str] = kwargs.get('ctrl_img_2', None)
-        self.ctrl_img_3: Optional[str] = kwargs.get('ctrl_img_3', None)
-        
         self.network_multiplier: float = kwargs.get('network_multiplier', sample_config.network_multiplier)
         # convert to a number if it is a string
         if isinstance(self.network_multiplier, str):
@@ -70,8 +65,6 @@ class SampleItem:
                 print(f"Invalid network_multiplier {self.network_multiplier}, defaulting to 1.0")
                 self.network_multiplier = 1.0
         
-        # only for models that support it, (qwen image edit 2509 for now)
-        self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
 
 class SampleConfig:
     def __init__(self, **kwargs):
@@ -106,8 +99,6 @@ class SampleConfig:
         ]
         raw_samples = kwargs.get('samples', default_samples_kwargs)
         self.samples = [SampleItem(self, **item) for item in raw_samples]
-        # only for models that support it, (qwen image edit 2509 for now)
-        self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
         
     @property
     def prompts(self):
@@ -208,9 +199,6 @@ class NetworkConfig:
         
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
-        
-        # ramtorch, doesn't work yet
-        self.layer_offloading = kwargs.get('layer_offloading', False)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']
@@ -364,8 +352,6 @@ class TrainConfig:
         self.dtype: str = kwargs.get('dtype', 'fp32')
         self.xformers = kwargs.get('xformers', False)
         self.sdp = kwargs.get('sdp', False)
-        # see https://huggingface.co/docs/diffusers/main/optimization/attention_backends#available-backends for options
-        self.attention_backend: str = kwargs.get('attention_backend', 'native')  # native, flash, _flash_3_hub, _flash_3, 
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', False)
         self.train_refiner = kwargs.get('train_refiner', True)
@@ -451,11 +437,7 @@ class TrainConfig:
         self.diff_output_preservation_multiplier = kwargs.get('diff_output_preservation_multiplier', 1.0)
         # If the trigger word is in the prompt, we will use this class name to replace it eg. "sks woman" -> "woman"
         self.diff_output_preservation_class = kwargs.get('diff_output_preservation_class', '')
-        
-        # blank prompt preservation will preserve the model's knowledge of a blank prompt
-        self.blank_prompt_preservation = kwargs.get('blank_prompt_preservation', False)
-        self.blank_prompt_preservation_multiplier = kwargs.get('blank_prompt_preservation_multiplier', 1.0)
-        
+
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
             self.match_adapter_chance = 1.0
@@ -541,14 +523,10 @@ class TrainConfig:
         # contrastive loss
         self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
         self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
-        self.do_guidance_loss_cfg_zero: bool = kwargs.get('do_guidance_loss_cfg_zero', False)
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
-
-        self.do_differential_guidance = kwargs.get('do_differential_guidance', False)
-        self.differential_guidance_scale = kwargs.get('differential_guidance_scale', 3.0)
-
+        
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
@@ -635,21 +613,6 @@ class ModelConfig:
         
         self.arch: ModelArch = kwargs.get("arch", None)
         
-        # auto memory management, only for some models
-        self.auto_memory = kwargs.get("auto_memory", False)
-        # auto memory is deprecated, use layer offloading instead
-        if self.auto_memory:
-            print("auto_memory is deprecated, use layer_offloading instead")
-        self.layer_offloading = kwargs.get("layer_offloading", self.auto_memory )
-        if self.layer_offloading and self.qtype == "qfloat8":
-            self.qtype = "float8"
-        if self.layer_offloading and self.qtype_te == "qfloat8":
-            self.qtype_te = "float8"
-        
-        # 0 is off and 1.0 is 100% of the layers
-        self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
-        self.layer_offloading_text_encoder_percent = kwargs.get("layer_offloading_text_encoder_percent", 1.0)
-
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for
         # 20 different model variants
@@ -676,7 +639,6 @@ class ModelConfig:
         
         if self.arch == "flex1":
             self.arch = "flux"
-            
         
         # handle migrating to new model arch
         if self.arch is not None:
@@ -864,21 +826,6 @@ class DatasetConfig:
         if self.control_path == '':
             self.control_path = None
         
-        # handle multi control inputs from the ui. It is just easier to handle it here for a cleaner ui experience
-        control_path_1 = kwargs.get('control_path_1', None)
-        control_path_2 = kwargs.get('control_path_2', None)
-        control_path_3 = kwargs.get('control_path_3', None)
-        
-        if any([control_path_1, control_path_2, control_path_3]):
-            control_paths = []
-            if control_path_1:
-                control_paths.append(control_path_1)
-            if control_path_2:
-                control_paths.append(control_path_2)
-            if control_path_3:
-                control_paths.append(control_path_3)
-            self.control_path = control_paths
-        
         # color for transparent reigon of control images with transparency
         self.control_transparent_color: List[int] = kwargs.get('control_transparent_color', [0, 0, 0])
         # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
@@ -1019,13 +966,9 @@ class GenerateImageConfig:
             extra_values: List[float] = None,  # extra values to save with prompt file
             logger: Optional[EmptyLogger] = None,
             ctrl_img: Optional[str] = None,  # control image for controlnet
-            ctrl_img_1: Optional[str] = None,  # first control image for multi control model
-            ctrl_img_2: Optional[str] = None,  # second control image for multi control model
-            ctrl_img_3: Optional[str] = None,  # third control image for multi control model
             num_frames: int = 1,
             fps: int = 15,
-            ctrl_idx: int = 0,
-            do_cfg_norm: bool = False,
+            ctrl_idx: int = 0
     ):
         self.width: int = width
         self.height: int = height
@@ -1059,12 +1002,6 @@ class GenerateImageConfig:
         self.ctrl_img = ctrl_img
         self.ctrl_idx = ctrl_idx
         
-        if ctrl_img_1 is None and ctrl_img is not None:
-            ctrl_img_1 = ctrl_img
-        
-        self.ctrl_img_1 = ctrl_img_1
-        self.ctrl_img_2 = ctrl_img_2
-        self.ctrl_img_3 = ctrl_img_3
 
         # prompt string will override any settings above
         self._process_prompt_string()
@@ -1095,8 +1032,6 @@ class GenerateImageConfig:
         self.width = max(64, self.width - self.width % 8)  # round to divisible by 8
 
         self.logger = logger
-        
-        self.do_cfg_norm: bool = do_cfg_norm
 
     def set_gen_time(self, gen_time: int = None):
         if gen_time is not None:
@@ -1326,8 +1261,5 @@ def validate_configs(
     if model_config.arch == 'qwen_image_edit':
         if train_config.unload_text_encoder:
             raise ValueError("Cannot cache unload text encoder with qwen_image_edit model. Control images are encoded with text embeddings. You can cache the text embeddings though")
-    
-    if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
-        raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
 
     

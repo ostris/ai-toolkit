@@ -42,21 +42,12 @@ export async function POST(request: Request) {
       });
       return NextResponse.json(training);
     } else {
-      // find the highest queue position and add 1000
-      const highestQueuePosition = await prisma.job.aggregate({
-        _max: {
-          queue_position: true,
-        },
-      });
-      const newQueuePosition = (highestQueuePosition._max.queue_position || 0) + 1000;
-
       // Create new training
       const training = await prisma.job.create({
         data: {
           name,
           gpu_ids,
           job_config: JSON.stringify(job_config),
-          queue_position: newQueuePosition,
         },
       });
       return NextResponse.json(training);

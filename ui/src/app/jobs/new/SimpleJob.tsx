@@ -11,14 +11,11 @@ import {
 import { defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
-import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
+import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
-import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
-import { handleModelArchChange } from './utils';
-import { IoFlaskSharp } from 'react-icons/io5';
 
 type Props = {
   jobConfig: JobConfig;
@@ -188,7 +185,58 @@ export default function SimpleJob({
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
               onChange={value => {
-                handleModelArchChange(jobConfig.config.process[0].model.arch, value, jobConfig, setJobConfig);
+                const currentArch = modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch);
+                if (!currentArch || currentArch.name === value) {
+                  return;
+                }
+                // update the defaults when a model is selected
+                const newArch = modelArchs.find(model => model.name === value);
+
+                // update vram setting
+                if (!newArch?.additionalSections?.includes('model.low_vram')) {
+                  setJobConfig(false, 'config.process[0].model.low_vram');
+                }
+
+                // revert defaults from previous model
+                for (const key in currentArch.defaults) {
+                  setJobConfig(currentArch.defaults[key][1], key);
+                }
+
+                if (newArch?.defaults) {
+                  for (const key in newArch.defaults) {
+                    setJobConfig(newArch.defaults[key][0], key);
+                  }
+                }
+                // set new model
+                setJobConfig(value, 'config.process[0].model.arch');
+
+                // update datasets
+                const hasControlPath = newArch?.additionalSections?.includes('datasets.control_path') || false;
+                const hasNumFrames = newArch?.additionalSections?.includes('datasets.num_frames') || false;
+                const controls = newArch?.controls ?? [];
+                const datasets = jobConfig.config.process[0].datasets.map(dataset => {
+                  const newDataset = objectCopy(dataset);
+                  newDataset.controls = controls;
+                  if (!hasControlPath) {
+                    newDataset.control_path = null; // reset control path if not applicable
+                  }
+                  if (!hasNumFrames) {
+                    newDataset.num_frames = 1; // reset num_frames if not applicable
+                  }
+                  return newDataset;
+                });
+                setJobConfig(datasets, 'config.process[0].datasets');
+
+                // update samples
+                const hasSampleCtrlImg = newArch?.additionalSections?.includes('sample.ctrl_img') || false;
+                const samples = jobConfig.config.process[0].sample.samples.map(sample => {
+                  const newSample = objectCopy(sample);
+                  if (!hasSampleCtrlImg) {
+                    delete newSample.ctrl_img; // remove ctrl_img if not applicable
+                  }
+                  return newSample;
+                });
+                setJobConfig(samples, 'config.process[0].sample.samples');
               }}
               options={groupedModelOptions}
             />
@@ -213,56 +261,6 @@ export default function SimpleJob({
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
               </FormGroup>
-            )}
-            {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
-              <Checkbox
-                label="Match Target Res"
-                docKey="model.qie.match_target_res"
-                checked={jobConfig.config.process[0].model.model_kwargs.match_target_res}
-                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
-              />
-            )}
-            {modelArch?.additionalSections?.includes('model.layer_offloading') && (
-              <>
-                <Checkbox
-                  label={
-                    <>
-                      Layer Offloading <IoFlaskSharp className="inline text-yellow-500" name="Experimental" />{' '}
-                    </>
-                  }
-                  checked={jobConfig.config.process[0].model.layer_offloading || false}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.layer_offloading')}
-                  docKey="model.layer_offloading"
-                />
-                {jobConfig.config.process[0].model.layer_offloading && (
-                  <div className="pt-2">
-                    <SliderInput
-                      label="Transformer Offload %"
-                      value={Math.round(
-                        (jobConfig.config.process[0].model.layer_offloading_transformer_percent ?? 1) * 100,
-                      )}
-                      onChange={value =>
-                        setJobConfig(value * 0.01, 'config.process[0].model.layer_offloading_transformer_percent')
-                      }
-                      min={0}
-                      max={100}
-                      step={1}
-                    />
-                    <SliderInput
-                      label="Text Encoder Offload %"
-                      value={Math.round(
-                        (jobConfig.config.process[0].model.layer_offloading_text_encoder_percent ?? 1) * 100,
-                      )}
-                      onChange={value =>
-                        setJobConfig(value * 0.01, 'config.process[0].model.layer_offloading_text_encoder_percent')
-                      }
-                      min={0}
-                      max={100}
-                      step={1}
-                    />
-                  </div>
-                )}
-              </>
             )}
           </Card>
           {disableSections.includes('model.quantize') ? null : (
@@ -526,15 +524,13 @@ export default function SimpleJob({
                   ]}
                 />
                 <SelectInput
-                  label="Loss Type"
+                  label="Noise Scheduler"
                   className="pt-2"
-                  value={jobConfig.config.process[0].train.loss_type}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.loss_type')}
+                  value={jobConfig.config.process[0].train.noise_scheduler}
+                  onChange={value => setJobConfig(value, 'config.process[0].train.noise_scheduler')}
                   options={[
-                    { value: 'mse', label: 'Mean Squared Error' },
-                    { value: 'mae', label: 'Mean Absolute Error' },
-                    { value: 'wavelet', label: 'Wavelet' },
-                    { value: 'stepped', label: 'Stepped Recovery' },
+                    { value: 'flowmatch', label: 'FlowMatch' },
+                    { value: 'ddpm', label: 'DDPM' },
                   ]}
                 />
               </div>
@@ -559,19 +555,17 @@ export default function SimpleJob({
                 )}
 
                 <FormGroup label="Text Encoder Optimizations" className="pt-2">
-                  {!disableSections.includes('train.unload_text_encoder') && (
-                    <Checkbox
-                      label="Unload TE"
-                      checked={jobConfig.config.process[0].train.unload_text_encoder || false}
-                      docKey={'train.unload_text_encoder'}
-                      onChange={value => {
-                        setJobConfig(value, 'config.process[0].train.unload_text_encoder');
-                        if (value) {
-                          setJobConfig(false, 'config.process[0].train.cache_text_embeddings');
-                        }
-                      }}
-                    />
-                  )}
+                  <Checkbox
+                    label="Unload TE"
+                    checked={jobConfig.config.process[0].train.unload_text_encoder || false}
+                    docKey={'train.unload_text_encoder'}
+                    onChange={value => {
+                      setJobConfig(value, 'config.process[0].train.unload_text_encoder');
+                      if (value) {
+                        setJobConfig(false, 'config.process[0].train.cache_text_embeddings');
+                      }
+                    }}
+                  />
                   <Checkbox
                     label="Cache Text Embeddings"
                     checked={jobConfig.config.process[0].train.cache_text_embeddings || false}
@@ -586,27 +580,16 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
               <div>
-                {disableSections.includes('train.diff_output_preservation') ||
-                disableSections.includes('train.blank_prompt_preservation') ? null : (
-                  <FormGroup label="Regularization">
-                    <></>
-                  </FormGroup>
-                )}
                 {disableSections.includes('train.diff_output_preservation') ? null : (
                   <>
-                    <Checkbox
-                      label="Differential Output Preservation"
-                      docKey={'train.diff_output_preservation'}
-                      className="pt-1"
-                      checked={jobConfig.config.process[0].train.diff_output_preservation || false}
-                      onChange={value => {
-                        setJobConfig(value, 'config.process[0].train.diff_output_preservation');
-                        if (value && jobConfig.config.process[0].train.blank_prompt_preservation) {
-                          // only one can be enabled at a time
-                          setJobConfig(false, 'config.process[0].train.blank_prompt_preservation');
-                        }
-                      }}
-                    />
+                    <FormGroup label="Regularization">
+                      <Checkbox
+                        label="Differential Output Preservation"
+                        className="pt-1"
+                        checked={jobConfig.config.process[0].train.diff_output_preservation || false}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.diff_output_preservation')}
+                      />
+                    </FormGroup>
                     {jobConfig.config.process[0].train.diff_output_preservation && (
                       <>
                         <NumberInput
@@ -621,7 +604,7 @@ export default function SimpleJob({
                         />
                         <TextInput
                           label="DOP Preservation Class"
-                          className="pt-2 pb-4"
+                          className="pt-2"
                           value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
                           onChange={value =>
                             setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')
@@ -630,78 +613,6 @@ export default function SimpleJob({
                         />
                       </>
                     )}
-                  </>
-                )}
-                {disableSections.includes('train.blank_prompt_preservation') ? null : (
-                  <>
-                    <Checkbox
-                      label="Blank Prompt Preservation"
-                      docKey={'train.blank_prompt_preservation'}
-                      className="pt-1"
-                      checked={jobConfig.config.process[0].train.blank_prompt_preservation || false}
-                      onChange={value => {
-                        setJobConfig(value, 'config.process[0].train.blank_prompt_preservation');
-                        if (value && jobConfig.config.process[0].train.diff_output_preservation) {
-                          // only one can be enabled at a time
-                          setJobConfig(false, 'config.process[0].train.diff_output_preservation');
-                        }
-                      }}
-                    />
-                    {jobConfig.config.process[0].train.blank_prompt_preservation && (
-                      <>
-                        <NumberInput
-                          label="BPP Loss Multiplier"
-                          className="pt-2"
-                          value={
-                            (jobConfig.config.process[0].train.blank_prompt_preservation_multiplier as number) || 1.0
-                          }
-                          onChange={value =>
-                            setJobConfig(value, 'config.process[0].train.blank_prompt_preservation_multiplier')
-                          }
-                          placeholder="eg. 1.0"
-                          min={0}
-                        />
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </Card>
-        </div>
-        <div>
-          <Card title="Advanced" collapsible>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div>
-                <Checkbox
-                  label="Do Differential Guidance"
-                  docKey={'train.do_differential_guidance'}
-                  className="pt-1"
-                  checked={jobConfig.config.process[0].train.do_differential_guidance || false}
-                  onChange={value => {
-                    let newValue = value == false ? undefined : value;
-                    setJobConfig(newValue, 'config.process[0].train.do_differential_guidance');
-                    if (!newValue) {
-                      setJobConfig(undefined, 'config.process[0].train.differential_guidance_scale');
-                    } else if (
-                      jobConfig.config.process[0].train.differential_guidance_scale === undefined ||
-                      jobConfig.config.process[0].train.differential_guidance_scale === null
-                    ) {
-                      // set default differential guidance scale to 3.0
-                      setJobConfig(3.0, 'config.process[0].train.differential_guidance_scale');
-                    }
-                  }}
-                />
-                {jobConfig.config.process[0].train.differential_guidance_scale && (
-                  <>
-                    <NumberInput
-                      label="Differential Guidance Scale"
-                      className="pt-2"
-                      value={(jobConfig.config.process[0].train.differential_guidance_scale as number) || 3.0}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.differential_guidance_scale')}
-                      placeholder="eg. 3.0"
-                      min={0}
-                    />
                   </>
                 )}
               </div>
@@ -729,7 +640,7 @@ export default function SimpleJob({
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <div>
                       <SelectInput
-                        label="Target Dataset"
+                        label="Dataset"
                         value={dataset.folder_path}
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
                         options={datasetOptions}
@@ -745,49 +656,6 @@ export default function SimpleJob({
                           }
                           options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
                         />
-                      )}
-                      {modelArch?.additionalSections?.includes('datasets.multi_control_paths') && (
-                        <>
-                          <SelectInput
-                            label="Control Dataset 1"
-                            docKey="datasets.multi_control_paths"
-                            value={dataset.control_path_1 ?? ''}
-                            className="pt-2"
-                            onChange={value =>
-                              setJobConfig(
-                                value == '' ? null : value,
-                                `config.process[0].datasets[${i}].control_path_1`,
-                              )
-                            }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
-                          />
-                          <SelectInput
-                            label="Control Dataset 2"
-                            docKey="datasets.multi_control_paths"
-                            value={dataset.control_path_2 ?? ''}
-                            className="pt-2"
-                            onChange={value =>
-                              setJobConfig(
-                                value == '' ? null : value,
-                                `config.process[0].datasets[${i}].control_path_2`,
-                              )
-                            }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
-                          />
-                          <SelectInput
-                            label="Control Dataset 3"
-                            docKey="datasets.multi_control_paths"
-                            value={dataset.control_path_3 ?? ''}
-                            className="pt-2"
-                            onChange={value =>
-                              setJobConfig(
-                                value == '' ? null : value,
-                                `config.process[0].datasets[${i}].control_path_3`,
-                              )
-                            }
-                            options={[{ value: '', label: <>&nbsp;</> }, ...datasetOptions]}
-                          />
-                        </>
                       )}
                       <NumberInput
                         label="LoRA Weight"
@@ -1192,46 +1060,30 @@ export default function SimpleJob({
                           />
                         </div>
                       </div>
-                      {modelArch?.additionalSections?.includes('datasets.multi_control_paths') && (
-                        <FormGroup label="Control Images" className="pt-2 ml-4">
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 mt-2">
-                            {['ctrl_img_1', 'ctrl_img_2', 'ctrl_img_3'].map((ctrlKey, ctrl_idx) => (
-                              <SampleControlImage
-                                key={ctrlKey}
-                                instruction={`Add Control Image ${ctrl_idx + 1}`}
-                                className=""
-                                src={sample[ctrlKey as keyof typeof sample] as string}
-                                onNewImageSelected={imagePath => {
-                                  if (!imagePath) {
-                                    let newSamples = objectCopy(jobConfig.config.process[0].sample.samples);
-                                    delete newSamples[i][ctrlKey as keyof typeof sample];
-                                    setJobConfig(newSamples, 'config.process[0].sample.samples');
-                                  } else {
-                                    setJobConfig(imagePath, `config.process[0].sample.samples[${i}].${ctrlKey}`);
-                                  }
-                                }}
-                              />
-                            ))}
-                          </div>
-                        </FormGroup>
-                      )}
+
                       {modelArch?.additionalSections?.includes('sample.ctrl_img') && (
-                        <SampleControlImage
-                          className="mt-6 ml-4"
-                          src={sample.ctrl_img
+                        <div
+                          className="h-14 w-14 mt-2 ml-4 border border-gray-500 flex items-center justify-center rounded cursor-pointer hover:bg-gray-700 transition-colors"
+                          style={{
+                            backgroundImage: sample.ctrl_img
                               ? `url(${`/aitoolkit/api/img/${encodeURIComponent(sample.ctrl_img)}`})`
-                              : 'none'
-                          }
-                          onNewImageSelected={imagePath => {
-                            if (!imagePath) {
-                              let newSamples = objectCopy(jobConfig.config.process[0].sample.samples);
-                              delete newSamples[i].ctrl_img;
-                              setJobConfig(newSamples, 'config.process[0].sample.samples');
-                            } else {
-                              setJobConfig(imagePath, `config.process[0].sample.samples[${i}].ctrl_img`);
-                            }
+                              : 'none',
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            marginBottom: '-1rem',
                           }}
-                        />
+                          onClick={() => {
+                            openAddImageModal(imagePath => {
+                              console.log('Selected image path:', imagePath);
+                              if (!imagePath) return;
+                              setJobConfig(imagePath, `config.process[0].sample.samples[${i}].ctrl_img`);
+                            });
+                          }}
+                        >
+                          {!sample.ctrl_img && (
+                            <div className="text-gray-400 text-xs text-center font-bold">Add Control Image</div>
+                          )}
+                        </div>
                       )}
                     </div>
                     <div className="pb-4"></div>

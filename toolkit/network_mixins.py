@@ -718,18 +718,12 @@ class ToolkitNetworkMixin:
         if hasattr(first_module, 'lora_down'):
             device = first_module.lora_down.weight.device
             dtype = first_module.lora_down.weight.dtype
-            if hasattr(first_module.lora_down, '_memory_management_device'):
-                device = first_module.lora_down._memory_management_device
         elif hasattr(first_module, 'lokr_w1'):
             device = first_module.lokr_w1.device
             dtype = first_module.lokr_w1.dtype
-            if hasattr(first_module.lokr_w1, '_memory_management_device'):
-                device = first_module.lokr_w1._memory_management_device
         elif hasattr(first_module, 'lokr_w1_a'):
             device = first_module.lokr_w1_a.device
             dtype = first_module.lokr_w1_a.dtype
-            if hasattr(first_module.lokr_w1_a, '_memory_management_device'):
-                device = first_module.lokr_w1_a._memory_management_device
         else:
             raise ValueError("Unknown module type")
         with torch.no_grad():

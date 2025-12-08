@@ -197,10 +197,6 @@ class Wan22Pipeline(WanPipeline):
             boundary_timestep = None
         
         current_model = self.transformer
-        
-        if self._aggressive_offload:
-            # we don't have one loaded yet in aggressive offload mode
-            current_model = None
 
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
