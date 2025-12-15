@@ -10,6 +10,19 @@ def get_accelerator() -> Accelerator:
         global_accelerator = Accelerator()
     return global_accelerator
 
+
+def reset_accelerator() -> None:
+    global global_accelerator
+    accelerator = global_accelerator
+    if accelerator is None:
+        return
+    try:
+        accelerator.free_memory()
+    except Exception:
+        pass
+    global_accelerator = None
+
+
 def unwrap_model(model):
     try:
         accelerator = get_accelerator()

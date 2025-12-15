@@ -2560,6 +2560,75 @@ For more details, including weighting, merging and fusing LoRAs, check the [docu
         return readme_content
 
     def cleanup_vram(self):
+        if hasattr(self, "ema") and self.ema is not None:
+            try:
+                self.ema.to("cpu")
+            except Exception:
+                pass
+            try:
+                self.ema = None
+            except Exception:
+                pass
+
+        if hasattr(self, "modules_being_trained") and isinstance(self.modules_being_trained, list):
+            for module in self.modules_being_trained:
+                try:
+                    if hasattr(module, "to"):
+                        module.to("cpu")
+                except Exception:
+                    pass
+            try:
+                self.modules_being_trained = []
+            except Exception:
+                pass
+
+        if hasattr(self, "params"):
+            try:
+                self.params = []
+            except Exception:
+                pass
+
+        for attr in ("data_loader", "data_loader_reg", "datasets", "datasets_reg"):
+            if hasattr(self, attr):
+                try:
+                    value = getattr(self, attr)
+                    if attr.startswith("datasets") and isinstance(value, list):
+                        for dataset in value:
+                            try:
+                                if hasattr(dataset, "sd"):
+                                    dataset.sd = None
+                            except Exception:
+                                pass
+                    setattr(self, attr, None)
+                except Exception:
+                    pass
+
+        for attr in (
+            "cached_blank_embeds",
+            "cached_trigger_embeds",
+            "diff_output_preservation_embeds",
+            "unconditional_embeds",
+            "_clip_image_embeds_unconditional",
+        ):
+            if hasattr(self, attr):
+                try:
+                    setattr(self, attr, None)
+                except Exception:
+                    pass
+
+        for attr in ("taesd", "assistant_adapter", "dfe"):
+            if hasattr(self, attr):
+                try:
+                    value = getattr(self, attr)
+                    if value is not None and hasattr(value, "to"):
+                        value.to("cpu")
+                except Exception:
+                    pass
+                try:
+                    setattr(self, attr, None)
+                except Exception:
+                    pass
+
         if hasattr(self, 'sd') and self.sd is not None:
             try:
                 if hasattr(self.sd, 'unet') and self.sd.unet is not None:

@@ -60,7 +60,7 @@ class TrainingSessionManager:
         for _, session in sessions:
             session.dispose()
 
-    def free_all_vram(self) -> Dict[str, Any]:
+    def free_all_vram(self, *, wait_timeout: float = 30.0) -> Dict[str, Any]:
         freed_sessions: List[str] = []
         failed_sessions: List[str] = []
 
@@ -69,17 +69,52 @@ class TrainingSessionManager:
 
         for sid, session in sessions:
             try:
-                if session.free_vram():
-                    freed_sessions.append(sid)
-                else:
+                stopped = session.wait_until_stopped(timeout=0)
+                if not stopped and (session.controller.abort_event.is_set() or session.status == "aborting"):
+                    stopped = session.wait_until_stopped(timeout=wait_timeout)
+                if not stopped:
                     failed_sessions.append(sid)
+                    continue
+                session.join(timeout=2)
+                session.free_vram()
+                freed_sessions.append(sid)
             except Exception:
                 failed_sessions.append(sid)
+
+        all_stopped = all(session.wait_until_stopped(timeout=0) for _, session in sessions)
+
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+
+        if all_stopped:
+            try:
+                from toolkit.memory_management import clear_device_state
+
+                clear_device_state()
+            except Exception:
+                pass
+
+            try:
+                from toolkit.accelerator import reset_accelerator
+
+                reset_accelerator()
+            except Exception:
+                pass
 
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
 
         return {
             'freed_sessions': freed_sessions,
