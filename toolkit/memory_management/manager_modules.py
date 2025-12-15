@@ -9,7 +9,7 @@ I simply modified it to work with a memory management model and with AI Toolkit'
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 from torch.overrides import has_torch_function_unary  # (ADD) torchao detection
 
 if TYPE_CHECKING:
@@ -54,6 +54,39 @@ def _get_device_state(device: torch.device):
                 "backward_clk": 0,
             }
     return _DEVICE_STATE[device]
+
+
+def clear_device_state(device: Optional[Union[str, torch.device]] = None) -> None:
+    if device is None:
+        devices = list(_DEVICE_STATE.keys())
+    else:
+        devices = [torch.device(device) if isinstance(device, str) else device]
+
+    for dev in devices:
+        state = _DEVICE_STATE.get(dev)
+        if state is None:
+            continue
+
+        if isinstance(dev, torch.device) and dev.type == "cuda" and torch.cuda.is_available():
+            try:
+                with torch.cuda.device(dev):
+                    torch.cuda.synchronize()
+            except Exception:
+                pass
+
+        for key in (
+            "w_buffers",
+            "b_buffers",
+            "w_bwd_buffers",
+            "w_grad_buffers",
+            "b_grad_buffers",
+        ):
+            buffers = state.get(key)
+            if isinstance(buffers, list):
+                for i in range(len(buffers)):
+                    buffers[i] = None
+
+        _DEVICE_STATE.pop(dev, None)
 
 
 # (ADD) detect torchao wrapper tensors
