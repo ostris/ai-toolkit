@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import time
 from collections import OrderedDict
 from typing import TYPE_CHECKING, List, Dict, Union
 import traceback
@@ -745,12 +746,19 @@ class ImageProcessingDTOMixin:
         if self.dataset_config.num_frames > 1:
             self.load_and_process_video(transform, only_load_latents)
             return
-        try:
-            img = Image.open(self.path)
-            img = exif_transpose(img)
-        except Exception as e:
-            print_acc(f"Error: {e}")
-            print_acc(f"Error loading image: {self.path}")
+        img = None
+        for attempt in range(20):
+            try:
+                img = Image.open(self.path)
+                img = exif_transpose(img)
+                break
+            except Exception as e:
+                if attempt < 19:
+                    time.sleep(2)
+                else:
+                    print_acc(f"Error: {e}")
+                    print_acc(f"Error loading image: {self.path}")
+                    raise RuntimeError(f"Failed to load image after 20 attempts: {self.path}") from e
 
         if self.use_alpha_as_mask:
             # we do this to make sure it does not replace the alpha with another color
@@ -867,59 +875,53 @@ class InpaintControlFileItemDTOMixin:
                     break
                 
     def load_inpaint_image(self: 'FileItemDTO'):
-        try:
-            # image must have alpha channel for inpaint
-            img = Image.open(self.inpaint_path)
-            # make sure has aplha
-            if img.mode != 'RGBA':
-                return
-            img = exif_transpose(img)
-        
-            w, h = img.size
-            if w > h and self.scale_to_width < self.scale_to_height:
-                # throw error, they should match
-                raise ValueError(
-                    f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
-            elif h > w and self.scale_to_height < self.scale_to_width:
-                # throw error, they should match
-                raise ValueError(
-                    f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+        img = None
+        for attempt in range(20):
+            try:
+                img = Image.open(self.inpaint_path)
+                if img.mode != 'RGBA':
+                    return
+                img = exif_transpose(img)
+                break
+            except Exception as e:
+                if attempt < 19:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"Failed to load inpaint image after 20 attempts: {self.inpaint_path}") from e
 
-            if self.flip_x:
-                # do a flip
-                img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            if self.flip_y:
-                # do a flip
-                img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        w, h = img.size
+        if w > h and self.scale_to_width < self.scale_to_height:
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+        elif h > w and self.scale_to_height < self.scale_to_width:
+            raise ValueError(
+                f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
 
-            if self.dataset_config.buckets:
-                # scale and crop based on file item
-                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
-                # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
-                # crop
-                img = img.crop((
-                    self.crop_x,
-                    self.crop_y,
-                    self.crop_x + self.crop_width,
-                    self.crop_y + self.crop_height
-                ))
-            else:
-                raise Exception("Inpaint images not supported for non-bucket datasets")
-            
-            transform = transforms.Compose([
-                transforms.ToTensor(),
-            ])
-            if self.aug_replay_spatial_transforms:
-                tensor = self.augment_spatial_control(img, transform=transform)
-            else:
-                tensor = transform(img)
-            
-            # is 0 to 1 with alpha
-            self.inpaint_tensor = tensor
-        
-        except Exception as e:
-            print_acc(f"Error: {e}")
-            print_acc(f"Error loading image: {self.inpaint_path}")
+        if self.flip_x:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        if self.flip_y:
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+        if self.dataset_config.buckets:
+            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            img = img.crop((
+                self.crop_x,
+                self.crop_y,
+                self.crop_x + self.crop_width,
+                self.crop_y + self.crop_height
+            ))
+        else:
+            raise Exception("Inpaint images not supported for non-bucket datasets")
+
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+        ])
+        if self.aug_replay_spatial_transforms:
+            tensor = self.augment_spatial_control(img, transform=transform)
+        else:
+            tensor = transform(img)
+
+        self.inpaint_tensor = tensor
 
     
     def cleanup_inpaint(self: 'FileItemDTO'):
@@ -969,23 +971,25 @@ class ControlFileItemDTOMixin:
             control_path_list = [self.control_path]
         
         for control_path in control_path_list:
-            try:
-                img = Image.open(control_path)
-                img = exif_transpose(img)
+            img = None
+            for attempt in range(20):
+                try:
+                    img = Image.open(control_path)
+                    img = exif_transpose(img)
 
-                if img.mode in ("RGBA", "LA"):
-                    # Create a background with the specified transparent color
-                    transparent_color = tuple(self.dataset_config.control_transparent_color)
-                    background = Image.new("RGB", img.size, transparent_color)
-                    # Paste the image on top using its alpha channel as mask
-                    background.paste(img, mask=img.getchannel("A"))
-                    img = background
-                else:
-                    # Already no alpha channel
-                    img = img.convert("RGB")
-            except Exception as e:
-                print_acc(f"Error: {e}")
-                print_acc(f"Error loading image: {control_path}")
+                    if img.mode in ("RGBA", "LA"):
+                        transparent_color = tuple(self.dataset_config.control_transparent_color)
+                        background = Image.new("RGB", img.size, transparent_color)
+                        background.paste(img, mask=img.getchannel("A"))
+                        img = background
+                    else:
+                        img = img.convert("RGB")
+                    break
+                except Exception as e:
+                    if attempt < 19:
+                        time.sleep(2)
+                    else:
+                        raise RuntimeError(f"Failed to load control image after 20 attempts: {control_path}") from e
             
             if not self.full_size_control_images:
                 # we just scale them to 512x512:
@@ -1396,12 +1400,17 @@ class MaskFileItemDTOMixin:
                     break
 
     def load_mask_image(self: 'FileItemDTO'):
-        try:
-            img = Image.open(self.mask_path)
-            img = exif_transpose(img)
-        except Exception as e:
-            print_acc(f"Error: {e}")
-            print_acc(f"Error loading image: {self.mask_path}")
+        img = None
+        for attempt in range(20):
+            try:
+                img = Image.open(self.mask_path)
+                img = exif_transpose(img)
+                break
+            except Exception as e:
+                if attempt < 19:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"Failed to load mask image after 20 attempts: {self.mask_path}") from e
 
         if self.use_alpha_as_mask:
             # pipeline expectws an rgb image so we need to put alpha in all channels
@@ -1499,12 +1508,17 @@ class UnconditionalFileItemDTOMixin:
                     break
 
     def load_unconditional_image(self: 'FileItemDTO'):
-        try:
-            img = Image.open(self.unconditional_path)
-            img = exif_transpose(img)
-        except Exception as e:
-            print_acc(f"Error: {e}")
-            print_acc(f"Error loading image: {self.mask_path}")
+        img = None
+        for attempt in range(20):
+            try:
+                img = Image.open(self.unconditional_path)
+                img = exif_transpose(img)
+                break
+            except Exception as e:
+                if attempt < 19:
+                    time.sleep(2)
+                else:
+                    raise RuntimeError(f"Failed to load unconditional image after 20 attempts: {self.unconditional_path}") from e
 
         img = img.convert('RGB')
         w, h = img.size
