@@ -84,13 +84,15 @@ class TrainingSession:
     # Lifecycle helpers
     # ------------------------------------------------------------------
     def _wait_for_initial_ready(self) -> None:
-        start = time.time()
+        start = time.monotonic()
+        timed_out = False
         while True:
             if self.controller.pause_event.is_set() or self.controller.finished_event.is_set():
                 break
             if not self._thread.is_alive():
                 break
-            if time.time() - start > 300:  # 5 minutes safeguard
+            if time.monotonic() - start > 1800:  # 30 minutes safeguard
+                timed_out = True
                 break
             time.sleep(0.05)
         with self._status_lock:
@@ -102,7 +104,7 @@ class TrainingSession:
             elif self.controller.pause_event.is_set():
                 self.status = 'paused'
             else:
-                self.status = 'running'
+                self.status = 'initializing' if timed_out else 'running'
         self.current_step = self.controller.completed_steps
         self.current_epoch = self.controller.current_epoch
 
@@ -265,15 +267,33 @@ class TrainingSession:
         self._thread.join(timeout=timeout)
 
     def get_status(self) -> Dict[str, Any]:
+        controller = self.controller
         with self._status_lock:
             status = self.status
             epoch = self.current_epoch
             step = self.current_step
             error = self.error
-        controller = self.controller
+
+        effective_status = status
+        if status not in ('completed', 'aborted', 'error'):
+            if status == 'aborting':
+                effective_status = 'aborting'
+            elif controller.finished_event.is_set():
+                if error is not None:
+                    effective_status = 'error'
+                elif controller.abort_event.is_set():
+                    effective_status = 'aborted'
+                else:
+                    effective_status = 'completed'
+            elif controller.pause_event.is_set():
+                effective_status = 'paused'
+            elif status == 'initializing':
+                effective_status = 'initializing'
+            else:
+                effective_status = 'running'
         return {
             'session_id': self.session_id,
-            'status': status,
+            'status': effective_status,
             'current_epoch': epoch,
             'current_step': step,
             'allowed_steps': controller.allowed_steps,
