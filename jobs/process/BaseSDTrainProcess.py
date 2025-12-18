@@ -127,7 +127,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.has_first_sample_requested = False
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
-        self.logger = create_logger(self.logging_config, config)
+        self.logger = create_logger(self.logging_config, config, self.save_root)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -2308,7 +2308,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 
                 # commit log
                 if self.accelerator.is_main_process:
-                    self.logger.commit(step=self.step_num)
+                    with self.timer('commit_logger'):
+                        self.logger.commit(step=self.step_num)
 
                 # sets progress bar to match out step
                 if self.progress_bar is not None:

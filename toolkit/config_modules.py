@@ -35,6 +35,7 @@ class LoggingConfig:
         self.log_every: int = kwargs.get('log_every', 100)
         self.verbose: bool = kwargs.get('verbose', False)
         self.use_wandb: bool = kwargs.get('use_wandb', False)
+        self.use_ui_logger: bool = kwargs.get('use_ui_logger', False)
         self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
         self.run_name: str = kwargs.get('run_name', None)
 
