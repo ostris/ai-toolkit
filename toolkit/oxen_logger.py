@@ -17,9 +17,11 @@ except ImportError:
 from .oxen_experiment import AIToolkitOxenExperiment
 
 def monitor_train_status(url: str, want_stop_event: threading.Event, finished_event: threading.Event):
+    headers = { "Authorization": f"Bearer {os.getenv('OXEN_API_TOKEN')}" }
+
     while not finished_event.is_set():
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             train_status = response.json()["train_status"]
 
@@ -320,8 +322,9 @@ class AIToolkitOxenLogger:
 
             self.finished_event.set()
 
+            headers = { "Authorization": f"Bearer {os.getenv('OXEN_API_TOKEN')}" }
             url = f"{self.status_url}/stopped"
-            requests.put(url=url, timeout=10)
+            requests.put(url=url, headers=headers, timeout=10)
 
             self.status_monitor.join(timeout=10)
 
