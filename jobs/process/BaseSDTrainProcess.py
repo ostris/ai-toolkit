@@ -67,6 +67,7 @@ from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.print import print_acc
 from accelerate import Accelerator
+import accelerate
 import transformers
 import diffusers
 import hashlib
@@ -2174,7 +2175,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     stop_early = self.oxen_logger.is_stopping()
 
                 stop_early = torch.tensor(int(stop_early), device=self.accelerator.device)
-                stop_early = self.accelerator.utils.broadcast(stop_early, from_process=0)
+                stop_early = accelerate.utils.broadcast(stop_early, from_process=0)
 
                 self.accelerator.wait_for_everyone()
 
