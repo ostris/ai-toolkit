@@ -23,6 +23,7 @@ from toolkit.dataloader_mixins import CaptionMixin, BucketsMixin, LatentCachingM
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
+from toolkit.device_utils import get_dataloader_kwargs
 
 import platform
 
@@ -646,13 +647,24 @@ def get_dataloader_from_datasets(
 
     # check if is caching latents
 
-    dataloader_kwargs = {}
-    
-    if is_native_windows():
+    # Get device-specific dataloader kwargs, but allow config override
+    device_kwargs = get_dataloader_kwargs()
+
+    # Start with device-specific defaults
+    dataloader_kwargs = device_kwargs.copy()
+
+    # Allow config to override num_workers and prefetch_factor, but enforce MPS constraints
+    if is_native_windows() or device_kwargs.get('num_workers', 0) == 0:
+        # Force 0 workers on Windows or MPS
         dataloader_kwargs['num_workers'] = 0
+        dataloader_kwargs['prefetch_factor'] = None
+        dataloader_kwargs['persistent_workers'] = False
     else:
-        dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+        # Allow config to specify worker count (but not less than 0)
+        config_workers = max(0, dataset_config_list[0].num_workers)
+        dataloader_kwargs['num_workers'] = config_workers
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        dataloader_kwargs['persistent_workers'] = config_workers > 0
 
     if has_buckets:
         # make sure they all have buckets

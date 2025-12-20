@@ -25,8 +25,13 @@ export default function JobConfigViewer({ job }: Props) {
   const [editorValue, setEditorValue] = useState<string>('');
   useEffect(() => {
     if (job?.job_config) {
-      const yamlContent = YAML.stringify(JSON.parse(job.job_config), yamlConfig);
-      setEditorValue(yamlContent);
+      try {
+        const yamlContent = YAML.stringify(JSON.parse(job.job_config), yamlConfig);
+        setEditorValue(yamlContent);
+      } catch (error) {
+        console.error('Error parsing job config:', error);
+        setEditorValue(`Error: Invalid job configuration\n\nRaw config:\n${job.job_config}`);
+      }
     }
   }, [job]);
   return (
