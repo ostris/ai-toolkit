@@ -29,6 +29,8 @@ pytorch_fid
 optimum-quanto==0.2.4
 sentencepiece
 huggingface_hub
+onnxruntime-gpu
+pandas
 peft
 gradio
 python-slugify

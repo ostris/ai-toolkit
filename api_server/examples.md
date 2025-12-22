@@ -313,3 +313,120 @@ curl -X POST http://localhost:8000/caption/unload \
 | `prompt` | string | "Write a long descriptive caption..." | Custom prompt for caption generation |
 | `temperature` | float | 0.6 | Sampling temperature (0.0-2.0)<br>Lower = more focused, Higher = more creative |
 | `top_p` | float | 0.9 | Nucleus sampling parameter (0.0-1.0)<br>Lower = more focused, Higher = more diverse |
+
+---
+
+# Tagging API
+
+The API server also supports WD14 tagger inference. The default model is `wd14-vit.v1` (SmilingWolf/wd-v1-4-vit-tagger).
+
+## Tagging Examples
+
+### 14. Tag an image
+
+```bash
+curl -X POST http://localhost:8000/tag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": ["/workspaces/ai-toolkit/cat.png"]
+  }'
+```
+
+### 15. Tag an image from URL
+
+```bash
+curl -X POST http://localhost:8000/tag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": [
+      {
+        "media_url": "https://example.com/cat.png"
+      }
+    ]
+  }'
+```
+
+### 16. Tag a video with custom thresholds
+
+```bash
+curl -X POST http://localhost:8000/tag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": [
+      {
+        "media_type": "video",
+        "media_path": "/workspaces/ai-toolkit/video.mp4",
+        "frame_interval": 0.25,
+        "max_frame_count": 15,
+        "general_threshold": 0.35,
+        "character_threshold": 0.85
+      }
+    ]
+  }'
+```
+
+### 17. Tag multiple inputs in one request
+
+```bash
+curl -X POST http://localhost:8000/tag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": [
+      "/workspaces/ai-toolkit/cat.png",
+      {
+        "media_path": "/workspaces/ai-toolkit/dog.png",
+        "general_threshold": 0.4
+      }
+    ]
+  }'
+```
+
+## Tagger Model Management
+
+### 18. Offload tagger model to CPU
+
+```bash
+curl -X GET http://localhost:8000/tag/free
+```
+
+## Tagging Parameter Reference
+
+### Request Shape
+
+```json
+{
+  "input": [
+    "/path/to/image.png",
+    {
+      "media_url": "https://example.com/sample.png"
+    },
+    {
+      "media_path": "/path/to/video.mp4",
+      "media_type": "video",
+      "frame_interval": 0.25,
+      "max_frame_count": 50,
+      "general_threshold": 0.35,
+      "character_threshold": 0.85
+    }
+  ]
+}
+```
+
+### Input Item Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `media_path` | string | required* | Path to a local image or video file |
+| `media_url` | string | optional | URL to an image or video file (use instead of `media_path`) |
+| `media_type` | string | inferred | `"image"` or `"video"`; inferred from file extension when omitted |
+| `frame_interval` | float | 0.25 | Video frame sampling interval in seconds |
+| `max_frame_count` | integer | 50 | Max frames sampled from a video |
+| `general_threshold` | float | 0.35 | Minimum confidence for general tags |
+| `character_threshold` | float | 0.85 | Minimum confidence for character tags |
+
+### Notes
+
+- `input` must be a list; items can be a string path or a dict with overrides.
+- Provide either `media_path` or `media_url`, not both.
+- Video inference is supported for `.mp4`, `.webm`, `.gifv`, and `.gif` files.
+- Responses include `rating` and `tags` only, matching civitai-tagger output.
