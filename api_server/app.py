@@ -16,6 +16,7 @@ app = FastAPI(title='AI Toolkit Training API')
 manager = TrainingSessionManager()
 
 _caption_processor = None
+_tagger_service = None
 
 
 class SessionCreateRequest(BaseModel):
@@ -193,6 +194,26 @@ def _get_caption_processor(model_type: str = "florence2", model_path: Optional[s
     return _caption_processor
 
 
+def _get_tagger_service():
+    global _tagger_service
+    if _tagger_service is None:
+        from api_server.tagger import TaggerService
+        _tagger_service = TaggerService()
+    return _tagger_service
+
+
+def _get_cuda_used_memory() -> int:
+    import torch
+
+    if not torch.cuda.is_available():
+        return 0
+    try:
+        free, total = torch.cuda.mem_get_info()
+        return total - free
+    except Exception:
+        return torch.cuda.memory_reserved()
+
+
 def _is_video_file(file_path: str) -> bool:
     video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm']
     return any(file_path.lower().endswith(ext) for ext in video_extensions)
@@ -245,6 +266,37 @@ def _load_video_from_source(video_path: Optional[str], video_url: Optional[str])
             return temp_path
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Failed to download video from URL: {str(e)}")
+
+
+def _download_media_from_url(media_url: str, media_type: Optional[str]) -> str:
+    try:
+        response = requests.get(media_url, timeout=120, stream=True)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        raise ValueError(f"Failed to download media from URL: {str(e)}")
+
+    url_path = media_url.split('?')[0]
+    ext = os.path.splitext(url_path)[-1].lower()
+    if not ext:
+        if media_type == "video":
+            ext = ".mp4"
+        elif media_type == "image":
+            ext = ".png"
+        else:
+            content_type = response.headers.get("Content-Type", "")
+            if "video" in content_type:
+                ext = ".mp4"
+            elif "image" in content_type:
+                ext = ".png"
+            else:
+                ext = ".bin"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_file:
+        for chunk in response.iter_content(chunk_size=8192):
+            tmp_file.write(chunk)
+        temp_path = tmp_file.name
+
+    return temp_path
 
 
 @app.post('/caption')
@@ -339,6 +391,103 @@ def generate_caption(request: CaptionRequest):
                 pass
 
 
+@app.post('/tag')
+def tag_media(request: Dict[str, Any] = Body(...)):
+    temp_paths = []
+    input_data = request.get("input")
+    if not input_data or not isinstance(input_data, list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'input' should be provided and be a list.",
+        )
+
+    from api_server.tagger import PredictionRequest
+
+    try:
+        prediction_requests = []
+        for idx, inp in enumerate(input_data):
+            if isinstance(inp, str):
+                prediction_requests.append(PredictionRequest.new(inp))
+                continue
+            if not isinstance(inp, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid input format at index {idx}",
+                )
+
+            media_path = inp.get("media_path")
+            media_url = inp.get("media_url")
+            if media_path and media_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Provide either media_path or media_url at index {idx}, not both",
+                )
+            if not media_path and not media_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"media_path or media_url must be provided at index {idx}",
+                )
+
+            if media_url:
+                temp_path = _download_media_from_url(media_url, inp.get("media_type"))
+                temp_paths.append(temp_path)
+                resolved = dict(inp)
+                resolved["media_path"] = temp_path
+                resolved.pop("media_url", None)
+                prediction_requests.append(PredictionRequest.from_dict(resolved))
+            else:
+                prediction_requests.append(PredictionRequest.from_dict(inp))
+
+        tagger = _get_tagger_service()
+        result = tagger.predict_inputs(prediction_requests)
+        return {"result": result}
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except OSError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating tags: {str(e)}",
+        )
+    finally:
+        for temp_path in temp_paths:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+
+
+@app.get('/tag/free')
+def free_tagger_vram():
+    global _tagger_service
+    if _tagger_service is None:
+        return {
+            'status': 'no_model_loaded',
+            'message': 'No tagger model is currently loaded',
+        }
+
+    import torch
+
+    memory_before = _get_cuda_used_memory() / (1024 * 1024)
+    _tagger_service.offload()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        memory_after = _get_cuda_used_memory() / (1024 * 1024)
+    else:
+        memory_after = 0
+
+    return {
+        'status': 'success',
+        'memory_before': memory_before,
+        'memory_after': memory_after,
+        'freed': max(0.0, memory_before - memory_after),
+    }
+
+
 @app.post('/caption/unload')
 def unload_caption_model():
 
@@ -368,7 +517,10 @@ def unload_caption_model():
 
 @app.on_event('shutdown')
 def _shutdown():
-    global _caption_processor
+    global _caption_processor, _tagger_service
     if _caption_processor is not None:
         _caption_processor.unload_model()
+    if _tagger_service is not None:
+        _tagger_service.offload()
+        _tagger_service = None
     manager.dispose_all()
