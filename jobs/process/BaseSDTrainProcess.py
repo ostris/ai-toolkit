@@ -816,11 +816,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 if len(paths) > 0:
                     latest_path = max(paths, key=os.path.getctime)
+        
+        if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
+            # set pretrained lora path as load path if we do not have a checkpoint to resume from
+            if os.path.exists(self.network_config.pretrained_lora_path):
+                latest_path = self.network_config.pretrained_lora_path
+                print_acc(f"Using pretrained lora path from config: {latest_path}")
+            else:
+                # no pretrained lora found
+                print_acc(f"Pretrained lora path from config does not exist: {self.network_config.pretrained_lora_path}")
 
         return latest_path
 
     def load_training_state_from_metadata(self, path):
         if not self.accelerator.is_main_process:
+            return
+        if path is not None and self.network_config is not None and path == self.network_config.pretrained_lora_path:
+            # dont load metadata from pretrained lora
             return
         meta = None
         # if path is folder, then it is diffusers
