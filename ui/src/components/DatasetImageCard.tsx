@@ -37,7 +37,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       .then(res => res.data)
       .then(data => {
         console.log('Caption fetched:', data);
-
+        if (data){
+          // fix issue where caption could be non string
+          data = `${data}`
+        }
         setCaption(data || '');
         setSavedCaption(data || '');
         setIsCaptionLoaded(true);
