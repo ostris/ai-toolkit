@@ -1,4 +1,5 @@
 import torch
+import importlib
 
 
 def get_optimizer(
@@ -39,7 +40,7 @@ def get_optimizer(
         # let net be the neural network you want to train
         # you can choose weight decay value based on your problem, 0 by default
         optimizer = Prodigy8bit(params, lr=use_lr, eps=1e-6, **optimizer_params)
-    elif lower_type.startswith("prodigy"):
+    elif lower_type == ("prodigy"):
         from prodigyopt import Prodigy
 
         print("Using Prodigy optimizer")
@@ -93,10 +94,39 @@ def get_optimizer(
             optimizer_params['scale_parameter'] = False
         if 'warmup_init' not in optimizer_params:
             optimizer_params['warmup_init'] = False
-        optimizer = Adafactor(params, lr=float(learning_rate), **optimizer_params)
+        optimizer = Adafactor(params, lr=float(learning_rate), eps=1e-6, **optimizer_params)
     elif lower_type == 'automagic':
         from toolkit.optimizers.automagic import Automagic
         optimizer = Automagic(params, lr=float(learning_rate), **optimizer_params)
     else:
-        raise ValueError(f'Unknown optimizer type {optimizer_type}')
+        # Try to dynamically import a user-defined optimizer
+        try:
+            # Split the string into module path and class name 
+            parts = optimizer_type.split(".")
+            print(f"parts {parts}, {optimizer_type}")
+            if len(parts) < 2:
+                raise ValueError(f"Unknown optimizer type {optimizer_type}")
+
+            module_path = ".".join(parts[:-1])
+            class_name = parts[-1]
+
+            # Import module dynamically
+            mod = importlib.import_module(module_path)
+
+            # Get optimizer class from module
+            opt_class = getattr(mod, class_name)
+
+            # Instantiate optimizer
+            try:
+                optimizer = opt_class(params, lr=float(learning_rate), **optimizer_params)
+            except TypeError:
+                # In case the optimizer does not take lr or eps the same way
+                optimizer = opt_class(params, **optimizer_params)
+
+            print(f"Using user-defined optimizer: {optimizer_type}")
+            return optimizer
+
+        except Exception as e:
+            raise ValueError(f'Unknown optimizer type {optimizer_type}. '
+                             f'Failed to import dynamically. Error: {e}')
     return optimizer
