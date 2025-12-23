@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
-import { FaRegTrashAlt } from 'react-icons/fa';
+import { FaRegTrashAlt, FaFolder, FaFolderOpen } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -20,19 +20,48 @@ export default function Datasets() {
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
 
   // Transform datasets array into rows with objects
-  const tableRows = datasets.map(dataset => ({
-    name: dataset,
-    actions: dataset, // Pass full dataset name for actions
-  }));
+  const tableRows = datasets.map(dataset => {
+    const depth = (dataset.match(/\//g) || []).length;
+    const segments = dataset.split('/');
+    const displayName = segments[segments.length - 1];
+    return {
+      name: dataset,
+      displayName,
+      depth,
+      actions: dataset,
+    };
+  });
 
   const columns: TableColumn[] = [
     {
       title: 'Dataset Name',
       key: 'name',
+      render: row => {
+        const paddingLeft = row.depth * 24;
+        return (
+          <Link
+            href={`/datasets/${row.name}`}
+            className="text-gray-200 hover:text-gray-100 flex items-center gap-2"
+          >
+            <span style={{ paddingLeft: `${paddingLeft}px` }} className="flex items-center gap-2">
+              {row.depth > 0 && (
+                <span className="text-gray-500 text-xs">└─</span>
+              )}
+              <FaFolder className="text-yellow-500 text-sm" />
+              {row.displayName}
+            </span>
+          </Link>
+        );
+      },
+    },
+    {
+      title: 'Full Path',
+      key: 'path',
+      className: 'text-gray-400 text-sm',
       render: row => (
-        <Link href={`/datasets/${row.name}`} className="text-gray-200 hover:text-gray-100">
-          {row.name}
-        </Link>
+        <span className="text-gray-500 text-xs font-mono">
+          {row.depth > 0 ? row.name : ''}
+        </span>
       ),
     },
     {
@@ -86,7 +115,7 @@ export default function Datasets() {
   const openNewDatasetModal = () => {
     openConfirm({
       title: 'New Dataset',
-      message: 'Enter the name of the new dataset:',
+      message: 'Enter the name of the new dataset. Use "/" to create nested folders.',
       type: 'info',
       confirmText: 'Create',
       inputTitle: 'Dataset Name',
@@ -146,9 +175,15 @@ export default function Datasets() {
           <form onSubmit={handleCreateDataset}>
             <div className="text-sm text-gray-400">
               This will create a new folder with the name below in your dataset folder.
+              You can use "/" to create nested folders.
             </div>
             <div className="mt-4">
-              <TextInput label="Dataset Name" value={newDatasetName} onChange={value => setNewDatasetName(value)} />
+              <TextInput 
+                label="Dataset Name" 
+                value={newDatasetName} 
+                onChange={value => setNewDatasetName(value)}
+                placeholder="e.g., project/character_a"
+              />
             </div>
 
             <div className="mt-6 flex justify-end space-x-3">
