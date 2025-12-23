@@ -17,6 +17,7 @@ manager = TrainingSessionManager()
 
 _caption_processor = None
 _tagger_service = None
+_tagger_model_path = None
 
 
 class SessionCreateRequest(BaseModel):
@@ -194,11 +195,14 @@ def _get_caption_processor(model_type: str = "florence2", model_path: Optional[s
     return _caption_processor
 
 
-def _get_tagger_service():
-    global _tagger_service
-    if _tagger_service is None:
+def _get_tagger_service(model_path: Optional[str]):
+    global _tagger_service, _tagger_model_path
+    if _tagger_service is None or _tagger_model_path != model_path:
+        if _tagger_service is not None:
+            _tagger_service.offload()
         from api_server.tagger import TaggerService
-        _tagger_service = TaggerService()
+        _tagger_service = TaggerService(model_path=model_path)
+        _tagger_model_path = model_path
     return _tagger_service
 
 
@@ -395,10 +399,16 @@ def generate_caption(request: CaptionRequest):
 def tag_media(request: Dict[str, Any] = Body(...)):
     temp_paths = []
     input_data = request.get("input")
+    model_path = request.get("model_path")
     if not input_data or not isinstance(input_data, list):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="'input' should be provided and be a list.",
+        )
+    if model_path is not None and not isinstance(model_path, str):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'model_path' must be a string when provided.",
         )
 
     from api_server.tagger import PredictionRequest
@@ -438,7 +448,7 @@ def tag_media(request: Dict[str, Any] = Body(...)):
             else:
                 prediction_requests.append(PredictionRequest.from_dict(inp))
 
-        tagger = _get_tagger_service()
+        tagger = _get_tagger_service(model_path)
         result = tagger.predict_inputs(prediction_requests)
         return {"result": result}
     except HTTPException:
@@ -517,10 +527,11 @@ def unload_caption_model():
 
 @app.on_event('shutdown')
 def _shutdown():
-    global _caption_processor, _tagger_service
+    global _caption_processor, _tagger_service, _tagger_model_path
     if _caption_processor is not None:
         _caption_processor.unload_model()
     if _tagger_service is not None:
         _tagger_service.offload()
         _tagger_service = None
+        _tagger_model_path = None
     manager.dispose_all()

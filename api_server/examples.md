@@ -346,7 +346,18 @@ curl -X POST http://localhost:8000/tag \
   }'
 ```
 
-### 16. Tag a video with custom thresholds
+### 16. Tag using a local model directory
+
+```bash
+curl -X POST http://localhost:8000/tag \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_path": "/models/wd14-vit-v1",
+    "input": ["/workspaces/ai-toolkit/cat.png"]
+  }'
+```
+
+### 17. Tag a video with custom thresholds
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -365,7 +376,7 @@ curl -X POST http://localhost:8000/tag \
   }'
 ```
 
-### 17. Tag multiple inputs in one request
+### 18. Tag multiple inputs in one request
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -383,7 +394,7 @@ curl -X POST http://localhost:8000/tag \
 
 ## Tagger Model Management
 
-### 18. Offload tagger model to CPU
+### 19. Offload tagger model to CPU
 
 ```bash
 curl -X GET http://localhost:8000/tag/free
@@ -395,6 +406,7 @@ curl -X GET http://localhost:8000/tag/free
 
 ```json
 {
+  "model_path": "/path/to/wd14-vit-v1",
   "input": [
     "/path/to/image.png",
     {
@@ -424,9 +436,16 @@ curl -X GET http://localhost:8000/tag/free
 | `general_threshold` | float | 0.35 | Minimum confidence for general tags |
 | `character_threshold` | float | 0.85 | Minimum confidence for character tags |
 
+### Request Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model_path` | string | null | Directory containing `model.onnx` and `selected_tags.csv` (or a path to `model.onnx` with `selected_tags.csv` in the same folder) |
+
 ### Notes
 
 - `input` must be a list; items can be a string path or a dict with overrides.
 - Provide either `media_path` or `media_url`, not both.
+- When `model_path` is provided, the server loads from that location instead of downloading.
 - Video inference is supported for `.mp4`, `.webm`, `.gifv`, and `.gif` files.
 - Responses include `rating` and `tags` only, matching civitai-tagger output.

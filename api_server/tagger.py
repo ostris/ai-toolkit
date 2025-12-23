@@ -1,4 +1,5 @@
 import logging
+import os
 import os.path
 from enum import Enum
 from time import monotonic_ns
@@ -137,19 +138,45 @@ def resolve_device() -> torch.device:
     return torch.device("cpu")
 
 
+def resolve_model_and_labels(
+    model_uri: str,
+    model_path: Optional[str],
+) -> Tuple[str, str]:
+    if model_path:
+        if os.path.isdir(model_path):
+            resolved_model_path = os.path.join(model_path, "model.onnx")
+            resolved_labels_path = os.path.join(model_path, "selected_tags.csv")
+        else:
+            resolved_model_path = model_path
+            resolved_labels_path = os.path.join(
+                os.path.dirname(model_path),
+                "selected_tags.csv",
+            )
+
+        if not os.path.exists(resolved_model_path):
+            raise FileNotFoundError(f"Model file not found: {resolved_model_path}")
+        if not os.path.exists(resolved_labels_path):
+            raise FileNotFoundError(f"Labels file not found: {resolved_labels_path}")
+
+        return resolved_model_path, resolved_labels_path
+
+    return get_model_and_labels(model_uri)
+
+
 def load(
     model_uri: str = MODEL_ID,
+    model_path: Optional[str] = None,
     device: Optional[torch.device] = None,
 ) -> Tuple[rt.InferenceSession, Tuple[Any, list]]:
-    model_path, labels_path = get_model_and_labels(model_uri)
+    resolved_model_path, resolved_labels_path = resolve_model_and_labels(model_uri, model_path)
     resolved_device = device or resolve_device()
     providers = (
         ["CUDAExecutionProvider", "CPUExecutionProvider"]
         if resolved_device.type == "cuda"
         else ["CPUExecutionProvider"]
     )
-    session = rt.InferenceSession(model_path, providers=providers)
-    labels = load_labels(labels_path)
+    session = rt.InferenceSession(resolved_model_path, providers=providers)
+    labels = load_labels(resolved_labels_path)
 
     return session, labels
 
@@ -401,10 +428,16 @@ def merge_scores(scores: List[Dict[str, float]]) -> Dict[str, float]:
 
 
 class TaggerService:
-    def __init__(self, model_id: str = MODEL_ID, device: Optional[torch.device] = None):
+    def __init__(
+        self,
+        model_id: str = MODEL_ID,
+        model_path: Optional[str] = None,
+        device: Optional[torch.device] = None,
+    ):
         self.model_id = model_id
+        self.model_path = model_path
         self.device = device or resolve_device()
-        self.session, self.labels = load(model_id, device=self.device)
+        self.session, self.labels = load(model_id, model_path=model_path, device=self.device)
         logger.info("Tagger Device: %s", self.device)
 
     def predict_request(self, request: PredictionRequest) -> List[PredictionResult]:
