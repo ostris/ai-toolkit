@@ -36,3 +36,4 @@ opencv-python
 pytorch-wavelets==1.3.0
 matplotlib==3.10.1
 setuptools==69.5.1
+scipy==1.12.0
