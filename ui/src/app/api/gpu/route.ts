@@ -547,7 +547,9 @@ async function getRocmGpuStats(isWindows: boolean) {
       
       // GPU use (%) - field index depends on format
       if (fields.length < usageFieldIdx + 1) {
-        console.error(`[ROCm GPU ${index}] ERROR: Not enough fields for usage! Expected at least ${usageFieldIdx + 1}, got ${fields.length}`);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`[ROCm GPU ${index}] ERROR: Not enough fields for usage! Expected at least ${usageFieldIdx + 1}, got ${fields.length}`);
+        }
       }
       const gpuUtilStr = fields[usageFieldIdx]?.trim() || '0';
       let gpuUtil = 0;
@@ -556,11 +558,11 @@ async function getRocmGpuStats(isWindows: boolean) {
         // Validate it's a reasonable percentage (0-100)
         if (parsed >= 0 && parsed <= 100) {
           gpuUtil = parsed;
-        } else {
+        } else if (process.env.NODE_ENV === 'development') {
           console.error(`[ROCm GPU ${index}] ERROR: Invalid usage value "${gpuUtilStr}" (parsed as ${parsed})`);
         }
-      } else {
-        console.error(`[ROCm GPU ${index}] ERROR: Could not parse usage from field[10]="${gpuUtilStr}"`);
+      } else if (process.env.NODE_ENV === 'development') {
+        console.error(`[ROCm GPU ${index}] ERROR: Could not parse usage from field[${usageFieldIdx}]="${gpuUtilStr}"`);
       }
       // rocm-smi GPU use is already a percentage, but validate and clamp to 0-100
       gpuUtil = Math.max(0, Math.min(100, gpuUtil));
@@ -573,7 +575,9 @@ async function getRocmGpuStats(isWindows: boolean) {
       // Memory values from rocm-smi are in bytes, but check if they're valid
       // Field indices depend on format
       if (fields.length < memUsedFieldIdx + 1) {
-        console.error(`[ROCm GPU ${index}] Insufficient fields: expected at least ${memUsedFieldIdx + 1}, got ${fields.length}`);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`[ROCm GPU ${index}] Insufficient fields: expected at least ${memUsedFieldIdx + 1}, got ${fields.length}`);
+        }
       }
       
       const memoryTotalStr = fields[memTotalFieldIdx]?.trim() || '0';
@@ -595,21 +599,33 @@ async function getRocmGpuStats(isWindows: boolean) {
       const memoryFree = Math.max(0, memoryTotal - memoryUsed);
       // Power draw - field index depends on format
       if (fields.length < powerFieldIdx + 1) {
-        console.error(`[ROCm GPU ${index}] ERROR: Not enough fields for power! Expected at least ${powerFieldIdx + 1}, got ${fields.length}`);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`[ROCm GPU ${index}] ERROR: Not enough fields for power! Expected at least ${powerFieldIdx + 1}, got ${fields.length}`);
+        }
       }
       const powerDrawStr = fields[powerFieldIdx]?.trim() || '';
       // Parse power draw, handle cases where it might be in different formats
       let powerDraw = 0;
-      if (powerDrawStr && powerDrawStr !== 'N/A' && !isNaN(parseFloat(powerDrawStr))) {
-        const parsed = parseFloat(powerDrawStr);
-        // Validate it's a reasonable power value (0-1000W)
-        if (parsed >= 0 && parsed <= 1000) {
-          powerDraw = parsed;
-        } else {
-          console.error(`[ROCm GPU ${index}] ERROR: Invalid power value "${powerDrawStr}" (parsed as ${parsed})`);
+      // Check if the field looks like a clock value (contains "Mhz" or "MHz") and skip it
+      if (powerDrawStr && powerDrawStr.toLowerCase().includes('mhz')) {
+        // This field contains a clock value, not power - skip parsing
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(`[ROCm GPU ${index}] Power field[${powerFieldIdx}] contains clock value "${powerDrawStr}", skipping`);
         }
-      } else {
-        console.error(`[ROCm GPU ${index}] ERROR: Could not parse power from field[9]="${powerDrawStr}"`);
+      } else if (powerDrawStr && powerDrawStr !== 'N/A') {
+        // Try to extract numeric value (handle formats like "123.45" or "(123.45)")
+        const powerMatch = powerDrawStr.match(/(\d+\.?\d*)/);
+        if (powerMatch) {
+          const parsed = parseFloat(powerMatch[1]);
+          // Validate it's a reasonable power value (0-1000W)
+          if (parsed >= 0 && parsed <= 1000) {
+            powerDraw = parsed;
+          } else if (process.env.NODE_ENV === 'development') {
+            console.error(`[ROCm GPU ${index}] ERROR: Invalid power value "${powerDrawStr}" (parsed as ${parsed}W)`);
+          }
+        } else if (process.env.NODE_ENV === 'development') {
+          console.error(`[ROCm GPU ${index}] ERROR: Could not parse power from field[${powerFieldIdx}]="${powerDrawStr}"`);
+        }
       }
       
       // Debug logging in development
@@ -631,6 +647,7 @@ async function getRocmGpuStats(isWindows: boolean) {
       }
       
       // Extract numeric value from clock strings like "(1000Mhz)" or "1000Mhz"
+      // Handle both formats: "(1472Mhz)" and raw numbers
       const mclkMatch = mclkStr.match(/(\d+)/);
       const sclkMatch = sclkStr.match(/(\d+)/);
       // Graphics clock is sclk (system/core clock), memory clock is mclk
@@ -638,12 +655,33 @@ async function getRocmGpuStats(isWindows: boolean) {
       let clockMemory = mclkMatch ? parseInt(mclkMatch[1]) : 0;
       
       // Validate clock speeds are reasonable (0-5000 MHz for graphics, 0-3000 MHz for memory)
+      // If the value is way too high, it might be in Hz instead of MHz - convert it
+      if (clockGraphics > 10000) {
+        // Likely in Hz, convert to MHz
+        clockGraphics = Math.round(clockGraphics / 1000000);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(`[ROCm GPU ${index}] Graphics clock appears to be in Hz (${clockGraphics * 1000000}), converted to ${clockGraphics}MHz`);
+        }
+      }
+      if (clockMemory > 10000) {
+        // Likely in Hz, convert to MHz
+        clockMemory = Math.round(clockMemory / 1000000);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(`[ROCm GPU ${index}] Memory clock appears to be in Hz (${clockMemory * 1000000}), converted to ${clockMemory}MHz`);
+        }
+      }
+      
+      // Final validation after potential conversion
       if (clockGraphics > 5000 || clockGraphics < 0) {
-        console.error(`[ROCm GPU ${index}] ERROR: Invalid graphics clock ${clockGraphics}MHz from field[5]="${fields[5]}"`);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`[ROCm GPU ${index}] ERROR: Invalid graphics clock ${clockGraphics}MHz from field[${sclkFieldIdx}]="${fields[sclkFieldIdx]}"`);
+        }
         clockGraphics = 0;
       }
       if (clockMemory > 3000 || clockMemory < 0) {
-        console.error(`[ROCm GPU ${index}] ERROR: Invalid memory clock ${clockMemory}MHz from field[3]="${fields[3]}"`);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`[ROCm GPU ${index}] ERROR: Invalid memory clock ${clockMemory}MHz from field[${mclkFieldIdx}]="${fields[mclkFieldIdx]}"`);
+        }
         clockMemory = 0;
       }
       
