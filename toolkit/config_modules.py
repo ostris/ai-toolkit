@@ -653,6 +653,11 @@ class ModelConfig:
         # 0 is off and 1.0 is 100% of the layers
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
         self.layer_offloading_text_encoder_percent = kwargs.get("layer_offloading_text_encoder_percent", 1.0)
+        
+        # Sequential loading: load text encoders first, cache embeddings, unload, then load transformer
+        # This significantly reduces peak RAM usage for low-RAM environments like Colab Free Tier
+        # Prevents loading transformer AND text encoders simultaneously
+        self.sequential_load = kwargs.get("sequential_load", False)
 
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for
