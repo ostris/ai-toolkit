@@ -199,6 +199,11 @@ export interface SampleConfig {
   fps: number;
 }
 
+export interface LoggingConfig {
+  log_every: number;
+  use_ui_logger: boolean;
+}
+
 export interface SliderConfig {
   guidance_strength?: number;
   anchor_strength?: number;
@@ -220,6 +225,7 @@ export interface ProcessConfig {
   save: SaveConfig;
   datasets: DatasetConfig[];
   train: TrainConfig;
+  logging: LoggingConfig;
   model: ModelConfig;
   sample: SampleConfig;
 }
