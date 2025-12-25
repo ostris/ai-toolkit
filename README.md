@@ -539,4 +539,4 @@ Only larger updates are listed here. There are usually smaller daily updated tha
 - Added support for SDXL in the UI
 - Added support for SD 1.5 in the UI
 - Fixed UI Wan 2.1 14b name bug
-- Added support for for conv training in the UI for models that support it
+- Added support for conv training in the UI for models that support it
