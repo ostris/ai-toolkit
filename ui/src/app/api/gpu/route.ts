@@ -25,13 +25,32 @@ export async function GET() {
       });
     }
 
-    // Check for ROCm/AMD GPUs - use rocm-smi directly
+    // Check for AMD GPUs - prioritize amd-smi, fallback to rocm-smi
+    const hasAmdSmi = await checkAmdSmi(isWindows);
+    if (hasAmdSmi) {
+      const gpuStats = await getAmdSmiGpuStats(isWindows);
+      // If amd-smi returns data, use it
+      if (gpuStats && gpuStats.length > 0) {
+        return NextResponse.json({
+          hasNvidiaSmi: false,
+          hasAmdSmi: true,
+          hasRocmSmi: false,
+          gpus: gpuStats,
+        });
+      }
+      // If amd-smi didn't return sufficient data, fallback to rocm-smi
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[GPU] amd-smi returned insufficient data, falling back to rocm-smi');
+      }
+    }
+
+    // Fallback to rocm-smi if amd-smi is not available or didn't return data
     const hasRocmSmi = await checkRocmSmi(isWindows);
     if (hasRocmSmi) {
       const gpuStats = await getRocmGpuStats(isWindows);
       return NextResponse.json({
         hasNvidiaSmi: false,
-        hasAmdSmi: false,
+        hasAmdSmi: hasAmdSmi, // Indicate if amd-smi was checked but failed
         hasRocmSmi: true,
         gpus: gpuStats,
       });
@@ -265,20 +284,27 @@ async function getAmdSmiGpuStats(isWindows: boolean) {
           const header = lines[0].split(',');
           const dataLine = lines[1].split(',');
           
-          // Find field indices dynamically
-          const getFieldIndex = (fieldName: string): number => {
-            return header.findIndex(h => h.toLowerCase().includes(fieldName.toLowerCase()));
+          // Find field indices dynamically - try multiple possible field names
+          const getFieldIndex = (fieldNames: string | string[]): number => {
+            const names = Array.isArray(fieldNames) ? fieldNames : [fieldNames];
+            for (const name of names) {
+              const idx = header.findIndex(h => h.toLowerCase().includes(name.toLowerCase()));
+              if (idx >= 0) return idx;
+            }
+            return -1;
           };
           
           const gpuIndex = getFieldIndex('gpu');
-          const usageIndex = getFieldIndex('usage');
-          const edgeIndex = getFieldIndex('edge');
-          const totalVramIndex = getFieldIndex('total_vram');
-          const usedVramIndex = getFieldIndex('used_vram');
-          const freeVramIndex = getFieldIndex('free_vram');
-          const socketPowerIndex = getFieldIndex('socket_power');
-          const fanMaxIndex = getFieldIndex('max');
-          const fanRpmIndex = getFieldIndex('rpm');
+          const usageIndex = getFieldIndex(['usage', 'gpu_use', 'utilization']);
+          // Temperature can be edge, temperature, temp, or junction
+          const edgeIndex = getFieldIndex(['edge', 'temperature', 'temp', 'junction']);
+          const totalVramIndex = getFieldIndex(['total_vram', 'vram_total', 'memory_total']);
+          const usedVramIndex = getFieldIndex(['used_vram', 'vram_used', 'memory_used']);
+          const freeVramIndex = getFieldIndex(['free_vram', 'vram_free', 'memory_free']);
+          const socketPowerIndex = getFieldIndex(['socket_power', 'power', 'power_draw', 'tdp']);
+          // Fan speed - look for max (percentage) or rpm
+          const fanMaxIndex = getFieldIndex(['fan_max', 'fan_speed', 'max', 'fan_percent']);
+          const fanRpmIndex = getFieldIndex(['fan_rpm', 'rpm']);
           
           // Find first available graphics clock (gfx_0_clk, gfx_1_clk, etc.)
           let gfxClkIndex = -1;
@@ -313,16 +339,32 @@ async function getAmdSmiGpuStats(isWindows: boolean) {
             fanSpeed = 0;
           }
           
-          // Get GPU name from static info
+          // Get GPU name from static info - try multiple possible paths
           let name = `AMD GPU ${index}`;
           try {
             const staticCommand = `amd-smi static --gpu ${gpuId} --json`;
             const { stdout: staticStdout } = await execAsync(staticCommand, { env });
             const staticData = JSON.parse(staticStdout);
+            
+            // Try multiple possible paths for GPU name
             if (staticData && staticData.gpu_data && staticData.gpu_data[0]) {
               const gpuData = staticData.gpu_data[0];
+              // Try market_name first (most common)
               if (gpuData.asic && gpuData.asic.market_name) {
                 name = gpuData.asic.market_name;
+              }
+              // Fallback to other possible name fields
+              else if (gpuData.asic && gpuData.asic.name) {
+                name = gpuData.asic.name;
+              }
+              else if (gpuData.card && gpuData.card.market_name) {
+                name = gpuData.card.market_name;
+              }
+              else if (gpuData.card && gpuData.card.name) {
+                name = gpuData.card.name;
+              }
+              else if (gpuData.name) {
+                name = gpuData.name;
               }
             }
           } catch (staticError) {
