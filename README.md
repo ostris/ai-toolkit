@@ -247,6 +247,12 @@ python -m venv venv
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
+# If you use  NVIDIA RTX 50-series
+you should pip this version 
+```
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+pip install -U bitsandbytes
+```
 
 
 # AI Toolkit UI
