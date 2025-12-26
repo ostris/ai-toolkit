@@ -356,7 +356,7 @@ and I will answer when I can.
 
 ## Gradio UI
 
-To get started training locally with a with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
+To get started training locally with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
 
 ```bash
 cd ai-toolkit #in case you are not yet in the ai-toolkit folder
@@ -539,4 +539,4 @@ Only larger updates are listed here. There are usually smaller daily updated tha
 - Added support for SDXL in the UI
 - Added support for SD 1.5 in the UI
 - Fixed UI Wan 2.1 14b name bug
-- Added support for for conv training in the UI for models that support it
+- Added support for conv training in the UI for models that support it
