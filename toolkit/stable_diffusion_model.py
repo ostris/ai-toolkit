@@ -123,6 +123,20 @@ def flush():
     gc.collect()
 
 
+def is_bnb_quantized(model) -> bool:
+    """
+    Check if a model is already quantized with BitsAndBytes.
+    BnB-quantized models cannot have their dtype changed via .to(dtype=...).
+    """
+    if hasattr(model, 'quantization_config') and model.quantization_config is not None:
+        config = model.quantization_config
+        if hasattr(config, 'load_in_8bit') and config.load_in_8bit:
+            return True
+        if hasattr(config, 'load_in_4bit') and config.load_in_4bit:
+            return True
+    return False
+
+
 UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。
 # VAE_SCALE_FACTOR = 8  # 2 ** (len(vae.config.block_out_channels) - 1) = 8
 
@@ -782,7 +796,11 @@ class StableDiffusion:
                     freeze(transformer)
                     transformer.to(self.device_torch)
                 else:
-                    transformer.to(self.device_torch, dtype=dtype)
+                    # BnB pre-quantized models cannot have dtype changed
+                    if is_bnb_quantized(transformer):
+                        transformer.to(self.device_torch)
+                    else:
+                        transformer.to(self.device_torch, dtype=dtype)
 
             flush()
 
@@ -799,7 +817,11 @@ class StableDiffusion:
             text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
                                                             torch_dtype=dtype)
 
-            text_encoder_2.to(self.device_torch, dtype=dtype)
+            # BnB pre-quantized models cannot have dtype changed
+            if is_bnb_quantized(text_encoder_2):
+                text_encoder_2.to(self.device_torch)
+            else:
+                text_encoder_2.to(self.device_torch, dtype=dtype)
             flush()
 
             if self.model_config.quantize_te:
@@ -811,7 +833,11 @@ class StableDiffusion:
             self.print_and_status_update("Loading CLIP")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
             tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
-            text_encoder.to(self.device_torch, dtype=dtype)
+            # BnB pre-quantized models cannot have dtype changed
+            if is_bnb_quantized(text_encoder):
+                text_encoder.to(self.device_torch)
+            else:
+                text_encoder.to(self.device_torch, dtype=dtype)
 
             self.print_and_status_update("Making pipe")
             Pipe = FluxPipeline
@@ -1178,7 +1204,11 @@ class StableDiffusion:
             freeze(transformer)
             transformer.to(self.device_torch)
         else:
-            transformer.to(self.device_torch, dtype=dtype)
+            # BnB pre-quantized models cannot have dtype changed
+            if is_bnb_quantized(transformer):
+                transformer.to(self.device_torch)
+            else:
+                transformer.to(self.device_torch, dtype=dtype)
         
         flush()
         
