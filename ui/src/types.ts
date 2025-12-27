@@ -11,6 +11,9 @@ export interface GpuMemory {
   total: number;
   free: number;
   used: number;
+  gttTotal?: number;
+  gttUsed?: number;
+  gttFree?: number;
 }
 
 export interface GpuPower {
@@ -50,7 +53,7 @@ export interface CpuInfo {
 }
 
 export interface GPUApiResponse {
-  hasNvidiaSmi: boolean;
+  hasGpuMonitor: boolean;
   gpus: GpuInfo[];
   error?: string;
 }
