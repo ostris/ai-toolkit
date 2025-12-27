@@ -1,0 +1,132 @@
+# FLUX LoRA Training Config for Low-RAM Environments (e.g., Google Colab Free Tier)
+# 
+# This config enables training FLUX.1-dev on low-RAM systems by using
+# sequential loading: text encoders are loaded first, embeddings cached to disk,
+# then text encoders are unloaded BEFORE the transformer is loaded.
+# This prevents having both loaded simultaneously, significantly reducing peak RAM.
+#
+# Requirements:
+#   - sequential_load: true (enables deferred transformer loading)
+#   - cache_text_embeddings: true (caches embeddings so TE can be unloaded)
+#   - low_vram: true (keeps components on CPU during quantization)
+#
+# Memory Timeline:
+#   1. Load T5 + CLIP text encoders
+#   2. Cache all text embeddings to disk
+#   3. Unload text encoders (RAM freed)
+#   4. Load transformer
+#   5. Train normally
+
+---
+job: "extension"
+config:
+  name: "flux_lora_low_ram"
+  process:
+    - type: "sd_trainer"
+      training_folder: "output"
+      device: "cuda"
+      trigger_word: null
+      performance_log_every: 10
+      
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+        network_kwargs:
+          ignore_if_contains: []
+          
+      save:
+        dtype: "float16"
+        save_every: 250
+        max_step_saves_to_keep: 2
+        save_format: "diffusers"
+        push_to_hub: false
+        
+      datasets:
+        - folder_path: "/content/training_images"
+          mask_path: null
+          mask_min_value: 0.1
+          default_caption: ""
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          is_reg: false
+          network_weight: 1
+          resolution:
+            - 512
+            - 768
+            - 1024
+          controls: []
+          flip_x: false
+          flip_y: false
+          
+      train:
+        batch_size: 1
+        steps: 1000
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        timestep_type: "sigmoid"
+        content_or_style: "balanced"
+        optimizer: "adamw8bit"
+        optimizer_params:
+          weight_decay: 0.0001
+        lr: 0.0001
+        dtype: "bf16"
+        # CRITICAL: must cache text embeddings for sequential loading to work
+        cache_text_embeddings: true
+        unload_text_encoder: false
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+        skip_first_sample: false
+        force_first_sample: false
+        disable_sampling: false
+        diff_output_preservation: false
+        diff_output_preservation_multiplier: 1
+        diff_output_preservation_class: "person"
+        loss_type: "mse"
+        
+      logging:
+        log_every: 1
+        use_ui_logger: true
+        
+      model:
+        # Can use pre-quantized BnB model or standard model with quantization
+        name_or_path: "diffusers/FLUX.1-dev-bnb-8bit"
+        arch: "flux"
+        
+        # CRITICAL: Enable sequential loading for low RAM usage
+        sequential_load: true
+        
+        # Quantization settings
+        quantize: true
+        qtype: "qfloat8"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        
+        # Keep on CPU during loading/quantization
+        low_vram: true
+        model_kwargs: {}
+        
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        samples:
+          - prompt: "a photo of [trigger] person"
+          - prompt: "a woman with red hair, studio lighting"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 3.5
+        sample_steps: 20
+        num_frames: 1
+        fps: 1
+        
+meta:
+  name: "flux_lora_low_ram"
+  version: "1.0"
