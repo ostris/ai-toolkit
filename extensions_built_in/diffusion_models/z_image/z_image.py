@@ -302,6 +302,8 @@ class ZImageModel(BaseModel):
     ):
         self.model.to(self.device_torch, dtype=self.torch_dtype)
         self.model.to(self.device_torch)
+        # Ensure direct buffers (like x_pad_token) are on the correct device
+        self._ensure_buffers_on_device(self.model, self.device_torch)
 
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
@@ -319,6 +321,19 @@ class ZImageModel(BaseModel):
         ).images[0]
         return img
 
+    def _ensure_buffers_on_device(self, model: torch.nn.Module, device: torch.device):
+        """
+        Ensure all direct buffers and parameters on the model are on the correct device.
+        This is needed because MemoryManager.to() only moves tracked submodules,
+        not direct buffers like x_pad_token.
+        """
+        for name, buf in model.named_buffers(recurse=False):
+            if buf.device != device:
+                setattr(model, name, buf.to(device))
+        for name, param in model.named_parameters(recurse=False):
+            if param.device != device:
+                param.data = param.data.to(device)
+
     def get_noise_prediction(
         self,
         latent_model_input: torch.Tensor,
@@ -327,6 +342,9 @@ class ZImageModel(BaseModel):
         **kwargs,
     ):
         self.model.to(self.device_torch)
+        # Ensure direct buffers (like x_pad_token) are on the correct device
+        # This is needed when using layer_offloading as MemoryManager doesn't move them
+        self._ensure_buffers_on_device(self.model, self.device_torch)
 
         latent_model_input = latent_model_input.unsqueeze(2)
         latent_model_input_list = list(latent_model_input.unbind(dim=0))
