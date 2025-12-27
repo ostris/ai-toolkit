@@ -127,13 +127,29 @@ def is_bnb_quantized(model) -> bool:
     """
     Check if a model is already quantized with BitsAndBytes.
     BnB-quantized models cannot have their dtype changed via .to(dtype=...).
+    
+    Checks both:
+    1. model.quantization_config (HuggingFace standard)
+    2. Presence of BnB linear layers in the model (fallback detection)
     """
+    # Check via quantization_config (standard HuggingFace way)
     if hasattr(model, 'quantization_config') and model.quantization_config is not None:
         config = model.quantization_config
         if hasattr(config, 'load_in_8bit') and config.load_in_8bit:
             return True
         if hasattr(config, 'load_in_4bit') and config.load_in_4bit:
             return True
+    
+    # Fallback: Check for BnB linear layers directly in the model
+    # This catches cases where quantization_config isn't properly set
+    try:
+        import bitsandbytes as bnb
+        for module in model.modules():
+            if isinstance(module, (bnb.nn.Linear8bitLt, bnb.nn.Linear4bit)):
+                return True
+    except ImportError:
+        pass  # bitsandbytes not installed
+    
     return False
 
 
