@@ -812,10 +812,8 @@ class StableDiffusion:
                     freeze(transformer)
                     transformer.to(self.device_torch)
                 else:
-                    # BnB pre-quantized models cannot have dtype changed
-                    if is_bnb_quantized(transformer):
-                        transformer.to(self.device_torch)
-                    else:
+                    # BnB pre-quantized models cannot have .to() called at all - already on correct device
+                    if not is_bnb_quantized(transformer):
                         transformer.to(self.device_torch, dtype=dtype)
 
             flush()
@@ -833,10 +831,8 @@ class StableDiffusion:
             text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
                                                             torch_dtype=dtype)
 
-            # BnB pre-quantized models cannot have dtype changed
-            if is_bnb_quantized(text_encoder_2):
-                text_encoder_2.to(self.device_torch)
-            else:
+            # BnB pre-quantized models cannot have .to() called at all - already on correct device
+            if not is_bnb_quantized(text_encoder_2):
                 text_encoder_2.to(self.device_torch, dtype=dtype)
             flush()
 
@@ -849,10 +845,8 @@ class StableDiffusion:
             self.print_and_status_update("Loading CLIP")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
             tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
-            # BnB pre-quantized models cannot have dtype changed
-            if is_bnb_quantized(text_encoder):
-                text_encoder.to(self.device_torch)
-            else:
+            # BnB pre-quantized models cannot have .to() called at all - already on correct device
+            if not is_bnb_quantized(text_encoder):
                 text_encoder.to(self.device_torch, dtype=dtype)
 
             self.print_and_status_update("Making pipe")
@@ -1220,10 +1214,8 @@ class StableDiffusion:
             freeze(transformer)
             transformer.to(self.device_torch)
         else:
-            # BnB pre-quantized models cannot have dtype changed
-            if is_bnb_quantized(transformer):
-                transformer.to(self.device_torch)
-            else:
+            # BnB pre-quantized models cannot have .to() called at all - already on correct device
+            if not is_bnb_quantized(transformer):
                 transformer.to(self.device_torch, dtype=dtype)
         
         flush()
