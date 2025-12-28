@@ -803,7 +803,8 @@ class StableDiffusion:
             
             # Skip quantization if transformer is deferred (sequential_load mode)
             if transformer is not None:
-                if self.model_config.quantize:
+                # Skip quantization if already BnB quantized
+                if self.model_config.quantize and not is_bnb_quantized(transformer):
                     # patch the state dict method
                     patch_dequantization_on_save(transformer)
                     quantization_type = get_qtype(self.model_config.qtype)
@@ -811,6 +812,8 @@ class StableDiffusion:
                     quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
                     freeze(transformer)
                     transformer.to(self.device_torch)
+                elif self.model_config.quantize and is_bnb_quantized(transformer):
+                    self.print_and_status_update("Transformer is already BnB quantized, skipping quantization")
                 else:
                     # BnB pre-quantized models cannot have .to() called at all - already on correct device
                     if not is_bnb_quantized(transformer):
@@ -837,10 +840,13 @@ class StableDiffusion:
             flush()
 
             if self.model_config.quantize_te:
-                self.print_and_status_update("Quantizing T5")
-                quantize(text_encoder_2, weights=get_qtype(self.model_config.qtype))
-                freeze(text_encoder_2)
-                flush()
+                if not is_bnb_quantized(text_encoder_2):
+                    self.print_and_status_update("Quantizing T5")
+                    quantize(text_encoder_2, weights=get_qtype(self.model_config.qtype))
+                    freeze(text_encoder_2)
+                    flush()
+                else:
+                    self.print_and_status_update("T5 is already BnB quantized, skipping quantization")
                 
             self.print_and_status_update("Loading CLIP")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
@@ -870,17 +876,23 @@ class StableDiffusion:
             tokenizer = [pipe.tokenizer, pipe.tokenizer_2]
 
             # Only move transformer to device if it's loaded (not in sequential_load mode)
-            if pipe.transformer is not None:
+            # And ONLY if not BnB quantized (already on device)
+            if pipe.transformer is not None and not is_bnb_quantized(pipe.transformer):
                 pipe.transformer = pipe.transformer.to(self.device_torch)
 
             flush()
-            text_encoder[0].to(self.device_torch)
+            # BnB models cannot have .to() called
+            if not is_bnb_quantized(text_encoder[0]):
+                text_encoder[0].to(self.device_torch)
             text_encoder[0].requires_grad_(False)
             text_encoder[0].eval()
-            text_encoder[1].to(self.device_torch)
+            
+            if not is_bnb_quantized(text_encoder[1]):
+                text_encoder[1].to(self.device_torch)
             text_encoder[1].requires_grad_(False)
             text_encoder[1].eval()
-            if pipe.transformer is not None:
+            
+            if pipe.transformer is not None and not is_bnb_quantized(pipe.transformer):
                 pipe.transformer = pipe.transformer.to(self.device_torch)
             flush()
         elif self.model_config.is_lumina2:
@@ -1202,17 +1214,22 @@ class StableDiffusion:
         flush()
         
         # Apply quantization if needed
+        # Apply quantization if needed
         if self.model_config.quantize:
-            from toolkit.dequantize import patch_dequantization_on_save
-            from optimum.quanto import freeze
-            from toolkit.util.quantize import quantize, get_qtype
-            
-            patch_dequantization_on_save(transformer)
-            quantization_type = get_qtype(self.model_config.qtype)
-            self.print_and_status_update("Quantizing transformer")
-            quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
-            freeze(transformer)
-            transformer.to(self.device_torch)
+            # Skip if already BnB quantized
+            if not is_bnb_quantized(transformer):
+                from toolkit.dequantize import patch_dequantization_on_save
+                from optimum.quanto import freeze
+                from toolkit.util.quantize import quantize, get_qtype
+                
+                patch_dequantization_on_save(transformer)
+                quantization_type = get_qtype(self.model_config.qtype)
+                self.print_and_status_update("Quantizing transformer")
+                quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
+                freeze(transformer)
+                transformer.to(self.device_torch)
+            else:
+                self.print_and_status_update("Transformer is already BnB quantized, skipping quantization")
         else:
             # BnB pre-quantized models cannot have .to() called at all - already on correct device
             if not is_bnb_quantized(transformer):
