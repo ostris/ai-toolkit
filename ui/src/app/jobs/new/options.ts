@@ -1,5 +1,5 @@
 import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
-import { defaultSliderConfig } from './jobConfig';
+import { defaultSliderConfig, defaultImageSliderConfig } from './jobConfig';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
@@ -11,7 +11,8 @@ type DisableableSections =
   | 'train.diff_output_preservation'
   | 'train.blank_prompt_preservation'
   | 'train.unload_text_encoder'
-  | 'slider';
+  | 'slider'
+  | 'image_slider';
 
 type AdditionalSections =
   | 'datasets.control_path'
@@ -620,12 +621,12 @@ export const jobTypeOptions: JobTypeOption[] = [
   {
     value: 'diffusion_trainer',
     label: 'LoRA Trainer',
-    disableSections: ['slider'],
+    disableSections: ['slider', 'image_slider'],
   },
   {
     value: 'concept_slider',
     label: 'Concept Slider',
-    disableSections: ['trigger_word', 'train.diff_output_preservation'],
+    disableSections: ['trigger_word', 'train.diff_output_preservation', 'image_slider'],
     onActivate: (config: JobConfig) => {
       // add default slider config
       config.config.process[0].slider = { ...defaultSliderConfig };
@@ -634,6 +635,21 @@ export const jobTypeOptions: JobTypeOption[] = [
     onDeactivate: (config: JobConfig) => {
       // remove slider config
       delete config.config.process[0].slider;
+      return config;
+    },
+  },
+  {
+    value: 'image_concept_slider',
+    label: 'Image Concept Slider',
+    disableSections: ['trigger_word', 'train.diff_output_preservation', 'slider'],
+    onActivate: (config: JobConfig) => {
+      // add default image slider config
+      config.config.process[0].image_slider = { ...defaultImageSliderConfig };
+      return config;
+    },
+    onDeactivate: (config: JobConfig) => {
+      // remove image slider config
+      delete config.config.process[0].image_slider;
       return config;
     },
   },

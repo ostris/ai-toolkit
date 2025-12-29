@@ -378,6 +378,173 @@ class PairedImageDataset(Dataset):
         return img, prompt, (self.neg_weight, self.pos_weight)
 
 
+class SequenceImageDataset(Dataset):
+    """
+    Dataset for loading image sequences with user-defined suffixes.
+    Supports multiple images per sequence (not just pairs).
+    
+    Each sequence is identified by a base name, and images are matched by suffix.
+    Example: 'image1_pos1.jpg', 'image1_neg1.jpg' -> base_name='image1'
+    
+    Returns:
+        images: List of PIL images in sequence order (all positive then all negative)
+        scales: List of scale values for each image
+        prompt: Text prompt for the sequence
+        network_weight: Network weight for this dataset
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.size = self.get_config('size', 512)
+        self.folder_path = self.get_config('folder_path', required=True)
+        
+        # Parse suffixes
+        pos_suffixes = self.get_config('positive_suffixes', ['_pos'])
+        neg_suffixes = self.get_config('negative_suffixes', ['_neg'])
+        
+        if isinstance(pos_suffixes, str):
+            self.positive_suffixes = [s.strip() for s in pos_suffixes.split(',') if s.strip()]
+        else:
+            self.positive_suffixes = pos_suffixes
+            
+        if isinstance(neg_suffixes, str):
+            self.negative_suffixes = [s.strip() for s in neg_suffixes.split(',') if s.strip()]
+        else:
+            self.negative_suffixes = neg_suffixes
+        
+        self.all_suffixes = self.positive_suffixes + self.negative_suffixes
+        
+        # Parse scales
+        scales = self.get_config('scales', None)
+        if scales is None:
+            self.scales = [1.0] * len(self.positive_suffixes) + [-1.0] * len(self.negative_suffixes)
+        elif isinstance(scales, str):
+            self.scales = [float(s.strip()) for s in scales.split(',') if s.strip()]
+        else:
+            self.scales = scales
+            
+        self.default_prompt = self.get_config('target_class', '')
+        self.network_weight = self.get_config('network_weight', 1.0)
+        
+        supported_exts = ('.jpg', '.jpeg', '.png', '.webp', '.JPEG', '.JPG', '.PNG', '.WEBP')
+        
+        # Find all files and group by base name
+        all_files = [f for f in os.listdir(self.folder_path) if f.lower().endswith(supported_exts)]
+        
+        # Extract base names by removing suffix and extension
+        base_name_to_files = {}
+        for filename in all_files:
+            name_no_ext = os.path.splitext(filename)[0]
+            # Try to match against any suffix
+            base_name = None
+            matched_suffix = None
+            for suffix in self.all_suffixes:
+                if name_no_ext.endswith(suffix):
+                    base_name = name_no_ext[:-len(suffix)]
+                    matched_suffix = suffix
+                    break
+            
+            if base_name is not None:
+                if base_name not in base_name_to_files:
+                    base_name_to_files[base_name] = {}
+                base_name_to_files[base_name][matched_suffix] = os.path.join(self.folder_path, filename)
+        
+        # Filter to only complete sequences (has all required suffixes)
+        self.sequences = []
+        for base_name, suffix_files in base_name_to_files.items():
+            if all(suffix in suffix_files for suffix in self.all_suffixes):
+                # Store as ordered list matching self.all_suffixes order
+                sequence_files = [suffix_files[suffix] for suffix in self.all_suffixes]
+                self.sequences.append({
+                    'base_name': base_name,
+                    'files': sequence_files,
+                })
+        
+        print_acc(f"  -  Found {len(self.sequences)} complete image sequences")
+        print_acc(f"  -  Suffixes: positive={self.positive_suffixes}, negative={self.negative_suffixes}")
+        
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            RescaleTransform(),
+        ])
+    
+    def get_config(self, key, default=None, required=False):
+        if isinstance(self.config, dict):
+            if key in self.config:
+                return self.config[key]
+        elif hasattr(self.config, key):
+            return getattr(self.config, key)
+        
+        if required:
+            raise ValueError(f'config error. Missing "{key}" key')
+        return default
+    
+    def __len__(self):
+        return len(self.sequences)
+    
+    def get_prompt_item(self, index):
+        """Get prompt for a sequence, checking for .txt file next to first image."""
+        sequence = self.sequences[index]
+        first_file = sequence['files'][0]
+        path_no_ext = os.path.splitext(first_file)[0]
+        # Also check base name
+        base_prompt_path = os.path.join(self.folder_path, sequence['base_name'] + '.txt')
+        suffix_prompt_path = path_no_ext + '.txt'
+        
+        prompt_path = None
+        if os.path.exists(base_prompt_path):
+            prompt_path = base_prompt_path
+        elif os.path.exists(suffix_prompt_path):
+            prompt_path = suffix_prompt_path
+            
+        if prompt_path:
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                prompt = f.read()
+                prompt = prompt.replace('\n', ', ').replace('\r', ', ')
+                prompt_split = [p.strip() for p in prompt.split(',') if p.strip()]
+                prompt = ', '.join(prompt_split)
+                return prompt
+        
+        return self.default_prompt
+    
+    def __getitem__(self, index):
+        sequence = self.sequences[index]
+        images = []
+        
+        # Load and process all images in the sequence
+        for file_path in sequence['files']:
+            img = exif_transpose(Image.open(file_path)).convert('RGB')
+            
+            # Resize to target size while maintaining aspect ratio, then center crop
+            bucket_resolution = get_bucket_for_image_size(
+                width=img.width,
+                height=img.height,
+                resolution=self.size,
+            )
+            
+            # Scale to fit bucket
+            if bucket_resolution['width'] > bucket_resolution['height']:
+                scale_to_height = bucket_resolution["height"]
+                scale_to_width = int(img.width * (bucket_resolution["height"] / img.height))
+            else:
+                scale_to_width = bucket_resolution["width"]
+                scale_to_height = int(img.height * (bucket_resolution["width"] / img.width))
+            
+            img = img.resize((scale_to_width, scale_to_height), Image.BICUBIC)
+            img = transforms.CenterCrop((bucket_resolution["height"], bucket_resolution["width"]))(img)
+            
+            img_tensor = self.transform(img)
+            images.append(img_tensor)
+        
+        # Stack all images into a single tensor
+        images_tensor = torch.stack(images, dim=0)  # Shape: [num_images, C, H, W]
+        
+        prompt = self.get_prompt_item(index)
+        scales = torch.tensor(self.scales, dtype=torch.float32)
+        
+        return images_tensor, scales, prompt, self.network_weight
+
+
 class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin, TextEmbeddingCachingMixin, BucketsMixin, CaptionMixin, Dataset):
 
     def __init__(
