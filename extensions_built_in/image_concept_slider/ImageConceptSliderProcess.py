@@ -60,6 +60,15 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
         self.device = self.get_conf('device', self.job.device)
         self.device_torch = torch.device(self.device)
         
+        # Store raw dataset configs before clearing self.datasets
+        # We use SequenceImageDataset instead of the standard AiToolkitDataset
+        self.raw_dataset_configs = self.get_conf('datasets', [])
+        
+        # Prevent parent from creating standard data loader
+        # ImageConceptSlider uses its own SequenceImageDataset in load_datasets()
+        self.datasets = None
+        self.datasets_reg = None
+        
         # Load slider config from 'image_slider' key
         slider_raw = self.get_conf('image_slider', None)
         if slider_raw is None:
@@ -78,8 +87,8 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
             print_acc(f"Loading image sequence datasets")
             datasets = []
             
-            # Get datasets from the main 'datasets' config section
-            raw_datasets = self.get_conf('datasets', [])
+            # Use raw dataset configs stored in __init__
+            raw_datasets = self.raw_dataset_configs
             
             if not raw_datasets:
                 raise ValueError("No datasets configured. Add datasets in the 'datasets' section.")
