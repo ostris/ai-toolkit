@@ -1,4 +1,6 @@
 import os
+import threading
+import requests
 import pandas as pd
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -14,6 +16,22 @@ except ImportError:
 
 from .oxen_experiment import AIToolkitOxenExperiment
 
+def monitor_train_status(url: str, want_stop_event: threading.Event, finished_event: threading.Event):
+    headers = { "Authorization": f"Bearer {os.getenv('OXEN_API_TOKEN')}" }
+
+    while not finished_event.is_set():
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            train_status = response.json()["train_status"]
+
+            if train_status == "stopping":
+                want_stop_event.set()
+                return
+        except Exception as ex:
+            print(f"Training status monitor error: {ex}")
+
+        finished_event.wait(timeout=10)
 
 class AIToolkitOxenLogger:
     """
@@ -57,6 +75,20 @@ class AIToolkitOxenLogger:
             and self.experiment.repo
         ):
             self._initialize_workspace()
+            self._start_status_monitor()
+
+    def _start_status_monitor(self):
+        base_url = f"{self.experiment.scheme}://{self.experiment.host}"
+        repo = self.experiment.repo_id
+        self.status_url = f"{base_url}/api/repos/{repo}/fine_tunes/{self.fine_tune_id}/train_status"
+        self.want_stop_event = threading.Event()
+        self.finished_event = threading.Event()
+        self.status_monitor = threading.Thread(
+            target=monitor_train_status,
+            args=(self.status_url, self.want_stop_event, self.finished_event),
+            daemon=True
+        )
+        self.status_monitor.start()
 
     def _initialize_workspace(self):
         """Initialize the Oxen workspace and DataFrame."""
@@ -82,7 +114,7 @@ class AIToolkitOxenLogger:
             # Create pandas DataFrame and save to repo
             initial_df = pd.DataFrame([initial_metrics])
             print(f"Oxen Logger: Initial DataFrame: {initial_df}")
-            
+
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(self.log_file_path), exist_ok=True)
             initial_df.to_json(self.log_file_path, orient="records", lines=True)
@@ -109,14 +141,14 @@ class AIToolkitOxenLogger:
                 workspace_name=self.fine_tune_id,
                 path=self.log_file_path,
             )
-            
+
             self.df = DataFrame(
                 self.workspace, 
                 self.log_file_path, 
                 workspace_name=self.fine_tune_id
             )
             print(f"Main process: DataFrame created successfully")
-            
+
         except Exception as e:
             print(f"Main process: ERROR Initializing Oxen Workspace/DataFrame: {e}")
             self.workspace = None
@@ -126,7 +158,7 @@ class AIToolkitOxenLogger:
     def log_metrics(self, metrics: Dict[str, Any], step: int):
         """
         Log training metrics to Oxen.
-        
+
         Args:
             metrics: Dictionary of metric name -> value
             step: Current training step
@@ -149,9 +181,16 @@ class AIToolkitOxenLogger:
             )
             row = self.df.insert_row(log_entry, self.workspace)
             print(f"Main process: Metrics logged successfully")
-            
+
         except Exception as e:
             print(f"Main process: Error logging metrics to Oxen: {e}")
+
+    def is_stopping(self):
+        if not self.is_main_process:
+            return False
+        # This is set when the fine-tune's train_status was set to "stopping"
+        # either from the user hitting "stop" or running out of credits.
+        return self.want_stop_event.is_set()
 
     def save_checkpoint(self, checkpoint_files, step: int):
         """
@@ -280,7 +319,15 @@ class AIToolkitOxenLogger:
             # Final commit
             self.workspace.commit("Final experiment state with all artifacts")
             print("Main process: Final commit successful")
-            
+
+            self.finished_event.set()
+
+            headers = { "Authorization": f"Bearer {os.getenv('OXEN_API_TOKEN')}" }
+            url = f"{self.status_url}/stopped"
+            requests.put(url=url, headers=headers, timeout=10)
+
+            self.status_monitor.join(timeout=10)
+
         except Exception as e:
             print(f"Main process: Error finalizing experiment: {e}")
             raise

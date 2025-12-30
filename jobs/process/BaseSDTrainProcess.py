@@ -67,6 +67,7 @@ from diffusers import FluxTransformer2DModel
 from toolkit.accelerator import get_accelerator, unwrap_model
 from toolkit.print import print_acc
 from accelerate import Accelerator
+import accelerate
 import transformers
 import diffusers
 import hashlib
@@ -2167,6 +2168,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):
+            if self.oxen_logger and self.oxen_config.enabled:
+                # Check if we are soft-stopping the training run
+                stop_early = False
+                if self.accelerator.is_main_process:
+                    stop_early = self.oxen_logger.is_stopping()
+
+                stop_early = torch.tensor(int(stop_early), device=self.accelerator.device)
+                stop_early = accelerate.utils.broadcast(stop_early, from_process=0)
+
+                self.accelerator.wait_for_everyone()
+
+                if stop_early.item():
+                    break
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
             self.timer.start('train_loop')
