@@ -234,9 +234,6 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
             # Stack latents: [num_images, latent_channels, H, W]
             all_latents = torch.cat(latents_list, dim=0)
             
-            height = images.shape[2]
-            width = images.shape[3]
-            
             if self.train_config.gradient_checkpointing:
                 self.sd.unet.enable_gradient_checkpointing()
 
@@ -254,10 +251,9 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
 
             # Generate ONE noise tensor that will be used for all images in the sequence
             # This is crucial for learning the direction between positive and negative
-            noise = self.sd.get_latent_noise(
-                pixel_height=height,
-                pixel_width=width,
-                batch_size=1,
+            # Use get_latent_noise_from_latents to ensure noise matches latent dimensions exactly
+            noise = self.sd.get_latent_noise_from_latents(
+                latents=latents_list[0],  # Use first latent as reference for shape
                 noise_offset=self.train_config.noise_offset,
             ).to(self.device_torch, dtype=dtype)
             
@@ -265,8 +261,9 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
             noise_expanded = noise.expand(num_images, -1, -1, -1)
             
             # Add noise to all latents with the same noise
-            timesteps_expanded = timesteps.expand(num_images)
-            noisy_latents = noise_scheduler.add_noise(all_latents, noise_expanded, timesteps_expanded)
+            # Note: We use the base timesteps (not expanded) since the flowmatch scheduler
+            # expects a single timestep value, and we process all images at the same timestep
+            noisy_latents = noise_scheduler.add_noise(all_latents, noise_expanded, timesteps)
 
         # Zero gradients
         self.optimizer.zero_grad()
