@@ -175,6 +175,11 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
         3. Predict noise with network multiplier = scale for each image
         4. Compute weighted loss
         """
+        # batch is actually a batch_list from gradient accumulation
+        # For simplicity, we just take the first batch (gradient_accumulation should be 1)
+        if isinstance(batch, list):
+            batch = batch[0]
+        
         with torch.no_grad():
             images, scales, prompts, network_weights = batch
             
