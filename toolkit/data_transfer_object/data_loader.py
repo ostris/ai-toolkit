@@ -295,9 +295,14 @@ class DataLoaderBatchDTO:
                 prompt_embeds_list = []
                 for x in self.file_items:
                     if x.prompt_embeds is None:
-                        prompt_embeds_list.append(base_prompt_embeds)
+                        y = base_prompt_embeds
                     else:
-                        prompt_embeds_list.append(x.prompt_embeds)
+                        y = x.prompt_embeds
+                    if x.text_embedding_space_version == "zimage":
+                        # z image needs to be a list if it is not already
+                        if not isinstance(y.text_embeds, list):
+                            y.text_embeds = [y.text_embeds]
+                    prompt_embeds_list.append(y)
                 self.prompt_embeds = concat_prompt_embeds(prompt_embeds_list)
                     
 
