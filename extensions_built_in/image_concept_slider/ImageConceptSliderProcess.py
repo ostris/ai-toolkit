@@ -28,7 +28,7 @@ from toolkit.train_tools import get_torch_dtype, apply_snr_weight
 import gc
 from toolkit import train_tools
 import torch
-from jobs.process import BaseSDTrainProcess
+from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
 from toolkit.basic import value_map
 from toolkit.print import print_acc
 
@@ -105,7 +105,7 @@ class ImageConceptSliderConfig:
         self.anchor_generation_mode: str = kwargs.get('anchor_generation_mode', 'once')
 
 
-class ImageConceptSliderProcess(BaseSDTrainProcess):
+class ImageConceptSliderProcess(DiffusionTrainer):
     """
     Training process for image-based concept sliders.
     
@@ -114,6 +114,8 @@ class ImageConceptSliderProcess(BaseSDTrainProcess):
     
     Uses the main 'datasets' section for folder paths and resolution, and
     the 'image_slider' section for suffix/scale configuration.
+    
+    Extends DiffusionTrainer for UI integration (step updates, status, etc.).
     """
     sd: StableDiffusion
     data_loader: DataLoader = None
