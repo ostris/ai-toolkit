@@ -345,9 +345,9 @@ export const modelArchs: ModelArch[] = [
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram', 'model.layer_offloading'],
     // Training an ARA now, the other one will not work
-    // accuracyRecoveryAdapters: {
-    //   '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_torchao_uint3.safetensors',
-    // },
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_2512_torchao_uint3.safetensors',
+    },
   },
   {
     name: 'qwen_image_edit',
