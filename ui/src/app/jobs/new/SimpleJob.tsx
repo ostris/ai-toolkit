@@ -448,6 +448,7 @@ export default function SimpleJob({
             const totalImages = posSuffixes.length + negSuffixes.length;
             const scalesStr = jobConfig.config.process[0].image_slider?.scales || '';
             const scalesArr = scalesStr.split(',').map(s => s.trim()).filter(s => s);
+            const anchorMode = jobConfig.config.process[0].image_slider?.anchor_mode || 'none';
 
             return (
               <Card title="Image Sequence Config">
@@ -510,6 +511,85 @@ export default function SimpleJob({
                     placeholder="0.0"
                     min={0}
                   />
+                  <NumberInput
+                    label="Guidance Strength"
+                    docKey="image_slider.guidance_strength"
+                    value={jobConfig.config.process[0].image_slider?.guidance_strength ?? 3.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].image_slider.guidance_strength')}
+                    placeholder="3.0"
+                    min={0}
+                    step={0.1}
+                  />
+                </div>
+                
+                {/* Anchor Configuration */}
+                <div className="mt-6 pt-4 border-t border-gray-700">
+                  <h4 className="text-sm font-medium text-gray-300 mb-3">Anchor Configuration</h4>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Anchor images/prompts help preserve parts of the image that shouldn't change with the slider.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <SelectInput
+                      label="Anchor Mode"
+                      docKey="image_slider.anchor_mode"
+                      value={anchorMode}
+                      onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_mode')}
+                      options={[
+                        { value: 'none', label: 'None (No Anchor)' },
+                        { value: 'suffix', label: 'From Dataset (Suffix)' },
+                        { value: 'prompt', label: 'From Prompt (Generated)' },
+                      ]}
+                    />
+                    <NumberInput
+                      label="Anchor Strength"
+                      docKey="image_slider.anchor_strength"
+                      value={jobConfig.config.process[0].image_slider?.anchor_strength ?? 1.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_strength')}
+                      placeholder="1.0"
+                      min={0}
+                      step={0.1}
+                    />
+                  </div>
+                  
+                  {anchorMode === 'suffix' && (
+                    <div className="mt-3">
+                      <TextInput
+                        label="Anchor Suffixes"
+                        docKey="image_slider.anchor_suffixes"
+                        value={jobConfig.config.process[0].image_slider?.anchor_suffixes ?? ''}
+                        onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_suffixes')}
+                        placeholder="_anchor1, _anchor2"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Comma-separated suffixes for anchor images (e.g., image1_anchor1.jpg)
+                      </p>
+                    </div>
+                  )}
+                  
+                  {anchorMode === 'prompt' && (
+                    <div className="mt-3 space-y-3">
+                      <TextInput
+                        label="Anchor Prompt"
+                        docKey="image_slider.anchor_prompt"
+                        value={jobConfig.config.process[0].image_slider?.anchor_prompt ?? ''}
+                        onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_prompt')}
+                        placeholder="background, scenery"
+                      />
+                      <SelectInput
+                        label="Generation Mode"
+                        docKey="image_slider.anchor_generation_mode"
+                        value={jobConfig.config.process[0].image_slider?.anchor_generation_mode ?? 'once'}
+                        onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_generation_mode')}
+                        options={[
+                          { value: 'once', label: 'Generate Once at Start' },
+                          { value: 'per_batch', label: 'Generate Per Batch' },
+                        ]}
+                      />
+                      <p className="text-xs text-gray-500">
+                        "Once" is faster and more stable. "Per Batch" provides more diversity but is slower.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </Card>
             );

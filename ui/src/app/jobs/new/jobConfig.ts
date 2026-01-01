@@ -6,6 +6,12 @@ export const defaultImageSliderConfig: ImageSliderConfig = {
   scales: '',
   weight_jitter: 0.0,
   additional_losses: [],
+  guidance_strength: 3.0,
+  anchor_mode: 'none',
+  anchor_strength: 1.0,
+  anchor_suffixes: '',
+  anchor_prompt: '',
+  anchor_generation_mode: 'once',
 };
 
 export const defaultDatasetConfig: DatasetConfig = {

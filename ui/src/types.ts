@@ -221,6 +221,22 @@ export interface ImageSliderConfig {
   scales?: string;            // Comma-separated scales like "1, 0.5, -1, -0.5"
   weight_jitter: number;
   additional_losses?: string[];  // e.g., ['prior_preservation']
+  
+  // Guidance strength for direction calculation
+  guidance_strength?: number;
+  
+  // Anchor configuration
+  anchor_mode?: 'none' | 'suffix' | 'prompt';
+  anchor_strength?: number;
+  
+  // For suffix mode: anchor images loaded from dataset with these suffixes
+  anchor_suffixes?: string;
+  
+  // For prompt mode: generate anchor latents from this prompt
+  anchor_prompt?: string;
+  
+  // Anchor generation mode for prompt mode: "once" (cache at start) or "per_batch"
+  anchor_generation_mode?: 'once' | 'per_batch';
 }
 
 export interface ProcessConfig {
