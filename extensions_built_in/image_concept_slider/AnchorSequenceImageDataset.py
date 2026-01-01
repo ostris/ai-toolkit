@@ -1,9 +1,10 @@
 """
-Extended SequenceImageDataset with anchor image support.
+Extended SequenceImageDataset with anchor image support and ZImage-compatible bucketing.
 
-This subclass adds the ability to load anchor images from the dataset using
-suffix-based matching (e.g., _anchor1, _anchor2). Anchor images are used to
-constrain the slider training so it doesn't affect unrelated parts of the image.
+This subclass adds:
+1. Anchor image support (suffix-based matching)
+2. Consistent resolution across all images in a sequence
+3. Dimensions divisible by 16 for ZImage compatibility
 """
 
 import os
@@ -13,11 +14,89 @@ from PIL import Image
 from PIL.ImageOps import exif_transpose
 from torchvision import transforms
 
-from toolkit.data_loader import SequenceImageDataset, get_bucket_for_image_size
+from toolkit.data_loader import SequenceImageDataset, get_bucket_for_image_size, RescaleTransform
 from toolkit.print import print_acc
 
 
-class AnchorSequenceImageDataset(SequenceImageDataset):
+def get_zimage_compatible_bucket(width: int, height: int, resolution: int) -> Dict[str, int]:
+    """
+    Get a bucket resolution that is compatible with ZImage's patch requirements.
+    ZImage requires latent dimensions divisible by 2, which means image dimensions
+    must be divisible by 16 (8x VAE downscaling * 2 patch size).
+    """
+    bucket = get_bucket_for_image_size(
+        width=width,
+        height=height,
+        resolution=resolution,
+        divisibility=16  # Use 16 instead of 8 for ZImage compatibility
+    )
+    
+    # Ensure dimensions are divisible by 16
+    bucket_w = bucket['width']
+    bucket_h = bucket['height']
+    
+    if bucket_w % 16 != 0:
+        bucket_w = (bucket_w // 16) * 16
+    if bucket_h % 16 != 0:
+        bucket_h = (bucket_h // 16) * 16
+    
+    # Ensure minimum size
+    bucket_w = max(bucket_w, 64)
+    bucket_h = max(bucket_h, 64)
+    
+    return {'width': bucket_w, 'height': bucket_h}
+
+
+class FixedResolutionSequenceDataset(SequenceImageDataset):
+    """
+    A SequenceImageDataset that ensures all images in a sequence have the same resolution.
+    Uses the first image to determine bucket, then applies to all images in sequence.
+    Also ensures ZImage-compatible dimensions (divisible by 16).
+    """
+    
+    def __getitem__(self, index):
+        sequence = self.sequences[index]
+        images = []
+        bucket_resolution = None
+        
+        # Load and process all images in the sequence
+        for i, file_path in enumerate(sequence['files']):
+            img = exif_transpose(Image.open(file_path)).convert('RGB')
+            
+            # Determine bucket resolution from first image only
+            if bucket_resolution is None:
+                bucket_resolution = get_zimage_compatible_bucket(
+                    width=img.width,
+                    height=img.height,
+                    resolution=self.size,
+                )
+            
+            # Scale to fit bucket
+            if bucket_resolution['width'] / bucket_resolution['height'] > img.width / img.height:
+                # Image is taller than bucket - scale by width
+                scale_to_width = bucket_resolution["width"]
+                scale_to_height = int(img.height * (bucket_resolution["width"] / img.width))
+            else:
+                # Image is wider than bucket - scale by height
+                scale_to_height = bucket_resolution["height"]
+                scale_to_width = int(img.width * (bucket_resolution["height"] / img.height))
+            
+            img = img.resize((scale_to_width, scale_to_height), Image.BICUBIC)
+            img = transforms.CenterCrop((bucket_resolution["height"], bucket_resolution["width"]))(img)
+            
+            img_tensor = self.transform(img)
+            images.append(img_tensor)
+        
+        # Stack all images into a single tensor
+        images_tensor = torch.stack(images, dim=0)  # Shape: [num_images, C, H, W]
+        
+        prompt = self.get_prompt_item(index)
+        scales = torch.tensor(self.scales, dtype=torch.float32)
+        
+        return images_tensor, scales, prompt, self.network_weight
+
+
+class AnchorSequenceImageDataset(FixedResolutionSequenceDataset):
     """
     Extended SequenceImageDataset with anchor image support.
     
@@ -84,32 +163,56 @@ class AnchorSequenceImageDataset(SequenceImageDataset):
             network_weight: Network weight for this dataset
             anchor_images: Tensor of shape [num_anchors, C, H, W] or None
         """
-        # Get base data from parent
-        images_tensor, scales, prompt, network_weight = super().__getitem__(index)
-        
-        # Load anchor images if present
         sequence = self.sequences[index]
+        images = []
+        bucket_resolution = None
+        
+        # Load and process all images in the sequence (same as parent)
+        for i, file_path in enumerate(sequence['files']):
+            img = exif_transpose(Image.open(file_path)).convert('RGB')
+            
+            # Determine bucket resolution from first image only
+            if bucket_resolution is None:
+                bucket_resolution = get_zimage_compatible_bucket(
+                    width=img.width,
+                    height=img.height,
+                    resolution=self.size,
+                )
+            
+            # Scale to fit bucket
+            if bucket_resolution['width'] / bucket_resolution['height'] > img.width / img.height:
+                scale_to_width = bucket_resolution["width"]
+                scale_to_height = int(img.height * (bucket_resolution["width"] / img.width))
+            else:
+                scale_to_height = bucket_resolution["height"]
+                scale_to_width = int(img.width * (bucket_resolution["height"] / img.height))
+            
+            img = img.resize((scale_to_width, scale_to_height), Image.BICUBIC)
+            img = transforms.CenterCrop((bucket_resolution["height"], bucket_resolution["width"]))(img)
+            
+            img_tensor = self.transform(img)
+            images.append(img_tensor)
+        
+        images_tensor = torch.stack(images, dim=0)
+        prompt = self.get_prompt_item(index)
+        scales = torch.tensor(self.scales, dtype=torch.float32)
+        
+        # Load anchor images using the SAME bucket resolution
         anchor_images = None
         anchor_files = sequence.get('anchor_files', [])
-        if anchor_files:
+        if anchor_files and bucket_resolution is not None:
             anchor_list = []
             for anchor_path in anchor_files:
                 try:
                     img = exif_transpose(Image.open(anchor_path)).convert('RGB')
                     
-                    # Use same resize logic as parent
-                    bucket_resolution = get_bucket_for_image_size(
-                        width=img.width,
-                        height=img.height,
-                        resolution=self.size,
-                    )
-                    
-                    if bucket_resolution['width'] > bucket_resolution['height']:
-                        scale_to_height = bucket_resolution["height"]
-                        scale_to_width = int(img.width * (bucket_resolution["height"] / img.height))
-                    else:
+                    # Use same bucket resolution as main images
+                    if bucket_resolution['width'] / bucket_resolution['height'] > img.width / img.height:
                         scale_to_width = bucket_resolution["width"]
                         scale_to_height = int(img.height * (bucket_resolution["width"] / img.width))
+                    else:
+                        scale_to_height = bucket_resolution["height"]
+                        scale_to_width = int(img.width * (bucket_resolution["height"] / img.height))
                     
                     img = img.resize((scale_to_width, scale_to_height), Image.BICUBIC)
                     img = transforms.CenterCrop((bucket_resolution["height"], bucket_resolution["width"]))(img)

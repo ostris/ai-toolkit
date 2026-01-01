@@ -173,6 +173,7 @@ class ImageConceptSliderProcess(DiffusionTrainer):
                 raise ValueError("No datasets configured. Add datasets in the 'datasets' section.")
             
             # Choose dataset class based on anchor mode
+            # Always use our fixed resolution datasets for ZImage compatibility
             use_anchor_dataset = (
                 self.slider_config.anchor_mode == 'suffix' and 
                 len(self.slider_config.anchor_suffixes) > 0
@@ -182,8 +183,9 @@ class ImageConceptSliderProcess(DiffusionTrainer):
                 from extensions_built_in.image_concept_slider.AnchorSequenceImageDataset import AnchorSequenceImageDataset
                 DatasetClass = AnchorSequenceImageDataset
             else:
-                from toolkit.data_loader import SequenceImageDataset
-                DatasetClass = SequenceImageDataset
+                # Use FixedResolutionSequenceDataset for ZImage-compatible dimensions
+                from extensions_built_in.image_concept_slider.AnchorSequenceImageDataset import FixedResolutionSequenceDataset
+                DatasetClass = FixedResolutionSequenceDataset
             
             for dataset_raw in raw_datasets:
                 # Parse the dataset config
@@ -511,43 +513,39 @@ class ImageConceptSliderProcess(DiffusionTrainer):
             )
             
             # Compute anchor target if anchor mode is enabled
-            # For prompt mode: use same noisy_neutral but with anchor prompt embeddings
-            # For suffix mode: use noisy_anchor (from actual anchor images)
+            # NOTE: For image sliders, prompt-based anchor doesn't work well because
+            # we'd be comparing predictions with different embeddings.
+            # Instead, we use neutral_pred as a regularization target.
+            # Suffix mode uses actual anchor images which is more appropriate.
             anchor_target = None
-            if self.slider_config.anchor_mode == 'prompt' and self.anchor_embeds_cache is not None:
-                # Prompt mode: predict for neutral latents with anchor prompt
-                # This constrains the output to match what anchor prompt would produce
-                anchor_target = self.sd.predict_noise(
-                    latents=noisy_neutral,
-                    conditional_embeddings=self.anchor_embeds_cache.to(self.device_torch, dtype=dtype),
-                    timestep=timesteps,
-                )
-            elif self.slider_config.anchor_mode == 'suffix' and noisy_anchor is not None:
+            if self.slider_config.anchor_mode == 'suffix' and noisy_anchor is not None:
                 # Suffix mode: predict for actual anchor image latents
                 anchor_target = self.sd.predict_noise(
                     latents=noisy_anchor,
                     conditional_embeddings=conditional_embeds.to(self.device_torch, dtype=dtype),
                     timestep=timesteps,
                 )
+            elif self.slider_config.anchor_mode == 'prompt':
+                # For prompt mode in image sliders, use neutral_pred as regularization
+                # This constrains the network to not drift too far from base model output
+                anchor_target = neutral_pred.detach().clone()
             
-            # Calculate direction targets (like concept_slider)
+            # Calculate direction targets
+            # The direction is simply: positive - negative (what makes positive different from negative)
             guidance_scale = self.slider_config.guidance_strength
             
-            # Direction vectors
-            positive_dir = (positive_pred - neutral_pred) - (negative_pred - neutral_pred)
-            negative_dir = (negative_pred - neutral_pred) - (positive_pred - neutral_pred)
+            # Direction vector: what transforms negative toward positive
+            direction = positive_pred - negative_pred
             
-            # Enhance/erase targets
-            enhance_positive_target = neutral_pred + guidance_scale * positive_dir
-            enhance_negative_target = neutral_pred + guidance_scale * negative_dir
-            erase_negative_target = neutral_pred - guidance_scale * negative_dir
-            erase_positive_target = neutral_pred - guidance_scale * positive_dir
+            # Targets for training:
+            # - Positive pass (+1): push neutral toward positive direction
+            # - Negative pass (-1): push neutral toward negative direction (opposite)
+            positive_target = neutral_pred + guidance_scale * direction
+            negative_target = neutral_pred - guidance_scale * direction
             
-            # Normalize to neutral distribution
-            enhance_positive_target = norm_like_tensor(enhance_positive_target, neutral_pred)
-            enhance_negative_target = norm_like_tensor(enhance_negative_target, neutral_pred)
-            erase_negative_target = norm_like_tensor(erase_negative_target, neutral_pred)
-            erase_positive_target = norm_like_tensor(erase_positive_target, neutral_pred)
+            # Normalize to neutral distribution to prevent magnitude drift
+            positive_target = norm_like_tensor(positive_target, neutral_pred)
+            negative_target = norm_like_tensor(negative_target, neutral_pred)
         
         # Restore network
         if self.network is not None:
@@ -567,18 +565,16 @@ class ImageConceptSliderProcess(DiffusionTrainer):
                 timestep=timesteps,
             )
             
-            # Compute losses for positive pass
-            enhance_loss = torch.nn.functional.mse_loss(class_pred, enhance_positive_target)
-            erase_loss = torch.nn.functional.mse_loss(class_pred, erase_negative_target)
+            # Loss: network output should match positive_target (pushed toward positive)
+            direction_loss = torch.nn.functional.mse_loss(class_pred, positive_target)
             
-            # Anchor loss constrains the network output to not drift from anchor target
-            # anchor_target was computed in Phase 1 with network disabled
+            # Anchor/regularization loss: keep output close to base model
             if anchor_target is not None:
                 anchor_loss = torch.nn.functional.mse_loss(class_pred, anchor_target)
                 anchor_loss = anchor_loss * self.slider_config.anchor_strength
-                total_pos_loss = (enhance_loss + erase_loss + anchor_loss) / 3.0
+                total_pos_loss = direction_loss + anchor_loss
             else:
-                total_pos_loss = (enhance_loss + erase_loss) / 2.0
+                total_pos_loss = direction_loss
             
             total_pos_loss = total_pos_loss * loss_jitter_multiplier
             total_pos_loss.backward()
@@ -594,17 +590,16 @@ class ImageConceptSliderProcess(DiffusionTrainer):
                 timestep=timesteps,
             )
             
-            # Compute losses for negative pass (reversed targets)
-            enhance_loss = torch.nn.functional.mse_loss(class_pred, enhance_negative_target)
-            erase_loss = torch.nn.functional.mse_loss(class_pred, erase_positive_target)
+            # Loss: network output should match negative_target (pushed toward negative)
+            direction_loss = torch.nn.functional.mse_loss(class_pred, negative_target)
             
-            # Anchor loss constrains the network output to not drift from anchor target
+            # Anchor/regularization loss
             if anchor_target is not None:
                 anchor_loss = torch.nn.functional.mse_loss(class_pred, anchor_target)
                 anchor_loss = anchor_loss * self.slider_config.anchor_strength
-                total_neg_loss = (enhance_loss + erase_loss + anchor_loss) / 3.0
+                total_neg_loss = direction_loss + anchor_loss
             else:
-                total_neg_loss = (enhance_loss + erase_loss) / 2.0
+                total_neg_loss = direction_loss
             
             total_neg_loss = total_neg_loss * loss_jitter_multiplier
             total_neg_loss.backward()
