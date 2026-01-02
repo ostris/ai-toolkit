@@ -347,6 +347,7 @@ export const modelArchs: ModelArch[] = [
     // Training an ARA now, the other one will not work
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_2512_torchao_uint3.safetensors',
+      '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/qwen_image_2512_torchao_uint4.safetensors',
     },
   },
   {
