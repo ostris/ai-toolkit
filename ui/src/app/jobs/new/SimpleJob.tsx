@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import {
   modelArchs,
   ModelArch,
@@ -8,12 +8,12 @@ import {
   defaultQtype,
   jobTypeOptions,
 } from './options';
-import { defaultDatasetConfig } from './jobConfig';
+import { defaultDatasetConfig, defaultImageSliderConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X } from 'lucide-react';
+import { X, Plus } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -66,6 +66,14 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
 
+  // Auto-initialize image_slider config when job type is image_concept_slider
+  const isImageSliderJob = jobConfig.config.process[0].type === 'image_concept_slider';
+  useEffect(() => {
+    if (isImageSliderJob && !jobConfig.config.process[0].image_slider) {
+      setJobConfig({ ...defaultImageSliderConfig }, 'config.process[0].image_slider');
+    }
+  }, [isImageSliderJob, jobConfig.config.process[0].image_slider, setJobConfig]);
+
   const numTopCards = useMemo(() => {
     let count = 4; // job settings, model config, target config, save config
     if (modelArch?.additionalSections?.includes('model.multistage')) {
@@ -77,8 +85,11 @@ export default function SimpleJob({
     if (!disableSections.includes('slider')) {
       count += 1; // add slider card
     }
+    if (!disableSections.includes('image_slider') && isImageSliderJob) {
+      count += 1; // add image slider card
+    }
     return count;
-  }, [modelArch, disableSections]);
+  }, [modelArch, disableSections, isImageSliderJob]);
 
   let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
 
@@ -424,6 +435,165 @@ export default function SimpleJob({
               />
             </Card>
           )}
+          {!disableSections.includes('image_slider') && isImageSliderJob && (() => {
+            // Calculate sequence info for display
+            const posSuffixes = (jobConfig.config.process[0].image_slider?.positive_suffixes || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(s => s);
+            const negSuffixes = (jobConfig.config.process[0].image_slider?.negative_suffixes || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(s => s);
+            const totalImages = posSuffixes.length + negSuffixes.length;
+            const scalesStr = jobConfig.config.process[0].image_slider?.scales || '';
+            const scalesArr = scalesStr.split(',').map(s => s.trim()).filter(s => s);
+            const anchorMode = jobConfig.config.process[0].image_slider?.anchor_mode || 'none';
+
+            return (
+              <Card title="Image Sequence Config">
+                {totalImages > 0 && (
+                  <div className="mb-4 p-3 bg-blue-900/30 rounded-lg">
+                    <span className="text-sm text-blue-200">
+                      <strong>{totalImages} images per sequence</strong> ({posSuffixes.length} positive, {negSuffixes.length} negative)
+                    </span>
+                    {scalesArr.length > 0 && (
+                      <div className="mt-2 text-xs">
+                        <span className="text-gray-400">Mapping: </span>
+                        {[...posSuffixes, ...negSuffixes].map((suffix, idx) => {
+                          const scale = scalesArr[idx] ?? 'auto';
+                          return (
+                            <span
+                              key={idx}
+                              className={`inline-block mr-2 px-1 rounded ${
+                                parseFloat(scale) > 0
+                                  ? 'bg-green-900 text-green-200'
+                                  : parseFloat(scale) < 0
+                                    ? 'bg-red-900 text-red-200'
+                                    : 'bg-gray-700'
+                              }`}
+                            >
+                              {suffix}={scale}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <TextInput
+                    label="Positive Suffixes"
+                    docKey="image_slider.positive_suffixes"
+                    value={jobConfig.config.process[0].image_slider?.positive_suffixes ?? ''}
+                    onChange={value => setJobConfig(value, 'config.process[0].image_slider.positive_suffixes')}
+                    placeholder="_pos1, _pos2"
+                  />
+                  <TextInput
+                    label="Negative Suffixes"
+                    docKey="image_slider.negative_suffixes"
+                    value={jobConfig.config.process[0].image_slider?.negative_suffixes ?? ''}
+                    onChange={value => setJobConfig(value, 'config.process[0].image_slider.negative_suffixes')}
+                    placeholder="_neg1, _neg2"
+                  />
+                  <TextInput
+                    label="Scales"
+                    docKey="image_slider.scales"
+                    value={jobConfig.config.process[0].image_slider?.scales ?? ''}
+                    onChange={value => setJobConfig(value, 'config.process[0].image_slider.scales')}
+                    placeholder="1, 1.5, -1, -1.5"
+                  />
+                  <NumberInput
+                    label="Weight Jitter"
+                    docKey="image_slider.weight_jitter"
+                    value={jobConfig.config.process[0].image_slider?.weight_jitter ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].image_slider.weight_jitter')}
+                    placeholder="0.0"
+                    min={0}
+                  />
+                  <NumberInput
+                    label="Guidance Strength"
+                    docKey="image_slider.guidance_strength"
+                    value={jobConfig.config.process[0].image_slider?.guidance_strength ?? 3.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].image_slider.guidance_strength')}
+                    placeholder="3.0"
+                    min={0}
+                    step={0.1}
+                  />
+                </div>
+                
+                {/* Anchor Configuration */}
+                <div className="mt-6 pt-4 border-t border-gray-700">
+                  <h4 className="text-sm font-medium text-gray-300 mb-3">Anchor Configuration</h4>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Anchor images/prompts help preserve parts of the image that shouldn't change with the slider.
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <SelectInput
+                      label="Anchor Mode"
+                      docKey="image_slider.anchor_mode"
+                      value={anchorMode}
+                      onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_mode')}
+                      options={[
+                        { value: 'none', label: 'None (No Anchor)' },
+                        { value: 'suffix', label: 'From Dataset (Suffix)' },
+                        { value: 'prompt', label: 'From Prompt (Generated)' },
+                      ]}
+                    />
+                    <NumberInput
+                      label="Anchor Strength"
+                      docKey="image_slider.anchor_strength"
+                      value={jobConfig.config.process[0].image_slider?.anchor_strength ?? 1.0}
+                      onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_strength')}
+                      placeholder="1.0"
+                      min={0}
+                      step={0.1}
+                    />
+                  </div>
+                  
+                  {anchorMode === 'suffix' && (
+                    <div className="mt-3">
+                      <TextInput
+                        label="Anchor Suffixes"
+                        docKey="image_slider.anchor_suffixes"
+                        value={jobConfig.config.process[0].image_slider?.anchor_suffixes ?? ''}
+                        onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_suffixes')}
+                        placeholder="_anchor1, _anchor2"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Comma-separated suffixes for anchor images (e.g., image1_anchor1.jpg)
+                      </p>
+                    </div>
+                  )}
+                  
+                  {anchorMode === 'prompt' && (
+                    <div className="mt-3 space-y-3">
+                      <TextInput
+                        label="Anchor Prompt"
+                        docKey="image_slider.anchor_prompt"
+                        value={jobConfig.config.process[0].image_slider?.anchor_prompt ?? ''}
+                        onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_prompt')}
+                        placeholder="background, scenery"
+                      />
+                      <SelectInput
+                        label="Generation Mode"
+                        docKey="image_slider.anchor_generation_mode"
+                        value={jobConfig.config.process[0].image_slider?.anchor_generation_mode ?? 'once'}
+                        onChange={value => setJobConfig(value, 'config.process[0].image_slider.anchor_generation_mode')}
+                        options={[
+                          { value: 'once', label: 'Generate Once at Start' },
+                          { value: 'per_batch', label: 'Generate Per Batch' },
+                        ]}
+                      />
+                      <p className="text-xs text-gray-500">
+                        "Once" is faster and more stable. "Per Batch" provides more diversity but is slower.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })()}
           <Card title="Save">
             <SelectInput
               label="Data Type"

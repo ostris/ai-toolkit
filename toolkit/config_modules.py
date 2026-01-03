@@ -764,6 +764,91 @@ class ReferenceDatasetConfig:
         self.size: int = kwargs.get('size', 512)
 
 
+class ImageSequenceDatasetConfig:
+    """
+    Config for image sequence datasets used in image-based concept sliders.
+    Supports multiple images per sequence (not just pairs) with user-defined suffixes.
+    
+    Example structure:
+        folder/
+            image1_pos1.jpg, image1_pos2.jpg, image1_neg1.jpg, image1_neg2.jpg
+            image2_pos1.jpg, image2_pos2.jpg, image2_neg1.jpg, image2_neg2.jpg
+    
+    With positive_suffixes=['_pos1', '_pos2'] and negative_suffixes=['_neg1', '_neg2']
+    """
+    def __init__(self, **kwargs):
+        # Folder containing the image sequences
+        self.folder_path: str = kwargs.get('folder_path', '')
+        
+        # Suffixes for positive and negative images (comma-separated string or list)
+        pos_suffixes = kwargs.get('positive_suffixes', ['_pos'])
+        neg_suffixes = kwargs.get('negative_suffixes', ['_neg'])
+        
+        # Handle comma-separated strings
+        if isinstance(pos_suffixes, str):
+            self.positive_suffixes: List[str] = [s.strip() for s in pos_suffixes.split(',') if s.strip()]
+        else:
+            self.positive_suffixes: List[str] = pos_suffixes
+            
+        if isinstance(neg_suffixes, str):
+            self.negative_suffixes: List[str] = [s.strip() for s in neg_suffixes.split(',') if s.strip()]
+        else:
+            self.negative_suffixes: List[str] = neg_suffixes
+        
+        # Scales for each suffix (positive values for positive direction, negative for negative)
+        # Length should match total suffixes, defaults to +1 for pos and -1 for neg
+        scales = kwargs.get('scales', None)
+        if scales is None:
+            self.scales: List[float] = [1.0] * len(self.positive_suffixes) + [-1.0] * len(self.negative_suffixes)
+        elif isinstance(scales, str):
+            self.scales: List[float] = [float(s.strip()) for s in scales.split(',') if s.strip()]
+        else:
+            self.scales: List[float] = scales
+        
+        # Network weight multiplier for this dataset
+        self.network_weight: float = float(kwargs.get('network_weight', 1.0))
+        
+        # Target class prompt for conditioning
+        self.target_class: str = kwargs.get('target_class', '')
+        
+        # Image resolution
+        self.size: int = kwargs.get('size', 512)
+
+
+class ImageConceptSliderConfig:
+    """
+    Config for image-based concept slider training.
+    Uses datasets from the main 'datasets' section and applies suffix filtering globally.
+    """
+    def __init__(self, **kwargs):
+        # Global suffix configuration - applied to all datasets
+        pos_suffixes = kwargs.get('positive_suffixes', ['_pos'])
+        neg_suffixes = kwargs.get('negative_suffixes', ['_neg'])
+        
+        if isinstance(pos_suffixes, str):
+            self.positive_suffixes: List[str] = [s.strip() for s in pos_suffixes.split(',') if s.strip()]
+        else:
+            self.positive_suffixes: List[str] = pos_suffixes
+            
+        if isinstance(neg_suffixes, str):
+            self.negative_suffixes: List[str] = [s.strip() for s in neg_suffixes.split(',') if s.strip()]
+        else:
+            self.negative_suffixes: List[str] = neg_suffixes
+        
+        # Scales for each suffix (positive values for positive direction, negative for negative)
+        scales = kwargs.get('scales', None)
+        if scales is None:
+            self.scales: List[float] = [1.0] * len(self.positive_suffixes) + [-1.0] * len(self.negative_suffixes)
+        elif isinstance(scales, str):
+            self.scales: List[float] = [float(s.strip()) for s in scales.split(',') if s.strip()]
+        else:
+            self.scales: List[float] = scales
+        
+        self.weight_jitter: float = kwargs.get('weight_jitter', 0.0)
+        # Additional loss types (e.g., 'prior_preservation')
+        self.additional_losses: List[str] = kwargs.get('additional_losses', [])
+
+
 class SliderTargetConfig:
     def __init__(self, **kwargs):
         self.target_class: str = kwargs.get('target_class', '')
