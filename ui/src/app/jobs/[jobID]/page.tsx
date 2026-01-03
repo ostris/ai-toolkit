@@ -2,7 +2,7 @@
 
 import { useState, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
-import { LuHouse, LuImage, LuFileCode, LuDownload } from 'react-icons/lu';
+import { LuHouse, LuImage, LuFileCode, LuChartLine } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
@@ -46,6 +46,8 @@ const pages: Page[] = [
   },
   {
     name: 'Loss Graph',
+    shortName: 'Loss',
+    icon: LuChartLine,
     value: 'loss_log',
     component: JobLossGraph,
     mainCss: 'pt-24',
