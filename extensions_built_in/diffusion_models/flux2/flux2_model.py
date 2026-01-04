@@ -312,7 +312,30 @@ class Flux2Model(BaseModel):
             img_cond_seq_ids: torch.Tensor | None = None
 
             # handle control images
-            if batch.control_tensor_list is not None:
+            # Normalize control_tensor and control_tensor_list to a consistent format
+            control_items = getattr(batch, "control_tensor_list", None)
+
+            # Fallback: handle single control_tensor (used when only one control path is specified)
+            if control_items is None:
+                ct = getattr(batch, "control_tensor", None)
+                if ct is not None:
+                    if torch.is_tensor(ct):
+                        if ct.dim() == 4:
+                            # (B,C,H,W) -> list-of-lists: [[img], ...]
+                            control_items = [[ct[i:i+1]] for i in range(ct.shape[0])]
+                        elif ct.dim() == 5:
+                            # (B,N,C,H,W) -> per-sample list of N controls
+                            control_items = [
+                                [ct[i, j] for j in range(ct.shape[1])]
+                                for i in range(ct.shape[0])
+                            ]
+                        else:
+                            raise ValueError(f"Unexpected control_tensor shape: {tuple(ct.shape)}")
+                    elif isinstance(ct, list):
+                        # already a list; wrap singletons to list-of-lists
+                        control_items = [[x] if torch.is_tensor(x) else x for x in ct]
+
+            if control_items is not None:
                 batch_size, num_channels_latents, height, width = (
                     latent_model_input.shape
                 )
@@ -328,11 +351,11 @@ class Flux2Model(BaseModel):
                     )
                     control_image_max_res = control_image_res
 
-                if len(batch.control_tensor_list) != batch_size:
+                if len(control_items) != batch_size:
                     raise ValueError(
                         "Control tensor list length does not match batch size"
                     )
-                for control_tensor_list in batch.control_tensor_list:
+                for control_tensor_list in control_items:
                     # control tensor list is a list of tensors for this batch item
                     controls = []
                     # pack control
