@@ -1,4 +1,4 @@
-# AI Toolkit by Ostris
+# AI Toolkit by Ostris - Nouveau Edition!
 
 This is a forked repo of AI-Toolkit that only adds a .bat file within the UI folder to help with running the program like most diffusion programs out there. It also fixes an issue with PID ports being locked and not cleared when the CLI is closed on windows systems.
 
