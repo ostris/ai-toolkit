@@ -56,18 +56,6 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
     return () => observer.disconnect();
   }, [observerRoot, rootMargin]);
 
-  // Pause video when leaving viewport
-  useEffect(() => {
-    if (!isVideo(imageUrl)) return;
-    const v = videoRef.current;
-    if (!v) return;
-    if (!isVisible && !v.paused) {
-      try {
-        v.pause();
-      } catch {}
-    }
-  }, [isVisible, imageUrl]);
-
   const handleLoad = () => setLoaded(true);
 
   return (
@@ -81,9 +69,11 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                 src={`/api/img/${encodeURIComponent(imageUrl)}`}
                 className="w-full h-full object-cover"
                 preload="none"
+                onLoad={handleLoad}
                 playsInline
                 muted
                 loop
+                autoPlay
                 controls={false}
               />
             ) : (

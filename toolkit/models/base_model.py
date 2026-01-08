@@ -185,6 +185,8 @@ class BaseModel:
         self.has_multiple_control_images = False
         # do not resize control images
         self.use_raw_control_images = False
+        # defines if the model supports model paths. Only some will
+        self.supports_model_paths = False
 
     # properties for old arch for backwards compatibility
     @property

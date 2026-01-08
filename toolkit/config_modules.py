@@ -672,6 +672,9 @@ class ModelConfig:
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         
+        # model paths for models that support it
+        self.model_paths = kwargs.get("model_paths", {})
+        
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
         if self.arch is not None:
