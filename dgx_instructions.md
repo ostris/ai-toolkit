@@ -12,39 +12,39 @@ This guide will assume you have a fresh installation of DGX OS, and will guide y
 
 Install the latest version of miniconda:
 ```
-$ wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
-$ chmod u+x Miniconda3-latest-Linux-aarch64.sh
-$ ./Miniconda3-latest-Linux-aarch64.sh
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+chmod u+x Miniconda3-latest-Linux-aarch64.sh
+./Miniconda3-latest-Linux-aarch64.sh
 ```
 
 Restart your bash or ssh session. If miniconda was installed successfully, it will automatically load the 'base' environment by default. If you want to disable this behaviour, run:
 ```
-$ conda config --set auto_activate_base false
+conda config --set auto_activate_base false
 ```
 
 Now you can create a Python 3.11 environment for ai-toolkit:
 ```
-$ conda create --name ai-toolkit python=3.11
+conda create --name ai-toolkit python=3.11
 ```
 
 Then activate the environment with:
 
 ```
-$ conda activate ai-toolkit
+conda activate ai-toolkit
 ```
 
 
 **2) Install PyTorch**
 
 ```
-$ pip3 install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
+pip3 install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 
 **3) Install the remaining requirements (dgx_requirements.txt)**
 
 ```
-$ pip3 install -r dgx_requirements.txt
+pip3 install -r dgx_requirements.txt
 ```
 
 ### Running the UI on DGX OS:
@@ -66,8 +66,8 @@ export PATH=“/opt/node-v24.11.1-linux-arm64/bin:$PATH”
 
 Change to the ui directory, then build and run the UI:
 ```
-$ cd ui
-$ npm run build_and_start
+cd ui
+npm run build_and_start
 ```
 
 If all went well, you’ll be able to access the UI on port 8675 and start training.
@@ -78,7 +78,7 @@ If all went well, you’ll be able to access the UI on port 8675 and start train
 If you’re not getting any output when starting a training job from the UI, it’s probably crashing before the process started, the best way to debug these issues is to run the python training script directly (which is normally started by the UI). To do this, set up a training job in the UI, go to the advanced config screen, copy and paste the configuration into a file like train.yaml, then run the training script like this with the conda virtual environment active:
 
 ```
-$ python run.py path/to/train.yaml
+python run.py path/to/train.yaml
 ```
 </details>
 <br>

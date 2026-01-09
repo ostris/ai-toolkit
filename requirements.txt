@@ -1,6 +1,6 @@
 torchao==0.10.0
 safetensors
-git+https://github.com/huggingface/diffusers@6bf668c4d217ebc96065e673d8a257fd79950d34
+git+https://github.com/huggingface/diffusers@f6b6a7181eb44f0120b29cd897c129275f366c2a
 transformers==4.57.3
 lycoris-lora==1.8.3
 flatten_json
