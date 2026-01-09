@@ -613,7 +613,7 @@ class ToolkitNetworkMixin:
                     from safetensors.torch import load_file
                     weights_sd = load_file(file)
                 else:
-                    weights_sd = torch.load(file, map_location="cpu")
+                    weights_sd = torch.load(file, map_location="cpu", weights_only=False)
         else:
             # probably a state dict
             weights_sd = file

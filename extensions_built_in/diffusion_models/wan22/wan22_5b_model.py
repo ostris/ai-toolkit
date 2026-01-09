@@ -246,21 +246,43 @@ class Wan225bModel(Wan21):
         
         if batch.dataset_config.do_i2v:
             with torch.no_grad():
-                frames = batch.tensor
-                if len(frames.shape) == 4:
-                    first_frames = frames
-                elif len(frames.shape) == 5:
-                    first_frames = frames[:, 0]
-                    # Add conditioning using the standalone function
-                    conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
-                        latent_model_input=latent_model_input.to(
-                            self.device_torch, self.torch_dtype
-                        ),
-                        first_frame=first_frames.to(self.device_torch, self.torch_dtype),
-                        vae=self.vae,
-                    )
+                # Check if we have frames/tensor data for i2v conditioning
+                # If batch.tensor is None (e.g., when latents are cached), try to use cached first frames
+                if batch.tensor is not None:
+                    frames = batch.tensor
+                    if len(frames.shape) == 4:
+                        first_frames = frames
+                    elif len(frames.shape) == 5:
+                        first_frames = frames[:, 0]
+                    else:
+                        raise ValueError(f"Unknown frame shape {frames.shape}")
+                elif batch.first_frame_tensor is not None:
+                    # Use cached first frames when batch.tensor is None (latents are cached)
+                    first_frames = batch.first_frame_tensor
                 else:
-                    raise ValueError(f"Unknown frame shape {frames.shape}")
+                    raise ValueError(
+                        "i2v conditioning requires either batch.tensor or batch.first_frame_tensor, "
+                        "but both are None. Ensure first frames are cached when using cached latents."
+                    )
+                
+                # Ensure VAE is on the correct device before encoding
+                target_device = self.device_torch
+                vae_was_on_cpu = next(self.vae.parameters()).device.type == 'cpu'
+                if vae_was_on_cpu:
+                    self.vae.to(target_device)
+                
+                # Add conditioning using the standalone function
+                conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
+                    latent_model_input=latent_model_input.to(
+                        self.device_torch, self.torch_dtype
+                    ),
+                    first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                    vae=self.vae,
+                )
+                
+                # Move VAE back to CPU if it was there before (to save memory)
+                if vae_was_on_cpu:
+                    self.vae.to('cpu')
 
                 # make the noise mask
                 if noise_mask is None:

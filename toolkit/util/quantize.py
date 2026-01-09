@@ -305,11 +305,19 @@ def quantize_model(
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)
-            block.to("cpu", non_blocking=True)
+            # Only move to CPU if in low_vram mode, otherwise keep on GPU for ROCm
+            if base_model.model_config.low_vram:
+                block.to("cpu", non_blocking=True)
+            # Note: If not low_vram, block is already on device_torch from line 305, no need to move again
 
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first
         base_model.print_and_status_update(" - quantizing extras")
-        # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
+        # Ensure model is on correct device before quantizing extras
+        if not base_model.model_config.low_vram:
+            model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
         quantize(model_to_quantize, weights=quantization_type)
         freeze(model_to_quantize)
+        # Ensure entire model is on correct device after quantization
+        if not base_model.model_config.low_vram:
+            model_to_quantize.to(base_model.device_torch)
