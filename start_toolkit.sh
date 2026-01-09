@@ -64,6 +64,33 @@ map_gpu_arch_to_rocm_dir() {
     esac
 }
 
+# Function to convert gfx architecture code to HSA_OVERRIDE_GFX_VERSION format
+# Example: gfx1151 -> 11.5.1, gfx1100 -> 11.0.0, gfx1030 -> 10.3.0
+gfx_arch_to_hsa_version() {
+    local gfx_arch="$1"
+    
+    # Extract the numeric part after "gfx"
+    if echo "$gfx_arch" | grep -qE "^gfx[0-9]+$"; then
+        # Remove "gfx" prefix and extract digits
+        local digits=$(echo "$gfx_arch" | sed 's/gfx//')
+        
+        # Ensure we have at least 4 digits (pad with zeros if needed)
+        while [ ${#digits} -lt 4 ]; do
+            digits="${digits}0"
+        done
+        
+        # Format as AB.C.D where AB = first two digits, C = third digit, D = fourth digit
+        local major="${digits:0:2}"
+        local minor="${digits:2:1}"
+        local patch="${digits:3:1}"
+        
+        echo "${major}.${minor}.${patch}"
+    else
+        # If format doesn't match, return empty (don't set HSA_OVERRIDE_GFX_VERSION)
+        echo ""
+    fi
+}
+
 # Function to show usage
 show_usage() {
     echo "AI Toolkit Startup Script"
@@ -121,8 +148,51 @@ detect_backend() {
             fi
             
             if [ -z "$PYTORCH_ROCM_ARCH" ]; then
-                export PYTORCH_ROCM_ARCH="gfx1151"
-                print_info "Set PYTORCH_ROCM_ARCH=gfx1151"
+                # Try to detect GPU architecture
+                print_info "Detecting GPU architecture..."
+                GPU_INFO=$(rocm-smi --showproductname 2>/dev/null || echo "")
+                
+                # Extract gfx architecture code from rocm-smi output
+                DETECTED_ARCH=""
+                if echo "$GPU_INFO" | grep -qE "gfx[0-9]+"; then
+                    # Extract the first gfx#### pattern found
+                    DETECTED_ARCH=$(echo "$GPU_INFO" | grep -oE "gfx[0-9]+" | head -1)
+                fi
+                
+                if [ -n "$DETECTED_ARCH" ]; then
+                    # Map to ROCm directory name (may differ from detected arch)
+                    ROCM_ARCH=$(map_gpu_arch_to_rocm_dir "$DETECTED_ARCH")
+                    export PYTORCH_ROCM_ARCH=$ROCM_ARCH
+                    print_info "Detected GPU architecture: $DETECTED_ARCH"
+                    print_info "Mapped to ROCm directory: $ROCM_ARCH"
+                    
+                    # Set HSA_OVERRIDE_GFX_VERSION based on detected architecture
+                    # Only set if we have the original detected arch (not the mapped one)
+                    HSA_VERSION=$(gfx_arch_to_hsa_version "$DETECTED_ARCH")
+                    if [ -n "$HSA_VERSION" ]; then
+                        export HSA_OVERRIDE_GFX_VERSION=$HSA_VERSION
+                        print_info "Set HSA_OVERRIDE_GFX_VERSION=$HSA_VERSION"
+                    fi
+                else
+                    # Fallback: use default but don't set HSA_OVERRIDE_GFX_VERSION
+                    # User should set it manually if needed
+                    export PYTORCH_ROCM_ARCH="gfx1151"
+                    print_warning "Could not auto-detect GPU architecture, defaulting to gfx1151"
+                    print_info "If you have a different GPU, set PYTORCH_ROCM_ARCH and HSA_OVERRIDE_GFX_VERSION manually"
+                fi
+            else
+                # PYTORCH_ROCM_ARCH is already set, try to set HSA_OVERRIDE_GFX_VERSION if not set
+                if [ -z "$HSA_OVERRIDE_GFX_VERSION" ]; then
+                    # Try to extract the original architecture from PYTORCH_ROCM_ARCH
+                    # If it's gfx110X-all, we can't determine the exact version, so skip
+                    if echo "$PYTORCH_ROCM_ARCH" | grep -qE "^gfx[0-9]+$"; then
+                        HSA_VERSION=$(gfx_arch_to_hsa_version "$PYTORCH_ROCM_ARCH")
+                        if [ -n "$HSA_VERSION" ]; then
+                            export HSA_OVERRIDE_GFX_VERSION=$HSA_VERSION
+                            print_info "Set HSA_OVERRIDE_GFX_VERSION=$HSA_VERSION based on PYTORCH_ROCM_ARCH"
+                        fi
+                    fi
+                fi
             fi
             
             # ROCBLAS_USE_HIPBLASLT can cause HIPBLAS_STATUS_INTERNAL_ERROR with quantized models

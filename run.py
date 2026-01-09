@@ -119,7 +119,9 @@ def main():
             job.cleanup()
             jobs_completed += 1
         except Exception as e:
+            import traceback
             print_acc(f"Error running job: {e}")
+            print_acc(f"Traceback: {traceback.format_exc()}")
             jobs_failed += 1
             try:
                 job.process[0].on_error(e)

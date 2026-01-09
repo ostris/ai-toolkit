@@ -215,7 +215,7 @@ _Last updated: 2025-12-17 22:19 UTC_
 ## Installation
 
 Requirements:
-- Python 3.10 or higher
+- Python 3.10, 3.11, or 3.12 (Python 3.13 may have compatibility issues with some packages)
 - GPU with enough RAM (NVIDIA with CUDA, or AMD with ROCm)
 - Git
 

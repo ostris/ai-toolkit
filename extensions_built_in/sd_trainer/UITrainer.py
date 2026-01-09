@@ -129,11 +129,13 @@ class UITrainer(SDTrainer):
 
     def maybe_stop(self):
         if self.should_stop():
+            self.print(f"Job {self.job_id} marked as stopped, raising exception to exit training loop")
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
             raise Exception("Job stopped")
         if self.should_return_to_queue():
+            self.print(f"Job {self.job_id} marked to return to queue, raising exception to exit training loop")
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
