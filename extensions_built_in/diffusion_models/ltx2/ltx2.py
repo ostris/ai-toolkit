@@ -7,6 +7,7 @@ import torch
 from transformers import Gemma3Config
 import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
+from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
@@ -85,7 +86,10 @@ def new_save_image_function(
 ):
     # this replaces gen image config save image function so we can save the video with sound from ltx2
     image["output_path"] = self.get_image_path(count, max_count)
+    # make sample directory if it does not exist
+    os.makedirs(os.path.dirname(image["output_path"]), exist_ok=True)
     encode_video(**image)
+    flush()
 
 
 def blank_log_image_function(self, *args, **kwargs):
@@ -386,6 +390,50 @@ class LTX2Model(BaseModel):
         self.model = pipe.transformer
         self.pipeline = pipe
         self.print_and_status_update("Model Loaded")
+        
+    @torch.no_grad()
+    def encode_images(
+            self,
+            image_list: List[torch.Tensor],
+            device=None,
+            dtype=None
+    ):
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        if self.vae.device == torch.device('cpu'):
+            self.vae.to(device)
+        self.vae.eval()
+        self.vae.requires_grad_(False)
+
+        image_list = [image.to(device, dtype=dtype) for image in image_list]
+
+        # Normalize shapes
+        norm_images = []
+        for image in image_list:
+            if image.ndim == 3:
+                # (C, H, W) -> (C, 1, H, W)
+                norm_images.append(image.unsqueeze(1))
+            elif image.ndim == 4:
+                # (T, C, H, W) -> (C, T, H, W)
+                norm_images.append(image.permute(1, 0, 2, 3))
+            else:
+                raise ValueError(f"Invalid image shape: {image.shape}")
+
+        # Stack to (B, C, T, H, W)
+        images = torch.stack(norm_images)
+
+        latents = self.vae.encode(images).latent_dist.mode()
+        
+        # Normalize latents across the channel dimension [B, C, F, H, W]
+        scaling_factor = 1.0
+        latents_mean = self.pipeline.vae.latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents_std = self.pipeline.vae.latents_std.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents = (latents - latents_mean) * scaling_factor / latents_std
+
+        return latents.to(device, dtype=dtype)
 
     def get_generation_pipeline(self):
         scheduler = LTX2Model.get_train_scheduler()
@@ -403,8 +451,8 @@ class LTX2Model(BaseModel):
         pipeline.transformer = unwrap_model(self.model)
         pipeline.text_encoder = unwrap_model(self.text_encoder[0])
 
-        if self.low_vram:
-            pipeline.enable_model_cpu_offload(device=self.device_torch)
+        # if self.low_vram:
+        #     pipeline.enable_model_cpu_offload(device=self.device_torch)
 
         pipeline = pipeline.to(self.device_torch)
 
@@ -419,7 +467,8 @@ class LTX2Model(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        self.model.to(self.device_torch, dtype=self.torch_dtype)
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
 
         is_video = gen_config.num_frames > 1
         # override the generate single image to handle video + audio generation
@@ -443,6 +492,17 @@ class LTX2Model(BaseModel):
         if gen_config.num_frames != 1:
             if (gen_config.num_frames - 1) % 8 != 0:
                 gen_config.num_frames = ((gen_config.num_frames - 1) // 8) * 8 + 1
+        
+        if self.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling(
+                tile_sample_min_height=256,
+                tile_sample_min_width=256,
+                tile_sample_min_num_frames=8,
+                tile_sample_stride_height=224,
+                tile_sample_stride_width=224,
+                tile_sample_stride_num_frames=4,
+            )
 
         video, audio = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
@@ -468,6 +528,9 @@ class LTX2Model(BaseModel):
             output_type="np" if is_video else "pil",
             **extra,
         )
+        if self.low_vram:
+            # Restore no tiling
+            pipeline.vae.use_tiling = False
 
         if is_video:
             # redurn as a dict, we will handle it with an override function
@@ -497,27 +560,95 @@ class LTX2Model(BaseModel):
         latent_model_input: torch.Tensor,
         timestep: torch.Tensor,  # 0 to 1000 scale
         text_embeddings: PromptEmbeds,
+        batch: "DataLoaderBatchDTO" = None,
         **kwargs,
     ):
-        self.model.to(self.device_torch)
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
 
-        latent_model_input = latent_model_input.unsqueeze(2)
-        latent_model_input_list = list(latent_model_input.unbind(dim=0))
+        batch_size, C, latent_num_frames, latent_height, latent_width = latent_model_input.shape
+        
+        # todo get this somehow
+        frame_rate = 24
+        #check frame dimension
+        # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
+        packed_latents = self.pipeline._pack_latents(
+            latent_model_input, 
+            patch_size=self.pipeline.transformer_spatial_patch_size, 
+            patch_size_t=self.pipeline.transformer_temporal_patch_size
+        )
+        
+        # TODO, do actual audio frames
+        num_mel_bins = self.pipeline.audio_vae.config.mel_bins
+        # latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
 
-        timestep_model_input = (1000 - timestep) / 1000
+        num_channels_latents_audio = (
+            self.pipeline.audio_vae.config.latent_channels
+        )
+        audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
+            batch_size,
+            num_channels_latents=num_channels_latents_audio,
+            num_mel_bins=num_mel_bins,
+            num_frames=latent_num_frames,  # Video frames, audio frames will be calculated from this
+            frame_rate=frame_rate,
+            sampling_rate=self.pipeline.audio_sampling_rate,
+            hop_length=self.pipeline.audio_hop_length,
+            dtype=torch.float32,
+            device=self.transformer.device,
+            generator=None,
+            latents=None,
+        )
+        
+        if self.pipeline.connectors.device != self.transformer.device:
+            self.pipeline.connectors.to(self.transformer.device)
+        
+        # TODO this is how diffusers does this on inference, not sure I understand why, check this
+        additive_attention_mask = (1 - text_embeddings.attention_mask.to(self.transformer.dtype)) * -1000000.0
+        connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.pipeline.connectors(
+            text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
+        )
+        
+        
+        # compute video and audio positional ids
+        video_coords = self.transformer.rope.prepare_video_coords(
+            packed_latents.shape[0], latent_num_frames, latent_height, latent_width, packed_latents.device, fps=frame_rate
+        )
+        audio_coords = self.transformer.audio_rope.prepare_audio_coords(
+            audio_latents.shape[0], audio_num_frames, audio_latents.device
+        )
 
-        model_out_list = self.transformer(
-            latent_model_input_list,
-            timestep_model_input,
-            text_embeddings.text_embeds,
-        )[0]
+        noise_pred_video, noise_pred_audio = self.transformer(
+            hidden_states=packed_latents,
+            audio_hidden_states=audio_latents.to(self.transformer.dtype),
+            encoder_hidden_states=connector_prompt_embeds,
+            audio_encoder_hidden_states=connector_audio_prompt_embeds,
+            timestep=timestep,
+            encoder_attention_mask=connector_attention_mask,
+            audio_encoder_attention_mask=connector_attention_mask,
+            num_frames=latent_num_frames,
+            height=latent_height,
+            width=latent_width,
+            fps=frame_rate,
+            audio_num_frames=audio_num_frames,
+            video_coords=video_coords,
+            audio_coords=audio_coords,
+            # rope_interpolation_scale=rope_interpolation_scale,
+            attention_kwargs=None,
+            return_dict=False,
+        )
+        
+        # todo handle audio noise pred too
 
-        noise_pred = torch.stack([t.float() for t in model_out_list], dim=0)
+        unpacked_output = self.pipeline._unpack_latents(
+            latents=noise_pred_video,
+            num_frames=latent_num_frames,
+            height=latent_height,
+            width=latent_width,
+            patch_size=self.pipeline.transformer_spatial_patch_size,
+            patch_size_t=self.pipeline.transformer_temporal_patch_size,
+        )
 
-        noise_pred = noise_pred.squeeze(2)
-        noise_pred = -noise_pred
-
-        return noise_pred
+        return unpacked_output
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         if self.pipeline.text_encoder.device != self.device_torch:
