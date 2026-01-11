@@ -45,6 +45,8 @@ try:
         convert_ltx2_connectors,
         dequantize_state_dict,
         convert_comfy_gemma3_to_transformers,
+        convert_lora_original_to_diffusers,
+        convert_lora_diffusers_to_original,
     )
 except ImportError as e:
     print("Diffusers import error:", e)
@@ -700,15 +702,15 @@ class LTX2Model(BaseModel):
         return ["transformer_blocks"]
 
     def convert_lora_weights_before_save(self, state_dict):
-        # TODO convert to original ltx2 keys
         new_sd = {}
         for key, value in state_dict.items():
             new_key = key.replace("transformer.", "diffusion_model.")
             new_sd[new_key] = value
+        new_sd = convert_lora_diffusers_to_original(new_sd)
         return new_sd
 
     def convert_lora_weights_before_load(self, state_dict):
-        # TODO convert to diffusers ltx2 keys
+        state_dict = convert_lora_original_to_diffusers(state_dict)
         new_sd = {}
         for key, value in state_dict.items():
             new_key = key.replace("diffusion_model.", "transformer.")

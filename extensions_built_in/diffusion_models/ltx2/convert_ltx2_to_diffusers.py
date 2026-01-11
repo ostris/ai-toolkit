@@ -582,3 +582,67 @@ def convert_comfy_gemma3_to_transformers(sd: dict):
         out["lm_head.weight"] = out["model.language_model.embed_tokens.weight"]
 
     return out
+
+
+def convert_lora_original_to_diffusers(
+    lora_state_dict: Dict[str, Any],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
+
+    for k, v in lora_state_dict.items():
+        # Keep the "diffusion_model." prefix as-is, but apply the transformer remaps to the rest
+        prefix = ""
+        rest = k
+        if rest.startswith("diffusion_model."):
+            prefix = "diffusion_model."
+            rest = rest[len(prefix) :]
+
+        nk = rest
+
+        # Same simple 1:1 remaps as the transformer
+        for replace_key, rename_key in rename_dict.items():
+            nk = nk.replace(replace_key, rename_key)
+
+        # Same special-case remap as the transformer (applies to LoRA keys too)
+        if nk.startswith("adaln_single."):
+            nk = nk.replace("adaln_single.", "time_embed.", 1)
+        elif nk.startswith("audio_adaln_single."):
+            nk = nk.replace("audio_adaln_single.", "audio_time_embed.", 1)
+
+        out[prefix + nk] = v
+
+    return out
+
+
+def convert_lora_diffusers_to_original(
+    lora_state_dict: Dict[str, Any],
+) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+
+    inv_rename = {v: k for k, v in LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT.items()}
+    inv_items = sorted(inv_rename.items(), key=lambda kv: len(kv[0]), reverse=True)
+
+    for k, v in lora_state_dict.items():
+        # Keep the "diffusion_model." prefix as-is, but invert remaps on the rest
+        prefix = ""
+        rest = k
+        if rest.startswith("diffusion_model."):
+            prefix = "diffusion_model."
+            rest = rest[len(prefix) :]
+
+        nk = rest
+
+        # Inverse of the adaln_single special-case
+        if nk.startswith("time_embed."):
+            nk = nk.replace("time_embed.", "adaln_single.", 1)
+        elif nk.startswith("audio_time_embed."):
+            nk = nk.replace("audio_time_embed.", "audio_adaln_single.", 1)
+
+        # Inverse 1:1 remaps
+        for diffusers_key, original_key in inv_items:
+            nk = nk.replace(diffusers_key, original_key)
+
+        out[prefix + nk] = v
+
+    return out
