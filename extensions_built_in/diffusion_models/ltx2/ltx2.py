@@ -74,7 +74,6 @@ dit_prefix = "model.diffusion_model."
 vae_prefix = "vae."
 audio_vae_prefix = "audio_vae."
 vocoder_prefix = "vocoder."
-ltx_model_version = "2.0"
 
 
 def new_save_image_function(
@@ -144,7 +143,7 @@ class LTX2Model(BaseModel):
             original_dit_ckpt = get_model_state_dict_from_combined_ckpt(
                 combined_state_dict, dit_prefix
             )
-            transformer = convert_ltx2_transformer(original_dit_ckpt, ltx_model_version)
+            transformer = convert_ltx2_transformer(original_dit_ckpt)
             transformer = transformer.to(dtype)
         else:
             transformer_path = model_path
@@ -193,8 +192,15 @@ class LTX2Model(BaseModel):
         flush()
 
         self.print_and_status_update("Loading text encoder")
-        if self.model_config.te_name_or_path is not None:
-            tokenizer = GemmaTokenizerFast.from_pretrained("unsloth/gemma-3-12b-it-qat")
+        if (
+            self.model_config.te_name_or_path is not None
+            and self.model_config.te_name_or_path.endswith(".safetensors")
+        ):
+            # load from comfyui gemma3 checkpoint
+            tokenizer = GemmaTokenizerFast.from_pretrained(
+                "Lightricks/LTX-2", subfolder="tokenizer"
+            )
+
             with init_empty_weights():
                 text_encoder = Gemma3ForConditionalGeneration(
                     Gemma3Config(
@@ -265,14 +271,15 @@ class LTX2Model(BaseModel):
             del te_state_dict
             flush()
         else:
-            # the model uses https://huggingface.co/google/gemma-3-12b-it-qat-q4_0-unquantized
-            # which is trained with quantized aware training so it works at quant q4_0 directly
-            # a prequantized gguf can be found here: unsloth/gemma-3-12b-it-qat-GGUF
+            if self.model_config.te_name_or_path is not None:
+                te_path = self.model_config.te_name_or_path
+            else:
+                te_path = base_model_path
             tokenizer = GemmaTokenizerFast.from_pretrained(
-                base_model_path, subfolder="tokenizer"
+                te_path, subfolder="tokenizer"
             )
             text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                base_model_path, subfolder="text_encoder", dtype=dtype
+                te_path, subfolder="text_encoder", dtype=dtype
             )
 
         # remove the vision tower
@@ -306,30 +313,22 @@ class LTX2Model(BaseModel):
             original_vae_ckpt = get_model_state_dict_from_combined_ckpt(
                 combined_state_dict, vae_prefix
             )
-            vae = convert_ltx2_video_vae(
-                original_vae_ckpt, version=ltx_model_version
-            ).to(dtype)
+            vae = convert_ltx2_video_vae(original_vae_ckpt).to(dtype)
             del original_vae_ckpt
             original_audio_vae_ckpt = get_model_state_dict_from_combined_ckpt(
                 combined_state_dict, audio_vae_prefix
             )
-            audio_vae = convert_ltx2_audio_vae(
-                original_audio_vae_ckpt, version=ltx_model_version
-            ).to(dtype)
+            audio_vae = convert_ltx2_audio_vae(original_audio_vae_ckpt).to(dtype)
             del original_audio_vae_ckpt
             original_connectors_ckpt = get_model_state_dict_from_combined_ckpt(
                 combined_state_dict, dit_prefix
             )
-            connectors = convert_ltx2_connectors(
-                original_connectors_ckpt, version=ltx_model_version
-            ).to(dtype)
+            connectors = convert_ltx2_connectors(original_connectors_ckpt).to(dtype)
             del original_connectors_ckpt
             original_vocoder_ckpt = get_model_state_dict_from_combined_ckpt(
                 combined_state_dict, vocoder_prefix
             )
-            vocoder = convert_ltx2_vocoder(
-                original_vocoder_ckpt, version=ltx_model_version
-            ).to(dtype)
+            vocoder = convert_ltx2_vocoder(original_vocoder_ckpt).to(dtype)
             del original_vocoder_ckpt
             del combined_state_dict
             flush()
@@ -390,20 +389,15 @@ class LTX2Model(BaseModel):
         self.model = pipe.transformer
         self.pipeline = pipe
         self.print_and_status_update("Model Loaded")
-        
+
     @torch.no_grad()
-    def encode_images(
-            self,
-            image_list: List[torch.Tensor],
-            device=None,
-            dtype=None
-    ):
+    def encode_images(self, image_list: List[torch.Tensor], device=None, dtype=None):
         if device is None:
             device = self.vae_device_torch
         if dtype is None:
             dtype = self.vae_torch_dtype
 
-        if self.vae.device == torch.device('cpu'):
+        if self.vae.device == torch.device("cpu"):
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
@@ -426,11 +420,15 @@ class LTX2Model(BaseModel):
         images = torch.stack(norm_images)
 
         latents = self.vae.encode(images).latent_dist.mode()
-        
+
         # Normalize latents across the channel dimension [B, C, F, H, W]
         scaling_factor = 1.0
-        latents_mean = self.pipeline.vae.latents_mean.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
-        latents_std = self.pipeline.vae.latents_std.view(1, -1, 1, 1, 1).to(latents.device, latents.dtype)
+        latents_mean = self.pipeline.vae.latents_mean.view(1, -1, 1, 1, 1).to(
+            latents.device, latents.dtype
+        )
+        latents_std = self.pipeline.vae.latents_std.view(1, -1, 1, 1, 1).to(
+            latents.device, latents.dtype
+        )
         latents = (latents - latents_mean) * scaling_factor / latents_std
 
         return latents.to(device, dtype=dtype)
@@ -492,7 +490,7 @@ class LTX2Model(BaseModel):
         if gen_config.num_frames != 1:
             if (gen_config.num_frames - 1) % 8 != 0:
                 gen_config.num_frames = ((gen_config.num_frames - 1) // 8) * 8 + 1
-        
+
         if self.low_vram:
             # set vae to tile decode
             pipeline.vae.enable_tiling(
@@ -566,25 +564,25 @@ class LTX2Model(BaseModel):
         if self.model.device == torch.device("cpu"):
             self.model.to(self.device_torch)
 
-        batch_size, C, latent_num_frames, latent_height, latent_width = latent_model_input.shape
-        
+        batch_size, C, latent_num_frames, latent_height, latent_width = (
+            latent_model_input.shape
+        )
+
         # todo get this somehow
         frame_rate = 24
-        #check frame dimension
+        # check frame dimension
         # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
         packed_latents = self.pipeline._pack_latents(
-            latent_model_input, 
-            patch_size=self.pipeline.transformer_spatial_patch_size, 
-            patch_size_t=self.pipeline.transformer_temporal_patch_size
+            latent_model_input,
+            patch_size=self.pipeline.transformer_spatial_patch_size,
+            patch_size_t=self.pipeline.transformer_temporal_patch_size,
         )
-        
+
         # TODO, do actual audio frames
         num_mel_bins = self.pipeline.audio_vae.config.mel_bins
         # latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
 
-        num_channels_latents_audio = (
-            self.pipeline.audio_vae.config.latent_channels
-        )
+        num_channels_latents_audio = self.pipeline.audio_vae.config.latent_channels
         audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
             batch_size,
             num_channels_latents=num_channels_latents_audio,
@@ -598,20 +596,30 @@ class LTX2Model(BaseModel):
             generator=None,
             latents=None,
         )
-        
+
         if self.pipeline.connectors.device != self.transformer.device:
             self.pipeline.connectors.to(self.transformer.device)
-        
+
         # TODO this is how diffusers does this on inference, not sure I understand why, check this
-        additive_attention_mask = (1 - text_embeddings.attention_mask.to(self.transformer.dtype)) * -1000000.0
-        connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.pipeline.connectors(
+        additive_attention_mask = (
+            1 - text_embeddings.attention_mask.to(self.transformer.dtype)
+        ) * -1000000.0
+        (
+            connector_prompt_embeds,
+            connector_audio_prompt_embeds,
+            connector_attention_mask,
+        ) = self.pipeline.connectors(
             text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
         )
-        
-        
+
         # compute video and audio positional ids
         video_coords = self.transformer.rope.prepare_video_coords(
-            packed_latents.shape[0], latent_num_frames, latent_height, latent_width, packed_latents.device, fps=frame_rate
+            packed_latents.shape[0],
+            latent_num_frames,
+            latent_height,
+            latent_width,
+            packed_latents.device,
+            fps=frame_rate,
         )
         audio_coords = self.transformer.audio_rope.prepare_audio_coords(
             audio_latents.shape[0], audio_num_frames, audio_latents.device
@@ -636,7 +644,7 @@ class LTX2Model(BaseModel):
             attention_kwargs=None,
             return_dict=False,
         )
-        
+
         # todo handle audio noise pred too
 
         unpacked_output = self.pipeline._unpack_latents(

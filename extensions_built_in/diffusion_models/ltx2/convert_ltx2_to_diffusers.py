@@ -1,21 +1,14 @@
 # ref https://github.com/huggingface/diffusers/blob/249ae1f853be8775c7d0b3a26ca4fbc4f6aa9998/scripts/convert_ltx2_to_diffusers.py
 
-import argparse
-import os
 from contextlib import nullcontext
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
-import safetensors.torch
 import torch
 from accelerate import init_empty_weights
-from huggingface_hub import hf_hub_download
-from transformers import AutoTokenizer, Gemma3ForConditionalGeneration
 
 from diffusers import (
     AutoencoderKLLTX2Audio,
     AutoencoderKLLTX2Video,
-    FlowMatchEulerDiscreteScheduler,
-    LTX2Pipeline,
     LTX2VideoTransformer3DModel,
 )
 from diffusers.pipelines.ltx2 import LTX2TextConnectors, LTX2Vocoder
@@ -183,144 +176,78 @@ def split_transformer_and_connector_state_dict(
     return transformer_state_dict, connector_state_dict
 
 
-def get_ltx2_transformer_config(
-    version: str,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    if version == "test":
-        # Produces a transformer of the same size as used in test_models_transformer_ltx2.py
-        config = {
-            "model_id": "diffusers-internal-dev/dummy-ltx2",
-            "diffusers_config": {
-                "in_channels": 4,
-                "out_channels": 4,
-                "patch_size": 1,
-                "patch_size_t": 1,
-                "num_attention_heads": 2,
-                "attention_head_dim": 8,
-                "cross_attention_dim": 16,
-                "vae_scale_factors": (8, 32, 32),
-                "pos_embed_max_pos": 20,
-                "base_height": 2048,
-                "base_width": 2048,
-                "audio_in_channels": 4,
-                "audio_out_channels": 4,
-                "audio_patch_size": 1,
-                "audio_patch_size_t": 1,
-                "audio_num_attention_heads": 2,
-                "audio_attention_head_dim": 4,
-                "audio_cross_attention_dim": 8,
-                "audio_scale_factor": 4,
-                "audio_pos_embed_max_pos": 20,
-                "audio_sampling_rate": 16000,
-                "audio_hop_length": 160,
-                "num_layers": 2,
-                "activation_fn": "gelu-approximate",
-                "qk_norm": "rms_norm_across_heads",
-                "norm_elementwise_affine": False,
-                "norm_eps": 1e-6,
-                "caption_channels": 16,
-                "attention_bias": True,
-                "attention_out_bias": True,
-                "rope_theta": 10000.0,
-                "rope_double_precision": False,
-                "causal_offset": 1,
-                "timestep_scale_multiplier": 1000,
-                "cross_attn_timestep_scale_multiplier": 1,
-            },
-        }
-        rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
-        special_keys_remap = LTX_2_0_TRANSFORMER_SPECIAL_KEYS_REMAP
-    elif version == "2.0":
-        config = {
-            "model_id": "diffusers-internal-dev/new-ltx-model",
-            "diffusers_config": {
-                "in_channels": 128,
-                "out_channels": 128,
-                "patch_size": 1,
-                "patch_size_t": 1,
-                "num_attention_heads": 32,
-                "attention_head_dim": 128,
-                "cross_attention_dim": 4096,
-                "vae_scale_factors": (8, 32, 32),
-                "pos_embed_max_pos": 20,
-                "base_height": 2048,
-                "base_width": 2048,
-                "audio_in_channels": 128,
-                "audio_out_channels": 128,
-                "audio_patch_size": 1,
-                "audio_patch_size_t": 1,
-                "audio_num_attention_heads": 32,
-                "audio_attention_head_dim": 64,
-                "audio_cross_attention_dim": 2048,
-                "audio_scale_factor": 4,
-                "audio_pos_embed_max_pos": 20,
-                "audio_sampling_rate": 16000,
-                "audio_hop_length": 160,
-                "num_layers": 48,
-                "activation_fn": "gelu-approximate",
-                "qk_norm": "rms_norm_across_heads",
-                "norm_elementwise_affine": False,
-                "norm_eps": 1e-6,
-                "caption_channels": 3840,
-                "attention_bias": True,
-                "attention_out_bias": True,
-                "rope_theta": 10000.0,
-                "rope_double_precision": True,
-                "causal_offset": 1,
-                "timestep_scale_multiplier": 1000,
-                "cross_attn_timestep_scale_multiplier": 1000,
-                "rope_type": "split",
-            },
-        }
-        rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
-        special_keys_remap = LTX_2_0_TRANSFORMER_SPECIAL_KEYS_REMAP
+def get_ltx2_transformer_config() -> Tuple[
+    Dict[str, Any], Dict[str, Any], Dict[str, Any]
+]:
+    config = {
+        "model_id": "diffusers-internal-dev/new-ltx-model",
+        "diffusers_config": {
+            "in_channels": 128,
+            "out_channels": 128,
+            "patch_size": 1,
+            "patch_size_t": 1,
+            "num_attention_heads": 32,
+            "attention_head_dim": 128,
+            "cross_attention_dim": 4096,
+            "vae_scale_factors": (8, 32, 32),
+            "pos_embed_max_pos": 20,
+            "base_height": 2048,
+            "base_width": 2048,
+            "audio_in_channels": 128,
+            "audio_out_channels": 128,
+            "audio_patch_size": 1,
+            "audio_patch_size_t": 1,
+            "audio_num_attention_heads": 32,
+            "audio_attention_head_dim": 64,
+            "audio_cross_attention_dim": 2048,
+            "audio_scale_factor": 4,
+            "audio_pos_embed_max_pos": 20,
+            "audio_sampling_rate": 16000,
+            "audio_hop_length": 160,
+            "num_layers": 48,
+            "activation_fn": "gelu-approximate",
+            "qk_norm": "rms_norm_across_heads",
+            "norm_elementwise_affine": False,
+            "norm_eps": 1e-6,
+            "caption_channels": 3840,
+            "attention_bias": True,
+            "attention_out_bias": True,
+            "rope_theta": 10000.0,
+            "rope_double_precision": True,
+            "causal_offset": 1,
+            "timestep_scale_multiplier": 1000,
+            "cross_attn_timestep_scale_multiplier": 1000,
+            "rope_type": "split",
+        },
+    }
+    rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
+    special_keys_remap = LTX_2_0_TRANSFORMER_SPECIAL_KEYS_REMAP
     return config, rename_dict, special_keys_remap
 
 
-def get_ltx2_connectors_config(
-    version: str,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    if version == "test":
-        config = {
-            "model_id": "diffusers-internal-dev/dummy-ltx2",
-            "diffusers_config": {
-                "caption_channels": 16,
-                "text_proj_in_factor": 3,
-                "video_connector_num_attention_heads": 4,
-                "video_connector_attention_head_dim": 8,
-                "video_connector_num_layers": 1,
-                "video_connector_num_learnable_registers": None,
-                "audio_connector_num_attention_heads": 4,
-                "audio_connector_attention_head_dim": 8,
-                "audio_connector_num_layers": 1,
-                "audio_connector_num_learnable_registers": None,
-                "connector_rope_base_seq_len": 32,
-                "rope_theta": 10000.0,
-                "rope_double_precision": False,
-                "causal_temporal_positioning": False,
-            },
-        }
-    elif version == "2.0":
-        config = {
-            "model_id": "diffusers-internal-dev/new-ltx-model",
-            "diffusers_config": {
-                "caption_channels": 3840,
-                "text_proj_in_factor": 49,
-                "video_connector_num_attention_heads": 30,
-                "video_connector_attention_head_dim": 128,
-                "video_connector_num_layers": 2,
-                "video_connector_num_learnable_registers": 128,
-                "audio_connector_num_attention_heads": 30,
-                "audio_connector_attention_head_dim": 128,
-                "audio_connector_num_layers": 2,
-                "audio_connector_num_learnable_registers": 128,
-                "connector_rope_base_seq_len": 4096,
-                "rope_theta": 10000.0,
-                "rope_double_precision": True,
-                "causal_temporal_positioning": False,
-                "rope_type": "split",
-            },
-        }
+def get_ltx2_connectors_config() -> Tuple[
+    Dict[str, Any], Dict[str, Any], Dict[str, Any]
+]:
+    config = {
+        "model_id": "diffusers-internal-dev/new-ltx-model",
+        "diffusers_config": {
+            "caption_channels": 3840,
+            "text_proj_in_factor": 49,
+            "video_connector_num_attention_heads": 30,
+            "video_connector_attention_head_dim": 128,
+            "video_connector_num_layers": 2,
+            "video_connector_num_learnable_registers": 128,
+            "audio_connector_num_attention_heads": 30,
+            "audio_connector_attention_head_dim": 128,
+            "audio_connector_num_layers": 2,
+            "audio_connector_num_learnable_registers": 128,
+            "connector_rope_base_seq_len": 4096,
+            "rope_theta": 10000.0,
+            "rope_double_precision": True,
+            "causal_temporal_positioning": False,
+            "rope_type": "split",
+        },
+    }
 
     rename_dict = LTX_2_0_CONNECTORS_KEYS_RENAME_DICT
     special_keys_remap = {}
@@ -328,10 +255,8 @@ def get_ltx2_connectors_config(
     return config, rename_dict, special_keys_remap
 
 
-def convert_ltx2_transformer(
-    original_state_dict: Dict[str, Any], version: str
-) -> Dict[str, Any]:
-    config, rename_dict, special_keys_remap = get_ltx2_transformer_config(version)
+def convert_ltx2_transformer(original_state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    config, rename_dict, special_keys_remap = get_ltx2_transformer_config()
     diffusers_config = config["diffusers_config"]
 
     transformer_state_dict, _ = split_transformer_and_connector_state_dict(
@@ -360,10 +285,8 @@ def convert_ltx2_transformer(
     return transformer
 
 
-def convert_ltx2_connectors(
-    original_state_dict: Dict[str, Any], version: str
-) -> LTX2TextConnectors:
-    config, rename_dict, special_keys_remap = get_ltx2_connectors_config(version)
+def convert_ltx2_connectors(original_state_dict: Dict[str, Any]) -> LTX2TextConnectors:
+    config, rename_dict, special_keys_remap = get_ltx2_connectors_config()
     diffusers_config = config["diffusers_config"]
 
     _, connector_state_dict = split_transformer_and_connector_state_dict(
@@ -391,100 +314,55 @@ def convert_ltx2_connectors(
     return connectors
 
 
-def get_ltx2_video_vae_config(
-    version: str,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    if version == "test":
-        config = {
-            "model_id": "diffusers-internal-dev/dummy-ltx2",
-            "diffusers_config": {
-                "in_channels": 3,
-                "out_channels": 3,
-                "latent_channels": 128,
-                "block_out_channels": (256, 512, 1024, 2048),
-                "down_block_types": (
-                    "LTX2VideoDownBlock3D",
-                    "LTX2VideoDownBlock3D",
-                    "LTX2VideoDownBlock3D",
-                    "LTX2VideoDownBlock3D",
-                ),
-                "decoder_block_out_channels": (256, 512, 1024),
-                "layers_per_block": (4, 6, 6, 2, 2),
-                "decoder_layers_per_block": (5, 5, 5, 5),
-                "spatio_temporal_scaling": (True, True, True, True),
-                "decoder_spatio_temporal_scaling": (True, True, True),
-                "decoder_inject_noise": (False, False, False, False),
-                "downsample_type": (
-                    "spatial",
-                    "temporal",
-                    "spatiotemporal",
-                    "spatiotemporal",
-                ),
-                "upsample_residual": (True, True, True),
-                "upsample_factor": (2, 2, 2),
-                "timestep_conditioning": False,
-                "patch_size": 4,
-                "patch_size_t": 1,
-                "resnet_norm_eps": 1e-6,
-                "encoder_causal": True,
-                "decoder_causal": False,
-                "encoder_spatial_padding_mode": "zeros",
-                "decoder_spatial_padding_mode": "reflect",
-                "spatial_compression_ratio": 32,
-                "temporal_compression_ratio": 8,
-            },
-        }
-        rename_dict = LTX_2_0_VIDEO_VAE_RENAME_DICT
-        special_keys_remap = LTX_2_0_VAE_SPECIAL_KEYS_REMAP
-    elif version == "2.0":
-        config = {
-            "model_id": "diffusers-internal-dev/dummy-ltx2",
-            "diffusers_config": {
-                "in_channels": 3,
-                "out_channels": 3,
-                "latent_channels": 128,
-                "block_out_channels": (256, 512, 1024, 2048),
-                "down_block_types": (
-                    "LTX2VideoDownBlock3D",
-                    "LTX2VideoDownBlock3D",
-                    "LTX2VideoDownBlock3D",
-                    "LTX2VideoDownBlock3D",
-                ),
-                "decoder_block_out_channels": (256, 512, 1024),
-                "layers_per_block": (4, 6, 6, 2, 2),
-                "decoder_layers_per_block": (5, 5, 5, 5),
-                "spatio_temporal_scaling": (True, True, True, True),
-                "decoder_spatio_temporal_scaling": (True, True, True),
-                "decoder_inject_noise": (False, False, False, False),
-                "downsample_type": (
-                    "spatial",
-                    "temporal",
-                    "spatiotemporal",
-                    "spatiotemporal",
-                ),
-                "upsample_residual": (True, True, True),
-                "upsample_factor": (2, 2, 2),
-                "timestep_conditioning": False,
-                "patch_size": 4,
-                "patch_size_t": 1,
-                "resnet_norm_eps": 1e-6,
-                "encoder_causal": True,
-                "decoder_causal": False,
-                "encoder_spatial_padding_mode": "zeros",
-                "decoder_spatial_padding_mode": "reflect",
-                "spatial_compression_ratio": 32,
-                "temporal_compression_ratio": 8,
-            },
-        }
-        rename_dict = LTX_2_0_VIDEO_VAE_RENAME_DICT
-        special_keys_remap = LTX_2_0_VAE_SPECIAL_KEYS_REMAP
+def get_ltx2_video_vae_config() -> Tuple[
+    Dict[str, Any], Dict[str, Any], Dict[str, Any]
+]:
+    config = {
+        "model_id": "diffusers-internal-dev/dummy-ltx2",
+        "diffusers_config": {
+            "in_channels": 3,
+            "out_channels": 3,
+            "latent_channels": 128,
+            "block_out_channels": (256, 512, 1024, 2048),
+            "down_block_types": (
+                "LTX2VideoDownBlock3D",
+                "LTX2VideoDownBlock3D",
+                "LTX2VideoDownBlock3D",
+                "LTX2VideoDownBlock3D",
+            ),
+            "decoder_block_out_channels": (256, 512, 1024),
+            "layers_per_block": (4, 6, 6, 2, 2),
+            "decoder_layers_per_block": (5, 5, 5, 5),
+            "spatio_temporal_scaling": (True, True, True, True),
+            "decoder_spatio_temporal_scaling": (True, True, True),
+            "decoder_inject_noise": (False, False, False, False),
+            "downsample_type": (
+                "spatial",
+                "temporal",
+                "spatiotemporal",
+                "spatiotemporal",
+            ),
+            "upsample_residual": (True, True, True),
+            "upsample_factor": (2, 2, 2),
+            "timestep_conditioning": False,
+            "patch_size": 4,
+            "patch_size_t": 1,
+            "resnet_norm_eps": 1e-6,
+            "encoder_causal": True,
+            "decoder_causal": False,
+            "encoder_spatial_padding_mode": "zeros",
+            "decoder_spatial_padding_mode": "reflect",
+            "spatial_compression_ratio": 32,
+            "temporal_compression_ratio": 8,
+        },
+    }
+    rename_dict = LTX_2_0_VIDEO_VAE_RENAME_DICT
+    special_keys_remap = LTX_2_0_VAE_SPECIAL_KEYS_REMAP
     return config, rename_dict, special_keys_remap
 
 
-def convert_ltx2_video_vae(
-    original_state_dict: Dict[str, Any], version: str
-) -> Dict[str, Any]:
-    config, rename_dict, special_keys_remap = get_ltx2_video_vae_config(version)
+def convert_ltx2_video_vae(original_state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    config, rename_dict, special_keys_remap = get_ltx2_video_vae_config()
     diffusers_config = config["diffusers_config"]
 
     with init_empty_weights():
@@ -509,41 +387,38 @@ def convert_ltx2_video_vae(
     return vae
 
 
-def get_ltx2_audio_vae_config(
-    version: str,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    if version == "2.0":
-        config = {
-            "model_id": "diffusers-internal-dev/new-ltx-model",
-            "diffusers_config": {
-                "base_channels": 128,
-                "output_channels": 2,
-                "ch_mult": (1, 2, 4),
-                "num_res_blocks": 2,
-                "attn_resolutions": None,
-                "in_channels": 2,
-                "resolution": 256,
-                "latent_channels": 8,
-                "norm_type": "pixel",
-                "causality_axis": "height",
-                "dropout": 0.0,
-                "mid_block_add_attention": False,
-                "sample_rate": 16000,
-                "mel_hop_length": 160,
-                "is_causal": True,
-                "mel_bins": 64,
-                "double_z": True,
-            },
-        }
-        rename_dict = LTX_2_0_AUDIO_VAE_RENAME_DICT
-        special_keys_remap = LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP
+def get_ltx2_audio_vae_config() -> Tuple[
+    Dict[str, Any], Dict[str, Any], Dict[str, Any]
+]:
+    config = {
+        "model_id": "diffusers-internal-dev/new-ltx-model",
+        "diffusers_config": {
+            "base_channels": 128,
+            "output_channels": 2,
+            "ch_mult": (1, 2, 4),
+            "num_res_blocks": 2,
+            "attn_resolutions": None,
+            "in_channels": 2,
+            "resolution": 256,
+            "latent_channels": 8,
+            "norm_type": "pixel",
+            "causality_axis": "height",
+            "dropout": 0.0,
+            "mid_block_add_attention": False,
+            "sample_rate": 16000,
+            "mel_hop_length": 160,
+            "is_causal": True,
+            "mel_bins": 64,
+            "double_z": True,
+        },
+    }
+    rename_dict = LTX_2_0_AUDIO_VAE_RENAME_DICT
+    special_keys_remap = LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP
     return config, rename_dict, special_keys_remap
 
 
-def convert_ltx2_audio_vae(
-    original_state_dict: Dict[str, Any], version: str
-) -> Dict[str, Any]:
-    config, rename_dict, special_keys_remap = get_ltx2_audio_vae_config(version)
+def convert_ltx2_audio_vae(original_state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    config, rename_dict, special_keys_remap = get_ltx2_audio_vae_config()
     diffusers_config = config["diffusers_config"]
 
     with init_empty_weights():
@@ -568,33 +443,28 @@ def convert_ltx2_audio_vae(
     return vae
 
 
-def get_ltx2_vocoder_config(
-    version: str,
-) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    if version == "2.0":
-        config = {
-            "model_id": "diffusers-internal-dev/new-ltx-model",
-            "diffusers_config": {
-                "in_channels": 128,
-                "hidden_channels": 1024,
-                "out_channels": 2,
-                "upsample_kernel_sizes": [16, 15, 8, 4, 4],
-                "upsample_factors": [6, 5, 2, 2, 2],
-                "resnet_kernel_sizes": [3, 7, 11],
-                "resnet_dilations": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
-                "leaky_relu_negative_slope": 0.1,
-                "output_sampling_rate": 24000,
-            },
-        }
-        rename_dict = LTX_2_0_VOCODER_RENAME_DICT
-        special_keys_remap = LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
+def get_ltx2_vocoder_config() -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    config = {
+        "model_id": "diffusers-internal-dev/new-ltx-model",
+        "diffusers_config": {
+            "in_channels": 128,
+            "hidden_channels": 1024,
+            "out_channels": 2,
+            "upsample_kernel_sizes": [16, 15, 8, 4, 4],
+            "upsample_factors": [6, 5, 2, 2, 2],
+            "resnet_kernel_sizes": [3, 7, 11],
+            "resnet_dilations": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+            "leaky_relu_negative_slope": 0.1,
+            "output_sampling_rate": 24000,
+        },
+    }
+    rename_dict = LTX_2_0_VOCODER_RENAME_DICT
+    special_keys_remap = LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
     return config, rename_dict, special_keys_remap
 
 
-def convert_ltx2_vocoder(
-    original_state_dict: Dict[str, Any], version: str
-) -> Dict[str, Any]:
-    config, rename_dict, special_keys_remap = get_ltx2_vocoder_config(version)
+def convert_ltx2_vocoder(original_state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    config, rename_dict, special_keys_remap = get_ltx2_vocoder_config()
     diffusers_config = config["diffusers_config"]
 
     with init_empty_weights():
@@ -619,46 +489,6 @@ def convert_ltx2_vocoder(
     return vocoder
 
 
-def load_original_checkpoint(args, filename: Optional[str]) -> Dict[str, Any]:
-    if args.original_state_dict_repo_id is not None:
-        ckpt_path = hf_hub_download(
-            repo_id=args.original_state_dict_repo_id, filename=filename
-        )
-    elif args.checkpoint_path is not None:
-        ckpt_path = args.checkpoint_path
-    else:
-        raise ValueError(
-            "Please provide either `original_state_dict_repo_id` or a local `checkpoint_path`"
-        )
-
-    original_state_dict = safetensors.torch.load_file(ckpt_path)
-    return original_state_dict
-
-
-def load_hub_or_local_checkpoint(
-    repo_id: Optional[str] = None, filename: Optional[str] = None
-) -> Dict[str, Any]:
-    if repo_id is None and filename is None:
-        raise ValueError("Please supply at least one of `repo_id` or `filename`")
-
-    if repo_id is not None:
-        if filename is None:
-            raise ValueError(
-                "If repo_id is specified, filename must also be specified."
-            )
-        ckpt_path = hf_hub_download(repo_id=repo_id, filename=filename)
-    else:
-        ckpt_path = filename
-
-    _, ext = os.path.splitext(ckpt_path)
-    if ext in [".safetensors", ".sft"]:
-        state_dict = safetensors.torch.load_file(ckpt_path)
-    else:
-        state_dict = torch.load(ckpt_path, map_location="cpu")
-
-    return state_dict
-
-
 def get_model_state_dict_from_combined_ckpt(
     combined_ckpt: Dict[str, Any], prefix: str
 ) -> Dict[str, Any]:
@@ -680,153 +510,10 @@ def get_model_state_dict_from_combined_ckpt(
     return model_state_dict
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--original_state_dict_repo_id",
-        default="Lightricks/LTX-2",
-        type=str,
-        help="HF Hub repo id with LTX 2.0 checkpoint",
-    )
-    parser.add_argument(
-        "--checkpoint_path",
-        default=None,
-        type=str,
-        help="Local checkpoint path for LTX 2.0. Will be used if `original_state_dict_repo_id` is not specified.",
-    )
-    parser.add_argument(
-        "--version",
-        type=str,
-        default="2.0",
-        choices=["test", "2.0"],
-        help="Version of the LTX 2.0 model",
-    )
-
-    parser.add_argument(
-        "--combined_filename",
-        default="ltx-2-19b-dev.safetensors",
-        type=str,
-        help="Filename for combined checkpoint with all LTX 2.0 models (VAE, DiT, etc.)",
-    )
-    parser.add_argument("--vae_prefix", default="vae.", type=str)
-    parser.add_argument("--audio_vae_prefix", default="audio_vae.", type=str)
-    parser.add_argument("--dit_prefix", default="model.diffusion_model.", type=str)
-    parser.add_argument("--vocoder_prefix", default="vocoder.", type=str)
-
-    parser.add_argument(
-        "--vae_filename",
-        default=None,
-        type=str,
-        help="VAE filename; overrides combined ckpt if set",
-    )
-    parser.add_argument(
-        "--audio_vae_filename",
-        default=None,
-        type=str,
-        help="Audio VAE filename; overrides combined ckpt if set",
-    )
-    parser.add_argument(
-        "--dit_filename",
-        default=None,
-        type=str,
-        help="DiT filename; overrides combined ckpt if set",
-    )
-    parser.add_argument(
-        "--vocoder_filename",
-        default=None,
-        type=str,
-        help="Vocoder filename; overrides combined ckpt if set",
-    )
-    parser.add_argument(
-        "--text_encoder_model_id",
-        default="google/gemma-3-12b-it-qat-q4_0-unquantized",
-        type=str,
-        help="HF Hub id for the LTX 2.0 base text encoder model",
-    )
-    parser.add_argument(
-        "--tokenizer_id",
-        default="google/gemma-3-12b-it-qat-q4_0-unquantized",
-        type=str,
-        help="HF Hub id for the LTX 2.0 text tokenizer",
-    )
-
-    parser.add_argument(
-        "--vae", action="store_true", help="Whether to convert the video VAE model"
-    )
-    parser.add_argument(
-        "--audio_vae",
-        action="store_true",
-        help="Whether to convert the audio VAE model",
-    )
-    parser.add_argument(
-        "--dit", action="store_true", help="Whether to convert the DiT model"
-    )
-    parser.add_argument(
-        "--connectors",
-        action="store_true",
-        help="Whether to convert the connector model",
-    )
-    parser.add_argument(
-        "--vocoder", action="store_true", help="Whether to convert the vocoder model"
-    )
-    parser.add_argument(
-        "--text_encoder", action="store_true", help="Whether to conver the text encoder"
-    )
-    parser.add_argument(
-        "--full_pipeline",
-        action="store_true",
-        help="Whether to save the pipeline. This will attempt to convert all models (e.g. vae, dit, etc.)",
-    )
-
-    parser.add_argument(
-        "--vae_dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"]
-    )
-    parser.add_argument(
-        "--audio_vae_dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"]
-    )
-    parser.add_argument(
-        "--dit_dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"]
-    )
-    parser.add_argument(
-        "--vocoder_dtype", type=str, default="bf16", choices=["fp32", "fp16", "bf16"]
-    )
-    parser.add_argument(
-        "--text_encoder_dtype",
-        type=str,
-        default="bf16",
-        choices=["fp32", "fp16", "bf16"],
-    )
-
-    parser.add_argument(
-        "--output_path",
-        type=str,
-        required=True,
-        help="Path where converted model should be saved",
-    )
-
-    return parser.parse_args()
-
-
-DTYPE_MAPPING = {
-    "fp32": torch.float32,
-    "fp16": torch.float16,
-    "bf16": torch.bfloat16,
-}
-
-VARIANT_MAPPING = {
-    "fp32": None,
-    "fp16": "fp16",
-    "bf16": "bf16",
-}
-
-
 def dequantize_state_dict(state_dict: Dict[str, Any]):
     keys = list(state_dict.keys())
     state_out = {}
-
     for k in keys:
-        # Skip quantization sidecar tensors in the bf16 output
         if k.endswith(
             (".weight_scale", ".weight_scale_2", ".pre_quant_scale", ".input_scale")
         ):
@@ -834,181 +521,25 @@ def dequantize_state_dict(state_dict: Dict[str, Any]):
 
         t = state_dict[k]
 
-        # Only weights are quantized in these layouts
         if k.endswith(".weight"):
             prefix = k[: -len(".weight")]
-
-            w_scale = state_dict.get(prefix + ".weight_scale")
-            w_scale_2 = state_dict.get(prefix + ".weight_scale_2")
-            pre_scale = state_dict.get(prefix + ".pre_quant_scale")
-            in_scale = state_dict.get(prefix + ".input_scale")
-
-            # Apply quantization chain if any exist
-            if any(s is not None for s in (w_scale, w_scale_2, pre_scale, in_scale)):
-                w_q = t.to(torch.bfloat16)
-
-                # Follow the documented dequantization order
-                # base: w_dq = w_q * weight_scale
-                if w_scale is not None:
-                    w_q = w_q * w_scale.to(torch.bfloat16)
-
-                # double scaling (global + local)
-                if w_scale_2 is not None:
-                    w_q = w_q * w_scale_2.to(torch.bfloat16)
-
-                # pre-quant smoothing
-                if pre_scale is not None:
-                    w_q = w_q * pre_scale.to(torch.bfloat16)
-
-                # optional activation input scaling (used in FP8 tensorcore layouts)
-                if in_scale is not None:
-                    w_q = w_q * in_scale.to(torch.bfloat16)
-
-                state_out[k] = w_q
+            wscale_k = prefix + ".weight_scale"
+            if wscale_k in state_dict:
+                w_q = t
+                w_scale = state_dict[wscale_k]
+                # Comfy quant = absmax per-tensor weight quant, nothing fancy
+                w_bf16 = w_q.to(torch.bfloat16) * w_scale.to(torch.bfloat16)
+                state_out[k] = w_bf16
                 continue
 
-        # Non-quantized tensors: keep dtype as-is, or optionally cast
         state_out[k] = t
-
     return state_out
-
-
-def main(args):
-    vae_dtype = DTYPE_MAPPING[args.vae_dtype]
-    audio_vae_dtype = DTYPE_MAPPING[args.audio_vae_dtype]
-    dit_dtype = DTYPE_MAPPING[args.dit_dtype]
-    vocoder_dtype = DTYPE_MAPPING[args.vocoder_dtype]
-    text_encoder_dtype = DTYPE_MAPPING[args.text_encoder_dtype]
-
-    combined_ckpt = None
-    load_combined_models = any(
-        [
-            args.vae,
-            args.audio_vae,
-            args.dit,
-            args.vocoder,
-            args.text_encoder,
-            args.full_pipeline,
-        ]
-    )
-    if args.combined_filename is not None and load_combined_models:
-        combined_ckpt = load_original_checkpoint(args, filename=args.combined_filename)
-
-    if args.vae or args.full_pipeline:
-        if args.vae_filename is not None:
-            original_vae_ckpt = load_hub_or_local_checkpoint(filename=args.vae_filename)
-        elif combined_ckpt is not None:
-            original_vae_ckpt = get_model_state_dict_from_combined_ckpt(
-                combined_ckpt, args.vae_prefix
-            )
-        vae = convert_ltx2_video_vae(original_vae_ckpt, version=args.version)
-        if not args.full_pipeline:
-            vae.to(vae_dtype).save_pretrained(os.path.join(args.output_path, "vae"))
-
-    if args.audio_vae or args.full_pipeline:
-        if args.audio_vae_filename is not None:
-            original_audio_vae_ckpt = load_hub_or_local_checkpoint(
-                filename=args.audio_vae_filename
-            )
-        elif combined_ckpt is not None:
-            original_audio_vae_ckpt = get_model_state_dict_from_combined_ckpt(
-                combined_ckpt, args.audio_vae_prefix
-            )
-        audio_vae = convert_ltx2_audio_vae(
-            original_audio_vae_ckpt, version=args.version
-        )
-        if not args.full_pipeline:
-            audio_vae.to(audio_vae_dtype).save_pretrained(
-                os.path.join(args.output_path, "audio_vae")
-            )
-
-    if args.dit or args.full_pipeline:
-        if args.dit_filename is not None:
-            original_dit_ckpt = load_hub_or_local_checkpoint(filename=args.dit_filename)
-        elif combined_ckpt is not None:
-            original_dit_ckpt = get_model_state_dict_from_combined_ckpt(
-                combined_ckpt, args.dit_prefix
-            )
-        transformer = convert_ltx2_transformer(original_dit_ckpt, version=args.version)
-        if not args.full_pipeline:
-            transformer.to(dit_dtype).save_pretrained(
-                os.path.join(args.output_path, "transformer")
-            )
-
-    if args.connectors or args.full_pipeline:
-        if args.dit_filename is not None:
-            original_connectors_ckpt = load_hub_or_local_checkpoint(
-                filename=args.dit_filename
-            )
-        elif combined_ckpt is not None:
-            original_connectors_ckpt = get_model_state_dict_from_combined_ckpt(
-                combined_ckpt, args.dit_prefix
-            )
-        connectors = convert_ltx2_connectors(
-            original_connectors_ckpt, version=args.version
-        )
-        if not args.full_pipeline:
-            connectors.to(dit_dtype).save_pretrained(
-                os.path.join(args.output_path, "connectors")
-            )
-
-    if args.vocoder or args.full_pipeline:
-        if args.vocoder_filename is not None:
-            original_vocoder_ckpt = load_hub_or_local_checkpoint(
-                filename=args.vocoder_filename
-            )
-        elif combined_ckpt is not None:
-            original_vocoder_ckpt = get_model_state_dict_from_combined_ckpt(
-                combined_ckpt, args.vocoder_prefix
-            )
-        vocoder = convert_ltx2_vocoder(original_vocoder_ckpt, version=args.version)
-        if not args.full_pipeline:
-            vocoder.to(vocoder_dtype).save_pretrained(
-                os.path.join(args.output_path, "vocoder")
-            )
-
-    if args.text_encoder or args.full_pipeline:
-        # text_encoder = AutoModel.from_pretrained(args.text_encoder_model_id)
-        text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-            args.text_encoder_model_id
-        )
-        if not args.full_pipeline:
-            text_encoder.to(text_encoder_dtype).save_pretrained(
-                os.path.join(args.output_path, "text_encoder")
-            )
-
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_id)
-        if not args.full_pipeline:
-            tokenizer.save_pretrained(os.path.join(args.output_path, "tokenizer"))
-
-    if args.full_pipeline:
-        scheduler = FlowMatchEulerDiscreteScheduler(
-            use_dynamic_shifting=True,
-            base_shift=0.95,
-            max_shift=2.05,
-            base_image_seq_len=1024,
-            max_image_seq_len=4096,
-            shift_terminal=0.1,
-        )
-
-        pipe = LTX2Pipeline(
-            scheduler=scheduler,
-            vae=vae,
-            audio_vae=audio_vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            connectors=connectors,
-            transformer=transformer,
-            vocoder=vocoder,
-        )
-
-        pipe.save_pretrained(
-            args.output_path, safe_serialization=True, max_shard_size="5GB"
-        )
 
 
 def convert_comfy_gemma3_to_transformers(sd: dict):
     out = {}
+
+    sd = dequantize_state_dict(sd)
 
     for k, v in sd.items():
         nk = k
@@ -1051,8 +582,3 @@ def convert_comfy_gemma3_to_transformers(sd: dict):
         out["lm_head.weight"] = out["model.language_model.embed_tokens.weight"]
 
     return out
-
-
-if __name__ == "__main__":
-    args = get_args()
-    main(args)
