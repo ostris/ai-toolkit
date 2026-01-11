@@ -96,7 +96,8 @@ export interface DatasetConfig {
   control_path?: string | null;
   num_frames: number;
   shrink_video_to_frames: boolean;
-  do_i2v: boolean;
+  do_i2v?: boolean;
+  do_audio?: boolean;
   flip_x: boolean;
   flip_y: boolean;
   control_path_1?: string | null;

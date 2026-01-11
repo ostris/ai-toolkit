@@ -17,6 +17,7 @@ type AdditionalSections =
   | 'datasets.control_path'
   | 'datasets.multi_control_paths'
   | 'datasets.do_i2v'
+  | 'datasets.do_audio'
   | 'sample.ctrl_img'
   | 'sample.multi_ctrl_imgs'
   | 'datasets.num_frames'
@@ -288,6 +289,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.width': [768, 1024],
       'config.process[0].sample.height': [768, 1024],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].datasets[x].do_i2v': [true, undefined],
     },
     disableSections: ['network.conv'],
     additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.do_i2v'],
@@ -619,9 +621,11 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.width': [768, 1024],
       'config.process[0].sample.height': [768, 1024],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].datasets[x].do_i2v': [false, undefined],
+      'config.process[0].datasets[x].do_audio': [true, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.layer_offloading', 'model.low_vram'],
+    additionalSections: ['datasets.num_frames', 'model.layer_offloading', 'model.low_vram', , 'datasets.do_i2v', , 'datasets.do_audio'],
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive

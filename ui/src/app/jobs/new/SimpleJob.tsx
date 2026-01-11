@@ -862,6 +862,21 @@ export default function SimpleJob({
                             docKey="datasets.do_i2v"
                           />
                         )}
+                        {modelArch?.additionalSections?.includes('datasets.do_audio') && (
+                          <Checkbox
+                            label="Do Audio"
+                            checked={dataset.do_audio || false}
+                            onChange={value => {
+                              if (!value) {
+                                // if disabling do_audio, also clear audio_path
+                                setJobConfig(undefined, `config.process[0].datasets[${i}].do_audio`);
+                              } else {
+                                setJobConfig(value, `config.process[0].datasets[${i}].do_audio`);
+                              }
+                            }}
+                            docKey="datasets.do_audio"
+                          />
+                        )}
                       </FormGroup>
                       <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
                         <Checkbox

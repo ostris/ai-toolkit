@@ -107,6 +107,16 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.do_audio': {
+    title: 'Do Audio',
+    description: (
+      <>
+        For models that support audio with video, this option will load the audio from the video and resize it to match
+        the video sequence. Since the video is automatically resized, the audio may drop or raise in pitch to match the new
+        speed of the video. It is important to prep your dataset to have the proper length before training.
+      </>
+    ),
+  },
   'datasets.flip': {
     title: 'Flip X and Flip Y',
     description: (
