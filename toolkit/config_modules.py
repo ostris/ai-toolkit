@@ -978,7 +978,8 @@ class DatasetConfig:
         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
         
         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
-        self.do_audio: bool = kwargs.get('load_audio', False) # load audio from video files for models that support it
+        self.do_audio: bool = kwargs.get('do_audio', False) # load audio from video files for models that support it
+        self.audio_preserve_pitch: bool = kwargs.get('audio_preserve_pitch', True) # preserve pitch when stretching audio to fit num_frames
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

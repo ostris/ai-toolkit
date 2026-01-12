@@ -16,6 +16,7 @@ from safetensors.torch import load_file, save_file
 from tqdm import tqdm
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, SiglipImageProcessor
 
+from toolkit.audio.preserve_pitch import time_stretch_preserve_pitch
 from toolkit.basic import flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
 from toolkit.config_modules import ControlTypes
@@ -652,10 +653,13 @@ class ImageProcessingDTOMixin:
                         target_samples = int(round(target_duration * sample_rate))
                         if target_samples > 0 and waveform.shape[-1] != target_samples:
                             # Time-stretch/shrink to match the video clip duration implied by dataset FPS.
-                            # Use linear interpolation over the time axis.
-                            wf = waveform.unsqueeze(0)  # [1, C, L]
-                            wf = F.interpolate(wf, size=target_samples, mode="linear", align_corners=False)
-                            waveform = wf.squeeze(0)  # [C, L]
+                            if self.dataset_config.audio_preserve_pitch:
+                                waveform = time_stretch_preserve_pitch(waveform, sample_rate, target_samples)  # waveform is [C, L]
+                            else:
+                                # Use linear interpolation over the time axis.
+                                wf = waveform.unsqueeze(0)  # [1, C, L]
+                                wf = F.interpolate(wf, size=target_samples, mode="linear", align_corners=False)
+                                waveform = wf.squeeze(0)  # [C, L]
 
                         self.audio_tensor = waveform
                         self.audio_data = {"waveform": waveform, "sample_rate": int(sample_rate)}

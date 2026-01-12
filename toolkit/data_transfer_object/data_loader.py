@@ -123,9 +123,13 @@ class FileItemDTO(
         self.is_reg = self.dataset_config.is_reg
         self.prior_reg = self.dataset_config.prior_reg
         self.tensor: Union[torch.Tensor, None] = None
+        self.audio_data = None
+        self.audio_tensor = None
 
     def cleanup(self):
         self.tensor = None
+        self.audio_data = None
+        self.audio_tensor = None
         self.cleanup_latent()
         self.cleanup_text_embedding()
         self.cleanup_control()
@@ -154,6 +158,8 @@ class DataLoaderBatchDTO:
             self.clip_image_embeds_unconditional: Union[List[dict], None] = None
             self.sigmas: Union[torch.Tensor, None] = None  # can be added elseware and passed along training code
             self.extra_values: Union[torch.Tensor, None] = torch.tensor([x.extra_values for x in self.file_items]) if len(self.file_items[0].extra_values) > 0 else None
+            self.audio_data: Union[List, None] = [x.audio_data for x in self.file_items] if self.file_items[0].audio_data is not None else None
+            self.audio_tensor: Union[torch.Tensor, None] = None
             if not is_latents_cached:
                 # only return a tensor if latents are not cached
                 self.tensor: torch.Tensor = torch.cat([x.tensor.unsqueeze(0) for x in self.file_items])

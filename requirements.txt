@@ -39,3 +39,4 @@ setuptools==69.5.1
 scipy==1.12.0
 gguf==0.17.1
 av==16.0.1
+torchcodec
