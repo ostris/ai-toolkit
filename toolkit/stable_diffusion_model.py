@@ -225,6 +225,9 @@ class StableDiffusion:
         self.use_raw_control_images = False
         # defines if the model supports model paths. Only some will
         self.supports_model_paths = False
+          
+        # use new lokr format (default false for old models for backwards compatibility)
+        self.use_old_lokr_format = True
         
     # properties for old arch for backwards compatibility
     @property

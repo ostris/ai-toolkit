@@ -11,6 +11,7 @@ from toolkit.network_mixins import ToolkitModuleMixin
 from typing import TYPE_CHECKING, Union, List
 
 from optimum.quanto import QBytesTensor, QTensor
+from torchao.dtypes import AffineQuantizedTensor
 
 if TYPE_CHECKING:
 
@@ -284,17 +285,26 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         org_sd[weight_key] = merged_weight.to(orig_dtype)
         self.org_module[0].load_state_dict(org_sd)
 
-    def get_orig_weight(self):
+    def get_orig_weight(self, device):
         weight = self.org_module[0].weight
+        if weight.device != device:
+            weight = weight.to(device)
         if isinstance(weight, QTensor) or isinstance(weight, QBytesTensor):
+            return weight.dequantize().data.detach()
+        elif isinstance(weight, AffineQuantizedTensor):
             return weight.dequantize().data.detach()
         else:
             return weight.data.detach()
 
-    def get_orig_bias(self):
+    def get_orig_bias(self, device):
         if hasattr(self.org_module[0], 'bias') and self.org_module[0].bias is not None:
-            if isinstance(self.org_module[0].bias, QTensor) or isinstance(self.org_module[0].bias, QBytesTensor):
-                return self.org_module[0].bias.dequantize().data.detach()
+            bias = self.org_module[0].bias
+            if bias.device != device:
+                bias = bias.to(device)
+            if isinstance(bias, QTensor) or isinstance(bias, QBytesTensor):
+                return bias.dequantize().data.detach()
+            elif isinstance(bias, AffineQuantizedTensor):
+                return bias.dequantize().data.detach()
             else:
                 return self.org_module[0].bias.data.detach()
         return None
@@ -305,7 +315,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
 
         orig_dtype = x.dtype
 
-        orig_weight = self.get_orig_weight()
+        orig_weight = self.get_orig_weight(x.device)
         lokr_weight = self.get_weight(orig_weight).to(dtype=orig_weight.dtype)
         multiplier = self.network_ref().torch_multiplier
 
@@ -319,7 +329,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             orig_weight
             + lokr_weight * multiplier
         )
-        bias = self.get_orig_bias()
+        bias = self.get_orig_bias(x.device)
         if bias is not None:
             bias = bias.to(weight.device, dtype=weight.dtype)
         output = self.op(

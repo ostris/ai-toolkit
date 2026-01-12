@@ -118,6 +118,8 @@ class LTX2Model(BaseModel):
         self.target_lora_modules = ["LTX2VideoTransformer3DModel"]
         # defines if the model supports model paths. Only some will
         self.supports_model_paths = True
+        # use the new format on this new model by default
+        self.use_old_lokr_format = False
 
     # static method to get the noise scheduler
     @staticmethod

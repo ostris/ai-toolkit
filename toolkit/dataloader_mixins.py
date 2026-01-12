@@ -467,6 +467,8 @@ class ImageProcessingDTOMixin:
         if not self.dataset_config.buckets:
             raise Exception('Buckets required for video processing')
         
+        do_audio = self.dataset_config.do_audio
+        
         try:
             # Use OpenCV to capture video frames
             cap = cv2.VideoCapture(self.path)
@@ -596,6 +598,74 @@ class ImageProcessingDTOMixin:
             
             # Stack frames into tensor [frames, channels, height, width]
             self.tensor = torch.stack(frames)
+
+            # ------------------------------
+            # Audio extraction + stretching
+            # ------------------------------
+            if do_audio:
+                # Default to "no audio" unless we successfully extract it
+                self.audio_data = None
+                self.audio_tensor = None
+
+                try:
+                    import torchaudio
+                    import torch.nn.functional as F
+
+                    # Compute the time range of the selected frames in the *source* video
+                    # Include the last frame by extending to the next frame boundary.
+                    if video_fps and video_fps > 0 and len(frames_to_extract) > 0:
+                        clip_start_frame = int(frames_to_extract[0])
+                        clip_end_frame = int(frames_to_extract[-1])
+                        clip_start_time = clip_start_frame / float(video_fps)
+                        clip_end_time = (clip_end_frame + 1) / float(video_fps)
+                        source_duration = max(0.0, clip_end_time - clip_start_time)
+                    else:
+                        clip_start_time = 0.0
+                        clip_end_time = 0.0
+                        source_duration = 0.0
+
+                    # Target duration is how this sampled/stretched clip is interpreted for training
+                    # (i.e. num_frames at the configured dataset FPS).
+                    if hasattr(self.dataset_config, "fps") and self.dataset_config.fps and self.dataset_config.fps > 0:
+                        target_duration = float(self.dataset_config.num_frames) / float(self.dataset_config.fps)
+                    else:
+                        target_duration = source_duration
+
+                    waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+
+                    # Slice to the selected clip region (when we have a meaningful time range)
+                    if source_duration > 0.0:
+                        start_sample = int(round(clip_start_time * sample_rate))
+                        end_sample = int(round(clip_end_time * sample_rate))
+                        start_sample = max(0, min(start_sample, waveform.shape[-1]))
+                        end_sample = max(0, min(end_sample, waveform.shape[-1]))
+                        if end_sample > start_sample:
+                            waveform = waveform[..., start_sample:end_sample]
+                        else:
+                            # No valid audio segment
+                            waveform = None
+                    else:
+                        # If we can't compute a meaningful time range, treat as no-audio
+                        waveform = None
+
+                    if waveform is not None and waveform.numel() > 0:
+                        target_samples = int(round(target_duration * sample_rate))
+                        if target_samples > 0 and waveform.shape[-1] != target_samples:
+                            # Time-stretch/shrink to match the video clip duration implied by dataset FPS.
+                            # Use linear interpolation over the time axis.
+                            wf = waveform.unsqueeze(0)  # [1, C, L]
+                            wf = F.interpolate(wf, size=target_samples, mode="linear", align_corners=False)
+                            waveform = wf.squeeze(0)  # [C, L]
+
+                        self.audio_tensor = waveform
+                        self.audio_data = {"waveform": waveform, "sample_rate": int(sample_rate)}
+
+                except Exception as e:
+                    # Keep behavior identical for non-audio datasets; for audio datasets, just skip if missing/broken.
+                    if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                        print_acc(f"Could not extract/stretch audio for {self.path}: {e}")
+                    self.audio_data = None
+                    self.audio_tensor = None
             
             # Only log success in debug mode
             if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
