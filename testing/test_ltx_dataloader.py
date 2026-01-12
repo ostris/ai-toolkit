@@ -19,7 +19,7 @@ parser = argparse.ArgumentParser()
 # parser.add_argument('dataset_folder', type=str, default='input')
 parser.add_argument('dataset_folder', type=str)
 parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--num_frames', type=int, default=241)
+parser.add_argument('--num_frames', type=int, default=121)
 parser.add_argument('--output_path', type=str, default='output/dataset_test')
 
 
@@ -62,6 +62,8 @@ dataset_config = DatasetConfig(
     fps=frame_rate,
     do_audio=True,
     debug=True,
+    audio_preserve_pitch=False,
+    audio_normalize=True
 
 )
 

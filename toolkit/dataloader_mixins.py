@@ -633,6 +633,13 @@ class ImageProcessingDTOMixin:
                         target_duration = source_duration
 
                     waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+                    
+                    if self.dataset_config.audio_normalize:
+                        peak = waveform.abs().amax()  # global peak across channels
+                        eps = 1e-9
+                        target_peak = 0.999  # ~ -0.01 dBFS
+                        gain = target_peak / (peak + eps)
+                        waveform = waveform * gain
 
                     # Slice to the selected clip region (when we have a meaningful time range)
                     if source_duration > 0.0:

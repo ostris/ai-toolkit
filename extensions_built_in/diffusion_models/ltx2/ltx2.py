@@ -2,13 +2,12 @@ from functools import partial
 import os
 from typing import List, Optional
 
-import huggingface_hub
 import torch
+import torchaudio
 from transformers import Gemma3Config
 import yaml
-from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
+from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
-from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
 from toolkit.prompt_utils import PromptEmbeds
@@ -98,6 +97,63 @@ def blank_log_image_function(self, *args, **kwargs):
     return
 
 
+class AudioProcessor(torch.nn.Module):
+    """Converts audio waveforms to log-mel spectrograms with optional resampling."""
+
+    def __init__(
+        self,
+        sample_rate: int,
+        mel_bins: int,
+        mel_hop_length: int,
+        n_fft: int,
+    ) -> None:
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            win_length=n_fft,
+            hop_length=mel_hop_length,
+            f_min=0.0,
+            f_max=sample_rate / 2.0,
+            n_mels=mel_bins,
+            window_fn=torch.hann_window,
+            center=True,
+            pad_mode="reflect",
+            power=1.0,
+            mel_scale="slaney",
+            norm="slaney",
+        )
+
+    def resample_waveform(
+        self,
+        waveform: torch.Tensor,
+        source_rate: int,
+        target_rate: int,
+    ) -> torch.Tensor:
+        """Resample waveform to target sample rate if needed."""
+        if source_rate == target_rate:
+            return waveform
+        resampled = torchaudio.functional.resample(waveform, source_rate, target_rate)
+        return resampled.to(device=waveform.device, dtype=waveform.dtype)
+
+    def waveform_to_mel(
+        self,
+        waveform: torch.Tensor,
+        waveform_sample_rate: int,
+    ) -> torch.Tensor:
+        """Convert waveform to log-mel spectrogram [batch, channels, time, n_mels]."""
+        waveform = self.resample_waveform(
+            waveform, waveform_sample_rate, self.sample_rate
+        )
+
+        mel = self.mel_transform(waveform)
+        mel = torch.log(torch.clamp(mel, min=1e-5))
+
+        mel = mel.to(device=waveform.device, dtype=waveform.dtype)
+        return mel.permute(0, 1, 3, 2).contiguous()
+
+
 class LTX2Model(BaseModel):
     arch = "ltx2"
 
@@ -120,6 +176,7 @@ class LTX2Model(BaseModel):
         self.supports_model_paths = True
         # use the new format on this new model by default
         self.use_old_lokr_format = False
+        self.audio_processor = None
 
     # static method to get the noise scheduler
     @staticmethod
@@ -392,6 +449,14 @@ class LTX2Model(BaseModel):
         self.tokenizer = tokenizer  # list of tokenizers
         self.model = pipe.transformer
         self.pipeline = pipe
+
+        self.audio_processor = AudioProcessor(
+            sample_rate=audio_vae.config.sample_rate,
+            mel_bins=audio_vae.config.mel_bins,
+            mel_hop_length=audio_vae.config.mel_hop_length,
+            n_fft=1024,  # todo get this from vae if we can, I couldnt find it.
+        ).to(self.device_torch, dtype=torch.float32)
+
         self.print_and_status_update("Model Loaded")
 
     @torch.no_grad()
@@ -557,6 +622,50 @@ class LTX2Model(BaseModel):
                 img = video[0]
             return img
 
+    def encode_audio(self, batch: "DataLoaderBatchDTO"):
+        if self.pipeline.audio_vae.device == torch.device("cpu"):
+            self.pipeline.audio_vae.to(self.device_torch)
+
+        output_tensor = None
+        audio_num_frames = None
+
+        # do them seperatly for now
+        for audio_data in batch.audio_data:
+            waveform = audio_data["waveform"].to(
+                device=self.device_torch, dtype=torch.float32
+            )
+            sample_rate = audio_data["sample_rate"]
+
+            # Add batch dimension if needed: [channels, samples] -> [batch, channels, samples]
+            if waveform.dim() == 2:
+                waveform = waveform.unsqueeze(0)
+            
+            # Convert waveform to mel spectrogram using AudioProcessor
+            mel_spectrogram = self.audio_processor.waveform_to_mel(waveform, waveform_sample_rate=sample_rate)
+            mel_spectrogram = mel_spectrogram.to(dtype=self.torch_dtype)
+
+            # Encode mel spectrogram to latents
+            latents = self.pipeline.audio_vae.encode(mel_spectrogram.to(self.device_torch, dtype=self.torch_dtype)).latent_dist.mode()
+
+            if audio_num_frames is None:
+                audio_num_frames = latents.shape[2]  #(latents is [B, C, T, F])
+
+            packed_latents = self.pipeline._pack_audio_latents(
+                latents,
+                # patch_size=self.pipeline.transformer.config.audio_patch_size,
+                # patch_size_t=self.pipeline.transformer.config.audio_patch_size_t,
+            ) # [B, L, C * M]
+            if output_tensor is None:
+                output_tensor = packed_latents
+            else:
+                output_tensor = torch.cat([output_tensor, packed_latents], dim=0)
+
+        # normalize latents, opposite of (latents * latents_std) + latents_mean
+        latents_mean = self.pipeline.audio_vae.latents_mean
+        latents_std = self.pipeline.audio_vae.latents_std
+        output_tensor = (output_tensor - latents_mean) / latents_std
+        return output_tensor, audio_num_frames 
+
     def get_noise_prediction(
         self,
         latent_model_input: torch.Tensor,
@@ -565,69 +674,85 @@ class LTX2Model(BaseModel):
         batch: "DataLoaderBatchDTO" = None,
         **kwargs,
     ):
-        if self.model.device == torch.device("cpu"):
-            self.model.to(self.device_torch)
+        with torch.no_grad():
+            if self.model.device == torch.device("cpu"):
+                self.model.to(self.device_torch)
 
-        batch_size, C, latent_num_frames, latent_height, latent_width = (
-            latent_model_input.shape
-        )
+            batch_size, C, latent_num_frames, latent_height, latent_width = (
+                latent_model_input.shape
+            )
 
-        # todo get this somehow
-        frame_rate = 24
-        # check frame dimension
-        # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
-        packed_latents = self.pipeline._pack_latents(
-            latent_model_input,
-            patch_size=self.pipeline.transformer_spatial_patch_size,
-            patch_size_t=self.pipeline.transformer_temporal_patch_size,
-        )
+            # todo get this somehow
+            frame_rate = 24
+            # check frame dimension
+            # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
+            packed_latents = self.pipeline._pack_latents(
+                latent_model_input,
+                patch_size=self.pipeline.transformer_spatial_patch_size,
+                patch_size_t=self.pipeline.transformer_temporal_patch_size,
+            )
 
-        # TODO, do actual audio frames
-        num_mel_bins = self.pipeline.audio_vae.config.mel_bins
-        # latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
+            if batch.audio_tensor is not None:
+                # use audio from the batch if available
+                raw_audio_latents, audio_num_frames = self.encode_audio(batch)
+                # add the audio targets to the batch for loss calculation later
+                audio_noise = torch.randn_like(raw_audio_latents)
+                batch.audio_target = (audio_noise - raw_audio_latents).detach()
+                audio_latents = self.add_noise(
+                    raw_audio_latents,
+                    audio_noise,
+                    timestep,
+                ).to(self.device_torch, dtype=self.torch_dtype)
 
-        num_channels_latents_audio = self.pipeline.audio_vae.config.latent_channels
-        audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
-            batch_size,
-            num_channels_latents=num_channels_latents_audio,
-            num_mel_bins=num_mel_bins,
-            num_frames=latent_num_frames,  # Video frames, audio frames will be calculated from this
-            frame_rate=frame_rate,
-            sampling_rate=self.pipeline.audio_sampling_rate,
-            hop_length=self.pipeline.audio_hop_length,
-            dtype=torch.float32,
-            device=self.transformer.device,
-            generator=None,
-            latents=None,
-        )
+            else:
+                # no audio
+                num_mel_bins = self.pipeline.audio_vae.config.mel_bins
+                # latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
+                num_channels_latents_audio = (
+                    self.pipeline.audio_vae.config.latent_channels
+                )
+                # audio latents are (1, 17, 128), audio_num_frames = 17
+                audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
+                    batch_size,
+                    num_channels_latents=num_channels_latents_audio,
+                    num_mel_bins=num_mel_bins,
+                    num_frames=batch.tensor.shape[1],
+                    frame_rate=frame_rate,
+                    sampling_rate=self.pipeline.audio_sampling_rate,
+                    hop_length=self.pipeline.audio_hop_length,
+                    dtype=torch.float32,
+                    device=self.transformer.device,
+                    generator=None,
+                    latents=None,
+                )
 
-        if self.pipeline.connectors.device != self.transformer.device:
-            self.pipeline.connectors.to(self.transformer.device)
+            if self.pipeline.connectors.device != self.transformer.device:
+                self.pipeline.connectors.to(self.transformer.device)
 
-        # TODO this is how diffusers does this on inference, not sure I understand why, check this
-        additive_attention_mask = (
-            1 - text_embeddings.attention_mask.to(self.transformer.dtype)
-        ) * -1000000.0
-        (
-            connector_prompt_embeds,
-            connector_audio_prompt_embeds,
-            connector_attention_mask,
-        ) = self.pipeline.connectors(
-            text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
-        )
+            # TODO this is how diffusers does this on inference, not sure I understand why, check this
+            additive_attention_mask = (
+                1 - text_embeddings.attention_mask.to(self.transformer.dtype)
+            ) * -1000000.0
+            (
+                connector_prompt_embeds,
+                connector_audio_prompt_embeds,
+                connector_attention_mask,
+            ) = self.pipeline.connectors(
+                text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
+            )
 
-        # compute video and audio positional ids
-        video_coords = self.transformer.rope.prepare_video_coords(
-            packed_latents.shape[0],
-            latent_num_frames,
-            latent_height,
-            latent_width,
-            packed_latents.device,
-            fps=frame_rate,
-        )
-        audio_coords = self.transformer.audio_rope.prepare_audio_coords(
-            audio_latents.shape[0], audio_num_frames, audio_latents.device
-        )
+            # compute video and audio positional ids
+            video_coords = self.transformer.rope.prepare_video_coords(
+                packed_latents.shape[0],
+                latent_num_frames,
+                latent_height,
+                latent_width,
+                packed_latents.device,
+                fps=frame_rate,
+            )
+            audio_coords = self.transformer.audio_rope.prepare_audio_coords(
+                audio_latents.shape[0], audio_num_frames, audio_latents.device
+            )
 
         noise_pred_video, noise_pred_audio = self.transformer(
             hidden_states=packed_latents,
@@ -649,7 +774,9 @@ class LTX2Model(BaseModel):
             return_dict=False,
         )
 
-        # todo handle audio noise pred too
+        # add audio latent to batch if we had audio
+        if batch.audio_target is not None:
+            batch.audio_pred = noise_pred_audio
 
         unpacked_output = self.pipeline._unpack_latents(
             latents=noise_pred_video,
