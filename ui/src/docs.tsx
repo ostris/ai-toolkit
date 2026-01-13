@@ -117,6 +117,25 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.audio_normalize': {
+    title: 'Audio Normalize',
+    description: (
+      <>
+        When loading audio, this will normalize the audio volume to the max peaks. Useful if your dataset has varying audio
+        volumes. Warning, do not use if you have clips with full silence you want to keep, as it will raise the volume of those clips.
+      </>
+    ),
+  },
+  'datasets.audio_preserve_pitch': {
+    title: 'Audio Preserve Pitch',
+    description: (
+      <>
+        When loading audio to match the number of frames requested, this option will preserve the pitch of the audio if
+        the length does not match training target. It is recommended to have a dataset that matches your target length,
+        as this option can add sound distortions. 
+      </>
+    ),
+  },
   'datasets.flip': {
     title: 'Flip X and Flip Y',
     description: (

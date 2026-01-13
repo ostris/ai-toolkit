@@ -18,6 +18,8 @@ type AdditionalSections =
   | 'datasets.multi_control_paths'
   | 'datasets.do_i2v'
   | 'datasets.do_audio'
+  | 'datasets.audio_normalize'
+  | 'datasets.audio_preserve_pitch'
   | 'sample.ctrl_img'
   | 'sample.multi_ctrl_imgs'
   | 'datasets.num_frames'
@@ -626,7 +628,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].fps': [24, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.layer_offloading', 'model.low_vram', , 'datasets.do_i2v', , 'datasets.do_audio'],
+    additionalSections: ['datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch'],
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive

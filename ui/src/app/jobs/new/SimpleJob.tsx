@@ -868,13 +868,40 @@ export default function SimpleJob({
                             checked={dataset.do_audio || false}
                             onChange={value => {
                               if (!value) {
-                                // if disabling do_audio, also clear audio_path
                                 setJobConfig(undefined, `config.process[0].datasets[${i}].do_audio`);
                               } else {
                                 setJobConfig(value, `config.process[0].datasets[${i}].do_audio`);
                               }
                             }}
                             docKey="datasets.do_audio"
+                          />
+                        )}
+                        {modelArch?.additionalSections?.includes('datasets.audio_normalize') && (
+                          <Checkbox
+                            label="Audio Normalize"
+                            checked={dataset.audio_normalize || false}
+                            onChange={value => {
+                              if (!value) {
+                                setJobConfig(undefined, `config.process[0].datasets[${i}].audio_normalize`);
+                              } else {
+                                setJobConfig(value, `config.process[0].datasets[${i}].audio_normalize`);
+                              }
+                            }}
+                            docKey="datasets.audio_normalize"
+                          />
+                        )}
+                        {modelArch?.additionalSections?.includes('datasets.audio_preserve_pitch') && (
+                          <Checkbox
+                            label="Audio Preserve Pitch"
+                            checked={dataset.audio_preserve_pitch || false}
+                            onChange={value => {
+                              if (!value) {
+                                setJobConfig(undefined, `config.process[0].datasets[${i}].audio_preserve_pitch`);
+                              } else {
+                                setJobConfig(value, `config.process[0].datasets[${i}].audio_preserve_pitch`);
+                              }
+                            }}
+                            docKey="datasets.audio_preserve_pitch"
                           />
                         )}
                       </FormGroup>

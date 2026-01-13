@@ -98,6 +98,8 @@ export interface DatasetConfig {
   shrink_video_to_frames: boolean;
   do_i2v?: boolean;
   do_audio?: boolean;
+  audio_normalize?: boolean;
+  audio_preserve_pitch?: boolean;
   fps?: number;
   flip_x: boolean;
   flip_y: boolean;
