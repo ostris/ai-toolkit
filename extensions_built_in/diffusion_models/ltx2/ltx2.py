@@ -184,7 +184,7 @@ class LTX2Model(BaseModel):
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
     def get_bucket_divisibility(self):
-        return 16 * 2  # 16 for the VAE, 2 for patch size
+        return 32
 
     def load_model(self):
         dtype = self.torch_dtype
@@ -451,9 +451,9 @@ class LTX2Model(BaseModel):
         self.pipeline = pipe
 
         self.audio_processor = AudioProcessor(
-            sample_rate=audio_vae.config.sample_rate,
+            sample_rate=pipe.audio_sampling_rate,
             mel_bins=audio_vae.config.mel_bins,
-            mel_hop_length=audio_vae.config.mel_hop_length,
+            mel_hop_length=pipe.audio_hop_length,
             n_fft=1024,  # todo get this from vae if we can, I couldnt find it.
         ).to(self.device_torch, dtype=torch.float32)
 
@@ -640,6 +640,10 @@ class LTX2Model(BaseModel):
             if waveform.dim() == 2:
                 waveform = waveform.unsqueeze(0)
             
+            if waveform.shape[1] == 1:
+                # make sure it is stereo
+                waveform = waveform.repeat(1, 2, 1)
+            
             # Convert waveform to mel spectrogram using AudioProcessor
             mel_spectrogram = self.audio_processor.waveform_to_mel(waveform, waveform_sample_rate=sample_rate)
             mel_spectrogram = mel_spectrogram.to(dtype=self.torch_dtype)
@@ -694,6 +698,7 @@ class LTX2Model(BaseModel):
 
             if batch.audio_tensor is not None:
                 # use audio from the batch if available
+                #(1, 190, 128)
                 raw_audio_latents, audio_num_frames = self.encode_audio(batch)
                 # add the audio targets to the batch for loss calculation later
                 audio_noise = torch.randn_like(raw_audio_latents)
@@ -711,7 +716,7 @@ class LTX2Model(BaseModel):
                 num_channels_latents_audio = (
                     self.pipeline.audio_vae.config.latent_channels
                 )
-                # audio latents are (1, 17, 128), audio_num_frames = 17
+                # audio latents are (1, 126, 128), audio_num_frames = 126
                 audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
                     batch_size,
                     num_channels_latents=num_channels_latents_audio,
