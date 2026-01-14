@@ -24,6 +24,7 @@ const startAndWatchJob = (job: Job) => {
 
     //log to path
     const logPath = path.join(trainingFolder, 'log.txt');
+    const stderrPath = path.join(trainingFolder, 'stderr.log');
 
     try {
       // if the log path exists, move it to a folder called logs and rename it {num}_log.txt, looking for the highest num
@@ -40,6 +41,20 @@ const startAndWatchJob = (job: Job) => {
         }
 
         fs.renameSync(logPath, path.join(logsFolder, `${num}_log.txt`));
+      }
+      // Also rotate stderr log if it exists
+      if (fs.existsSync(stderrPath)) {
+        const logsFolder = path.join(trainingFolder, 'logs');
+        if (!fs.existsSync(logsFolder)) {
+          fs.mkdirSync(logsFolder, { recursive: true });
+        }
+
+        let num = 0;
+        while (fs.existsSync(path.join(logsFolder, `${num}_stderr.log`))) {
+          num++;
+        }
+
+        fs.renameSync(stderrPath, path.join(logsFolder, `${num}_stderr.log`));
       }
     } catch (e) {
       console.error('Error moving log file:', e);
@@ -86,6 +101,14 @@ const startAndWatchJob = (job: Job) => {
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
+      // ROCm environment variables - only pass through if already set in parent process
+      // run.py will set defaults if not present, so we don't override here
+      // This allows run.py to handle ROCm configuration consistently
+      ...(process.env.AMD_SERIALIZE_KERNEL && { AMD_SERIALIZE_KERNEL: process.env.AMD_SERIALIZE_KERNEL }),
+      ...(process.env.TORCH_USE_HIP_DSA && { TORCH_USE_HIP_DSA: process.env.TORCH_USE_HIP_DSA }),
+      ...(process.env.HSA_ENABLE_SDMA && { HSA_ENABLE_SDMA: process.env.HSA_ENABLE_SDMA }),
+      ...(process.env.PYTORCH_ROCM_ALLOC_CONF && { PYTORCH_ROCM_ALLOC_CONF: process.env.PYTORCH_ROCM_ALLOC_CONF }),
+      ...(process.env.HIP_LAUNCH_BLOCKING && { HIP_LAUNCH_BLOCKING: process.env.HIP_LAUNCH_BLOCKING }),
     };
 
     // HF_TOKEN
@@ -100,6 +123,9 @@ const startAndWatchJob = (job: Job) => {
     try {
       let subprocess;
 
+      // Open stderr log file for writing (append mode to preserve previous errors)
+      const stderrFd = fs.openSync(stderrPath, 'a');
+      
       if (isWindows) {
         // Spawn Python directly on Windows so the process can survive parent exit
         subprocess = spawn(pythonPath, args, {
@@ -110,19 +136,30 @@ const startAndWatchJob = (job: Job) => {
           cwd: TOOLKIT_ROOT,
           detached: true,
           windowsHide: true,
-          stdio: 'ignore', // don't tie stdio to parent
+          stdio: ['ignore', 'ignore', stderrFd], // Capture stderr to file
         });
+        // On Windows, we need to keep the file descriptor open
+        // The child process will inherit it and close it when done
       } else {
-        // For non-Windows platforms, fully detach and ignore stdio so it survives daemon-like
+        // For non-Windows platforms, fully detach but capture stderr to file
         subprocess = spawn(pythonPath, args, {
           detached: true,
-          stdio: 'ignore',
+          stdio: ['ignore', 'ignore', stderrFd], // Capture stderr to file
           env: {
             ...process.env,
             ...additionalEnv,
           },
           cwd: TOOLKIT_ROOT,
         });
+        // On Unix, the file descriptor is inherited by the child process
+        // We can close our handle after a short delay
+        setTimeout(() => {
+          try {
+            fs.closeSync(stderrFd);
+          } catch (e) {
+            // Ignore errors - file might already be closed
+          }
+        }, 100);
       }
 
       // Important: let the child run independently of this Node process.

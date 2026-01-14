@@ -215,37 +215,164 @@ _Last updated: 2025-12-17 22:19 UTC_
 ## Installation
 
 Requirements:
-- python >3.10
-- Nvidia GPU with enough ram to do what you need
-- python venv
-- git
+- Python 3.10, 3.11, or 3.12 (Python 3.13 may have compatibility issues with some packages)
+- GPU with enough RAM (NVIDIA with CUDA, or AMD with ROCm)
+- Git
 
+### Quick Start (Recommended)
 
-Linux:
+We provide setup scripts that automatically detect your system and install the correct dependencies:
+
+#### Linux:
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+chmod +x setup.sh start_toolkit.sh
+./setup.sh
+```
+
+#### Windows (PowerShell):
+```powershell
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+.\setup.ps1
+```
+
+The setup script will:
+- Create a virtual environment (using `uv` if available, otherwise `venv`)
+- Detect your GPU (ROCm or CUDA)
+- Install PyTorch with the correct backend
+- Install all required dependencies
+- Verify the installation
+
+### Manual Installation
+
+If you prefer to install manually or the setup script doesn't work for your system:
+
+#### Linux (NVIDIA GPU with CUDA):
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
-# install torch first
+# Install torch first
 pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
-For devices running **DGX OS** (including DGX Spark), follow [these](dgx_instructions.md) instructions.
-
-
-Windows:
-
-If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
+#### Linux (AMD GPU with ROCm):
+For AMD GPUs using ROCm, we recommend using [uv](https://github.com/astral-sh/uv) for virtual environment management:
 
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
+# Create virtual environment with uv (creates .venv directory)
+uv venv
+source .venv/bin/activate
+
+# Install PyTorch with ROCm support for your GPU architecture
+# The setup script will auto-detect your GPU architecture, but you can also specify manually:
+uv pip install --upgrade --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ --pre torch torchaudio torchvision
+
+# Install remaining requirements
+uv pip install -r requirements.txt
+```
+
+**Note:** The setup script automatically detects your GPU architecture and maps it to the correct ROCm directory. Common architectures and their mappings:
+
+- **`gfx1151`** - RDNA 3.5 architecture (Strix Point Halo APU)
+- **`gfx110X-all`** - RDNA 3 architecture (maps from gfx1100, gfx1101, gfx1102, gfx1103)
+  - Radeon RX 7900 XTX, RX 7900 XT, RX 7800 XT, RX 7700 XT
+- **`gfx1030`** - RDNA 2 architecture
+  - Radeon RX 6900 XT, RX 6800 XT, RX 6700 XT, RX 6600 XT
+- **`gfx90a`** - CDNA 2 architecture (Instinct MI200 series)
+- **`gfx906`** - Vega 7nm (Instinct MI50)
+- **`gfx908`** - CDNA 1 (Instinct MI100)
+
+**Important:** The ROCm nightlies directory structure uses `gfx110X-all` for all RDNA 3 GPUs (gfx1100-gfx1103), not the individual architecture codes. The setup script automatically handles this mapping.
+
+Check your GPU architecture with: `rocm-smi --showproductname`
+
+#### DGX OS:
+
+For devices running **DGX OS** (including DGX Spark), follow [these](dgx_instructions.md) instructions.
+
+#### Windows (NVIDIA GPU with CUDA):
+
+If you are having issues with Windows, we recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
+
+Or manually:
+```powershell
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
 python -m venv venv
-.\venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
+```
+
+## Running the Toolkit
+
+After installation, you can use the startup script to run the toolkit:
+
+### Linux:
+```bash
+# Start the web UI
+./start_toolkit.sh ui
+
+# Start the web UI in development mode (with hot reload)
+./start_toolkit.sh ui --dev
+
+# Run a training job
+./start_toolkit.sh train config/examples/train_lora_wan22_14b_24gb.yaml
+
+# Setup/validate the toolkit
+./start_toolkit.sh setup
+```
+
+### Windows (PowerShell):
+```powershell
+# Start the web UI
+.\start_toolkit.ps1 ui
+
+# Start the web UI in development mode (with hot reload)
+.\start_toolkit.ps1 ui --dev
+
+# Run a training job
+.\start_toolkit.ps1 train config\examples\train_lora_wan22_14b_24gb.yaml
+
+# Setup/validate the toolkit
+.\start_toolkit.ps1 setup
+```
+
+### Startup Script Options:
+
+- `setup` - Setup/validate the toolkit environment
+- `train <config_file>` - Run training job(s) with config file(s)
+- `ui` - Launch web UI (production mode)
+- `ui --dev` - Launch web UI (development mode with hot reload)
+- `gradio` - Launch Gradio UI for FLUX training
+
+Training options:
+- `-r, --recover` - Continue running additional jobs if one fails
+- `-n, --name NAME` - Name to replace [name] tag in config
+- `-l, --log FILE` - Log file to write output to
+
+UI options:
+- `-p, --port PORT` - Port for web UI (default: 8675)
+
+### Direct Python Execution:
+
+You can also run directly without the startup script:
+
+```bash
+# Linux
+source venv/bin/activate  # or source .venv/bin/activate for uv
+python run.py config/your_config.yaml
+
+# Windows
+.\venv\Scripts\Activate.ps1
+python run.py config\your_config.yaml
 ```
 
 

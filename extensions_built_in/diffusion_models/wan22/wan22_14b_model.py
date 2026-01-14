@@ -1,5 +1,6 @@
 from functools import partial
 import os
+import gc
 from typing import Any, Dict, Optional, Union, List
 from typing_extensions import Self
 import torch
@@ -238,6 +239,10 @@ class Wan2214bModel(Wan21):
         self.model.transformer_2.condition_embedder.forward = partial(
             time_text_monkeypatch, self.model.transformer_2.condition_embedder
         )
+        
+        # Enable flash attention if requested
+        if self.model_config.model_kwargs.get('use_flash_attention', False):
+            self.enable_flash_attention()
 
     def get_bucket_divisibility(self):
         # 8x compression  and 2x2 patch size
@@ -281,11 +286,21 @@ class Wan2214bModel(Wan21):
 
         self.print_and_status_update("Loading transformer 1")
         dtype = self.torch_dtype
-        transformer_1 = WanTransformer3DModel.from_pretrained(
-            transformer_path_1,
-            subfolder=subfolder_1,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        # Use device context to ensure loading happens on GPU for ROCm
+        with torch.device(self.device_torch if not self.model_config.low_vram else 'cpu'):
+            transformer_1 = WanTransformer3DModel.from_pretrained(
+                transformer_path_1,
+                subfolder=subfolder_1,
+                torch_dtype=dtype,
+                device_map=None,
+            )
+        # Immediately move to GPU on ROCm to prevent transformers from keeping it on CPU
+        if not self.model_config.low_vram:
+            transformer_1 = transformer_1.to(self.device_torch, dtype=dtype)
+            # Force garbage collection to free CPU memory after moving to GPU
+            gc.collect()
+        else:
+            transformer_1 = transformer_1.to(dtype=dtype)
 
         flush()
 
@@ -311,11 +326,21 @@ class Wan2214bModel(Wan21):
 
         self.print_and_status_update("Loading transformer 2")
         dtype = self.torch_dtype
-        transformer_2 = WanTransformer3DModel.from_pretrained(
-            transformer_path_2,
-            subfolder=subfolder_2,
-            torch_dtype=dtype,
-        ).to(dtype=dtype)
+        # Use device context to ensure loading happens on GPU for ROCm
+        with torch.device(self.device_torch if not self.model_config.low_vram else 'cpu'):
+            transformer_2 = WanTransformer3DModel.from_pretrained(
+                transformer_path_2,
+                subfolder=subfolder_2,
+                torch_dtype=dtype,
+                device_map=None,
+            )
+        # Immediately move to GPU on ROCm to prevent transformers from keeping it on CPU
+        if not self.model_config.low_vram:
+            transformer_2 = transformer_2.to(self.device_torch, dtype=dtype)
+            # Force garbage collection to free CPU memory after moving to GPU
+            gc.collect()
+        else:
+            transformer_2 = transformer_2.to(dtype=dtype)
 
         flush()
 

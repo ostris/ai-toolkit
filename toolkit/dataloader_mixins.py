@@ -1725,6 +1725,9 @@ class LatentCachingFileItemDTOMixin:
         self.latent_space_version = 'sd1'
         # todo, increment this if we change the latent format to invalidate cache
         self.latent_version = 1
+        # First frame caching for i2v models
+        self._cached_first_frame: Union[torch.Tensor, None] = None
+        self._first_frame_path: Union[str, None] = None
 
     def get_latent_info_dict(self: 'FileItemDTO'):
         item = OrderedDict([
@@ -1785,6 +1788,33 @@ class LatentCachingFileItemDTOMixin:
             )
             self._encoded_latent = state_dict['latent']
         return self._encoded_latent
+    
+    def get_first_frame_path(self: 'FileItemDTO', recalculate=False):
+        """Get path for cached first frame, similar to get_latent_path"""
+        if self._first_frame_path is not None and not recalculate:
+            return self._first_frame_path
+        else:
+            # Store first frames in same folder as latents
+            img_dir = os.path.dirname(self.path)
+            latent_dir = os.path.join(img_dir, '_latent_cache')
+            hash_dict = self.get_latent_info_dict()
+            filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
+            hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
+            hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
+            hash_str = hash_str.replace('=', '')
+            self._first_frame_path = os.path.join(latent_dir, f'{filename_no_ext}_{hash_str}_first_frame.safetensors')
+        return self._first_frame_path
+    
+    def get_first_frame(self: 'FileItemDTO', device=None):
+        """Get cached first frame for i2v conditioning"""
+        if not self.is_latent_cached:
+            return None
+        if self._cached_first_frame is None:
+            first_frame_path = self.get_first_frame_path()
+            if os.path.exists(first_frame_path):
+                state_dict = load_file(first_frame_path, device='cpu')
+                self._cached_first_frame = state_dict.get('first_frame', None)
+        return self._cached_first_frame
 
 
 class LatentCachingMixin:
@@ -1839,6 +1869,14 @@ class LatentCachingMixin:
                         # load it into memory
                         state_dict = load_file(latent_path, device='cpu')
                         file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
+                    
+                    # Load cached first frame if i2v is enabled
+                    if hasattr(file_item, 'dataset_config') and file_item.dataset_config.do_i2v:
+                        first_frame_path = file_item.get_first_frame_path(recalculate=True)
+                        if os.path.exists(first_frame_path):
+                            if to_memory:
+                                first_frame_state_dict = load_file(first_frame_path, device='cpu')
+                                file_item._cached_first_frame = first_frame_state_dict.get('first_frame', None)
                 else:
                     # not saved to disk, calculate
                     # load the image first
@@ -1866,6 +1904,33 @@ class LatentCachingMixin:
                     if to_memory:
                         # keep it in memory
                         file_item._encoded_latent = latent.to('cpu', dtype=self.sd.torch_dtype)
+
+                    # Cache first frame for i2v models if do_i2v is enabled
+                    if hasattr(file_item, 'dataset_config') and file_item.dataset_config.do_i2v:
+                        # Extract first frame from tensor before deleting it
+                        if file_item.tensor is not None:
+                            if len(file_item.tensor.shape) == 3:
+                                # Single image - shape is (C, H, W), use as-is
+                                first_frame = file_item.tensor.clone()
+                            elif len(file_item.tensor.shape) == 4:
+                                # Video - shape is (T, C, H, W), extract first frame: -> (C, H, W)
+                                first_frame = file_item.tensor[0].clone()
+                            else:
+                                first_frame = None
+                            
+                            if first_frame is not None:
+                                # Save first frame to disk if caching to disk
+                                if to_disk:
+                                    first_frame_path = file_item.get_first_frame_path(recalculate=True)
+                                    first_frame_state_dict = OrderedDict([
+                                        ('first_frame', first_frame.clone().detach().cpu()),
+                                    ])
+                                    os.makedirs(os.path.dirname(first_frame_path), exist_ok=True)
+                                    save_file(first_frame_state_dict, first_frame_path, metadata=meta)
+                                
+                                # Keep in memory if caching to memory
+                                if to_memory:
+                                    file_item._cached_first_frame = first_frame.to('cpu', dtype=torch.float32)
 
                     del imgs
                     del latent

@@ -172,6 +172,17 @@ class DataLoaderBatchDTO:
             self.latents: Union[torch.Tensor, None] = None
             if is_latents_cached:
                 self.latents = torch.cat([x.get_latent().unsqueeze(0) for x in self.file_items])
+            
+            # Load cached first frames for i2v when latents are cached
+            self.first_frame_tensor: Union[torch.Tensor, None] = None
+            if is_latents_cached and hasattr(self.file_items[0], 'dataset_config') and self.file_items[0].dataset_config.do_i2v:
+                first_frames = []
+                for x in self.file_items:
+                    first_frame = x.get_first_frame()
+                    if first_frame is not None:
+                        first_frames.append(first_frame.unsqueeze(0))
+                if first_frames:
+                    self.first_frame_tensor = torch.cat(first_frames)
             self.prompt_embeds: Union[PromptEmbeds, None] = None
             # if self.file_items[0].control_tensor is not None:
             # if any have a control tensor, we concatenate them
