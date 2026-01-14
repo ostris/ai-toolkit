@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import os from 'os';
+import fs from 'fs';
 
 const execAsync = promisify(exec);
+const statAsync = promisify(fs.stat);
 
 export async function GET() {
   try {
@@ -13,18 +15,18 @@ export async function GET() {
 
 
     // Check for GPU monitor (nvidia-smi or rocm-smi)
-    const monitorType = await checkGpuMonitor(isWindows);
+    const monitor = await checkGpuMonitor(isWindows);
 
-    if (!monitorType) {
+    if (!monitor) {
       return NextResponse.json({
         hasGpuMonitor: false,
         gpus: [],
-        error: 'No GPU monitor found (nvidia-smi or rocm-smi)',
+        error: "Unable to load 'nvidia-smi' or 'rocm-smi' - ensure the correct GPU monitoring tool is installed",
       });
     }
 
     // Get GPU stats
-    const gpuStats = await getGpuStats(monitorType, isWindows);
+    const gpuStats = await getGpuStats(monitor, isWindows);
 
     return NextResponse.json({
       hasGpuMonitor: true,
@@ -43,16 +45,21 @@ export async function GET() {
   }
 }
 
-async function checkGpuMonitor(isWindows: boolean): Promise<'nvidia' | 'amd' | null> {
+interface MonitorInfo {
+  type: 'nvidia' | 'amd';
+  path: string;
+}
+
+async function checkGpuMonitor(isWindows: boolean): Promise<MonitorInfo | null> {
   try {
     // Check nvidia-smi first
     if (isWindows) {
       await execAsync('nvidia-smi -L');
-      return 'nvidia';
+      return { type: 'nvidia', path: 'nvidia-smi' };
     } else {
       try {
         await execAsync('which nvidia-smi');
-        return 'nvidia';
+        return { type: 'nvidia', path: 'nvidia-smi' };
       } catch {
         // failed
       }
@@ -65,9 +72,39 @@ async function checkGpuMonitor(isWindows: boolean): Promise<'nvidia' | 'amd' | n
   try {
     if (!isWindows) {
       // rocm-smi is typically linux only or wsl
+      // 1. Check path (which rocm-smi)
       try {
         await execAsync('which rocm-smi');
-        return 'amd';
+        return { type: 'amd', path: 'rocm-smi' };
+      } catch {
+        // failed
+      }
+
+      // 2. Check $ROCM_PATH/bin/rocm-smi
+      if (process.env.ROCM_PATH) {
+        try {
+          const manualPath = `${process.env.ROCM_PATH}/bin/rocm-smi`;
+          await statAsync(manualPath);
+          return { type: 'amd', path: manualPath };
+        } catch {
+          // failed
+        }
+      }
+
+      // 3. Check /usr/bin/rocm-smi
+      try {
+        const manualPath = '/usr/bin/rocm-smi';
+        await statAsync(manualPath);
+        return { type: 'amd', path: manualPath };
+      } catch {
+        // failed
+      }
+
+      // 4. Check /opt/rocm/bin/rocm-smi
+      try {
+        const manualPath = '/opt/rocm/bin/rocm-smi';
+        await statAsync(manualPath);
+        return { type: 'amd', path: manualPath };
       } catch {
         // failed
       }
@@ -79,18 +116,18 @@ async function checkGpuMonitor(isWindows: boolean): Promise<'nvidia' | 'amd' | n
   return null;
 }
 
-async function getGpuStats(type: 'nvidia' | 'amd', isWindows: boolean) {
-  if (type === 'nvidia') {
-    return getNvidiaStats(isWindows);
+async function getGpuStats(monitor: MonitorInfo, isWindows: boolean) {
+  if (monitor.type === 'nvidia') {
+    return getNvidiaStats(monitor.path, isWindows);
   } else {
-    return getAmdStats();
+    return getAmdStats(monitor.path);
   }
 }
 
-async function getNvidiaStats(isWindows: boolean) {
+async function getNvidiaStats(path: string, isWindows: boolean) {
   // Command is the same for both platforms, but the path might be different
   const command =
-    'nvidia-smi --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits';
+    `${path} --query-gpu=index,name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.total,memory.free,memory.used,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,fan.speed --format=csv,noheader,nounits`;
 
   // Execute command
   const { stdout } = await execAsync(command, {
@@ -150,11 +187,11 @@ async function getNvidiaStats(isWindows: boolean) {
   return gpus;
 }
 
-async function getAmdStats() {
+async function getAmdStats(path: string) {
   // Use rocm-smi with json output
   // We request all relevant details
   // flags: --showproductname --showdriverversion --showtemp --showuse --showmeminfo --showpower --showclocks --showfan --json
-  const command = 'rocm-smi --showproductname --showdriverversion --showtemp --showuse --showmeminfo vram --showpower --showclocks --showfan --json';
+  const command = `${path} --showproductname --showdriverversion --showtemp --showuse --showmeminfo vram --showpower --showclocks --showfan --json`;
 
   const { stdout } = await execAsync(command);
 
