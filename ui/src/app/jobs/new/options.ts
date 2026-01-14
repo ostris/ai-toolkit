@@ -628,7 +628,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].fps': [24, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v'],
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
