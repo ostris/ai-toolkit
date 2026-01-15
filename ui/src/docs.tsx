@@ -306,6 +306,17 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'dataset.num_repeats': {
+    title: 'Num Repeats',
+    description: (
+      <>
+        Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are using multiple
+        datasets and want to balance the number of samples from each dataset. For instance, if you have a small dataset of 10 images 
+        and a large dataset of 100 images, you can set the small dataset to have 10 repeats to effectively make it 100 images, making
+        the two datasets occour equally during training.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

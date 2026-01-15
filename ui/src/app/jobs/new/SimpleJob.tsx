@@ -810,6 +810,14 @@ export default function SimpleJob({
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].network_weight`)}
                         placeholder="eg. 1.0"
                       />
+                      <NumberInput
+                        label="Num Repeats"
+                        value={dataset.num_repeats || 1}
+                        className="pt-2"
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].num_repeats`)}
+                        placeholder="eg. 1"
+                        docKey={'dataset.num_repeats'}
+                      />
                     </div>
                     <div>
                       <TextInput

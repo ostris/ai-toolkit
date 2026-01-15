@@ -16,6 +16,7 @@ export const defaultDatasetConfig: DatasetConfig = {
   num_frames: 1,
   flip_x: false,
   flip_y: false,
+  num_repeats: 1,
 };
 
 export const defaultSliderConfig: SliderConfig = {
