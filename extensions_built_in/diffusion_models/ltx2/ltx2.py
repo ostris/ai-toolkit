@@ -751,7 +751,7 @@ class LTX2Model(BaseModel):
             video_timestep = timestep.clone()
 
             # i2v from first frame
-            if batch.dataset_config.do_i2v:
+            if batch.dataset_config.do_i2v and batch.dataset_config.num_frames > 1:
                 # check to see if we had it cached
                 if batch.first_frame_latents is not None:
                     init_latents = batch.first_frame_latents.to(
