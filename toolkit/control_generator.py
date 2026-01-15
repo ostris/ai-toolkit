@@ -124,7 +124,7 @@ class ControlGenerator:
                         device=str(device))
                 except ImportError:
                     raise ImportError(
-                        "easy-dwpose is not installed. Please install it with pip install easy-dwpose")
+                        "easy-dwpose is not installed. Please install it with pip install git+https://github.com/jaretburkett/easy_dwpose.git")
             img = image.copy()
 
             detect_res = int(math.sqrt(img.size[0] * img.size[1]))

@@ -35,6 +35,7 @@ class LoggingConfig:
         self.log_every: int = kwargs.get('log_every', 100)
         self.verbose: bool = kwargs.get('verbose', False)
         self.use_wandb: bool = kwargs.get('use_wandb', False)
+        self.use_ui_logger: bool = kwargs.get('use_ui_logger', False)
         self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
         self.run_name: str = kwargs.get('run_name', None)
 
@@ -217,11 +218,17 @@ class NetworkConfig:
         # -1 automatically finds the largest factor
         self.lokr_factor = kwargs.get('lokr_factor', -1)
         
+        # Use the old lokr format
+        self.old_lokr_format = kwargs.get('old_lokr_format', False)
+        
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
         
         # ramtorch, doesn't work yet
         self.layer_offloading = kwargs.get('layer_offloading', False)
+        
+        # start from a pretrained lora
+        self.pretrained_lora_path = kwargs.get('pretrained_lora_path', None)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']
@@ -679,6 +686,9 @@ class ModelConfig:
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         
+        # model paths for models that support it
+        self.model_paths = kwargs.get("model_paths", {})
+        
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
         if self.arch is not None:
@@ -963,7 +973,7 @@ class DatasetConfig:
         # it will select a random start frame and pull the frames at the given fps
         # this could have various issues with shorter videos and videos with variable fps
         # I recommend trimming your videos to the desired length and using shrink_video_to_frames(default)
-        self.fps: int = kwargs.get('fps', 16)
+        self.fps: int = kwargs.get('fps', 24)
         
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
@@ -979,6 +989,9 @@ class DatasetConfig:
         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
         
         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
+        self.do_audio: bool = kwargs.get('do_audio', False) # load audio from video files for models that support it
+        self.audio_preserve_pitch: bool = kwargs.get('audio_preserve_pitch', False) # preserve pitch when stretching audio to fit num_frames
+        self.audio_normalize: bool = kwargs.get('audio_normalize', False) # normalize audio volume levels when loading
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:
@@ -1319,6 +1332,11 @@ def validate_configs(
     if train_config.bypass_guidance_embedding and train_config.do_guidance_loss:
         raise ValueError("Cannot bypass guidance embedding and do guidance loss at the same time. "
                          "Please set bypass_guidance_embedding to False or do_guidance_loss to False.")
+        
+    if model_config.accuracy_recovery_adapter is not None:
+        if model_config.assistant_lora_path is not None:
+            raise ValueError("Cannot use accuracy recovery adapter and assistant lora at the same time. "
+                             "Please set one of them to None.")
 
     # see if any datasets are caching text embeddings
     is_caching_text_embeddings = any(dataset.cache_text_embeddings for dataset in dataset_configs)

@@ -2,6 +2,25 @@ import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { modelArchs, ModelArch } from './options';
 import { objectCopy } from '@/utils/basic';
 
+const expandDatasetDefaults = (
+  defaults: { [key: string]: any },
+  numDatasets: number,
+): { [key: string]: any } => {
+  // expands the defaults for datasets[x] to datasets[0], datasets[1], etc.
+  const expandedDefaults: { [key: string]: any } = { ...defaults };
+  for (const key in defaults) {
+    if (key.includes('datasets[x].')) {
+      for (let i = 0; i < numDatasets; i++) {
+        const datasetKey = key.replace('datasets[x].', `datasets[${i}].`);
+        const v = defaults[key];
+        expandedDefaults[datasetKey] = Array.isArray(v) ? [...v] : objectCopy(v);
+      }
+      delete expandedDefaults[key];
+    }
+  }
+  return expandedDefaults;
+};
+
 export const handleModelArchChange = (
   currentArchName: string,
   newArchName: string,
@@ -39,16 +58,11 @@ export const handleModelArchChange = (
     }
   }
 
-  // revert defaults from previous model
-  for (const key in currentArch.defaults) {
-    setJobConfig(currentArch.defaults[key][1], key);
-  }
+  const numDatasets = jobConfig.config.process[0].datasets.length;
 
-  if (newArch?.defaults) {
-    for (const key in newArch.defaults) {
-      setJobConfig(newArch.defaults[key][0], key);
-    }
-  }
+  let currentDefaults = expandDatasetDefaults(currentArch.defaults || {}, numDatasets);
+  let newDefaults = expandDatasetDefaults(newArch?.defaults || {}, numDatasets);
+
   // set new model
   setJobConfig(newArchName, 'config.process[0].model.arch');
 
@@ -79,27 +93,27 @@ export const handleModelArchChange = (
       if (newDataset.control_path_1 && newDataset.control_path_1 !== '') {
         newDataset.control_path = newDataset.control_path_1;
       }
-      if (newDataset.control_path_1) {
+      if ('control_path_1' in newDataset) {
         delete newDataset.control_path_1;
       }
-      if (newDataset.control_path_2) {
+      if ('control_path_2' in newDataset) {
         delete newDataset.control_path_2;
       }
-      if (newDataset.control_path_3) {
+      if ('control_path_3' in newDataset) {
         delete newDataset.control_path_3;
       }
     } else {
       // does not have control images
-      if (newDataset.control_path) {
+      if ('control_path' in newDataset) {
         delete newDataset.control_path;
       }
-      if (newDataset.control_path_1) {
+      if ('control_path_1' in newDataset) {
         delete newDataset.control_path_1;
       }
-      if (newDataset.control_path_2) {
+      if ('control_path_2' in newDataset) {
         delete newDataset.control_path_2;
       }
-      if (newDataset.control_path_3) {
+      if ('control_path_3' in newDataset) {
         delete newDataset.control_path_3;
       }
     }
@@ -120,4 +134,13 @@ export const handleModelArchChange = (
     return newSample;
   });
   setJobConfig(samples, 'config.process[0].sample.samples');
+
+  // revert defaults from previous model
+  for (const key in currentDefaults) {
+    setJobConfig(currentDefaults[key][1], key);
+  }
+
+  for (const key in newDefaults) {
+    setJobConfig(newDefaults[key][0], key);
+  }
 };
