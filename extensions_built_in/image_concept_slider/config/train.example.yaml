@@ -1,0 +1,129 @@
+# Image-based Concept Slider Training Configuration
+# 
+# This trains a slider LoRA using image sequences rather than text prompts.
+# Unlike text-based sliders that use CFG-style training, this uses paired images
+# to learn the direction between positive and negative attributes.
+#
+# Dataset Structure:
+# Your dataset folder should contain images with matching base names and different suffixes.
+# For example, for an "eye size" slider with larger eyes being positive:
+#   
+#   datasets/eyesize/
+#     person1_large.jpg   # positive: large eyes
+#     person1_small.jpg   # negative: small eyes
+#     person2_large.jpg
+#     person2_small.jpg
+#     ...
+#
+# The positive_suffixes and negative_suffixes define how to identify each type.
+# The scales determine the direction and magnitude for each suffix.
+# 
+# How sequences work:
+# - Images are matched by base filename (everything before the suffix)
+# - Each sequence must have ALL specified suffixes present
+# - Example: with positive_suffixes="_happy" and negative_suffixes="_sad"
+#   Files: person1_happy.jpg, person1_sad.jpg -> sequence "person1"
+#   Files: person2_happy.jpg, person2_sad.jpg -> sequence "person2"
+
+job: extension
+config:
+  name: "image_slider_example_v1"
+  process:
+    - type: "image_concept_slider"
+      training_folder: "output"
+      device: cuda:0
+      
+      # Network configuration (LoRA)
+      network:
+        type: "lora"
+        linear: 8
+        linear_alpha: 8
+      
+      # Training configuration
+      train:
+        batch_size: 1
+        steps: 2000
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 0.0001
+        dtype: "bf16"
+        max_denoising_steps: 1000
+        noise_offset: 0.0
+        # min_snr_gamma: 5.0  # Optional: Enable SNR weighting
+      
+      # Model to train on
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        quantize: true
+        quantize_te: true
+        arch: "flux"
+      
+      # Save configuration
+      save:
+        dtype: "bf16"
+        save_every: 250
+        max_step_saves_to_keep: 4
+        save_format: "safetensors"
+      
+      # Logging
+      logging:
+        log_every: 10
+        use_ui_logger: true
+      
+      # Sampling configuration (for preview during training)
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        prompts:
+          - "a photo of a person"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 3.5
+        sample_steps: 20
+      
+      # Datasets section - same as regular training
+      # The folder should contain images with matching base names and different suffixes
+      datasets:
+        - folder_path: "/path/to/eyesize/images"
+          resolution: 512
+          default_caption: "a photo of a person"
+          network_weight: 1.0
+        
+        # Add more datasets as needed
+        # - folder_path: "/path/to/age/images"
+        #   resolution: 512
+        #   default_caption: "a photo of a person"
+        #   network_weight: 1.0
+      
+      # Image Slider Configuration
+      # Defines HOW to interpret the images in the datasets above
+      image_slider:
+        # Suffixes to identify positive images (comma-separated)
+        # Example: "_large" matches "person1_large.jpg"
+        positive_suffixes: "_large"
+        
+        # Suffixes to identify negative images (comma-separated)
+        # Example: "_small" matches "person1_small.jpg"
+        negative_suffixes: "_small"
+        
+        # Scales: weight for each suffix in order [positive..., negative...]
+        # Leave empty to auto-generate: +1 for each positive, -1 for each negative
+        # Or specify explicitly for fine control: "1.0, 1.5, -1.0, -1.5"
+        # For multi-suffix sequences like positive_suffixes: "_old, _very_old"
+        # and negative_suffixes: "_young, _very_young"
+        # you might use scales: "1.0, 1.5, -1.0, -1.5"
+        scales: ""
+        
+        # Weight jitter adds randomness to network weights during training for regularization
+        weight_jitter: 0.0
+        
+        # Additional loss functions (optional)
+        # additional_losses:
+        #   - "prior_preservation"

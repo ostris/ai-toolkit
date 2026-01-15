@@ -306,6 +306,85 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'image_slider': {
+    title: 'Image Concept Slider',
+    description: (
+      <>
+        <strong>Train a slider using multi-image sequences.</strong> Unlike pair-based training, you can use
+        any number of images per sequence with different intensities.
+        <br /><br />
+        <strong>How it works:</strong>
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li>Images are matched by base filename + suffix (e.g., <code>person1_young.jpg</code>, <code>person1_old.jpg</code>, <code>person1_very_old.jpg</code>)</li>
+          <li>Add multiple comma-separated suffixes for longer sequences</li>
+          <li>Use scales to control intensity per suffix</li>
+        </ul>
+      </>
+    ),
+  },
+  'image_slider.positive_suffixes': {
+    title: 'Positive Suffixes',
+    description: (
+      <>
+        Comma-separated list of suffixes that identify images in the <strong>positive direction</strong> of your slider.
+        <br /><br />
+        <strong>Examples:</strong>
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li>Single suffix: <code>_happy</code> or <code>_large</code></li>
+          <li>Multiple suffixes for gradations: <code>_old, _very_old, _ancient</code></li>
+        </ul>
+        <br />
+        Each suffix creates one image per sequence. More suffixes = more images per sequence = finer control.
+      </>
+    ),
+  },
+  'image_slider.negative_suffixes': {
+    title: 'Negative Suffixes',
+    description: (
+      <>
+        Comma-separated list of suffixes that identify images in the <strong>negative direction</strong> of your slider.
+        <br /><br />
+        <strong>Examples:</strong>
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li>Single suffix: <code>_sad</code> or <code>_small</code></li>
+          <li>Multiple suffixes for gradations: <code>_young, _very_young, _baby</code></li>
+        </ul>
+        <br />
+        Negative suffixes work opposite to positive - the slider will move away from these attributes.
+      </>
+    ),
+  },
+  'image_slider.scales': {
+    title: 'Scales',
+    description: (
+      <>
+        Comma-separated weights for each suffix, controlling training intensity.
+        <br /><br />
+        <strong>Order:</strong> All positive suffixes first, then all negative suffixes.
+        <br /><br />
+        <strong>Example:</strong> With suffixes <code>_old, _very_old</code> and <code>_young, _very_young</code>:
+        <ul className="list-disc list-inside mt-2 space-y-1">
+          <li>Scales <code>1, 2, -1, -2</code> means:</li>
+          <li><code>_old</code> = 1.0 (mild positive)</li>
+          <li><code>_very_old</code> = 2.0 (strong positive)</li>
+          <li><code>_young</code> = -1.0 (mild negative)</li>
+          <li><code>_very_young</code> = -2.0 (strong negative)</li>
+        </ul>
+        <br />
+        <strong>Leave empty</strong> to auto-generate: +1 for each positive, -1 for each negative suffix.
+      </>
+    ),
+  },
+  'image_slider.weight_jitter': {
+    title: 'Weight Jitter',
+    description: (
+      <>
+        Adds random variation to network weights during training for regularization.
+        <br /><br />
+        A value of 0.0 means no jitter. Higher values (e.g., 0.1-0.3) add more randomness, which can help prevent overfitting.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

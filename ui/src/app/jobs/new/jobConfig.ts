@@ -1,4 +1,18 @@
-import { JobConfig, DatasetConfig, SliderConfig } from '@/types';
+import { JobConfig, DatasetConfig, SliderConfig, ImageSliderConfig } from '@/types';
+
+export const defaultImageSliderConfig: ImageSliderConfig = {
+  positive_suffixes: '_pos1, _pos2',
+  negative_suffixes: '_neg1, _neg2',
+  scales: '',
+  weight_jitter: 0.0,
+  additional_losses: [],
+  guidance_strength: 3.0,
+  anchor_mode: 'none',
+  anchor_strength: 1.0,
+  anchor_suffixes: '',
+  anchor_prompt: '',
+  anchor_generation_mode: 'once',
+};
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',

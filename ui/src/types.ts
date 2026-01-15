@@ -215,6 +215,34 @@ export interface SliderConfig {
   anchor_class?: string | null;
 }
 
+/**
+ * Config for image-based concept slider training.
+ * Uses datasets from the main datasets section, this just adds suffix configuration.
+ */
+export interface ImageSliderConfig {
+  positive_suffixes: string;  // Comma-separated suffixes like "_pos1, _pos2"
+  negative_suffixes: string;  // Comma-separated suffixes like "_neg1, _neg2"
+  scales?: string;            // Comma-separated scales like "1, 0.5, -1, -0.5"
+  weight_jitter: number;
+  additional_losses?: string[];  // e.g., ['prior_preservation']
+  
+  // Guidance strength for direction calculation
+  guidance_strength?: number;
+  
+  // Anchor configuration
+  anchor_mode?: 'none' | 'suffix' | 'prompt';
+  anchor_strength?: number;
+  
+  // For suffix mode: anchor images loaded from dataset with these suffixes
+  anchor_suffixes?: string;
+  
+  // For prompt mode: generate anchor latents from this prompt
+  anchor_prompt?: string;
+  
+  // Anchor generation mode for prompt mode: "once" (cache at start) or "per_batch"
+  anchor_generation_mode?: 'once' | 'per_batch';
+}
+
 export interface ProcessConfig {
   type: string;
   sqlite_db_path?: string;
@@ -224,6 +252,7 @@ export interface ProcessConfig {
   device: string;
   network?: NetworkConfig;
   slider?: SliderConfig;
+  image_slider?: ImageSliderConfig;
   save: SaveConfig;
   datasets: DatasetConfig[];
   train: TrainConfig;
