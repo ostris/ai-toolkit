@@ -2550,6 +2550,10 @@ class StableDiffusion:
         latents = latents.to(device, dtype=dtype)
 
         return latents
+    
+    def encode_audio(self, audio_data_list):
+        # audio_date_list is a list of {"waveform": waveform[C, L], "sample_rate": int(sample_rate)}
+        raise NotImplementedError("Audio encoding not implemented for this model.")
 
     def decode_latents(
             self,

@@ -103,6 +103,7 @@ export interface DatasetConfig {
   fps?: number;
   flip_x: boolean;
   flip_y: boolean;
+  num_repeats?: number;
   control_path_1?: string | null;
   control_path_2?: string | null;
   control_path_3?: string | null;
