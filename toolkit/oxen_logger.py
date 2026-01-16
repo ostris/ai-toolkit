@@ -257,7 +257,7 @@ class AIToolkitOxenLogger:
             for root, dirs, files in os.walk(sample_dir):
                 for file in files:
                     print(f"Main process: Considering sample: {file}")
-                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.mp4')):
                         file_path = os.path.join(root, file)
                         dst_path = os.path.join(self.experiment.name, "samples")
                         print(f"Main process: Adding sample image: {file_path} -> {dst_path}")

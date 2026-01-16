@@ -481,6 +481,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             
             num_saves_to_keep = self.save_config.max_step_saves_to_keep
             
+            # If max_step_saves_to_keep is -1 or None, keep all checkpoints
+            if num_saves_to_keep == -1 or num_saves_to_keep is None:
+                if combined_items:
+                    latest_item = combined_items[-1]
+                return latest_item
+            
             if hasattr(self.sd, 'max_step_saves_to_keep_multiplier'):
                 num_saves_to_keep *= self.sd.max_step_saves_to_keep_multiplier
 
