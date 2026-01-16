@@ -127,7 +127,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.has_first_sample_requested = False
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
-        self.logger = create_logger(self.logging_config, config)
+        self.logger = create_logger(self.logging_config, config, self.save_root)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -816,11 +816,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 if len(paths) > 0:
                     latest_path = max(paths, key=os.path.getctime)
+        
+        if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
+            # set pretrained lora path as load path if we do not have a checkpoint to resume from
+            if os.path.exists(self.network_config.pretrained_lora_path):
+                latest_path = self.network_config.pretrained_lora_path
+                print_acc(f"Using pretrained lora path from config: {latest_path}")
+            else:
+                # no pretrained lora found
+                print_acc(f"Pretrained lora path from config does not exist: {self.network_config.pretrained_lora_path}")
 
         return latest_path
 
     def load_training_state_from_metadata(self, path):
         if not self.accelerator.is_main_process:
+            return
+        if path is not None and self.network_config is not None and path == self.network_config.pretrained_lora_path:
+            # dont load metadata from pretrained lora
             return
         meta = None
         # if path is folder, then it is diffusers
@@ -2200,6 +2212,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             with torch.no_grad():
                 # torch.cuda.empty_cache()
                 # if optimizer has get_lrs method, then use it
+                learning_rate = 0.0
                 if not did_oom and loss_dict is not None:
                     if hasattr(optimizer, 'get_avg_learning_rate'):
                         learning_rate = optimizer.get_avg_learning_rate()
@@ -2270,9 +2283,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             # log to tensorboard
                             if self.accelerator.is_main_process:
                                 if self.writer is not None:
-                                    for key, value in loss_dict.items():
-                                        self.writer.add_scalar(f"{key}", value, self.step_num)
-                                    self.writer.add_scalar(f"lr", learning_rate, self.step_num)
+                                    if loss_dict is not None:
+                                        for key, value in loss_dict.items():
+                                            self.writer.add_scalar(f"{key}", value, self.step_num)
+                                        self.writer.add_scalar(f"lr", learning_rate, self.step_num)
                                 if self.progress_bar is not None:
                                     self.progress_bar.unpause()
                         
@@ -2281,10 +2295,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.logger.log({
                                 'learning_rate': learning_rate,
                             })
-                            for key, value in loss_dict.items():
-                                self.logger.log({
-                                    f'loss/{key}': value,
-                                })
+                            if loss_dict is not None:
+                                for key, value in loss_dict.items():
+                                    self.logger.log({
+                                        f'loss/{key}': value,
+                                    })
                     elif self.logging_config.log_every is None:
                         if self.accelerator.is_main_process:
                             # log every step
@@ -2308,7 +2323,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 
                 # commit log
                 if self.accelerator.is_main_process:
-                    self.logger.commit(step=self.step_num)
+                    with self.timer('commit_logger'):
+                        self.logger.commit(step=self.step_num)
 
                 # sets progress bar to match out step
                 if self.progress_bar is not None:

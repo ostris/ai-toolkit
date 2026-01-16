@@ -205,6 +205,20 @@ export default function SimpleJob({
               placeholder=""
               required
             />
+            {modelArch?.additionalSections?.includes('model.assistant_lora_path') && (
+              <TextInput
+                label="Training Adapter Path"
+                value={jobConfig.config.process[0].model.assistant_lora_path ?? ''}
+                docKey="config.process[0].model.assistant_lora_path"
+                onChange={(value: string | undefined) => {
+                  if (value?.trim() === '') {
+                    value = undefined;
+                  }
+                  setJobConfig(value, 'config.process[0].model.assistant_lora_path');
+                }}
+                placeholder=""
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.low_vram') && (
               <FormGroup label="Options">
                 <Checkbox
@@ -796,6 +810,14 @@ export default function SimpleJob({
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].network_weight`)}
                         placeholder="eg. 1.0"
                       />
+                      <NumberInput
+                        label="Num Repeats"
+                        value={dataset.num_repeats || 1}
+                        className="pt-2"
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].num_repeats`)}
+                        placeholder="eg. 1"
+                        docKey={'dataset.num_repeats'}
+                      />
                     </div>
                     <div>
                       <TextInput
@@ -846,6 +868,48 @@ export default function SimpleJob({
                             checked={dataset.do_i2v || false}
                             onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].do_i2v`)}
                             docKey="datasets.do_i2v"
+                          />
+                        )}
+                        {modelArch?.additionalSections?.includes('datasets.do_audio') && (
+                          <Checkbox
+                            label="Do Audio"
+                            checked={dataset.do_audio || false}
+                            onChange={value => {
+                              if (!value) {
+                                setJobConfig(undefined, `config.process[0].datasets[${i}].do_audio`);
+                              } else {
+                                setJobConfig(value, `config.process[0].datasets[${i}].do_audio`);
+                              }
+                            }}
+                            docKey="datasets.do_audio"
+                          />
+                        )}
+                        {modelArch?.additionalSections?.includes('datasets.audio_normalize') && (
+                          <Checkbox
+                            label="Audio Normalize"
+                            checked={dataset.audio_normalize || false}
+                            onChange={value => {
+                              if (!value) {
+                                setJobConfig(undefined, `config.process[0].datasets[${i}].audio_normalize`);
+                              } else {
+                                setJobConfig(value, `config.process[0].datasets[${i}].audio_normalize`);
+                              }
+                            }}
+                            docKey="datasets.audio_normalize"
+                          />
+                        )}
+                        {modelArch?.additionalSections?.includes('datasets.audio_preserve_pitch') && (
+                          <Checkbox
+                            label="Audio Preserve Pitch"
+                            checked={dataset.audio_preserve_pitch || false}
+                            onChange={value => {
+                              if (!value) {
+                                setJobConfig(undefined, `config.process[0].datasets[${i}].audio_preserve_pitch`);
+                              } else {
+                                setJobConfig(value, `config.process[0].datasets[${i}].audio_preserve_pitch`);
+                              }
+                            }}
+                            docKey="datasets.audio_preserve_pitch"
                           />
                         )}
                       </FormGroup>
