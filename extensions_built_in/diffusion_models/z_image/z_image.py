@@ -333,10 +333,25 @@ class ZImageModel(BaseModel):
 
         timestep_model_input = (1000 - timestep) / 1000
 
+        text_embeds = text_embeddings.text_embeds
+        if isinstance(text_embeds, torch.Tensor):
+            if len(text_embeds.shape) == 3:
+                # if it is a single batch tensor, unbind it into a list of tensors
+                text_embeds = list(text_embeds.unbind(dim=0))
+        elif isinstance(text_embeds, list):
+            # check if items are rank 3 (batch, length, dim)
+            if len(text_embeds[0].shape) == 3:
+                # flatten the list of batches into a single list of tensors
+                new_text_embeds = []
+                for t in text_embeds:
+                    if t is not None:
+                        new_text_embeds += list(t.unbind(dim=0))
+                text_embeds = new_text_embeds
+
         model_out_list = self.transformer(
             latent_model_input_list,
             timestep_model_input,
-            text_embeddings.text_embeds,
+            text_embeds,
         )[0]
 
         noise_pred = torch.stack([t.float() for t in model_out_list], dim=0)

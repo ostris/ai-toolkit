@@ -247,22 +247,29 @@ class EncodedPromptPair:
 def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
     # --- pad text_embeds ---
     if isinstance(prompt_embeds[0].text_embeds, (list, tuple)):
-        embed_list = []
-        for i in range(len(prompt_embeds[0].text_embeds)):
-            max_len = max(p.text_embeds[i].shape[1] for p in prompt_embeds)
-            padded = []
+        # check if it is Z-Image style (list of rank-2 tensors)
+        if len(prompt_embeds[0].text_embeds[0].shape) == 2:
+            # simple flatten
+            text_embeds = []
             for p in prompt_embeds:
-                t = p.text_embeds[i]
-                if t.shape[1] < max_len:
-                    pad = torch.zeros(
-                        (t.shape[0], max_len - t.shape[1], *t.shape[2:]),
-                        dtype=t.dtype,
-                        device=t.device,
-                    )
-                    t = torch.cat([t, pad], dim=1)
-                padded.append(t)
-            embed_list.append(torch.cat(padded, dim=0))
-        text_embeds = embed_list
+                text_embeds += [t for t in p.text_embeds if t is not None]
+        else:
+            embed_list = []
+            for i in range(len(prompt_embeds[0].text_embeds)):
+                max_len = max(p.text_embeds[i].shape[1] for p in prompt_embeds)
+                padded = []
+                for p in prompt_embeds:
+                    t = p.text_embeds[i]
+                    if t.shape[1] < max_len:
+                        pad = torch.zeros(
+                            (t.shape[0], max_len - t.shape[1], *t.shape[2:]),
+                            dtype=t.dtype,
+                            device=t.device,
+                        )
+                        t = torch.cat([t, pad], dim=1)
+                    padded.append(t)
+                embed_list.append(torch.cat(padded, dim=0))
+            text_embeds = embed_list
     else:
         max_len = max(p.text_embeds.shape[1] for p in prompt_embeds)
         padded = []
@@ -281,24 +288,36 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
     # --- pooled embeds ---
     pooled_embeds = None
     if prompt_embeds[0].pooled_embeds is not None:
-        pooled_embeds = torch.cat([p.pooled_embeds for p in prompt_embeds], dim=0)
+        # check if it is Z-Image style, list or tuple.
+        if isinstance(prompt_embeds[0].pooled_embeds, (list, tuple)):
+            pooled_embeds = []
+            for p in prompt_embeds:
+                pooled_embeds += [t for t in p.pooled_embeds if t is not None]
+        else:
+            pooled_embeds = torch.cat([p.pooled_embeds for p in prompt_embeds if p.pooled_embeds is not None], dim=0)
 
     # --- attention mask ---
     attention_mask = None
     if prompt_embeds[0].attention_mask is not None:
-        max_len = max(p.attention_mask.shape[1] for p in prompt_embeds)
-        padded = []
-        for p in prompt_embeds:
-            m = p.attention_mask
-            if m.shape[1] < max_len:
-                pad = torch.zeros(
-                    (m.shape[0], max_len - m.shape[1]),
-                    dtype=m.dtype,
-                    device=m.device,
-                )
-                m = torch.cat([m, pad], dim=1)
-            padded.append(m)
-        attention_mask = torch.cat(padded, dim=0)
+        # check if it is Z-Image style, list or tuple.
+        if isinstance(prompt_embeds[0].attention_mask, (list, tuple)):
+            attention_mask = []
+            for p in prompt_embeds:
+                attention_mask += [t for t in p.attention_mask if t is not None]
+        else:
+            max_len = max(p.attention_mask.shape[1] for p in prompt_embeds)
+            padded = []
+            for p in prompt_embeds:
+                m = p.attention_mask
+                if m.shape[1] < max_len:
+                    pad = torch.zeros(
+                        (m.shape[0], max_len - m.shape[1]),
+                        dtype=m.dtype,
+                        device=m.device,
+                    )
+                    m = torch.cat([m, pad], dim=1)
+                padded.append(m)
+            attention_mask = torch.cat(padded, dim=0)
 
     # wrap back into PromptEmbeds
     pe = PromptEmbeds([text_embeds, pooled_embeds])
