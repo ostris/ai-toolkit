@@ -313,29 +313,38 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         if isinstance(x, QTensor) or isinstance(x, QBytesTensor):
             x = x.dequantize()
 
-        orig_dtype = x.dtype
+        # get the base output
+        # we do this to allow the base model to be quantized or optimized
+        # or just generally different from the lora
+        base_output = self.org_forward(x)
 
-        orig_weight = self.get_orig_weight(x.device)
-        lokr_weight = self.get_weight(orig_weight).to(dtype=orig_weight.dtype)
+        # get the loakr weight
+        # we don't pass the orig_weight as we want to use the valid shape
+        # and we don't want to force the dtype
+        lokr_weight = self.get_weight(orig_weight=None)
+        
+        # cast to x dtype
+        if lokr_weight.dtype != x.dtype:
+            lokr_weight = lokr_weight.to(dtype=x.dtype)
+
+        # reshape to the correct shape
+        lokr_weight = lokr_weight.view(self.shape)
+
         multiplier = self.network_ref().torch_multiplier
-
-        if x.dtype != orig_weight.dtype:
-            x = x.to(dtype=orig_weight.dtype)
-
+        
         # we do not currently support split batch multipliers for lokr. Just do a mean
         multiplier = torch.mean(multiplier)
 
-        weight = (
-            orig_weight
-            + lokr_weight * multiplier
-        )
-        bias = self.get_orig_bias(x.device)
-        if bias is not None:
-            bias = bias.to(weight.device, dtype=weight.dtype)
-        output = self.op(
+        # calculate the delta
+        # we don't include the bias as it is already in the base output
+        delta_output = self.op(
             x,
-            weight.view(self.shape),
-            bias,
+            lokr_weight,
+            None,
             **self.extra_args
         )
-        return output.to(orig_dtype)
+        
+        # add the delta to the base output
+        output = base_output + delta_output * multiplier
+
+        return output
