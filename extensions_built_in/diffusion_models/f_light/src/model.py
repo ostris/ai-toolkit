@@ -1,6 +1,7 @@
 # originally from https://github.com/fal-ai/f-lite/blob/main/f_lite/model.py but modified slightly
 
 import math
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -15,9 +16,8 @@ from torch import nn
 
 def timestep_embedding(t, dim, max_period=10000):
     half = dim // 2
-    freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(
-        device=t.device
-    )
+    freqs = np.exp(-math.log(max_period) * np.arange(start=0, end=half, dtype=np.float32) / half)
+    freqs = torch.from_numpy(freqs).to(device=t.device)
     args = t[:, None].float() * freqs[None]
     embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
 
