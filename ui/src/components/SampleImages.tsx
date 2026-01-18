@@ -48,16 +48,16 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
   return (
     <Button
       onClick={downloadZip}
-      className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
+      className={classNames(`px-2 md:px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center`, {
         'opacity-50 cursor-not-allowed': isZipping,
       })}
     >
       {isZipping ? (
-        <LuLoader className="animate-spin inline-block mr-2" />
+        <LuLoader className="animate-spin w-4 h-4" />
       ) : (
-        <FaDownload className="inline-block mr-2" />
+        <FaDownload className="w-4 h-4" />
       )}
-      {isZipping ? 'Preparing' : 'Download'}
+      <span className="hidden md:inline ml-2">{isZipping ? 'Preparing' : 'Download'}</span>
     </Button>
   );
 };
@@ -137,7 +137,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
     return (
       <div
-        className={`mt-10 flex flex-col items-center justify-center py-16 px-8 rounded-xl border-2 border-gray-700 border-dashed ${bgColor} ${textColor} mx-auto max-w-md text-center`}
+        className={`mt-2 md:mt-10 flex flex-col items-center justify-center py-12 md:py-16 px-6 md:px-8 rounded-xl border-2 border-gray-700 border-dashed ${bgColor} ${textColor} mx-auto max-w-md text-center`}
       >
         <div className={`${iconColor} mb-4`}>{icon}</div>
         <h3 className="text-lg font-semibold mb-2">{text}</h3>
@@ -256,10 +256,10 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
   return (
     <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
-      <div className="pb-4">
+      <div className="pt-4 pb-4 px-1 md:px-4">
         {PageInfoContent}
         {sampleImages && (
-          <div className={`grid ${gridColsClass} gap-1`}>
+          <div className={`grid grid-cols-2 sm:grid-cols-3 md:${gridColsClass} gap-1`}>
             {sampleImages.map((sample: string, idx: number) => {
               // Compute current group (groups are size = numSamples)
               const groupIndex = Math.floor(idx / numSamples);
@@ -304,14 +304,14 @@ export default function SampleImages({ job }: SampleImagesProps) {
         refreshSampleImages={refreshSampleImages}
       />
       <div
-        className="fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="fixed top-[88px] right-2 md:right-6 w-8 h-8 md:w-10 md:h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer z-10"
         onClick={scrollToTop}
         title="Scroll to Top"
       >
         <FaCaretUp className="text-gray-500 dark:text-gray-400" />
       </div>
       <div
-        className="fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="fixed bottom-5 right-2 md:right-6 w-8 h-8 md:w-10 md:h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer z-10"
         onClick={scrollToBottom}
         title="Scroll to Bottom"
       >
