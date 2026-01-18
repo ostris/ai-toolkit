@@ -62,6 +62,11 @@ from transformers import CLIPTextModel, CLIPTokenizer, CLIPTextModelWithProjecti
 from toolkit.paths import ORIG_CONFIGS_ROOT, DIFFUSERS_CONFIGS_ROOT
 from huggingface_hub import hf_hub_download
 from toolkit.models.flux import add_model_gpu_splitter_to_flux, bypass_flux_guidance, restore_flux_guidance
+from toolkit.util.flux_checkpoint import (
+    convert_bfl_to_diffusers_state,
+    determine_default_flux_base_repo,
+    load_flux_transformer_state,
+)
 
 from optimum.quanto import freeze, qfloat8, QTensor, qint4
 from toolkit.util.quantize import quantize, get_qtype
@@ -622,26 +627,65 @@ class StableDiffusion:
             # base_model_path = "black-forest-labs/FLUX.1-schnell"
             base_model_path = self.model_config.name_or_path_original
             self.print_and_status_update("Loading transformer")
-            subfolder = 'transformer'
-            transformer_path = model_path
-            local_files_only = False
-            # check if HF_DATASETS_OFFLINE or TRANSFORMERS_OFFLINE is set
-            if os.path.exists(transformer_path):
-                subfolder = None
-                transformer_path = os.path.join(transformer_path, 'transformer')
-                # check if the path is a full checkpoint.
-                te_folder_path = os.path.join(model_path, 'text_encoder')
-                # if we have the te, this folder is a full checkpoint, use it as the base
-                if os.path.exists(te_folder_path):
-                    base_model_path = model_path
+            transformer_source_path = self.model_config.unet_path or model_path
+            custom_transformer_state = None
+            custom_state_format = None
+            custom_variant = None
+
+            if (
+                transformer_source_path
+                and os.path.isfile(transformer_source_path)
+                and transformer_source_path.endswith(".safetensors")
+            ):
+                self.print_and_status_update("Detected Flux safetensors checkpoint")
+                custom_transformer_state, _, custom_state_format, custom_variant = load_flux_transformer_state(
+                    transformer_source_path
+                )
+                if self.model_config.flux_reference is not None:
+                    base_model_path = self.model_config.flux_reference
+                elif base_model_path == transformer_source_path:
+                    base_model_path = determine_default_flux_base_repo(custom_variant)
+                if base_model_path != transformer_source_path:
+                    print_acc(f"Using {base_model_path} as base Flux reference for auxiliary weights")
+                transformer_load_path = base_model_path
+                transformer_subfolder = "transformer"
+            else:
+                transformer_load_path = transformer_source_path
+                transformer_subfolder = "transformer"
+                if transformer_source_path and os.path.exists(transformer_source_path):
+                    transformer_subfolder = None
+                    transformer_load_path = os.path.join(transformer_source_path, 'transformer')
+                    te_folder_path = os.path.join(transformer_source_path, 'text_encoder')
+                    if os.path.exists(te_folder_path):
+                        base_model_path = transformer_source_path
 
             transformer = FluxTransformer2DModel.from_pretrained(
-                transformer_path,
-                subfolder=subfolder,
+                transformer_load_path,
+                subfolder=transformer_subfolder,
                 torch_dtype=dtype,
-                # low_cpu_mem_usage=False,
-                # device_map=None
             )
+
+            if custom_transformer_state is not None:
+                reference_shapes = {key: tensor.shape for key, tensor in transformer.state_dict().items()}
+                if custom_state_format == "bfl":
+                    custom_transformer_state = convert_bfl_to_diffusers_state(
+                        custom_transformer_state,
+                        reference_shapes,
+                    )
+                missing, unexpected = transformer.load_state_dict(custom_transformer_state, strict=False)
+                if missing:
+                    print_acc(
+                        "Missing keys while loading custom transformer checkpoint: "
+                        f"{', '.join(sorted(missing)[:8])}{' ...' if len(missing) > 8 else ''}"
+                    )
+                if unexpected:
+                    print_acc(
+                        "Unexpected keys while loading custom transformer checkpoint: "
+                        f"{', '.join(sorted(unexpected)[:8])}{' ...' if len(unexpected) > 8 else ''}"
+                    )
+                custom_transformer_state = None
+                flush()
+
             # hack in model gpu splitter
             if self.model_config.split_model_over_gpus:
                 add_model_gpu_splitter_to_flux(
