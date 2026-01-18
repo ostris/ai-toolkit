@@ -61,7 +61,7 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             </div>
             <div className="flex items-center space-x-2 mb-1 mt-3">
               <HardDrive className="w-4 h-4 text-blue-400" />
-              <p className="text-xs text-gray-400">Memory</p>
+              <p className="text-xs text-gray-400">Memory (VRAM)</p>
               <span className="text-xs text-gray-300 ml-auto">
                 {((gpu.memory.used / gpu.memory.total) * 100).toFixed(1)}%
               </span>
@@ -75,6 +75,36 @@ export default function GPUWidget({ gpu }: GPUWidgetProps) {
             <p className="text-xs text-gray-400 mt-0.5">
               {formatMemory(gpu.memory.used)} / {formatMemory(gpu.memory.total)}
             </p>
+
+            {/* GTT Memory Section - Only show if available and non-zero */}
+            {gpu.memory.gttTotal && gpu.memory.gttTotal > 0 && (
+              <>
+                <div className="flex items-center space-x-2 mb-1 mt-3">
+                  <HardDrive className="w-4 h-4 text-indigo-400" />
+                  <p className="text-xs text-gray-400">Memory (GTT)</p>
+                  <span className="text-xs text-gray-300 ml-auto">
+                    {gpu.memory.gttUsed !== undefined
+                      ? ((gpu.memory.gttUsed / gpu.memory.gttTotal) * 100).toFixed(1)
+                      : '0.0'}
+                    %
+                  </span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-1">
+                  <div
+                    className="h-1 rounded-full bg-indigo-500 transition-all"
+                    style={{
+                      width: `${gpu.memory.gttUsed !== undefined
+                          ? (gpu.memory.gttUsed / gpu.memory.gttTotal) * 100
+                          : 0
+                        }%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {formatMemory(gpu.memory.gttUsed || 0)} / {formatMemory(gpu.memory.gttTotal)}
+                </p>
+              </>
+            )}
           </div>
         </div>
 
