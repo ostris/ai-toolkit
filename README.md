@@ -216,7 +216,7 @@ _Last updated: 2025-12-17 22:19 UTC_
 
 Requirements:
 - python >3.10
-- Nvidia GPU with enough ram to do what you need
+- Nvidia or AMD ROCm GPU with enough ram to do what you need
 - python venv
 - git
 
@@ -248,6 +248,29 @@ pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --
 pip install -r requirements.txt
 ```
 
+Linux AMD:
+
+Follow instructions in https://rocm.docs.amd.com to install amdgpu drivers and rocm support. Latest version 7.1.1 is confirmed to work. older versions might not work due to differences in amd-smi command.
+
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+python3 -m venv venv
+source venv/bin/activate
+# install torch first - rocm7.1 compatible
+pip install --pre torch torchvision torchaudio torchao --index-url https://download.pytorch.org/whl/nightly/rocm7.1
+pip3 install -r requirements-amd.txt
+```
+
+AI Toolkit requires to have bitsandbytes installed. Perhaps this will change but for now the solution is to build it.
+```bash
+git clone https://github.com/bitsandbytes-foundation/bitsandbytes.git -b 0.48.2
+cd bitsandbytes
+# replace gfx1201 by the arch for your GPU. You can get it with `amd-smi static | grep gfx`
+cmake -DCMAKE_HIP_COMPILER="/opt/rocm-7.1.1/lib/llvm/bin/clang++" -DCMAKE-DBNB_ROCM_ARCH="gfx1201" -DCOMPUTE_BACKEND=hip .
+make -j32
+pip install .
+```
 
 # AI Toolkit UI
 
