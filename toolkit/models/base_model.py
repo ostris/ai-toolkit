@@ -808,12 +808,13 @@ class BaseModel:
         # then we are doing it, otherwise we are not and takes half the time.
         do_classifier_free_guidance = True
 
-        if isinstance(text_embeddings.text_embeds, list):
+        if isinstance(text_embeddings.text_embeds, list) or isinstance(text_embeddings.text_embeds, tuple):
             if len(text_embeddings.text_embeds[0].shape) == 2:
-                # handle list of embeddings
-                te_batch_size = len(text_embeddings.text_embeds)
+                # handle list of embeddings (Z-Image style - individual prompts)
+                te_batch_size = len([t for t in text_embeddings.text_embeds if t is not None])
             else:
-                te_batch_size = text_embeddings.text_embeds[0].shape[0]
+                # handle list of rank-3 tensors (SDXL/Flux style - batch, length, dim)
+                te_batch_size = sum([t.shape[0] for t in text_embeddings.text_embeds if t is not None])
         else:
             te_batch_size = text_embeddings.text_embeds.shape[0]
         if latents.shape[0] == te_batch_size:
