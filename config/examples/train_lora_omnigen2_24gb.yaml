@@ -61,7 +61,7 @@ config:
         # will probably need this if gpu supports it for omnigen2, other dtypes may not work correctly
         dtype: bf16
       model:
-        name_or_path: "OmniGen2/OmniGen2
+        name_or_path: "OmniGen2/OmniGen2"
         arch: "omnigen2"
         quantize_te: true  # quantize_only te
         # quantize: true  # quantize transformer
