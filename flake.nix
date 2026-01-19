@@ -115,7 +115,8 @@
             source venv/bin/activate
             
             # Set up library paths for OpenCV and CUDA
-            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudnn}/lib:${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.libGL}/lib:${pkgs.glib}/lib:${pkgs.glibc}/lib:${pkgs.xorg.libX11}/lib:${pkgs.xorg.libXext}/lib:$LD_LIBRARY_PATH"
+            # Include both lib and lib64 directories
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudnn}/lib:${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.libGL}/lib:${pkgs.glib.out}/lib:${pkgs.glibc}/lib:${pkgs.xorg.libX11}/lib:${pkgs.xorg.libXext}/lib:$LD_LIBRARY_PATH"
             
             python run.py "$@"
           else
@@ -137,7 +138,7 @@
             source venv/bin/activate
             
             # Set up library paths
-            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.libGL}/lib:${pkgs.glib}/lib:${pkgs.glibc}/lib:${pkgs.xorg.libX11}/lib:${pkgs.xorg.libXext}/lib:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.libGL}/lib:${pkgs.glib.out}/lib:${pkgs.glibc}/lib:${pkgs.xorg.libX11}/lib:${pkgs.xorg.libXext}/lib:$LD_LIBRARY_PATH"
             
             cd ui
             ${pkgs.nodejs}/bin/npm run build_and_start
@@ -241,7 +242,7 @@
             export CUDA_PATH="${pkgs.cudaPackages.cudatoolkit}"
 
             # Add all necessary libraries to LD_LIBRARY_PATH
-            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudnn}/lib:${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.libGL}/lib:${pkgs.glib}/lib:${pkgs.glibc}/lib:${pkgs.xorg.libX11}/lib:${pkgs.xorg.libXext}/lib:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudnn}/lib:${pkgs.linuxPackages.nvidia_x11}/lib:${pkgs.libGL}/lib:${pkgs.glib.out}/lib:${pkgs.glibc}/lib:${pkgs.xorg.libX11}/lib:${pkgs.xorg.libXext}/lib:$LD_LIBRARY_PATH"
 
             # Support for Blackwell architecture (sm_120) and others
             export TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0 12.0"
