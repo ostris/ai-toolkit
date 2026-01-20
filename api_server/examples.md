@@ -200,7 +200,7 @@ The API server includes endpoints for generating captions using **Florence2** or
 
 ## Florence2 Examples
 
-### 1. Caption an image with Florence2 (default model)
+### Caption an image with Florence2 (default model)
 
 ```bash
 curl -X POST http://localhost:8000/caption \
@@ -210,7 +210,7 @@ curl -X POST http://localhost:8000/caption \
   }'
 ```
 
-### 3. Caption a video with Florence2
+### Caption a video with Florence2
 
 ```bash
 curl -X POST http://localhost:8000/caption \
@@ -227,9 +227,27 @@ curl -X POST http://localhost:8000/caption \
   }'
 ```
 
+### Caption a video with Florence2 + audio
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/workspaces/ai-toolkit/video.mp4",
+    "model_type": "florence2",
+    "num_frames": 8,
+    "sample_method": "uniform",
+    "combine_method": "first",
+    "max_new_tokens": 1024,
+    "num_beams": 3,
+    "task": "<DETAILED_CAPTION>",
+    "do_audio": true
+  }'
+```
+
 ## JoyCaption Examples
 
-### 5. Caption an image with JoyCaption
+### Caption an image with JoyCaption
 
 ```bash
 curl -X POST http://localhost:8000/caption \
@@ -240,7 +258,7 @@ curl -X POST http://localhost:8000/caption \
   }'
 ```
 
-### 6. JoyCaption with custom prompt
+### JoyCaption with custom prompt
 
 ```bash
 curl -X POST http://localhost:8000/caption \
@@ -255,7 +273,7 @@ curl -X POST http://localhost:8000/caption \
   }'
 ```
 
-### 9. Caption a video with JoyCaption
+### Caption a video with JoyCaption
 
 ```bash
 curl -X POST http://localhost:8000/caption \
@@ -273,9 +291,29 @@ curl -X POST http://localhost:8000/caption \
   }'
 ```
 
+### Caption a video with JoyCaption + audio
+
+```bash
+curl -X POST http://localhost:8000/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/workspaces/ai-toolkit/video.mp4",
+    "model_type": "joycaption",
+    "prompt": "Describe what is happening in this video in a narrative style.",
+    "num_frames": 8,
+    "sample_method": "uniform",
+    "combine_method": "longest",
+    "temperature": 0.6,
+    "top_p": 0.9,
+    "max_new_tokens": 512,
+    "do_audio": true,
+    "audio_prompt": "Provide a concise but detailed caption of the audio. Describe any speech (content summary if clear), speaker count, perceived gender/age, tone/emotion, language/accent, and notable non-speech sounds such as music (genre/instruments/tempo/mood) or environmental noises. If there is no speech, focus on the audio events and atmosphere."
+  }'
+```
+
 ## Model Management
 
-### 13. Unload caption model to free GPU memory
+### Unload caption model to free GPU memory
 
 ```bash
 curl -X POST http://localhost:8000/caption/unload \
@@ -298,6 +336,7 @@ curl -X POST http://localhost:8000/caption/unload \
 | `num_frames` | integer | 8 | Number of frames to extract from video |
 | `sample_method` | string | "uniform" | Frame sampling: "uniform" or "first" |
 | `combine_method` | string | "first" | Caption combining: "first", "longest", or "combined" |
+| `do_audio` | boolean | false | Also caption audio when using video inputs |
 
 ### Florence2-Specific Parameters
 
@@ -314,6 +353,107 @@ curl -X POST http://localhost:8000/caption/unload \
 | `temperature` | float | 0.6 | Sampling temperature (0.0-2.0)<br>Lower = more focused, Higher = more creative |
 | `top_p` | float | 0.9 | Nucleus sampling parameter (0.0-1.0)<br>Lower = more focused, Higher = more diverse |
 
+### Video Audio Captioning Parameters (Video Only)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `audio_model_path` | string | "mispeech/midashenglm-7b-0804-fp8" | Custom audio model path |
+| `audio_prompt` | string | "Provide a concise but detailed caption of the audio. Describe any speech (content summary if clear), speaker count, perceived gender/age, tone/emotion, language/accent, and notable non-speech sounds such as music (genre/instruments/tempo/mood) or environmental noises. If there is no speech, focus on the audio events and atmosphere." | Prompt for audio captioning |
+| `audio_max_new_tokens` | integer | 256 | Maximum tokens for audio captioning |
+| `audio_temperature` | float | 0.2 | Sampling temperature for audio captioning |
+| `audio_top_p` | float | 0.9 | Top-p for audio captioning |
+| `audio_num_beams` | integer | 1 | Beam count for audio captioning |
+| `audio_do_sample` | boolean | true | Whether to sample for audio captioning |
+| `audio_repetition_penalty` | float | null | Repetition penalty for audio captioning |
+| `audio_target_sample_rate` | integer | 16000 | Sample rate when extracting audio from video |
+| `audio_max_audio_seconds` | float | null | Max duration for extracted audio |
+
+---
+
+# Audio Captioning API
+
+The API server includes an endpoint for generating captions from audio or video (audio extracted).
+
+## Audio Captioning Examples
+
+### Caption an audio file
+
+```bash
+curl -X POST http://localhost:8000/audio/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audio_path": "/workspaces/ai-toolkit/audio.wav"
+  }'
+```
+
+### Caption a video (audio extracted)
+
+```bash
+curl -X POST http://localhost:8000/audio/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/workspaces/ai-toolkit/video.mp4",
+    "target_sample_rate": 16000,
+    "max_audio_seconds": 30
+  }'
+```
+
+### Caption an audio URL with custom options
+
+```bash
+curl -X POST http://localhost:8000/audio/caption \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audio_url": "https://example.com/sample.wav",
+    "prompt": "Provide a concise but detailed caption of the audio. Describe any speech (content summary if clear), speaker count, perceived gender/age, tone/emotion, language/accent, and notable non-speech sounds such as music (genre/instruments/tempo/mood) or environmental noises. If there is no speech, focus on the audio events and atmosphere.",
+    "max_new_tokens": 256,
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "num_beams": 1,
+    "do_sample": true
+  }'
+```
+
+## Audio Model Management
+
+### Unload audio caption model
+
+```bash
+curl -X POST http://localhost:8000/audio/unload \
+  -H "Content-Type: application/json"
+```
+
+### Free all VRAM (sessions + caption + tag + audio)
+
+```bash
+curl -X POST http://localhost:8000/vram/free \
+  -H "Content-Type: application/json"
+```
+
+## Audio Captioning Parameter Reference
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `audio_path` | string | null | Path to local audio file |
+| `audio_url` | string | null | URL to audio file |
+| `video_path` | string | null | Path to local video file (audio extracted) |
+| `video_url` | string | null | URL to video file (audio extracted) |
+| `model_path` | string | "mispeech/midashenglm-7b-0804-fp8" | Custom model path (overrides default) |
+| `prompt` | string | "Provide a concise but detailed caption of the audio. Describe any speech (content summary if clear), speaker count, perceived gender/age, tone/emotion, language/accent, and notable non-speech sounds such as music (genre/instruments/tempo/mood) or environmental noises. If there is no speech, focus on the audio events and atmosphere." | Prompt for captioning |
+| `max_new_tokens` | integer | 256 | Maximum tokens to generate |
+| `temperature` | float | 0.2 | Sampling temperature |
+| `top_p` | float | 0.9 | Nucleus sampling parameter |
+| `num_beams` | integer | 1 | Number of beams for generation |
+| `do_sample` | boolean | true | Whether to sample during generation |
+| `repetition_penalty` | float | null | Repetition penalty |
+| `target_sample_rate` | integer | 16000 | Sample rate for extracted audio |
+| `max_audio_seconds` | float | null | Max audio duration to process in seconds |
+
+Notes:
+
+- Provide either `audio_*` or `video_*`, not both.
+- Video inputs are decoded to audio before captioning.
+
 ---
 
 # Tagging API
@@ -322,7 +462,7 @@ The API server also supports WD14 tagger inference. The default model is `wd14-v
 
 ## Tagging Examples
 
-### 14. Tag an image
+### Tag an image
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -332,7 +472,7 @@ curl -X POST http://localhost:8000/tag \
   }'
 ```
 
-### 15. Tag an image from URL
+### Tag an image from URL
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -346,7 +486,7 @@ curl -X POST http://localhost:8000/tag \
   }'
 ```
 
-### 16. Tag using a local model directory
+### Tag using a local model directory
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -357,7 +497,7 @@ curl -X POST http://localhost:8000/tag \
   }'
 ```
 
-### 17. Tag a video with custom thresholds
+### Tag a video with custom thresholds
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -376,7 +516,7 @@ curl -X POST http://localhost:8000/tag \
   }'
 ```
 
-### 18. Tag multiple inputs in one request
+### Tag multiple inputs in one request
 
 ```bash
 curl -X POST http://localhost:8000/tag \
@@ -394,7 +534,7 @@ curl -X POST http://localhost:8000/tag \
 
 ## Tagger Model Management
 
-### 19. Offload tagger model to CPU
+### Offload tagger model to CPU
 
 ```bash
 curl -X GET http://localhost:8000/tag/free
