@@ -32,9 +32,9 @@ from toolkit.print import print_acc
 from toolkit.accelerator import get_accelerator
 from toolkit.prompt_utils import PromptEmbeds
 from torchvision.transforms import functional as TF
-
+from pathlib import Path
 from toolkit.train_tools import get_torch_dtype
-
+from toolkit.print import print_acc
 if TYPE_CHECKING:
     from toolkit.data_loader import AiToolkitDataset
     from toolkit.data_transfer_object.data_loader import FileItemDTO
@@ -728,6 +728,32 @@ class ImageProcessingDTOMixin:
         # handle get_prompt_embedding
         if self.is_text_embedding_cached:
             self.load_prompt_embedding()
+            # Also load DOP embedding if enabled (dataloader pattern: always load if available)
+            has_pairs = hasattr(self, '_dop_replacement_pairs')
+            pairs_value = getattr(self, '_dop_replacement_pairs', None) if has_pairs else None
+
+            # DEBUG: Always print to see if this code path executes
+            print_acc(f"[DOP DEBUG] load_and_process_image: has_pairs={has_pairs}, pairs_value={'NOT_NONE' if pairs_value else 'NONE_OR_EMPTY'}")
+
+            if has_pairs and pairs_value:
+                from toolkit.prompt_utils import apply_dop_replacements
+                # Ensure caption is loaded before computing transformation
+                if self.caption is None:
+                    self.load_caption()
+                # Compute transformed caption on-the-fly
+                transformed_caption = apply_dop_replacements(
+                    caption=self.caption,
+                    replacement_pairs=self._dop_replacement_pairs,
+                    case_insensitive=getattr(self, '_dop_case_insensitive', False),
+                    debug=False
+                )
+                self.load_dop_prompt_embedding(dop_caption=transformed_caption)
+            else:
+                # Debug: Why isn't DOP loading?
+                if not has_pairs:
+                    print_acc(f"[DOP DEBUG] File item missing _dop_replacement_pairs attribute: {self.path}")
+                elif not pairs_value:
+                    print_acc(f"[DOP DEBUG] File item has _dop_replacement_pairs but it's empty/None: {self.path}")
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
@@ -1930,55 +1956,143 @@ class TextEmbeddingFileItemDTOMixin:
         if hasattr(super(), '__init__'):
             super().__init__(*args, **kwargs)
         self.prompt_embeds: Union[PromptEmbeds, None] = None
+        self.dop_prompt_embeds: Union[PromptEmbeds, None] = None
         self._text_embedding_path: Union[str, None] = None
+        self._dop_text_embedding_path: Union[str, None] = None
         self.is_text_embedding_cached = False
         self.text_embedding_load_device = 'cpu'
         self.text_embedding_space_version = 'sd1'
         self.text_embedding_version = 1
+        # honor dataset-level preference to keep text embeddings in memory
+        self.is_caching_text_embeddings_to_memory = getattr(self.dataset_config, 'cache_text_embeddings_to_memory', True)
 
-    def get_text_embedding_info_dict(self: 'FileItemDTO'):
+    def get_text_embedding_info_dict(self: 'FileItemDTO', dop_caption: str = None):
         # make sure the caption is loaded here
-        # TODO: we need a way to cache all the other features like trigger words, DOP, etc. For now, we need to throw an error if not compatible.
         if self.caption is None:
             self.load_caption()
+        # Build a deterministic dict describing the text embedding input.
+        # For DOP, use the transformed caption instead of the original.
+        caption_to_use = dop_caption if dop_caption is not None else self.caption
         item = OrderedDict([
-            ("caption", self.caption),
+            ("caption", caption_to_use),
             ("text_embedding_space_version", self.text_embedding_space_version),
             ("text_embedding_version", self.text_embedding_version),
         ])
         # if we have a control image, cache the path
         if self.encode_control_in_text_embeddings and self.control_path is not None:
             item["control_path"] = self.control_path
+        # Add a marker for DOP to keep cache keys separate
+        if dop_caption is not None:
+            item["is_dop"] = True
         return item
 
-    def get_text_embedding_path(self: 'FileItemDTO', recalculate=False):
-        if self._text_embedding_path is not None and not recalculate:
-            return self._text_embedding_path
+    def get_text_embedding_path(self: 'FileItemDTO', recalculate=False, dop_caption: str = None):
+        # choose cached path for normal or dop variant
+        if dop_caption is None:
+            if self._text_embedding_path is not None and not recalculate:
+                return self._text_embedding_path
         else:
-            # we store text embeddings in a folder in same path as image called _text_embedding_cache
-            img_dir = os.path.dirname(self.path)
-            te_dir = os.path.join(img_dir, '_t_e_cache')
-            hash_dict = self.get_text_embedding_info_dict()
-            filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
-            # get base64 hash of md5 checksum of hash_dict
-            hash_input = json.dumps(hash_dict, sort_keys=True).encode('utf-8')
-            hash_str = base64.urlsafe_b64encode(hashlib.md5(hash_input).digest()).decode('ascii')
-            hash_str = hash_str.replace('=', '')
-            self._text_embedding_path = os.path.join(te_dir, f'{filename_no_ext}_{hash_str}.safetensors')
+            if self._dop_text_embedding_path is not None and not recalculate:
+                return self._dop_text_embedding_path
 
-        return self._text_embedding_path
+        # we store text embeddings in a folder in same path as image called _text_embedding_cache
+        img_dir = os.path.dirname(self.path)
+        te_dir = os.path.join(img_dir, '_t_e_cache')
+        hash_dict = self.get_text_embedding_info_dict(dop_caption=dop_caption)
+        filename_no_ext = os.path.splitext(os.path.basename(self.path))[0]
+        # get base64 hash of md5 checksum of hash_dict
+        # compute param digest (stable) and content digest (caption or transformed caption)
+        from toolkit.cache_utils import compute_param_digest
+        param_digest = compute_param_digest(hash_dict)
+        # For DOP, hash the transformed caption; otherwise use original caption
+        caption_to_hash = dop_caption if dop_caption is not None else self.caption
+        content_digest = hashlib.sha256(caption_to_hash.encode('utf-8')).hexdigest()
+        path = os.path.join(te_dir, f'{filename_no_ext}_{param_digest}_{content_digest}.safetensors')
+        if dop_caption is None:
+            self._text_embedding_path = path
+        else:
+            self._dop_text_embedding_path = path
+
+        return path
 
     def cleanup_text_embedding(self):
+        # Respect memory caching preference: if enabled, keep embeddings in-memory (move to CPU),
+        # otherwise clear them so subsequent batches will reload from disk when needed.
         if self.prompt_embeds is not None:
-            # we are caching on disk, don't save in memory
-            self.prompt_embeds = None
+            if not getattr(self, 'is_caching_text_embeddings_to_memory', False):
+                self.prompt_embeds = None
+            else:
+                try:
+                    self.prompt_embeds = self.prompt_embeds.to('cpu')
+                except Exception:
+                    # best-effort: do not fail cleanup
+                    pass
+        if self.dop_prompt_embeds is not None:
+            if not getattr(self, 'is_caching_text_embeddings_to_memory', False):
+                self.dop_prompt_embeds = None
+            else:
+                try:
+                    self.dop_prompt_embeds = self.dop_prompt_embeds.to('cpu')
+                except Exception:
+                    pass
 
     def load_prompt_embedding(self, device=None):
         if not self.is_text_embedding_cached:
             return
         if self.prompt_embeds is None:
-            # load it from disk
-            self.prompt_embeds = PromptEmbeds.load(self.get_text_embedding_path())
+            # load it from disk using robust lookup (hashed + legacy fallback)
+            from toolkit.cache_utils import find_cached_file, wait_for_cached_file
+            try:
+                expected = Path(self.get_text_embedding_path())
+            except Exception:
+                return
+            cached = wait_for_cached_file(expected, timeout=float(os.getenv('CACHE_WAIT_TIMEOUT', 5.0)))
+            if not cached:
+                return
+            try:
+                self.prompt_embeds = PromptEmbeds.load(str(cached))
+            except FileNotFoundError:
+                # file was removed racing with load; treat as missing
+                return
+            except Exception as e:
+                # don't let a corrupted cache crash the flow; log and skip
+                try:
+                    print_acc(f"Warning: failed to load prompt embedding {cached}: {e}")
+                except Exception:
+                    pass
+                return
+
+    def load_dop_prompt_embedding(self, dop_caption: str, device=None):
+        """Load a precomputed DOP variant prompt embedding (if present on disk).
+
+        DOP prompt embeddings are persisted under the `_t_e_cache` directory.
+
+        Args:
+            dop_caption: The transformed DOP caption (with triggers replaced by classes)
+            device: Optional device to load to
+        """
+        if self.dop_prompt_embeds is None:
+            from toolkit.cache_utils import wait_for_cached_file
+            try:
+                dop_path = Path(self.get_text_embedding_path(recalculate=False, dop_caption=dop_caption))
+            except Exception:
+                return
+            cached = wait_for_cached_file(dop_path, timeout=float(os.getenv('CACHE_WAIT_TIMEOUT', 5.0)))
+            if not cached:
+                # missing dop embedding on disk; leave as None
+                return
+            try:
+                self.dop_prompt_embeds = PromptEmbeds.load(str(cached))
+            except FileNotFoundError:
+                # file removed between discovery and load; treat as missing
+                return
+            except Exception as e:
+                try:
+                    print_acc(f"[DOP Cache] Failed to load DOP prompt embed {cached}: {e}")
+                except Exception:
+                    pass
+                return
+
 
 class TextEmbeddingCachingMixin:
     def __init__(self: 'AiToolkitDataset', **kwargs):
@@ -1992,61 +2106,282 @@ class TextEmbeddingCachingMixin:
             print_acc(f"Caching text_embeddings for {self.dataset_path}")
             print_acc(" - Saving text embeddings to disk")
             
-            did_move = False
+            # If a per-dataset SplitPrompt is configured, encode and save it now (so the trainer or later stages can load it)
+            ds_cfg = self.dataset_config
+            sp_enabled = bool(getattr(ds_cfg, 'split_prompt_enabled', False))
+            sp_text = getattr(ds_cfg, 'split_prompt', None)
+            if sp_enabled and sp_text and str(sp_text).strip() != '':
+                encode_kwargs = {}
+                if self.sd.encode_control_in_text_embeddings:
+                    # use a blank control image placeholder similar to generator
+                    control_image = torch.zeros((1, 3, 224, 224), device=self.sd.device_torch, dtype=self.sd.torch_dtype)
+                    if self.sd.has_multiple_control_images:
+                        control_image = [control_image]
+                    encode_kwargs['control_images'] = control_image
 
-            # use tqdm to show progress
-            i = 0
-            for file_item in tqdm(self.file_list, desc='Caching text embeddings to disk'):
+                # Encode the split prompt. If encoding fails, raise a RuntimeError.
+                try:
+                    sp_emb = self.sd.encode_prompt(sp_text, **encode_kwargs)
+                except Exception as e:
+                    raise RuntimeError(f"SplitPrompt encoding failed for dataset {self.dataset_path}: {e}") from e
+
+                # Save to disk and cache in-memory. Failures during save should raise as well.
+                try:
+                    sp_emb = sp_emb.to('cpu')
+                    split_path = os.path.join(self.dataset_path, 'split_prompt.safetensors')
+                    from toolkit.cache_utils import atomic_write
+                    atomic_write(Path(split_path), lambda p: sp_emb.save(str(p)))
+                    # also cache in-memory on the dataset object for immediate use
+                    self.split_prompt_embeds = sp_emb
+                    print_acc(f"[SplitPrompt] Saved split prompt embedding to {split_path}")
+                except Exception as e:
+                    raise RuntimeError(f"Failed to save split prompt embedding for dataset {self.dataset_path}: {e}") from e
+
+            # PRE-CHECK: Count how many files already have valid text embedding caches
+            from toolkit.cache_utils import find_cached_file
+            files_needing_encode = []
+            files_cached = 0
+            
+            for file_item in self.file_list:
                 file_item.text_embedding_space_version = self.sd.model_config.arch
                 file_item.latent_load_device = self.sd.device
+                
+                text_embedding_path = Path(file_item.get_text_embedding_path(recalculate=True))
+                cached = find_cached_file(text_embedding_path)
+                if cached:
+                    files_cached += 1
+                    file_item.is_text_embedding_cached = True
+                else:
+                    files_needing_encode.append(file_item)
+            
+            # Report cache hit rate
+            total_files = len(self.file_list)
+            print_acc(f"Text embedding cache: {files_cached}/{total_files} files cached, {len(files_needing_encode)} need encoding")
+            
+            # If everything is cached, we're done!
+            if len(files_needing_encode) == 0:
+                print_acc("All text embeddings already cached, skipping encoding")
+                return
 
-                text_embedding_path = file_item.get_text_embedding_path(recalculate=True)
-                # only process if not saved to disk
-                if not os.path.exists(text_embedding_path):
-                    # load if not loaded
-                    if not did_move:
-                        self.sd.set_device_state_preset('cache_text_encoder')
-                        did_move = True
-                        
-                    if file_item.encode_control_in_text_embeddings:
-                        if file_item.control_path is None:
-                            raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
-                        ctrl_img_list = []
-                        control_path_list = file_item.control_path
-                        if not isinstance(file_item.control_path, list):
-                            control_path_list = [control_path_list]
-                        for i in range(len(control_path_list)):
-                            try:
-                                img = Image.open(control_path_list[i]).convert("RGB")
-                                img = exif_transpose(img)
-                                # convert to 0 to 1 tensor
-                                img = (
-                                    TF.to_tensor(img)
-                                    .unsqueeze(0)
-                                    .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
-                                )
-                                ctrl_img_list.append(img)
-                            except Exception as e:
-                                print_acc(f"Error: {e}")
-                                print_acc(f"Error loading control image: {control_path_list[i]}")
-                        
-                        if len(ctrl_img_list) == 0:
-                            ctrl_img = None
-                        elif not self.sd.has_multiple_control_images:
-                            ctrl_img = ctrl_img_list[0]
-                        else:
-                            ctrl_img = ctrl_img_list
-                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+            did_move = False
+
+            # use tqdm to show progress (only for files that need encoding)
+            i = 0
+            for file_item in tqdm(files_needing_encode, desc='Caching text embeddings to disk'):
+                # Note: text_embedding_space_version already set during pre-check
+                text_embedding_path = Path(file_item.get_text_embedding_path(recalculate=True))
+                
+                # We know this file needs encoding (pre-check determined it's not cached)
+                # load if not loaded
+                if not did_move:
+                    self.sd.set_device_state_preset('cache_text_encoder')
+                    did_move = True
+                
+                if file_item.encode_control_in_text_embeddings:
+                    if file_item.control_path is None:
+                        raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
+                    ctrl_img_list = []
+                    control_path_list = file_item.control_path
+                    if not isinstance(file_item.control_path, list):
+                        control_path_list = [control_path_list]
+                    for i in range(len(control_path_list)):
+                        try:
+                            img = Image.open(control_path_list[i]).convert("RGB")
+                            img = exif_transpose(img)
+                            # convert to 0 to 1 tensor
+                            img = (
+                                TF.to_tensor(img)
+                                .unsqueeze(0)
+                                .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                            )
+                            ctrl_img_list.append(img)
+                        except Exception as e:
+                            print_acc(f"Error: {e}")
+                            print_acc(f"Error loading control image: {control_path_list[i]}")
+                    
+                    if len(ctrl_img_list) == 0:
+                        ctrl_img = None
+                    elif not self.sd.has_multiple_control_images:
+                        ctrl_img = ctrl_img_list[0]
                     else:
-                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
-                    # save it
-                    prompt_embeds.save(text_embedding_path)
-                    del prompt_embeds
-                file_item.is_text_embedding_cached = True
+                        ctrl_img = ctrl_img_list
+                    prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                else:
+                    prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
+                
+                # atomic write to avoid partial files (no race re-check needed since we pre-checked)
+                from toolkit.cache_utils import atomic_write
+                try:
+                    atomic_write(text_embedding_path, lambda p: prompt_embeds.save(str(p)))
+                    file_item.is_text_embedding_cached = True
+                except Exception as e:
+                    # Surface a clear error instead of failing silently — include dataset and file for diagnostics
+                    try:
+                        import traceback
+                        print_acc(f"Error: failed to save text embedding for {file_item.path} to {text_embedding_path}: {e}")
+                        print_acc(traceback.format_exc())
+                    except Exception:
+                        pass
+                    raise RuntimeError(f"Text embedding caching failed for dataset {self.dataset_path} on file {file_item.path}: {e}") from e
+                finally:
+                    # ensure we drop the prompt embeds reference to avoid leaking tensors even on error
+                    try:
+                        del prompt_embeds
+                    except Exception:
+                        pass
                 i += 1
             # restore device state
             # if did_move:
             #     self.sd.restore_device_state()
+
+    def precompute_dop_embeddings(
+        self: 'AiToolkitDataset',
+        triggers_csv: str,
+        classes_csv: str,
+        encode_fn: 'Callable[[str], PromptEmbeds]',
+        case_insensitive: bool = False,
+        debug: bool = False
+    ):
+        """Precompute DOP (Differential Output Preservation) embeddings for all file items.
+
+        This method applies trigger→class text replacements and encodes the transformed
+        captions, saving them to disk for use during training. Follows the dataloader
+        pattern: dataloader loads from cache, trainer provides encoding function.
+
+        Args:
+            triggers_csv: Comma-separated trigger words, e.g., "Jinx, Zapper"
+            classes_csv: Comma-separated class names, e.g., "Woman, Gun"
+            encode_fn: Function to encode text → PromptEmbeds (from trainer's sd.encode_prompt)
+            case_insensitive: Match triggers case-insensitively (default: False)
+            debug: Log each trigger→class replacement (default: False)
+
+        Process:
+            1. Build replacement pairs and compute digest
+            2. Check cache hit rate for DOP embeddings
+            3. For files missing DOP cache:
+                a. Apply trigger→class replacements to caption
+                b. Call encode_fn(transformed_caption) → PromptEmbeds
+                c. Save to _dop_text_embedding_path with atomic write
+                d. Store digest in file_item for cache key stability
+        """
+        from toolkit.prompt_utils import build_dop_replacement_pairs, apply_dop_replacements
+        from toolkit.cache_utils import atomic_write, find_cached_file
+        from pathlib import Path
+
+        with accelerator.main_process_first():
+            print_acc(f"Precomputing DOP embeddings for {self.dataset_path}")
+            print_acc(f" - Triggers: {triggers_csv}")
+            print_acc(f" - Classes: {classes_csv}")
+
+            # Build replacement pairs (shared for all files)
+            replacement_pairs = build_dop_replacement_pairs(
+                triggers_csv=triggers_csv,
+                classes_csv=classes_csv,
+                case_insensitive=case_insensitive
+            )
+
+            # Store DOP params on dataset for use in __getitem__
+            self._dop_enabled = True
+            self._dop_replacement_pairs = replacement_pairs
+            self._dop_case_insensitive = case_insensitive
+
+            # PRE-CHECK: Count how many files already have valid DOP embedding caches
+            files_needing_encode = []
+            files_cached = 0
+
+            for file_item in self.file_list:
+                # Store DOP params on file_item so it can compute transformed caption during loading
+                file_item._dop_replacement_pairs = replacement_pairs
+                file_item._dop_case_insensitive = case_insensitive
+
+                # Apply trigger→class replacements to get transformed caption for caching
+                transformed_caption = apply_dop_replacements(
+                    caption=file_item.caption,
+                    replacement_pairs=replacement_pairs,
+                    case_insensitive=case_insensitive,
+                    debug=False
+                )
+
+                # Check if DOP embedding already cached (hash based on transformed caption)
+                # Use strict path check (not find_cached_file which does fuzzy matching)
+                dop_path = Path(file_item.get_text_embedding_path(
+                    recalculate=True,
+                    dop_caption=transformed_caption
+                ))
+                if dop_path.exists():
+                    files_cached += 1
+                else:
+                    files_needing_encode.append(file_item)
+
+            # Report cache hit rate
+            total_files = len(self.file_list)
+            print_acc(f"DOP embedding cache: {files_cached}/{total_files} files cached, {len(files_needing_encode)} need encoding")
+
+            # Show example transformations for debugging (first 3 files)
+            if debug or len(files_needing_encode) == 0:
+                print_acc("\nDOP transformation examples:")
+                for i, file_item in enumerate(self.file_list[:3]):
+                    transformed = apply_dop_replacements(
+                        caption=file_item.caption,
+                        replacement_pairs=replacement_pairs,
+                        case_insensitive=case_insensitive,
+                        debug=False
+                    )
+                    print_acc(f"  [{i+1}] Original: {file_item.caption}")
+                    print_acc(f"      DOP:      {transformed}")
+
+            # If everything is cached, we're done!
+            if len(files_needing_encode) == 0:
+                print_acc("\nAll DOP embeddings already cached, skipping encoding")
+                return
+
+            did_move = False
+
+            # Use tqdm to show progress (only for files that need encoding)
+            from tqdm import tqdm
+            for file_item in tqdm(files_needing_encode, desc='Precomputing DOP embeddings to disk'):
+                # Get transformed caption (already computed and stored in pre-check loop)
+                transformed_caption = file_item._dop_transformed_caption
+
+                dop_path = Path(file_item.get_text_embedding_path(
+                    recalculate=True,
+                    dop_caption=transformed_caption
+                ))
+
+                # Set device state for encoding (only once)
+                if not did_move:
+                    self.sd.set_device_state_preset('cache_text_encoder')
+                    did_move = True
+
+                # Encode transformed caption using trainer's encode function
+                try:
+                    dop_prompt_embeds = encode_fn(transformed_caption)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"DOP encoding failed for {file_item.path} with transformed caption '{transformed_caption}': {e}"
+                    ) from e
+
+                # Atomic write to avoid partial files
+                try:
+                    atomic_write(dop_path, lambda p: dop_prompt_embeds.save(str(p)))
+                except Exception as e:
+                    try:
+                        import traceback
+                        print_acc(f"Error: failed to save DOP embedding for {file_item.path} to {dop_path}: {e}")
+                        print_acc(traceback.format_exc())
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"DOP embedding caching failed for dataset {self.dataset_path} on file {file_item.path}: {e}"
+                    ) from e
+                finally:
+                    # Drop reference to avoid memory leak
+                    try:
+                        del dop_prompt_embeds
+                    except Exception:
+                        pass
+
+            print_acc(f"DOP precompute complete: {len(files_needing_encode)} files encoded")
 
 
 class CLIPCachingMixin:

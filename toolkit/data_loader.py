@@ -578,6 +578,10 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
 
     def _get_single_item(self, index) -> 'FileItemDTO':
         file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
+        # Inject DOP params from dataset to file_item (ensures survival through pickle/deepcopy)
+        if hasattr(self, '_dop_enabled') and self._dop_enabled:
+            file_item._dop_replacement_pairs = getattr(self, '_dop_replacement_pairs', None)
+            file_item._dop_case_insensitive = getattr(self, '_dop_case_insensitive', False)
         file_item.load_and_process_image(self.transform)
         file_item.load_caption(self.caption_dict)
         return file_item

@@ -325,9 +325,32 @@ class SDTrainer(BaseSDTrainProcess):
                 self.cached_blank_embeds = self.sd.encode_prompt("", **encode_kwargs)
                 if self.trigger_word is not None:
                     self.cached_trigger_embeds = self.sd.encode_prompt(self.trigger_word, **encode_kwargs)
+
+                # DOP: Precompute embeddings via dataloader (new pattern)
                 if self.train_config.diff_output_preservation:
-                    self.diff_output_preservation_embeds = self.sd.encode_prompt(self.train_config.diff_output_preservation_class)
-                
+                    from toolkit.prompt_utils import build_dop_replacement_pairs
+
+                    triggers_csv = self.trigger_word
+                    classes_csv = self.train_config.diff_output_preservation_class
+
+                    # Build replacement pairs for fallback encoding
+                    self._dop_replacement_pairs = build_dop_replacement_pairs(
+                        triggers_csv=triggers_csv,
+                        classes_csv=classes_csv,
+                        case_insensitive=False
+                    )
+
+                    # Delegate precompute to dataloader
+                    datasets = get_dataloader_datasets(self.data_loader)
+                    for dataset in datasets:
+                        dataset.precompute_dop_embeddings(
+                            triggers_csv=triggers_csv,
+                            classes_csv=classes_csv,
+                            encode_fn=lambda caption: self.sd.encode_prompt(caption, **encode_kwargs),
+                            case_insensitive=False,
+                            debug=getattr(self.train_config, 'diff_output_preservation_debug', False)
+                        )
+
                 self.cache_sample_prompts()
                 
                 print_acc("\n***** UNLOADING TEXT ENCODER *****")
@@ -1522,6 +1545,13 @@ class SDTrainer(BaseSDTrainProcess):
                                 unconditional_embeds = concat_prompt_embeds(
                                     [unconditional_embeds] * noisy_latents.shape[0]
                                 )
+                            if self.train_config.diff_output_preservation:
+
+                                if batch.dop_prompt_embeds is not None:
+                                    # use the cached embeds
+                                    self.diff_output_preservation_embeds = batch.dop_prompt_embeds.clone().detach().to(
+                                        self.device_torch, dtype=dtype
+                                    )  
 
                             if isinstance(self.adapter, CustomAdapter):
                                 self.adapter.is_unconditional_run = False
@@ -1587,18 +1617,65 @@ class SDTrainer(BaseSDTrainProcess):
                                     self.adapter.is_unconditional_run = False
                             
                             if self.train_config.diff_output_preservation:
-                                dop_prompts = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in conditioned_prompts]
-                                dop_prompts_2 = None
-                                if prompt_2 is not None:
-                                    dop_prompts_2 = [p.replace(self.trigger_word, self.train_config.diff_output_preservation_class) for p in prompt_2]
-                                self.diff_output_preservation_embeds = self.sd.encode_prompt(
-                                    dop_prompts, dop_prompts_2,
-                                    dropout_prob=self.train_config.prompt_dropout_prob,
-                                    long_prompts=self.do_long_prompts,
-                                    **prompt_kwargs
-                                ).to(
-                                    self.device_torch,
-                                    dtype=dtype)
+
+
+
+                                try:
+                                    if isinstance(batch.dop_prompt_embeds.text_embeds, (list, tuple)):
+                                        shapes = [tuple(t.shape) for t in batch.dop_prompt_embeds.text_embeds]
+                                        devices = [str(t.device) for t in batch.dop_prompt_embeds.text_embeds]
+                                    else:
+                                        shapes = tuple(batch.dop_prompt_embeds.text_embeds.shape)
+                                        devices = str(batch.dop_prompt_embeds.text_embeds.device)
+                                    return print_acc(f"PromptEmbeds(shapes={shapes}, devices={devices}, pooled={batch.dop_prompt_embeds.pooled_embeds is not None}, src={getattr(batch.dop_prompt_embeds,'_source_path',None)})") 
+                                except Exception as e:
+                                    return print_acc(f"PromptEmbeds(<err:{e}>)")
+
+                                try:
+                                    print_acc(f"[DOP DEBUG BATCH] dop_prompt_embeds={_pe_summary(getattr(batch,'dop_prompt_embeds', None))}; prompt_embeds={_pe_summary(getattr(batch,'prompt_embeds', None))}; file_items={len(getattr(batch,'file_items', []))}")
+                                    for i, fi in enumerate(getattr(batch, 'file_items', [])):
+                                        fi_pe = getattr(fi, 'dop_prompt_embeds', None)
+                                        print_acc(
+                                            f"  [DOP DEBUG FILE {i}] path={getattr(fi,'path',None)} is_text_embedding_cached={getattr(fi,'is_text_embedding_cached',None)} "
+                                            f"_dop_transformed_caption={getattr(fi,'_dop_transformed_caption',None)} _dop_path={getattr(fi,'_dop_text_embedding_path',None)} dop_prompt_embeds={_pe_summary(fi_pe)}"
+                                        )
+                                except Exception as e:
+                                    print_acc(f"[DOP DEBUG BATCH] error: {e}")
+
+                                # Use dataloader-provided DOP embeddings (new pattern)
+                                print_acc(f"[DOP DEBUG TRAINER] Retrieving DOP embeds from batch.dop_prompt_embeds (is None: {batch.dop_prompt_embeds is None})")
+                                self.diff_output_preservation_embeds = batch.dop_prompt_embeds
+
+                                # Fallback: encode on-the-fly if cache missing
+                                if self.diff_output_preservation_embeds is None:
+                                    from toolkit.prompt_utils import apply_dop_replacements
+                                    print_acc("Warning: DOP cache missing for batch - encoding on-the-fly (slower)")
+
+                                    # Apply trigger→class replacements using utility
+                                    dop_prompts = [
+                                        apply_dop_replacements(p, self._dop_replacement_pairs, debug=False)
+                                        for p in conditioned_prompts
+                                    ]
+                                    dop_prompts_2 = None
+                                    if prompt_2 is not None:
+                                        dop_prompts_2 = [
+                                            apply_dop_replacements(p, self._dop_replacement_pairs, debug=False)
+                                            for p in prompt_2
+                                        ]
+                                    self.diff_output_preservation_embeds = self.sd.encode_prompt(
+                                        dop_prompts, dop_prompts_2,
+                                        dropout_prob=self.train_config.prompt_dropout_prob,
+                                        long_prompts=self.do_long_prompts,
+                                        **prompt_kwargs
+                                    ).to(
+                                        self.device_torch,
+                                        dtype=dtype)
+                                else:
+                                    # Move cached embeddings to device
+                                    self.diff_output_preservation_embeds = self.diff_output_preservation_embeds.to(
+                                        self.device_torch,
+                                        dtype=dtype
+                                    )
                         # detach the embeddings
                         conditional_embeds = conditional_embeds.detach()
                         if self.train_config.do_cfg:
