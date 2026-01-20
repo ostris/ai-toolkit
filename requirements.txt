@@ -2,6 +2,7 @@ torchao==0.10.0
 safetensors
 git+https://github.com/huggingface/diffusers@8600b4c10d67b0ce200f664204358747bd53c775
 transformers==4.57.3
+compressed-tensors==0.13.0
 lycoris-lora==1.8.3
 flatten_json
 pyyaml
