@@ -32,8 +32,12 @@ except ImportError:
 
 scheduler_config = {
     "num_train_timesteps": 1000,
-    "use_dynamic_shifting": False,
-    "shift": 3.0,
+    "use_dynamic_shifting": True,
+    "base_image_seq_len": 256,   # 512x512 with VAE/16 and patch/2
+    "max_image_seq_len": 1024,   # 1024x1024
+    "base_shift": 0.5,
+    "max_shift": 0.85,
+    "min_shift": 0.33,           # Floor to prevent very low noise sampling
 }
 
 

@@ -729,13 +729,8 @@ class ImageProcessingDTOMixin:
         if self.is_text_embedding_cached:
             self.load_prompt_embedding()
             # Also load DOP embedding if enabled (dataloader pattern: always load if available)
-            has_pairs = hasattr(self, '_dop_replacement_pairs')
-            pairs_value = getattr(self, '_dop_replacement_pairs', None) if has_pairs else None
-
-            # DEBUG: Always print to see if this code path executes
-            print_acc(f"[DOP DEBUG] load_and_process_image: has_pairs={has_pairs}, pairs_value={'NOT_NONE' if pairs_value else 'NONE_OR_EMPTY'}")
-
-            if has_pairs and pairs_value:
+            dop_pairs = getattr(self, '_dop_replacement_pairs', None)
+            if dop_pairs:
                 from toolkit.prompt_utils import apply_dop_replacements
                 # Ensure caption is loaded before computing transformation
                 if self.caption is None:
@@ -743,17 +738,11 @@ class ImageProcessingDTOMixin:
                 # Compute transformed caption on-the-fly
                 transformed_caption = apply_dop_replacements(
                     caption=self.caption,
-                    replacement_pairs=self._dop_replacement_pairs,
+                    replacement_pairs=dop_pairs,
                     case_insensitive=getattr(self, '_dop_case_insensitive', False),
                     debug=False
                 )
                 self.load_dop_prompt_embedding(dop_caption=transformed_caption)
-            else:
-                # Debug: Why isn't DOP loading?
-                if not has_pairs:
-                    print_acc(f"[DOP DEBUG] File item missing _dop_replacement_pairs attribute: {self.path}")
-                elif not pairs_value:
-                    print_acc(f"[DOP DEBUG] File item has _dop_replacement_pairs but it's empty/None: {self.path}")
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
@@ -2077,20 +2066,15 @@ class TextEmbeddingFileItemDTOMixin:
                 dop_path = Path(self.get_text_embedding_path(recalculate=False, dop_caption=dop_caption))
             except Exception:
                 return
+
             cached = wait_for_cached_file(dop_path, timeout=float(os.getenv('CACHE_WAIT_TIMEOUT', 5.0)))
             if not cached:
-                # missing dop embedding on disk; leave as None
                 return
             try:
                 self.dop_prompt_embeds = PromptEmbeds.load(str(cached))
             except FileNotFoundError:
-                # file removed between discovery and load; treat as missing
                 return
-            except Exception as e:
-                try:
-                    print_acc(f"[DOP Cache] Failed to load DOP prompt embed {cached}: {e}")
-                except Exception:
-                    pass
+            except Exception:
                 return
 
 
@@ -2301,6 +2285,9 @@ class TextEmbeddingCachingMixin:
                     case_insensitive=case_insensitive,
                     debug=False
                 )
+
+                # Store transformed caption on file_item for later use during encoding
+                file_item._dop_transformed_caption = transformed_caption
 
                 # Check if DOP embedding already cached (hash based on transformed caption)
                 # Use strict path check (not find_cached_file which does fuzzy matching)

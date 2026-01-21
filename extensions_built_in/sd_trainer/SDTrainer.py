@@ -1617,39 +1617,13 @@ class SDTrainer(BaseSDTrainProcess):
                                     self.adapter.is_unconditional_run = False
                             
                             if self.train_config.diff_output_preservation:
-
-
-
-                                try:
-                                    if isinstance(batch.dop_prompt_embeds.text_embeds, (list, tuple)):
-                                        shapes = [tuple(t.shape) for t in batch.dop_prompt_embeds.text_embeds]
-                                        devices = [str(t.device) for t in batch.dop_prompt_embeds.text_embeds]
-                                    else:
-                                        shapes = tuple(batch.dop_prompt_embeds.text_embeds.shape)
-                                        devices = str(batch.dop_prompt_embeds.text_embeds.device)
-                                    return print_acc(f"PromptEmbeds(shapes={shapes}, devices={devices}, pooled={batch.dop_prompt_embeds.pooled_embeds is not None}, src={getattr(batch.dop_prompt_embeds,'_source_path',None)})") 
-                                except Exception as e:
-                                    return print_acc(f"PromptEmbeds(<err:{e}>)")
-
-                                try:
-                                    print_acc(f"[DOP DEBUG BATCH] dop_prompt_embeds={_pe_summary(getattr(batch,'dop_prompt_embeds', None))}; prompt_embeds={_pe_summary(getattr(batch,'prompt_embeds', None))}; file_items={len(getattr(batch,'file_items', []))}")
-                                    for i, fi in enumerate(getattr(batch, 'file_items', [])):
-                                        fi_pe = getattr(fi, 'dop_prompt_embeds', None)
-                                        print_acc(
-                                            f"  [DOP DEBUG FILE {i}] path={getattr(fi,'path',None)} is_text_embedding_cached={getattr(fi,'is_text_embedding_cached',None)} "
-                                            f"_dop_transformed_caption={getattr(fi,'_dop_transformed_caption',None)} _dop_path={getattr(fi,'_dop_text_embedding_path',None)} dop_prompt_embeds={_pe_summary(fi_pe)}"
-                                        )
-                                except Exception as e:
-                                    print_acc(f"[DOP DEBUG BATCH] error: {e}")
-
                                 # Use dataloader-provided DOP embeddings (new pattern)
-                                print_acc(f"[DOP DEBUG TRAINER] Retrieving DOP embeds from batch.dop_prompt_embeds (is None: {batch.dop_prompt_embeds is None})")
                                 self.diff_output_preservation_embeds = batch.dop_prompt_embeds
 
-                                # Fallback: encode on-the-fly if cache missing
+                                # Fallback: encode on-the-fly if cache missing (text encoder still available in this branch)
                                 if self.diff_output_preservation_embeds is None:
                                     from toolkit.prompt_utils import apply_dop_replacements
-                                    print_acc("Warning: DOP cache missing for batch - encoding on-the-fly (slower)")
+                                    print_acc("[DOP] Cache missing for batch - encoding on-the-fly")
 
                                     # Apply trigger→class replacements using utility
                                     dop_prompts = [
@@ -1861,7 +1835,10 @@ class SDTrainer(BaseSDTrainProcess):
                         prior_embeds_to_use = conditional_embeds
                         # use diff_output_preservation embeds if doing dfe
                         if self.train_config.diff_output_preservation:
-                            prior_embeds_to_use = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
+                            if self.diff_output_preservation_embeds is None:
+                                print_acc("[DOP WARNING] diff_output_preservation enabled but embeddings missing - skipping DOP this step")
+                            else:
+                                prior_embeds_to_use = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
                         
                         if self.train_config.blank_prompt_preservation:
                             blank_embeds = self.cached_blank_embeds.clone().detach().to(
@@ -2060,13 +2037,18 @@ class SDTrainer(BaseSDTrainProcess):
                             prior_pred=prior_to_calculate_loss,
                         )
                     
-                    if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
+                    # Check if DOP is actually available this step (embeds might be missing if cache failed)
+                    do_dop_this_step = self.train_config.diff_output_preservation and self.diff_output_preservation_embeds is not None
+                    if self.train_config.diff_output_preservation and self.diff_output_preservation_embeds is None:
+                        print_acc("[DOP WARNING] diff_output_preservation enabled but embeddings missing - skipping preservation loss this step")
+
+                    if do_dop_this_step or self.train_config.blank_prompt_preservation:
                         # send the loss backwards otherwise checkpointing will fail
                         self.accelerator.backward(loss)
                         normal_loss = loss.detach() # dont send backward again
-                        
+
                         with torch.no_grad():
-                            if self.train_config.diff_output_preservation:
+                            if do_dop_this_step:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
                             elif self.train_config.blank_prompt_preservation:
                                 blank_embeds = self.cached_blank_embeds.clone().detach().to(
@@ -2083,7 +2065,7 @@ class SDTrainer(BaseSDTrainProcess):
                             batch=batch,
                             **pred_kwargs
                         )
-                        multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
+                        multiplier = self.train_config.diff_output_preservation_multiplier if do_dop_this_step else self.train_config.blank_prompt_preservation_multiplier
                         preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
                         self.accelerator.backward(preservation_loss)
 

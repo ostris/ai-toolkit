@@ -403,15 +403,7 @@ class DataLoaderBatchDTO:
 
             # DOP (Differential Output Preservation) embeddings collation
             self.dop_prompt_embeds: Union[PromptEmbeds, None] = None
-            has_any_dop = any([getattr(x, 'dop_prompt_embeds', None) is not None for x in self.file_items])
-
-            # DEBUG: Print DOP collation status
-            print_acc(f"[DOP DEBUG BATCH] has_any_dop={has_any_dop}, num_file_items={len(self.file_items)}")
-            for idx, x in enumerate(self.file_items):
-                dop_status = getattr(x, 'dop_prompt_embeds', None)
-                print_acc(f"  [DOP DEBUG BATCH] file_item[{idx}] dop_prompt_embeds={'NOT_NONE' if dop_status is not None else 'NONE'}")
-
-            if has_any_dop:
+            if any([getattr(x, 'dop_prompt_embeds', None) is not None for x in self.file_items]):
                 dop_list = []
                 # Only collate if all items have DOP embeddings (all-or-nothing approach)
                 for x in self.file_items:
@@ -421,9 +413,6 @@ class DataLoaderBatchDTO:
                     dop_list.append(x.dop_prompt_embeds)
                 if dop_list is not None:
                     self.dop_prompt_embeds = concat_prompt_embeds(dop_list)
-                    print_acc(f"[DOP DEBUG BATCH] Successfully collated {len(dop_list)} DOP embeddings")
-                else:
-                    print_acc(f"[DOP DEBUG BATCH] All-or-nothing check failed - some file_items missing DOP embeddings")
 
             if any([x.audio_tensor is not None for x in self.file_items]):
                 # find one to use as a base
