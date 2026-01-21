@@ -107,6 +107,35 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.do_audio': {
+    title: 'Do Audio',
+    description: (
+      <>
+        For models that support audio with video, this option will load the audio from the video and resize it to match
+        the video sequence. Since the video is automatically resized, the audio may drop or raise in pitch to match the new
+        speed of the video. It is important to prep your dataset to have the proper length before training.
+      </>
+    ),
+  },
+  'datasets.audio_normalize': {
+    title: 'Audio Normalize',
+    description: (
+      <>
+        When loading audio, this will normalize the audio volume to the max peaks. Useful if your dataset has varying audio
+        volumes. Warning, do not use if you have clips with full silence you want to keep, as it will raise the volume of those clips.
+      </>
+    ),
+  },
+  'datasets.audio_preserve_pitch': {
+    title: 'Audio Preserve Pitch',
+    description: (
+      <>
+        When loading audio to match the number of frames requested, this option will preserve the pitch of the audio if
+        the length does not match training target. It is recommended to have a dataset that matches your target length,
+        as this option can add sound distortions. 
+      </>
+    ),
+  },
   'datasets.flip': {
     title: 'Flip X and Flip Y',
     description: (
@@ -274,6 +303,17 @@ const docs: { [key: string]: ConfigDoc } = {
         <br />
         <br />
         <img src="/imgs/diff_guidance.png" alt="Differential Guidance Diagram" className="max-w-full mx-auto" />
+      </>
+    ),
+  },
+  'dataset.num_repeats': {
+    title: 'Num Repeats',
+    description: (
+      <>
+        Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are using multiple
+        datasets and want to balance the number of samples from each dataset. For instance, if you have a small dataset of 10 images 
+        and a large dataset of 100 images, you can set the small dataset to have 10 repeats to effectively make it 100 images, making
+        the two datasets occour equally during training.
       </>
     ),
   },
