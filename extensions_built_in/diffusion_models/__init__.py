@@ -5,8 +5,9 @@ from .omnigen2 import OmniGen2Model
 from .flux_kontext import FluxKontextModel
 from .wan22 import Wan225bModel, Wan2214bModel, Wan2214bI2VModel
 from .qwen_image import QwenImageModel, QwenImageEditModel, QwenImageEditPlusModel
-from .flux2 import Flux2Model
+from .flux2 import Flux2Model, Flux2Klein4BModel, Flux2Klein9BModel
 from .z_image import ZImageModel
+from .ltx2 import LTX2Model
 
 AI_TOOLKIT_MODELS = [
     # put a list of models here
@@ -25,4 +26,7 @@ AI_TOOLKIT_MODELS = [
     QwenImageEditPlusModel,
     Flux2Model,
     ZImageModel,
+    LTX2Model,
+    Flux2Klein4BModel,
+    Flux2Klein9BModel,
 ]

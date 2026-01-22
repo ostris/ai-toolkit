@@ -124,6 +124,7 @@ class ZImageModel(BaseModel):
             is_transformer=True,
             target_lin_modules=self.target_lora_modules,
             is_assistant_adapter=True,
+            is_ara=True,
         )
         network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
         self.print_and_status_update("Merging in assistant LoRA")
@@ -189,6 +190,10 @@ class ZImageModel(BaseModel):
                 transformer,
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
+                ignore_modules=[
+                    transformer.x_pad_token,
+                    transformer.cap_pad_token,
+                ]
             )
 
         if self.model_config.low_vram:
