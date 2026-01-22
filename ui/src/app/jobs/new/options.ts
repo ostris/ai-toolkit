@@ -328,6 +328,29 @@ export const modelArchs: ModelArch[] = [
     },
   },
   {
+    name: 'qwen_image:2512',
+    label: 'Qwen-Image-2512',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-2512', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+    // Training an ARA now, the other one will not work
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_2512_torchao_uint3.safetensors',
+      '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/qwen_image_2512_torchao_uint4.safetensors',
+    },
+  },
+  {
     name: 'qwen_image_edit',
     label: 'Qwen-Image-Edit',
     group: 'instruction',
@@ -380,6 +403,40 @@ export const modelArchs: ModelArch[] = [
     ],
     accuracyRecoveryAdapters: {
       '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2509_torchao_uint3.safetensors',
+    },
+  },
+  {
+    name: 'qwen_image_edit_plus:2511',
+    label: 'Qwen-Image-Edit-2511',
+    group: 'instruction',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Qwen/Qwen-Image-Edit-2511', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].model.model_kwargs': [
+        {
+          match_target_res: false,
+        },
+        {},
+      ],
+    },
+    disableSections: ['network.conv', 'train.unload_text_encoder'],
+    additionalSections: [
+      'datasets.multi_control_paths',
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+      'model.qie.match_target_res',
+    ],
+    accuracyRecoveryAdapters: {
+      '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_2511_torchao_uint3.safetensors',
     },
   },
   {

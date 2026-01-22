@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.8.1-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
 
 LABEL authors="jaret"
 
@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     build-essential \
     cmake \
     wget \
-    python3.10 \
+    python3.12 \
     python3-pip \
     python3-dev \
     python3-setuptools \
@@ -49,7 +49,7 @@ WORKDIR /app
 RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # install pytorch before cache bust to avoid redownloading pytorch
-RUN pip install --pre --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+RUN pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128 --break-system-packages
 
 # Fix cache busting by moving CACHEBUST to right before git clone
 ARG CACHEBUST=1234
@@ -61,10 +61,12 @@ RUN echo "Cache bust: ${CACHEBUST}" && \
 
 WORKDIR /app/ai-toolkit
 
+# copy requirements.txt to leverage docker cache
+COPY requirements.txt /app/ai-toolkit/requirements.txt
+
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --pre --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 --force && \
-    pip install setuptools==69.5.1 --no-cache-dir
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt && \
+    pip install setuptools==69.5.1 --no-cache-dir --break-system-packages
 
 # Build UI
 WORKDIR /app/ai-toolkit/ui

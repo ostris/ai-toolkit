@@ -237,14 +237,16 @@ class QwenImageEditPlusModel(QwenImageModel):
             # split the latents into batch items so we can concat the controls
             packed_latents_list = torch.chunk(latent_model_input, batch_size, dim=0)
             packed_latents_with_controls_list = []
+            
+            batch_control_tensor_list = batch.control_tensor_list
+            if batch_control_tensor_list is None and batch.control_tensor is not None:
+                batch_control_tensor_list = []
+                for b in range(batch_size):
+                    batch_control_tensor_list.append(batch.control_tensor[b : b + 1])
 
-            if batch.control_tensor_list is not None:
-                if len(batch.control_tensor_list) != batch_size:
-                    raise ValueError(
-                        "Control tensor list length does not match batch size"
-                    )
+            if batch_control_tensor_list is not None:
                 b = 0
-                for control_tensor_list in batch.control_tensor_list:
+                for control_tensor_list in batch_control_tensor_list:
                     # control tensor list is a list of tensors for this batch item
                     controls = []
                     # pack control
