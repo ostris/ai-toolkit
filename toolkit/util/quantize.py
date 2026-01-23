@@ -254,12 +254,8 @@ def quantize_model(
             None, model_to_quantize, apply_text_encoder=False, apply_unet=True
         )
 
-        if base_model.model_config.low_vram and base_model.model_config.layer_offloading:
-            network.force_to('cpu')
-        else:
-            network.force_to(base_model.device_torch, dtype=base_model.torch_dtype)
-            network._update_torch_multiplier()
-            
+        network.force_to(base_model.device_torch, dtype=base_model.torch_dtype)
+        network._update_torch_multiplier()
         network.load_weights(lora_state_dict)
         network.eval()
         network.is_active = True

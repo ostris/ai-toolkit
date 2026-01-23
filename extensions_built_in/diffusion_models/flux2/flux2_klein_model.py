@@ -45,7 +45,7 @@ class Flux2KleinModel(Flux2Model):
             torch_dtype=dtype,
         )
 
-        if not self.model_config.layer_offloading:
+        if not self.model_config.low_vram:
             text_encoder.to(self.device_torch, dtype=dtype)
 
         if self.model_config.quantize_te:

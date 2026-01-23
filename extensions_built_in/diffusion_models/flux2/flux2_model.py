@@ -160,7 +160,7 @@ class Flux2Model(BaseModel):
         transformer.load_state_dict(transformer_state_dict, assign=True)
 
         if not self.model_config.layer_offloading:
-            transformer.to(self.device_torch, dtype=dtype)
+            transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
             # patch the state dict method
