@@ -101,7 +101,7 @@ class Flux2Model(BaseModel):
                 torch_dtype=dtype,
             )
         )
-        if not self.model_config.low_vram and not self.model_config.layer_offloading:
+        if not self.model_config.layer_offloading:
             text_encoder.to(self.device_torch, dtype=dtype)
 
         if self.model_config.quantize_te:
@@ -155,7 +155,7 @@ class Flux2Model(BaseModel):
 
         transformer.load_state_dict(transformer_state_dict, assign=True)
 
-        if not self.model_config.low_vram and not self.model_config.layer_offloading:
+        if not self.model_config.layer_offloading:
             transformer.to(self.device_torch, dtype=dtype)
 
         if self.model_config.quantize:
@@ -164,11 +164,11 @@ class Flux2Model(BaseModel):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
-            if not self.model_config.low_vram and not self.model_config.layer_offloading:
+            if not self.model_config.layer_offloading:
                 # make sure we are on the same device after quantization
                 transformer.to(self.device_torch, dtype=dtype)
 
-        if self.model_config.low_vram and self.model_config.layer_offloading:
+        if self.model_config.layer_offloading:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
 
@@ -240,7 +240,7 @@ class Flux2Model(BaseModel):
         text_encoder[0].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
-        if not self.model_config.low_vram and not self.model_config.layer_offloading:
+        if not self.model_config.layer_offloading:
             pipe.transformer = pipe.transformer.to(self.device_torch)
         flush()
 
