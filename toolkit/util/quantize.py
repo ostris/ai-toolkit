@@ -253,7 +253,6 @@ def quantize_model(
         network.apply_to(
             None, model_to_quantize, apply_text_encoder=False, apply_unet=True
         )
-
         network.force_to(base_model.device_torch, dtype=base_model.torch_dtype)
         network._update_torch_multiplier()
         network.load_weights(lora_state_dict)
