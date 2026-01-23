@@ -253,8 +253,8 @@ def quantize_model(
         network.apply_to(
             None, model_to_quantize, apply_text_encoder=False, apply_unet=True
         )
-    
-        if base_model.model_config.low_vram:
+
+        if base_model.model_config.low_vram and base_model.model_config.layer_offloading:
             network.force_to('cpu')
         else:
             network.force_to(base_model.device_torch, dtype=base_model.torch_dtype)
