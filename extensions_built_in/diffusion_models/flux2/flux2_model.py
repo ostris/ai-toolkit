@@ -168,13 +168,12 @@ class Flux2Model(BaseModel):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
-            if not self.model_config.layer_offloading:
-                # make sure we are on the same device after quantization
-                transformer.to(self.device_torch, dtype=dtype)
 
         if self.model_config.layer_offloading:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
+        else:
+            transformer.to(self.device_torch, dtype=dtype)
 
         if (
             self.model_config.layer_offloading
