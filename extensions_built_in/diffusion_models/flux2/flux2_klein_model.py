@@ -45,9 +45,7 @@ class Flux2KleinModel(Flux2Model):
             torch_dtype=dtype,
         )
 
-        if self.model_config.layer_offloading:
-            text_encoder.to('cpu')
-        else:
+        if not self.model_config.layer_offloading:
             text_encoder.to(self.device_torch, dtype=dtype)
 
         if self.model_config.quantize_te:
@@ -65,6 +63,9 @@ class Flux2KleinModel(Flux2Model):
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
+
+        if self.model_config.layer_offloading:
+            text_encoder.to('cpu')
 
         flush()
 
