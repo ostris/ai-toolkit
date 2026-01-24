@@ -413,8 +413,11 @@ class QwenImageModel(BaseModel):
         if dtype is None:
             dtype = self.vae_torch_dtype
 
+        # Check if the VAE was originally on CPU
+        was_on_cpu = self.vae.device == torch.device("cpu")
+
         # Move to vae to device if on cpu
-        if self.vae.device == torch.device("cpu"):
+        if was_on_cpu:
             self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
@@ -424,20 +427,28 @@ class QwenImageModel(BaseModel):
         # it uses wan vae, so add dim for frame count
 
         images = images.unsqueeze(2)
-        latents = self.vae.encode(images).latent_dist.sample()
+        
+        # Use no_grad to ensure the encoding process does not consume gradient memory
+        with torch.no_grad():
+            latents = self.vae.encode(images).latent_dist.sample()
 
-        latents_mean = (
-            torch.tensor(self.vae.config.latents_mean)
-            .view(1, self.vae.config.z_dim, 1, 1, 1)
-            .to(latents.device, latents.dtype)
-        )
-        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
-            1, self.vae.config.z_dim, 1, 1, 1
-        ).to(latents.device, latents.dtype)
+            latents_mean = (
+                torch.tensor(self.vae.config.latents_mean)
+                .view(1, self.vae.config.z_dim, 1, 1, 1)
+                .to(latents.device, latents.dtype)
+            )
+            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
+                1, self.vae.config.z_dim, 1, 1, 1
+            ).to(latents.device, latents.dtype)
 
-        latents = (latents - latents_mean) * latents_std
-        latents = latents.to(device, dtype=dtype)
+            latents = (latents - latents_mean) * latents_std
+            latents = latents.to(device, dtype=dtype)
 
-        latents = latents.squeeze(2)  # remove the frame count dimension
+            latents = latents.squeeze(2)  # remove the frame count dimension
+
+        # If low_vram is enabled or it was originally on CPU, move VAE back to CPU immediately
+        if self.model_config.low_vram or was_on_cpu:
+            self.vae.to("cpu")
+            torch.cuda.empty_cache()
 
         return latents
