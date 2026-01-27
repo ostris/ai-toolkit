@@ -333,10 +333,25 @@ class ZImageModel(BaseModel):
 
         timestep_model_input = (1000 - timestep) / 1000
 
+        text_embeds = text_embeddings.text_embeds
+        if isinstance(text_embeds, torch.Tensor):
+            if len(text_embeds.shape) == 3:
+                # if it is a single batch tensor, unbind it into a list of tensors
+                text_embeds = list(text_embeds.unbind(dim=0))
+        elif isinstance(text_embeds, list):
+            # check if items are rank 3 (batch, length, dim)
+            if len(text_embeds[0].shape) == 3:
+                # flatten the list of batches into a single list of tensors
+                new_text_embeds = []
+                for t in text_embeds:
+                    if t is not None:
+                        new_text_embeds += list(t.unbind(dim=0))
+                text_embeds = new_text_embeds
+
         model_out_list = self.transformer(
             latent_model_input_list,
             timestep_model_input,
-            text_embeddings.text_embeds,
+            text_embeds,
         )[0]
 
         noise_pred = torch.stack([t.float() for t in model_out_list], dim=0)
@@ -355,6 +370,24 @@ class ZImageModel(BaseModel):
             do_classifier_free_guidance=False,
             device=self.device_torch,
         )
+        # encode_prompt returns list of rank-2 tensors [seq_len, dim]
+        # Pad to same length and stack into rank-3 tensor [batch, seq_len, dim]
+        # for compatibility with concat_prompt_embeds and predict_noise
+        if isinstance(prompt_embeds, list):
+            # Find max sequence length, TODO: Or just use 512?
+            max_seq_len = max(t.shape[0] for t in prompt_embeds)
+            # Pad each tensor to max length
+            padded = []
+            for t in prompt_embeds:
+                if t.shape[0] < max_seq_len:
+                    pad = torch.zeros(
+                        (max_seq_len - t.shape[0], t.shape[1]),
+                        dtype=t.dtype,
+                        device=t.device,
+                    )
+                    t = torch.cat([t, pad], dim=0)
+                padded.append(t)
+            prompt_embeds = torch.stack(padded, dim=0)
         pe = PromptEmbeds([prompt_embeds, None])
         return pe
 
