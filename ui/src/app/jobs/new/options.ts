@@ -598,6 +598,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].sample.sample_steps': [30, 25],
     },
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram', 'model.layer_offloading'],
