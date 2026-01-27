@@ -137,38 +137,42 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
             <div key={gpuKey} className="mb-6">
               <div
                 className={classNames(
-                  'text-md flex px-4 py-1 rounded-t-lg',
+                  'text-md flex px-2 md:px-4 py-1 rounded-t-lg items-center gap-2',
                   { 'bg-green-900': queue?.is_running },
                   { 'bg-red-900': !queue?.is_running },
                 )}
               >
-                <div className="flex items-center space-x-2 flex-1 py-2">
-                  <h2 className="font-semibold text-gray-100">{jobsDict[gpuKey].name}</h2>
-                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {queue?.gpu_ids}</span>
+                <div className="flex items-center gap-2 flex-1 py-2 min-w-0">
+                  <h2 className="font-semibold text-gray-100 truncate text-sm md:text-base">{jobsDict[gpuKey].name}</h2>
+                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 whitespace-nowrap shrink-0"># {queue?.gpu_ids}</span>
                 </div>
-                <div className="text-sm text-gray-300 italic flex items-center">
+                <div className="text-sm text-gray-300 flex items-center gap-2 shrink-0">
                   {queue?.is_running ? (
                     <>
-                      <span className="text-green-400 mr-2">Queue Running</span>
+                      {/* Mobile: dot indicator, Desktop: text */}
+                      <span className="hidden md:inline text-green-400 italic">Queue Running</span>
+                      <span className="md:hidden w-2 h-2 rounded-full bg-green-400" title="Queue Running"></span>
                       <button
                         onClick={async () => {
                           await stopQueue(queue.gpu_ids as string);
                           refresh();
                         }}
-                        className="ml-4 text-xs bg-red-900 hover:bg-red-800 px-2 py-1 rounded"
+                        className="text-xs bg-red-900 hover:bg-red-800 px-2 py-1 rounded"
                       >
                         STOP
                       </button>
                     </>
                   ) : (
                     <>
-                      <span className="text-red-400 mr-2">Queue Stopped</span>
+                      {/* Mobile: dot indicator, Desktop: text */}
+                      <span className="hidden md:inline text-red-400 italic">Queue Stopped</span>
+                      <span className="md:hidden w-2 h-2 rounded-full bg-red-400" title="Queue Stopped"></span>
                       <button
                         onClick={async () => {
                           await startQueue(gpuKey);
                           refresh();
                         }}
-                        className="ml-4 text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded"
+                        className="text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded"
                       >
                         START
                       </button>

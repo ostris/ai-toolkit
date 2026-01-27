@@ -30,7 +30,7 @@ export default function JobActionBar({
   if (!afterDelete) afterDelete = onRefresh;
 
   return (
-    <div className={`${className}`}>
+    <div className={`flex items-center ${className}`}>
       {canStart && (
         <Button
           onClick={async () => {
@@ -117,7 +117,7 @@ export default function JobActionBar({
       >
         <Trash2 />
       </Button>
-      <div className="border-r border-1 border-gray-700 ml-2 inline"></div>
+      <div className="border-r border-gray-700 ml-2 h-5"></div>
       <Menu>
         <MenuButton className={'ml-2'}>
           <Cog />
