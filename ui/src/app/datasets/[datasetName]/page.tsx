@@ -9,12 +9,26 @@ import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
+import RenamingSection from '@/components/RenamingSection';
+import CaptioningSection from '@/components/CaptioningSection';
+
+
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
   const usableParams = use(params as any) as { datasetName: string };
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+
+
+  // Collapsible sections state
+  const [isRenamingExpanded, setIsRenamingExpanded] = useState(false);
+  const [isCaptioningExpanded, setIsCaptioningExpanded] = useState(false);
+
+
+
+
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
@@ -29,11 +43,13 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         setImgList(data.images);
         setStatus('success');
       })
-      .catch(error => {
+      .catch((error: any) => {
         console.error('Error fetching images:', error);
         setStatus('error');
       });
   };
+
+
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
@@ -114,6 +130,28 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       </TopBar>
       <MainContent>
         {PageInfoContent}
+
+        {/* Renaming Section - Only visible when files are successfully uploaded */}
+        {status === 'success' && imgList.length > 0 && (
+          <RenamingSection
+            datasetName={datasetName}
+            isExpanded={isRenamingExpanded}
+            onToggleExpanded={() => setIsRenamingExpanded(!isRenamingExpanded)}
+            onRenameComplete={() => refreshImageList(datasetName)}
+          />
+        )}
+
+        {/* Auto-Captioning Section - Only visible when files are successfully uploaded */}
+        {status === 'success' && imgList.length > 0 && (
+          <CaptioningSection
+            datasetName={datasetName}
+            imgList={imgList}
+            isExpanded={isCaptioningExpanded}
+            onToggleExpanded={() => setIsCaptioningExpanded(!isCaptioningExpanded)}
+            onCaptionComplete={() => refreshImageList(datasetName)}
+          />
+        )}
+
         {status === 'success' && imgList.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {imgList.map(img => (
