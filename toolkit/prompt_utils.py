@@ -1,5 +1,7 @@
 import os
 from typing import Optional, TYPE_CHECKING, List, Union, Tuple
+import re
+from pathlib import Path
 
 import torch
 from safetensors.torch import load_file, save_file
@@ -135,8 +137,18 @@ class PromptEmbeds:
                     state_dict[f"attention_mask_{i}"] = attn.cpu()
             else:
                 state_dict["attention_mask"] = pe.attention_mask.cpu()
+        from toolkit.cache_utils import atomic_write
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        save_file(state_dict, path)
+        # write via atomic_write to avoid partial/corrupt files
+        def _writer(p):
+            # save_file expects a path-like or str
+            save_file(state_dict, str(p))
+        atomic_write(Path(path), _writer)
+        # record source path for diagnostics
+        try:
+            self._source_path = path
+        except Exception:
+            pass
     
     @classmethod
     def load(cls, path: str) -> 'PromptEmbeds':
@@ -146,6 +158,8 @@ class PromptEmbeds:
         :return: An instance of PromptEmbeds.
         """
         state_dict = load_file(path, device='cpu')
+        # record source path for diagnostics on the created object (set below)
+        source_path = path
         text_embeds = []
         pooled_embeds = None
         attention_mask = []
@@ -173,6 +187,10 @@ class PromptEmbeds:
                 pe.attention_mask = attention_mask[0]
             else:
                 pe.attention_mask = attention_mask
+        try:
+            pe._source_path = source_path
+        except Exception:
+            pass
         return pe
 
 
@@ -341,6 +359,9 @@ def concat_prompt_pairs(prompt_pairs: list[EncodedPromptPair]):
     )
 
 
+
+
+
 def split_prompt_embeds(concatenated: PromptEmbeds, num_parts=None) -> List[PromptEmbeds]:
     if num_parts is None:
         # use batch size
@@ -482,6 +503,149 @@ def get_permutations(s, max_permutations=8):
 
     # Convert the tuples back to comma separated strings
     return [', '.join(permutation) for permutation in permutations]
+
+
+def parse_csv_list(value: Optional[str]) -> List[str]:
+    """Parse a comma-separated string into a list preserving explicit empty entries.
+
+    Examples:
+        "a, b, c" -> ["a", "b", "c"]
+        "a, , c" -> ["a", "", "c"]
+        "" -> []
+        None -> []
+    """
+    if value is None:
+        return []
+    # split on comma, preserve empty strings if present
+    parts = [p.strip() for p in value.split(',')]
+    # If the input is empty string, return [] (consistent with previous behavior)
+    if len(parts) == 1 and parts[0] == "":
+        return []
+    return parts
+
+
+def normalize_caption_separators(text: str) -> str:
+    """Normalize separators and spacing in caption text.
+
+    Ensures there is a single space after commas and collapses repeated whitespace.
+    This helps avoid tokenizer merging of adjacent tokens in many cases.
+    """
+    if text is None:
+        return ""
+    # Ensure space after commas
+    text = re.sub(r",\s*", ", ", text)
+    # Collapse multiple spaces
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def build_dop_replacement_pairs(
+    triggers_csv: str,
+    classes_csv: str,
+    case_insensitive: bool = False
+) -> List[Tuple[str, str]]:
+    """Build trigger→class replacement pairs from CSV strings.
+
+    Args:
+        triggers_csv: Comma-separated triggers, e.g., "Jinx, Zapper"
+        classes_csv: Comma-separated classes, e.g., "Woman, Gun"
+        case_insensitive: Whether replacements should be case-insensitive
+
+    Returns:
+        pairs: [(trigger, class), ...] sorted by trigger length DESC
+
+    Examples:
+        >>> build_dop_replacement_pairs("Jinx, Zapper", "Woman, Gun")
+        [("Zapper", "Gun"), ("Jinx", "Woman")]
+
+        >>> build_dop_replacement_pairs("Jinx, Zapper, Vest", "Woman, Gun")
+        [("Zapper", "Gun"), ("Jinx", "Woman"), ("Vest", "")]
+    """
+    triggers = parse_csv_list(triggers_csv)
+    classes = parse_csv_list(classes_csv)
+
+    # Build pairs: if more triggers than classes, missing classes become empty string
+    pairs = [(t, classes[i] if i < len(classes) else '') for i, t in enumerate(triggers)]
+
+    # Sort by trigger length DESC to avoid substring collision
+    # Example: "Jinx Master" should be replaced before "Jinx"
+    pairs.sort(key=lambda x: len(x[0]) if x[0] else 0, reverse=True)
+
+    return pairs
+
+
+def apply_dop_replacements(
+    caption: str,
+    replacement_pairs: List[Tuple[str, str]],
+    case_insensitive: bool = False,
+    debug: bool = False
+) -> str:
+    """Apply trigger→class replacements to caption text.
+
+    Follows MultiTrigger.md algorithm:
+    1. Normalize caption (spaces, punctuation)
+    2. For each (trigger, cls) pair:
+       - Use word-boundary regex: \\btrigger\\b (respects punctuation)
+       - Fall back to simple string.replace() if regex fails
+    3. Return modified caption
+
+    Args:
+        caption: Original caption text
+        replacement_pairs: [(trigger, class), ...] sorted by length DESC
+        case_insensitive: Match triggers case-insensitively
+        debug: Log replacement details
+
+    Returns:
+        Transformed caption with triggers replaced by classes
+
+    Examples:
+        >>> pairs = [("Zapper", "Gun"), ("Jinx", "Woman")]
+        >>> apply_dop_replacements("Jinx with a Zapper", pairs)
+        "Woman with a Gun"
+    """
+    original = caption
+    out = normalize_caption_separators(caption)
+
+    if not replacement_pairs:
+        return out
+
+    for trigger, cls in replacement_pairs:
+        if not trigger:  # Skip empty triggers
+            continue
+
+        try:
+            # Word-boundary match to avoid replacing substrings inside words
+            # Use \b for proper word boundaries (works with punctuation)
+            escaped_trigger = re.escape(trigger)
+            if case_insensitive:
+                pattern = rf"\b{escaped_trigger}\b"
+                out = re.sub(pattern, cls, out, flags=re.IGNORECASE)
+            else:
+                pattern = rf"\b{escaped_trigger}\b"
+                out = re.sub(pattern, cls, out)
+        except Exception:
+            # Fallback to simple replace if regex fails
+            if case_insensitive:
+                # Manual case-insensitive replace (less efficient but works)
+                out = re.sub(re.escape(trigger), cls, out, flags=re.IGNORECASE)
+            else:
+                out = out.replace(trigger, cls)
+
+    # Clean up comma artifacts from empty replacements
+    # Handle cases like "a, , b" → "a, b" and "a,, b" → "a, b"
+    out = re.sub(r",\s*,", ",", out)  # ", ," or ",," → ","
+    out = re.sub(r",\s*,", ",", out)  # Run twice to handle "a, , , b" cases
+
+    # Clean up leading/trailing commas and whitespace
+    out = out.strip(", \t\n")
+
+    # Collapse repeated whitespace after all cleanup
+    out = re.sub(r"\s+", " ", out).strip()
+
+    if debug:
+        print(f"[DOP DEBUG] '{original}' → '{out}'")
+
+    return out
 
 
 def get_slider_target_permutations(target: 'SliderTargetConfig', max_permutations=8) -> List['SliderTargetConfig']:
@@ -723,11 +887,15 @@ def inject_trigger_into_prompt(prompt, trigger=None, to_replace_list=None, add_i
         # replace it
         output_prompt = output_prompt.replace(to_replace, replace_with)
 
-    if trigger.strip() != "":
+    # If trigger contains multiple CSV entries, do not auto-prepend it for backwards compatibility
+    parsed_triggers = parse_csv_list(trigger)
+    allow_prepend = add_if_not_present and len(parsed_triggers) == 1 and parsed_triggers[0].strip() != ''
+
+    if trigger.strip() != "" and allow_prepend:
         # see how many times replace_with is in the prompt
         num_instances = output_prompt.count(replace_with)
 
-        if num_instances == 0 and add_if_not_present:
+        if num_instances == 0:
             # add it to the beginning of the prompt
             output_prompt = replace_with + " " + output_prompt
 

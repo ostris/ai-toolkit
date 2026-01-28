@@ -22,6 +22,8 @@ def calculate_shift(
 
 class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
     def __init__(self, *args, **kwargs):
+        # Extract custom params not supported by parent class
+        self._min_shift = kwargs.pop("min_shift", None)
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
         self.timestep_type = "linear"
@@ -156,6 +158,9 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
                     self.config.get("base_shift", 0.5),
                     self.config.get("max_shift", 1.16),
                 )
+                # Clamp mu to min_shift floor if configured
+                if self._min_shift is not None:
+                    mu = max(mu, self._min_shift)
                 sigmas = self.time_shift(mu, 1.0, sigmas)
             else:
                 sigmas = self.shift * sigmas / (1 + (self.shift - 1) * sigmas)

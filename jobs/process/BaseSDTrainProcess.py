@@ -1174,8 +1174,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         timestep_type = 'shift'
                     
                     patch_size = 1
-                    if self.sd.is_flux or 'flex' in self.sd.arch:
-                        # flux is a patch size of 1, but latents are divided by 2, so we need to double it
+                    if self.sd.is_flux or 'flex' in self.sd.arch or self.sd.arch == 'zimage':
+                        # flux/zimage is a patch size of 1, but latents are divided by 2, so we need to double it
                         patch_size = 2
                     elif hasattr(self.sd.unet.config, 'patch_size'):
                         patch_size = self.sd.unet.config.patch_size

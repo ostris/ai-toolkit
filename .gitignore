@@ -182,3 +182,5 @@ cython_debug/
 aitk_db.db
 /notes.md
 /data
+masks/*
+MULTITRIGGER_DOP_REFACTOR_PLAN.md

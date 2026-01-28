@@ -413,6 +413,21 @@ class BaseModel:
             except:
                 pass
 
+        # Enable CacheDiT acceleration for supported DiT pipelines
+        cache_dit_enabled = False
+        try:
+            import cache_dit
+            import fnmatch
+
+            pipeline_class_name = pipeline.__class__.__name__
+            _, supported_patterns = cache_dit.supported_pipelines()
+
+            if any(fnmatch.fnmatch(pipeline_class_name, p) for p in supported_patterns):
+                cache_dit.enable_cache(pipeline)
+                cache_dit_enabled = True
+        except ImportError:
+            pass
+
         start_multiplier = 1.0
         if network is not None:
             start_multiplier = network.multiplier
@@ -674,6 +689,15 @@ class BaseModel:
             torch.cuda.set_rng_state(cuda_rng_state)
 
         self.restore_device_state()
+
+        # Disable CacheDiT to remove any forward hooks before training resumes
+        if cache_dit_enabled:
+            try:
+                import cache_dit
+                cache_dit.disable_cache(pipeline)
+            except Exception:
+                pass
+
         if network is not None:
             network.train()
             network.multiplier = start_multiplier
