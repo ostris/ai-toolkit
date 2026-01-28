@@ -60,6 +60,9 @@ class FileItemDTO(
         self.encode_control_in_text_embeddings = kwargs.get(
             "encode_control_in_text_embeddings", False
         )
+        self.te_padding_side = kwargs.get("te_padding_side", "right")
+        self.latent_space_version = kwargs.get("latent_space_version", "sd1")
+        self.text_embedding_space_version = kwargs.get("text_embedding_space_version", "sd1")
         if dataset_root is not None:
             # remove dataset root from path
             file_key = self.path.replace(dataset_root, "")
@@ -399,7 +402,9 @@ class DataLoaderBatchDTO:
                         if not isinstance(y.text_embeds, list):
                             y.text_embeds = [y.text_embeds]
                     prompt_embeds_list.append(y)
-                self.prompt_embeds = concat_prompt_embeds(prompt_embeds_list)
+                padding_side = self.file_items[0].te_padding_side
+                
+                self.prompt_embeds = concat_prompt_embeds(prompt_embeds_list, padding_side=padding_side)
 
             if any([x.audio_tensor is not None for x in self.file_items]):
                 # find one to use as a base
