@@ -306,9 +306,33 @@ class ZImageModel(BaseModel):
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
+
+        # ZImagePipeline expects prompt_embeds and negative_prompt_embeds to be
+        # List[torch.FloatTensor] where each element is [seq_len, dim].
+        # The pipeline concatenates these lists for CFG (not element-wise add).
+        cond_embeds = conditional_embeds.text_embeds
+        uncond_embeds = unconditional_embeds.text_embeds
+
+        # Convert rank-3 tensors back to list of rank-2 tensors
+        def to_embed_list(embeds):
+            if embeds is None:
+                return []
+            if isinstance(embeds, list):
+                return embeds
+            if len(embeds.shape) == 3:
+                # [batch, seq_len, dim] -> list of [seq_len, dim]
+                return list(embeds.unbind(dim=0))
+            elif len(embeds.shape) == 2:
+                # Already [seq_len, dim], wrap in list
+                return [embeds]
+            return embeds
+
+        cond_embeds_list = to_embed_list(cond_embeds)
+        uncond_embeds_list = to_embed_list(uncond_embeds)
+
         img = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds,
-            negative_prompt_embeds=unconditional_embeds.text_embeds,
+            prompt_embeds=cond_embeds_list,
+            negative_prompt_embeds=uncond_embeds_list,
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
