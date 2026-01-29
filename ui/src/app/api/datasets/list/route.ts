@@ -11,10 +11,22 @@ export async function GET() {
       fs.mkdirSync(datasetsPath);
     }
 
-    // find all the folders in the datasets folder
+    // find all the folders in the datasets folder (including symlinks)
     let folders = fs
       .readdirSync(datasetsPath, { withFileTypes: true })
-      .filter(dirent => dirent.isDirectory())
+      .filter(dirent => {
+        // Check if it's a directory or a symlink pointing to a directory
+        if (dirent.isDirectory()) return true;
+        if (dirent.isSymbolicLink()) {
+          const fullPath = `${datasetsPath}/${dirent.name}`;
+          try {
+            return fs.statSync(fullPath).isDirectory();
+          } catch {
+            return false;
+          }
+        }
+        return false;
+      })
       .filter(dirent => !dirent.name.startsWith('.'))
       .map(dirent => dirent.name);
 
