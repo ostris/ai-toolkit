@@ -750,6 +750,8 @@ class ModelConfig:
                 self.is_ssd = True
             else:
                 pass
+        self._te_path_cache = None
+
         if self.arch is None:
             if kwargs.get('is_v2', False):
                 self.arch = 'sd2'
@@ -774,6 +776,29 @@ class ModelConfig:
             else:
                 self.arch = 'sd1'
         
+
+
+    def resolve_te_path(self, default=None):
+        if self._te_path_cache is not None:
+            return self._te_path_cache
+
+        if self.te_name_or_path is not None and os.path.isdir(self.te_name_or_path):
+            self._te_path_cache = self.te_name_or_path
+            return self._te_path_cache
+
+        for base_path in [self.name_or_path, self.extras_name_or_path]:
+            if base_path is not None:
+                te_dir = os.path.join(base_path, "text_encoder")
+                if os.path.isdir(te_dir):
+                    self._te_path_cache = te_dir
+                    return self._te_path_cache
+
+        if self.te_name_or_path is not None:
+            self._te_path_cache = self.te_name_or_path
+            return self._te_path_cache
+
+        self._te_path_cache = default
+        return self._te_path_cache
 
 
 class EMAConfig:
