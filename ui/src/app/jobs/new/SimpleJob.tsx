@@ -414,6 +414,15 @@ export default function SimpleJob({
                 value={jobConfig.config.process[0].slider?.negative_prompt ?? ''}
                 onChange={value => setJobConfig(value, 'config.process[0].slider.negative_prompt')}
                 placeholder="eg. person who is sad"
+				      />
+			        <NumberInput
+                label="Prompt Guidance Strength"
+                className=""
+				        value={jobConfig.config.process[0].slider?.guidance_strength}
+                onChange={value => setJobConfig(value, 'config.process[0].slider.guidance_strength')}
+                placeholder="eg. 3"
+                min={0.01}
+                required
               />
               <TextInput
                 label="Anchor Class"
@@ -422,6 +431,15 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].slider.anchor_class')}
                 placeholder=""
               />
+			        <NumberInput
+                label="Anchor Guidance Strength"
+                className=""
+				        value={jobConfig.config.process[0].slider?.anchor_strength}
+                onChange={value => setJobConfig(value, 'config.process[0].slider.anchor_strength')}
+                placeholder="eg. 1"
+                min={0.01}
+                required
+				      />
             </Card>
           )}
           <Card title="Save">
