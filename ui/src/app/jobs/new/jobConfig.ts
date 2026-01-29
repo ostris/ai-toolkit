@@ -37,7 +37,7 @@ export const defaultJobConfig: JobConfig = {
         type: 'diffusion_trainer',
         training_folder: 'output',
         sqlite_db_path: './aitk_db.db',
-        device: 'cuda',
+        device: typeof window !== 'undefined' && navigator.platform.includes('Mac') ? 'mps' : 'cuda',
         trigger_word: null,
         performance_log_every: 10,
         network: {
@@ -69,7 +69,7 @@ export const defaultJobConfig: JobConfig = {
           train_text_encoder: false,
           gradient_checkpointing: true,
           noise_scheduler: 'flowmatch',
-          optimizer: 'adamw8bit',
+          optimizer: typeof window !== 'undefined' && navigator.platform.includes('Mac') ? 'adamw' : 'adamw8bit',
           timestep_type: 'sigmoid',
           content_or_style: 'balanced',
           optimizer_params: {

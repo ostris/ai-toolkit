@@ -10,30 +10,41 @@ export async function GET() {
     // Get platform
     const platform = os.platform();
     const isWindows = platform === 'win32';
+    const isMac = platform === 'darwin';
 
-    // Check if nvidia-smi is available
-    const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
+    let gpus: any[] = [];
+    let hasNvidiaSmi = false;
+    let hasMps = false;
 
-    if (!hasNvidiaSmi) {
-      return NextResponse.json({
-        hasNvidiaSmi: false,
-        gpus: [],
-        error: 'nvidia-smi not found or not accessible',
-      });
+    // Check for NVIDIA GPUs
+    hasNvidiaSmi = await checkNvidiaSmi(isWindows);
+    if (hasNvidiaSmi) {
+      const nvidiaGpus = await getGpuStats(isWindows);
+      gpus = gpus.concat(nvidiaGpus.map(gpu => ({ ...gpu, type: 'cuda' })));
     }
 
-    // Get GPU stats
-    const gpuStats = await getGpuStats(isWindows);
+    // Check for Apple Silicon MPS
+    if (isMac) {
+      const mpsInfo = await getMpsInfo();
+      if (mpsInfo) {
+        hasMps = true;
+        gpus.push(mpsInfo);
+      }
+    }
 
     return NextResponse.json({
-      hasNvidiaSmi: true,
-      gpus: gpuStats,
+      hasNvidiaSmi,
+      hasMps,
+      platform,
+      gpus,
     });
   } catch (error) {
-    console.error('Error fetching NVIDIA GPU stats:', error);
+    console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
       {
         hasNvidiaSmi: false,
+        hasMps: false,
+        platform: os.platform(),
         gpus: [],
         error: `Failed to fetch GPU stats: ${error instanceof Error ? error.message : String(error)}`,
       },
@@ -120,4 +131,88 @@ async function getGpuStats(isWindows: boolean) {
     });
 
   return gpus;
+}
+
+async function getMpsInfo() {
+  try {
+    // Check if we're on Apple Silicon by checking for Apple Silicon chip
+    const { stdout } = await execAsync('sysctl -n machdep.cpu.brand_string');
+    const isAppleSilicon = stdout.includes('Apple M');
+
+    if (!isAppleSilicon) {
+      return null;
+    }
+
+    // Get system info for Apple Silicon
+    const { stdout: memInfo } = await execAsync('sysctl -n hw.memsize');
+    const totalMemoryBytes = parseInt(memInfo.trim());
+    const totalMemoryGB = Math.round(totalMemoryBytes / (1024 * 1024 * 1024));
+
+    // Get GPU cores info
+    try {
+      const { stdout: gpuCores } = await execAsync('system_profiler SPDisplaysDataType | grep "Total Number of Cores"');
+      const gpuCoreCount = parseInt(gpuCores.split(':')[1].trim());
+
+      return {
+        index: 0,
+        name: 'Apple Silicon GPU',
+        type: 'mps',
+        model: stdout.trim(),
+        cores: gpuCoreCount,
+        memory: {
+          total: totalMemoryGB * 1024, // Convert GB to MB for consistency with nvidia-smi
+          used: 'N/A',
+          free: 'N/A',
+        },
+        utilization: {
+          gpu: 'N/A',
+          memory: 'N/A',
+        },
+        temperature: 'N/A',
+        power: {
+          draw: 'N/A',
+          limit: 'N/A',
+        },
+        clocks: {
+          graphics: 'N/A',
+          memory: 'N/A',
+        },
+        fan: {
+          speed: 'N/A',
+        },
+      };
+    } catch (gpuError) {
+      // Fallback if we can't get GPU core count
+      return {
+        index: 0,
+        name: 'Apple Silicon GPU',
+        type: 'mps',
+        model: stdout.trim(),
+        memory: {
+          total: totalMemoryGB * 1024,
+          used: 'N/A',
+          free: 'N/A',
+        },
+        utilization: {
+          gpu: 'N/A',
+          memory: 'N/A',
+        },
+        temperature: 'N/A',
+        power: {
+          draw: 'N/A',
+          limit: 'N/A',
+        },
+        clocks: {
+          graphics: 'N/A',
+          memory: 'N/A',
+        },
+        fan: {
+          speed: 'N/A',
+        },
+      };
+    }
+  } catch (error) {
+    console.error('Error detecting MPS:', error);
+    return null;
+  }
 }
