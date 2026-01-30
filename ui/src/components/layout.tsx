@@ -1,4 +1,5 @@
 import classNames from 'classnames';
+import { FaBars } from "react-icons/fa";
 
 interface Props {
   className?: string;
@@ -13,6 +14,11 @@ export const TopBar: React.FC<Props> = ({ children, className }) => {
         className,
       )}
     >
+      <label className="mr-2 cursor-pointer sm:hidden">
+        <input id="sidebar-toggle" type="checkbox" hidden />
+        <FaBars />
+      </label>
+
       {children ? children : null}
     </div>
   );
