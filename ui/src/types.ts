@@ -142,6 +142,7 @@ export interface TrainConfig {
   diff_output_preservation_class: string;
   blank_prompt_preservation?: boolean;
   blank_prompt_preservation_multiplier?: number;
+  blank_prompt_probability?: number;
   switch_boundary_every: number;
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
   do_differential_guidance?: boolean;

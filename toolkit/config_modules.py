@@ -462,6 +462,7 @@ class TrainConfig:
         # blank prompt preservation will preserve the model's knowledge of a blank prompt
         self.blank_prompt_preservation = kwargs.get('blank_prompt_preservation', False)
         self.blank_prompt_preservation_multiplier = kwargs.get('blank_prompt_preservation_multiplier', 1.0)
+        self.blank_prompt_probability = kwargs.get('blank_prompt_probability', 1.0)
         
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
