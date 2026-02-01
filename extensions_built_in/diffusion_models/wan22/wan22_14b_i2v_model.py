@@ -15,7 +15,7 @@ from .wan22_14b_model import Wan2214bModel
 class Wan2214bI2VModel(Wan2214bModel):
     arch = "wan22_14b_i2v"
     
-
+    
     def generate_single_image(
         self,
         pipeline: Wan22Pipeline,
