@@ -237,14 +237,17 @@ class ZImageModel(BaseModel):
         
         num_layers = max(layer_ids) + 1 if layer_ids else 32  # default to 32 if not found
         
-        # Infer cross-attention dim from x_embedder
+        # Infer in_channels from x_embedder weight shape
+        # x_embedder has shape [hidden_size, in_channels * patch_size * patch_size]
+        # patch_size is 2, so in_channels = x_embedder.shape[1] / 4
         x_keys = [k for k in state_dict if "all_x_embedder" in k and k.endswith(".weight")]
         if not x_keys:
-            # Fallback: try to infer from other keys or use default
-            cross_attention_dim = 2048  # default for Z-Image-Turbo
+            # Fallback: use default
+            in_channels = 4  # default for standard VAE
         else:
             x_w = state_dict[x_keys[0]]
-            cross_attention_dim = x_w.shape[1]
+            patch_size = 2  # ZImage uses patch_size=2
+            in_channels = x_w.shape[1] // (patch_size * patch_size)
         
         # Create config dict or config object depending on availability
         config_dict = {
@@ -252,12 +255,14 @@ class ZImageModel(BaseModel):
             "num_attention_heads": num_heads,
             "attention_head_dim": head_dim,
             "hidden_size": hidden_size,
-            "in_channels": 4,
-            "cross_attention_dim": cross_attention_dim,
+            "in_channels": in_channels,
             "norm_type": "ada_norm_single",
             "norm_eps": 1e-05,
             "use_bias": True,
         }
+        
+        # Note: cross_attention_dim is not typically needed in config as it's inferred 
+        # from text encoder, but if needed it can be added here
         
         if ZImageTransformer2DModelConfig is not None:
             config = ZImageTransformer2DModelConfig(**config_dict)
