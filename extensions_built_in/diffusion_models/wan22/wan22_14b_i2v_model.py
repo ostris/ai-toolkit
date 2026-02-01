@@ -15,18 +15,7 @@ from .wan22_14b_model import Wan2214bModel
 class Wan2214bI2VModel(Wan2214bModel):
     arch = "wan22_14b_i2v"
     
-    def get_model_has_grad(self):
-        # Check if the transformers have gradients enabled
-        # We need to check both transformers since this is a dual model
-        transformer_1_has_grad = self.model.transformer_1.proj_out.weight.requires_grad
-        transformer_2_has_grad = self.model.transformer_2.proj_out.weight.requires_grad
-        return transformer_1_has_grad or transformer_2_has_grad
 
-    def get_te_has_grad(self):
-        # Check if the text encoder has gradients enabled
-        return self.text_encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
-    
-    
     def generate_single_image(
         self,
         pipeline: Wan22Pipeline,
