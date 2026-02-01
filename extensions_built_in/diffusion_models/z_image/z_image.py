@@ -372,11 +372,7 @@ class ZImageModel(BaseModel):
 
         flush()
 
-        # Load text encoder and tokenizer from base_model_path
-        # Using subfolder parameter ensures ONLY the text_encoder and tokenizer subfolders
-        # are downloaded, NOT the transformer folder (which is loaded from safetensors file)
         self.print_and_status_update("Text Encoder")
-        self.print_and_status_update(f"Downloading text encoder and tokenizer from: {base_model_path}")
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype
         )
@@ -403,11 +399,7 @@ class ZImageModel(BaseModel):
             freeze(text_encoder)
             flush()
 
-        # Load VAE from base_model_path
-        # Using subfolder parameter ensures ONLY the vae subfolder is downloaded,
-        # NOT the transformer folder (which is loaded from safetensors file)
         self.print_and_status_update("Loading VAE")
-        self.print_and_status_update(f"Downloading VAE from: {base_model_path}")
         vae = AutoencoderKL.from_pretrained(
             base_model_path, subfolder="vae", torch_dtype=dtype
         )
