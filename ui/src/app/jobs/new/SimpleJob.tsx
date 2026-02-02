@@ -566,7 +566,7 @@ export default function SimpleJob({
                     label="EMA Decay"
                     className="pt-2"
                     value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
                     placeholder="eg. 0.99"
                     min={0}
                   />
