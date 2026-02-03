@@ -36,7 +36,7 @@ export async function POST(request: Request) {
  * @returns Array of absolute paths to image files
  */
 function findImagesRecursively(dir: string): string[] {
-  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav'];
   let results: string[] = [];
 
   const items = fs.readdirSync(dir);
