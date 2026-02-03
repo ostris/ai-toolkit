@@ -37,11 +37,12 @@ class Flux2KleinModel(Flux2Model):
     def load_te(self):
         if self.flux2_klein_te_path is None:
             raise ValueError("flux2_klein_te_path must be set for Flux2KleinModel")
+        te_path = self.model_config.te_name_or_path or self.flux2_klein_te_path
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Qwen3")
 
         text_encoder: Qwen3ForCausalLM = Qwen3ForCausalLM.from_pretrained(
-            self.flux2_klein_te_path,
+            te_path,
             torch_dtype=dtype,
         )
         text_encoder.to(self.device_torch, dtype=dtype)
@@ -64,7 +65,7 @@ class Flux2KleinModel(Flux2Model):
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
-        tokenizer = Qwen2Tokenizer.from_pretrained(self.flux2_klein_te_path)
+        tokenizer = Qwen2Tokenizer.from_pretrained(te_path)
         return text_encoder, tokenizer
 
 
