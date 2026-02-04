@@ -192,6 +192,18 @@ class AIToolkitOxenLogger:
         # either from the user hitting "stop" or running out of credits.
         return self.want_stop_event.is_set()
 
+    def get_checkpoint_path(self, step: int) -> str:
+        """
+        Get the checkpoint path for a given step.
+
+        Args:
+            step: Training step number
+
+        Returns:
+            Checkpoint path in format: {experiment_name}/checkpoints/step_{N}
+        """
+        return f"{self.experiment.name}/checkpoints/step_{step}"
+
     def save_checkpoint(self, checkpoint_files, step: int):
         """
         Save checkpoint files to Oxen workspace.
@@ -213,8 +225,8 @@ class AIToolkitOxenLogger:
         try:
             print(f"Main process: Saving {len(checkpoint_files)} checkpoint file(s) at step {step}")
 
-            # Create a step-specific directory in checkpoints
-            checkpoint_dst = f"checkpoints/step_{str(step).zfill(9)}"
+            # Create a step-specific directory in checkpoints/{finetune_name}/step_{N}
+            checkpoint_dst = self.get_checkpoint_path(step)
 
             for checkpoint_path in checkpoint_files:
                 if os.path.isfile(checkpoint_path):
@@ -235,12 +247,13 @@ class AIToolkitOxenLogger:
         except Exception as e:
             print(f"Main process: Error saving checkpoint to Oxen: {e}")
 
-    def add_samples(self, sample_dir: str):
+    def add_samples(self, sample_dir: str, step: int):
         """
-        Add sample images to Oxen workspace in the "samples" directory.
-        
+        Add sample images to Oxen workspace in the checkpoint's samples directory.
+
         Args:
             sample_dir: Directory containing sample images
+            step: Training step number for organizing samples per checkpoint
         """
         if not self.enabled or not self.is_main_process or self.workspace is None:
             print(f"Main process: Skipping sample images")
@@ -250,21 +263,23 @@ class AIToolkitOxenLogger:
             if not os.path.exists(sample_dir):
                 print(f"Main process: Sample directory does not exist: {sample_dir}")
                 return
-                
+
             print(f"Main process: Adding sample images to Oxen workspace from: {sample_dir}")
-            
-            # Add all sample images to the "samples" directory in workspace
+
+            # Add all sample images to checkpoints/{finetune_name}/step_{N}/samples/
+            checkpoint_path = self.get_checkpoint_path(step)
+            dst_path = f"{checkpoint_path}/samples"
+
             for root, dirs, files in os.walk(sample_dir):
                 for file in files:
                     print(f"Main process: Considering sample: {file}")
                     if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.mp4')):
                         file_path = os.path.join(root, file)
-                        dst_path = os.path.join(self.experiment.name, "samples")
                         print(f"Main process: Adding sample image: {file_path} -> {dst_path}")
                         self.workspace.add(file_path, dst=dst_path)
-            
+
             print(f"Main process: Sample images added to Oxen workspace successfully")
-            
+
         except Exception as e:
             print(f"Main process: Error adding sample images to Oxen: {e}")
 
