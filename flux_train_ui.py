@@ -146,6 +146,7 @@ def start_training(
     steps,
     lr,
     rank,
+    optimizer,
     model_to_train,
     low_vram,
     dataset_folder,
@@ -181,6 +182,7 @@ def start_training(
     config["config"]["process"][0]["train"]["skip_first_sample"] = True
     config["config"]["process"][0]["train"]["steps"] = int(steps)
     config["config"]["process"][0]["train"]["lr"] = float(lr)
+    config["config"]["process"][0]["train"]["optimizer"] = optimizer
     config["config"]["process"][0]["network"]["linear"] = int(rank)
     config["config"]["process"][0]["network"]["linear_alpha"] = int(rank)
     config["config"]["process"][0]["datasets"][0]["folder_path"] = dataset_folder
@@ -266,7 +268,7 @@ train:
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
   noise_scheduler: flowmatch 
-  optimizer: adamw8bit #options: prodigy, dadaptation, adamw, adamw8bit, lion, lion8bit
+  optimizer: adamw8bit #options: prodigy, dadaptation, adamw, adamw8bit, lion, lion8bit, adamwfp8
   train_text_encoder: false #probably doesn't work for flux
   train_unet: true
 '''
@@ -347,6 +349,7 @@ with gr.Blocks(theme=theme, css=css) as demo:
             steps = gr.Number(label="Steps", value=1000, minimum=1, maximum=10000, step=1)
             lr = gr.Number(label="Learning Rate", value=4e-4, minimum=1e-6, maximum=1e-3, step=1e-6)
             rank = gr.Number(label="LoRA Rank", value=16, minimum=4, maximum=128, step=4)
+            optimizer = gr.Dropdown(["adamw8bit", "adamwfp8", "adamw", "prodigy", "lion", "lion8bit"], value="adamw8bit", label="Optimizer")
             model_to_train = gr.Radio(["dev", "schnell"], value="dev", label="Model to train")
             low_vram = gr.Checkbox(label="Low VRAM", value=True)
             with gr.Accordion("Even more advanced options", open=False):
@@ -396,6 +399,7 @@ with gr.Blocks(theme=theme, css=css) as demo:
             steps,
             lr,
             rank,
+            optimizer,
             model_to_train,
             low_vram,
             dataset_folder,

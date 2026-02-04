@@ -491,6 +491,7 @@ export default function SimpleJob({
                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
                   options={[
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
+                    { value: 'adamwfp8', label: 'AdamWFP8' },
                     { value: 'adafactor', label: 'Adafactor' },
                   ]}
                 />
