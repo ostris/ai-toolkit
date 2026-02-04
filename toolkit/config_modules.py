@@ -559,6 +559,9 @@ class TrainConfig:
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
+        # stabilizes empty prompts to be zeroed predictions
+        self.do_blank_stabilization = kwargs.get('do_blank_stabilization', False)
+
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
 

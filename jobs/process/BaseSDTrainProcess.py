@@ -1336,6 +1336,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     latent_multiplier = normalizer
 
                 latents = latents * latent_multiplier
+                
+                if self.train_config.do_blank_stabilization:
+                    # zero out latents with blank prompts
+                    blank_latent = torch.zeros_like(latents)
+                    for i, prompt in enumerate(conditioned_prompts):
+                        if prompt.strip() == '':
+                            latents[i] = blank_latent[i]
+                
                 batch.latents = latents
 
                 # normalize latents to a mean of 0 and an std of 1
