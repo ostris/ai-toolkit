@@ -1,4 +1,5 @@
 import React, { Fragment, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
   isOpen: boolean;
@@ -19,6 +20,8 @@ export const Modal: React.FC<ModalProps> = ({
   size = 'md',
   closeOnOverlayClick = true,
 }) => {
+  const [mouseDownOnOverlay, setMouseDownOnOverlay] = React.useState(false);
+
   // Close on ESC key press
   useEffect(() => {
     const handleEscKey = (e: KeyboardEvent) => {
@@ -39,11 +42,21 @@ export const Modal: React.FC<ModalProps> = ({
     };
   }, [isOpen, onClose]);
 
-  // Handle overlay click
+  // Track mouse down on overlay
+  const handleOverlayMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) {
+      setMouseDownOnOverlay(true);
+    } else {
+      setMouseDownOnOverlay(false);
+    }
+  };
+
+  // Handle overlay click - only close if both mousedown AND mouseup were on overlay
   const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && closeOnOverlayClick) {
+    if (e.target === e.currentTarget && closeOnOverlayClick && mouseDownOnOverlay) {
       onClose();
     }
+    setMouseDownOnOverlay(false);
   };
 
   if (!isOpen) return null;
@@ -56,11 +69,12 @@ export const Modal: React.FC<ModalProps> = ({
     xl: 'max-w-4xl',
   };
 
-  return (
+  const modalContent = (
     <Fragment>
       {/* Modal backdrop */}
       <div
         className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900 bg-opacity-75 backdrop-blur-sm transition-opacity"
+        onMouseDown={handleOverlayMouseDown}
         onClick={handleOverlayClick}
         aria-modal="true"
         role="dialog"
@@ -107,4 +121,7 @@ export const Modal: React.FC<ModalProps> = ({
       </div>
     </Fragment>
   );
+
+  // Render modal at document root level using portal
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : null;
 };

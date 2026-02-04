@@ -66,6 +66,26 @@ export const markJobAsStopped = (jobID: string) => {
   });
 };
 
+export const continueJob = (jobID: string, mode: 'resume' | 'clone', newSteps?: number, newName?: string) => {
+  return new Promise<Job>((resolve, reject) => {
+    apiClient
+      .post(`/api/jobs/${jobID}/continue`, {
+        mode,
+        newSteps,
+        newName,
+      })
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job continued:', data);
+        resolve(data);
+      })
+      .catch(error => {
+        console.error('Error continuing job:', error);
+        reject(error);
+      });
+  });
+};
+
 export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
@@ -82,7 +102,8 @@ export const getAvaliableJobActions = (job: Job) => {
   if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
     canStart = true;
   }
-  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue };
+  const canContinue = job.status === 'completed' && !isStopping;
+  return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue, canContinue };
 };
 
 export const getNumberOfSamples = (job: Job) => {
