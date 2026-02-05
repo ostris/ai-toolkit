@@ -138,6 +138,16 @@ class AdamWFP8(Optimizer):
                     if amsgrad:
                         state['max_exp_avg_sq'] = torch.zeros_like(p, dtype=self._fp8_dtype_v)
                         state['scale_max_v'] = torch.tensor(1.0, device=p.device)
+
+                # if state is loaded from a checkpoint, it will be fp32 and not have scale
+                if state['exp_avg'].dtype != self._fp8_dtype_m:
+                    state['exp_avg'], state['scale_m'] = self._to_fp8_scaled(state['exp_avg'], self._fp8_dtype_m)
+                    state['exp_avg_sq'], state['scale_v'] = self._to_fp8_scaled(state['exp_avg_sq'], self._fp8_dtype_v)
+                    if amsgrad and 'max_exp_avg_sq' in state:
+                        if state['max_exp_avg_sq'].dtype != self._fp8_dtype_v:
+                            state['max_exp_avg_sq'], state['scale_max_v'] = self._to_fp8_scaled(
+                                state['max_exp_avg_sq'], self._fp8_dtype_v
+                            )
                 
                 state['step'] += 1
                 step = state['step']
