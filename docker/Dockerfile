@@ -54,8 +54,9 @@ RUN pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.
 # Fix cache busting by moving CACHEBUST to right before git clone
 ARG CACHEBUST=1234
 ARG GIT_COMMIT=main
+ARG GIT_REPO=ostris/ai-toolkit
 RUN echo "Cache bust: ${CACHEBUST}" && \
-    git clone https://github.com/saluzafa/ai-toolkit.git && \
+    git clone https://github.com/${GIT_REPO}.git && \
     cd ai-toolkit && \
     git checkout ${GIT_COMMIT}
 
