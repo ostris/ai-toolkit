@@ -7,7 +7,21 @@ export async function POST(request: Request) {
   const datasetsPath = await getDatasetsRoot();
   const body = await request.json();
   const { datasetName } = body;
-  const datasetFolder = path.join(datasetsPath, datasetName);
+
+  if (!datasetName) {
+    return NextResponse.json({ error: 'Dataset name is required' }, { status: 400 });
+  }
+
+  // Security check: normalize the path and validate it
+  const normalizedPath = path.normalize(datasetName).replace(/^(\.\.(\/|\\|$))+/, '');
+  const datasetFolder = path.join(datasetsPath, normalizedPath);
+
+  // Ensure paths are within datasetsPath (to prevent path traversal attacks)
+  const resolvedPath = path.resolve(datasetFolder);
+  const resolvedBase = path.resolve(datasetsPath);
+  if (!resolvedPath.startsWith(resolvedBase)) {
+    return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+  }
 
   try {
     // Check if folder exists
