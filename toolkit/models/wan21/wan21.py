@@ -654,10 +654,10 @@ class Wan21(BaseModel):
         return latents.to(device, dtype=dtype)
 
     def get_model_has_grad(self):
-        return self.model.proj_out.weight.requires_grad
+        return False
 
     def get_te_has_grad(self):
-        return self.text_encoder.encoder.block[0].layer[0].SelfAttention.q.weight.requires_grad
+        return False
 
     def save_model(self, output_path, meta, save_dtype):
         # only save the unet
