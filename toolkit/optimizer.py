@@ -46,7 +46,7 @@ def get_optimizer(
         
         optimizer = AdamWFP8(params, lr=use_lr, eps=1e-8, **optimizer_params)
     elif lower_type.startswith("adamw_bf16"):
-        from toolkit.optimizers.adamw_fp8 import AdamWBF16
+        from toolkit.optimizers.adamw_bf16 import AdamWBF16
         print("Using adamw_bf16")
         use_lr = learning_rate
         
