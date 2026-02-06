@@ -2175,6 +2175,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             ### HOOK ###
             if self.torch_profiler is not None:
                 self.torch_profiler.start()
+            # Schedule-Free optimizers (e.g. Prodigy Schedule Free) need train() during training step
+            if hasattr(optimizer, 'train') and callable(optimizer.train):
+                optimizer.train()
             did_oom = False
             loss_dict = None
             try:
@@ -2257,8 +2260,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # print above the progress bar
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
+                        # Schedule-Free: use averaged params for checkpoint
+                        if hasattr(optimizer, 'eval') and callable(optimizer.eval):
+                            optimizer.eval()
                         print_acc(f"\nSaving at step {self.step_num}")
                         self.save(self.step_num)
+                        if hasattr(optimizer, 'train') and callable(optimizer.train):
+                            optimizer.train()
                         self.ensure_params_requires_grad()
                         # clear any grads
                         optimizer.zero_grad()
@@ -2271,10 +2279,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
                         flush()
+                        # Schedule-Free: use averaged params for sampling
+                        if hasattr(optimizer, 'eval') and callable(optimizer.eval):
+                            optimizer.eval()
                         # print above the progress bar
                         if self.train_config.free_u:
                             self.sd.pipeline.disable_freeu()
                         self.sample(self.step_num)
+                        if hasattr(optimizer, 'train') and callable(optimizer.train):
+                            optimizer.train()
                         if self.train_config.unload_text_encoder:
                             # make sure the text encoder is unloaded
                             self.sd.text_encoder_to('cpu')
