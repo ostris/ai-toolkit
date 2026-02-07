@@ -1306,6 +1306,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 
                 noise = noise * noise_multiplier
                 
+                if self.train_config.do_signal_correction_noise:
+                    batch_noise = latents.clone().to(noise.device, dtype=noise.dtype)
+                    scn_scale = torch.randn(
+                        batch_noise.shape[0], batch_noise.shape[1], 1, 1,
+                        device=batch_noise.device, 
+                        dtype=batch_noise.dtype
+                    )
+                    batch_noise = batch_noise * scn_scale
+                    noise = noise + batch_noise 
+                
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
