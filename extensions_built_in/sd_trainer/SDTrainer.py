@@ -1983,7 +1983,12 @@ class SDTrainer(BaseSDTrainProcess):
                             prior_pred=prior_to_calculate_loss,
                         )
                     
-                    if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
+                    # Determine if we should run BPP this step
+                    should_run_bpp = False
+                    if self.train_config.blank_prompt_preservation:
+                        should_run_bpp = random.random() < self.train_config.blank_prompt_probability
+                    
+                    if self.train_config.diff_output_preservation or should_run_bpp:
                         # send the loss backwards otherwise checkpointing will fail
                         self.accelerator.backward(loss)
                         normal_loss = loss.detach() # dont send backward again
@@ -1991,7 +1996,7 @@ class SDTrainer(BaseSDTrainProcess):
                         with torch.no_grad():
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
-                            elif self.train_config.blank_prompt_preservation:
+                            elif should_run_bpp:
                                 blank_embeds = self.cached_blank_embeds.clone().detach().to(
                                     self.device_torch, dtype=dtype
                                 )

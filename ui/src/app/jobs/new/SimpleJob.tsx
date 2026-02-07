@@ -675,6 +675,21 @@ export default function SimpleJob({
                           placeholder="eg. 1.0"
                           min={0}
                         />
+                        <NumberInput
+                          label="BPP Probability"
+                          docKey={'train.blank_prompt_probability'}
+                          className="pt-2"
+                          value={
+                            (jobConfig.config.process[0].train.blank_prompt_probability as number) ?? 1.0
+                          }
+                          onChange={value =>
+                            setJobConfig(value, 'config.process[0].train.blank_prompt_probability')
+                          }
+                          placeholder="eg. 0.1 for 10%, 1.0 for 100%"
+                          min={0}
+                          max={1}
+                          step={0.1}
+                        />
                       </>
                     )}
                   </>

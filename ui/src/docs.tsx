@@ -287,6 +287,18 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.blank_prompt_probability': {
+    title: 'BPP Probability',
+    description: (
+      <>
+        Controls how often the Blank Prompt Preservation check runs during training. 
+        Value between 0.0 and 1.0. Default is 1.0 (runs every step). 
+        Setting to 0.1 means BPP runs ~10% of steps, reducing training time by up to 45% 
+        while still preventing model degradation. Lower values give the model more freedom 
+        to adapt to new concepts between BPP corrections. Recommended: 0.1-0.2 for Turbo models.
+      </>
+    ),
+  },
   'train.do_differential_guidance': {
     title: 'Differential Guidance',
     description: (
