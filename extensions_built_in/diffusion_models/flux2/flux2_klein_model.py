@@ -44,13 +44,13 @@ class Flux2KleinModel(Flux2Model):
             self.flux2_klein_te_path,
             torch_dtype=dtype,
         )
-        text_encoder.to(self.device_torch, dtype=dtype)
 
-        flush()
+        if not self.model_config.low_vram:
+            text_encoder.to(self.device_torch, dtype=dtype)
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Qwen3")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
             freeze(text_encoder)
             flush()
 
@@ -63,6 +63,11 @@ class Flux2KleinModel(Flux2Model):
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
+
+        if self.model_config.layer_offloading:
+            text_encoder.to('cpu')
+
+        flush()
 
         tokenizer = Qwen2Tokenizer.from_pretrained(self.flux2_klein_te_path)
         return text_encoder, tokenizer
