@@ -1312,7 +1312,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         batch_noise.shape[0], batch_noise.shape[1], 1, 1,
                         device=batch_noise.device, 
                         dtype=batch_noise.dtype
-                    )
+                    ) * self.train_config.signal_correction_noise_scale
                     batch_noise = batch_noise * scn_scale
                     noise = noise + batch_noise 
                 
