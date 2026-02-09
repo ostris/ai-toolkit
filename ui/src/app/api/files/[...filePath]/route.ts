@@ -58,7 +58,10 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       '.mkv': 'video/x-matroska',
       '.wmv': 'video/x-ms-wmv',
       '.m4v': 'video/x-m4v',
-      '.flv': 'video/x-flv'
+      '.flv': 'video/x-flv',
+      // Audio
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
     };
 
     const contentType = contentTypeMap[ext] || 'application/octet-stream';

@@ -190,6 +190,10 @@ class BaseModel:
         
         # use new lokr format (default false for old models for backwards compatibility)
         self.use_old_lokr_format = True
+        
+        # when padding to make batch size work, which side padding to use, right or left
+        # some llms need left side padding, others need right side
+        self.te_padding_side = "right"
 
     # properties for old arch for backwards compatibility
     @property

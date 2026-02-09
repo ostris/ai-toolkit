@@ -1359,28 +1359,33 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # if we have a 5d tensor, then we need to do it on a per batch item, per channel basis, per frame
                     s = (noise.shape[0], noise.shape[1], noise.shape[2], 1, 1)
                 
-                if self.train_config.random_noise_multiplier > 0.0:
-                    
-                    # do it on a per batch item, per channel basis
-                    noise_multiplier = 1 + torch.randn(
-                        s,
-                        device=noise.device,
-                        dtype=noise.dtype
-                    ) * self.train_config.random_noise_multiplier
-                
-            with self.timer('make_noisy_latents'):
-
                 noise = noise * noise_multiplier
+                
+                if self.train_config.do_signal_correction_noise:
+                    batch_noise = latents.clone().to(noise.device, dtype=noise.dtype)
+                    scn_scale = torch.randn(
+                        batch_noise.shape[0], batch_noise.shape[1], 1, 1,
+                        device=batch_noise.device, 
+                        dtype=batch_noise.dtype
+                    ) * self.train_config.signal_correction_noise_scale
+                    batch_noise = batch_noise * scn_scale
+                    noise = noise + batch_noise 
                 
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
-                        s,  
+                        batch_size, latents.shape[1], 1, 1,
                         device=noise.device,
                         dtype=noise.dtype
                     ) * self.train_config.random_noise_shift
                     # add to noise
                     noise += noise_shift
+                
+                if self.train_config.random_noise_multiplier > 0.0:
+                    sigma = self.train_config.random_noise_multiplier
+                    noise_multiplier = torch.exp(torch.randn(s, device=noise.device, dtype=noise.dtype) * sigma)
+                
+            with self.timer('make_noisy_latents'):
 
                 latent_multiplier = self.train_config.latent_multiplier
 
@@ -1391,6 +1396,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     latent_multiplier = normalizer
 
                 latents = latents * latent_multiplier
+                
+                if self.train_config.do_blank_stabilization:
+                    # zero out latents with blank prompts
+                    blank_latent = torch.zeros_like(latents)
+                    for i, prompt in enumerate(conditioned_prompts):
+                        if prompt.strip() == '':
+                            latents[i] = blank_latent[i]
+                
                 batch.latents = latents
 
                 # normalize latents to a mean of 0 and an std of 1
