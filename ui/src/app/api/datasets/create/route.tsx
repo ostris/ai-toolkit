@@ -7,18 +7,40 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     let { name } = body;
-    // clean name by making lower case,  removing special characters, and replacing spaces with underscores
-    name = name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 
-    let datasetsPath = await getDatasetsRoot();
-    let datasetPath = path.join(datasetsPath, name);
+    // Keep slashes, only clean special characters in each path segment
+    const segments = name
+      .split('/')
+      .map((segment: string) =>
+        segment
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+      )
+      .filter((s: string) => s.length > 0);
 
-    // if folder doesnt exist, create it
-    if (!fs.existsSync(datasetPath)) {
-      fs.mkdirSync(datasetPath);
+    if (segments.length === 0) {
+      return NextResponse.json({ error: 'Invalid dataset name' }, { status: 400 });
     }
 
-    return NextResponse.json({ success: true, name: name });
+    const cleanName = segments.join('/');
+
+    let datasetsPath = await getDatasetsRoot();
+    let datasetPath = path.join(datasetsPath, cleanName);
+
+    // Security check: ensure path is within datasetsPath
+    const resolvedPath = path.resolve(datasetPath);
+    const resolvedBase = path.resolve(datasetsPath);
+    if (!resolvedPath.startsWith(resolvedBase)) {
+      return NextResponse.json({ error: 'Invalid path' }, { status: 400 });
+    }
+
+    // Recursively create directory
+    if (!fs.existsSync(datasetPath)) {
+      fs.mkdirSync(datasetPath, { recursive: true });
+    }
+
+    return NextResponse.json({ success: true, name: cleanName });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to create dataset' }, { status: 500 });
   }
