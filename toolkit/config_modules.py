@@ -397,6 +397,8 @@ class TrainConfig:
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.target_noise_multiplier = kwargs.get('target_noise_multiplier', 1.0)
         self.random_noise_multiplier = kwargs.get('random_noise_multiplier', 0.0)
+        self.do_signal_correction_noise = kwargs.get('do_signal_correction_noise', False)
+        self.signal_correction_noise_scale = kwargs.get('signal_correction_noise_scale', 1.0)
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
