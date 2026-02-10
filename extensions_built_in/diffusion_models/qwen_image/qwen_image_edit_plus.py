@@ -176,8 +176,8 @@ class QwenImageEditPlusModel(QwenImageModel):
             for i in range(len(control_images)):
                 # control images are 0 - 1 scale, shape (bs, ch, height, width)
                 ratio = control_images[i].shape[2] / control_images[i].shape[3]
-                width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
-                height = width / ratio
+                height = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
+                width = height / ratio
 
                 width = round(width / 32) * 32
                 height = round(height / 32) * 32
@@ -259,8 +259,8 @@ class QwenImageEditPlusModel(QwenImageModel):
                         if len(control_img.shape) == 3:
                             control_img = control_img.unsqueeze(0)
                         ratio = control_img.shape[2] / control_img.shape[3]
-                        c_width = math.sqrt(control_image_res * ratio)
-                        c_height = c_width / ratio
+                        c_height = math.sqrt(control_image_res * ratio)
+                        c_width = c_height / ratio
 
                         c_width = round(c_width / 32) * 32
                         c_height = round(c_height / 32) * 32
