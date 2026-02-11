@@ -102,7 +102,10 @@ class CometLogger(EmptyLogger):
         # Configure comet_ml by running `comet login`
         # This will create a .comet.config file in your home directory
         # Add `workspace=your_workspace` to the .comet.config file if you want to specify a default workspace
-        experiment = comet_ml.start(project_name=self.project)
+        experiment = comet_ml.Experiment(
+            project_name=self.project,
+            log_code=False,  # Disables automatic code logging
+        )
         experiment.set_name(self.run_name)  # Set the experiment name
 
         if self.run_name is not None:
