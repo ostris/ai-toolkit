@@ -30,9 +30,13 @@ class Wan2214bI2VModel(Wan2214bModel):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
 
-        num_frames = (
-            (gen_config.num_frames - 1) // 4
-        ) * 4 + 1  # make sure it is divisible by 4 + 1
+        # Prevent division by zero for num_frames
+        if gen_config.num_frames is None or gen_config.num_frames < 1:
+            num_frames = 1
+        else:
+            num_frames = (
+                (gen_config.num_frames - 1) // 4
+            ) * 4 + 1  # make sure it is divisible by 4 + 1
         gen_config.num_frames = num_frames
 
         height = gen_config.height
@@ -42,10 +46,13 @@ class Wan2214bI2VModel(Wan2214bModel):
             control_img = Image.open(gen_config.ctrl_img).convert("RGB")
 
             d = self.get_bucket_divisibility()
+            # Prevent division by zero for d
+            if d is None or d == 0:
+                d = 1
 
             # make sure they are divisible by d
-            height = height // d * d
-            width = width // d * d
+            height = height // d * d if height is not None else d
+            width = width // d * d if width is not None else d
 
             # resize the control image
             control_img = control_img.resize((width, height), Image.LANCZOS)

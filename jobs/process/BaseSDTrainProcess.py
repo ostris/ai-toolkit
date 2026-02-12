@@ -242,7 +242,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # fine_tuning here is for training actual SD network, not LoRA, embeddings, etc. it is (Dreambooth, etc)
         self.is_fine_tuning = True
-        if self.network_config is not None or is_training_adapter or self.embed_config is not None or self.decorator_config is not None:
+        if self.network_config_safe is not None or is_training_adapter or self.embed_config is not None or self.decorator_config is not None:
             self.is_fine_tuning = False
 
         self.named_lora = False
@@ -286,6 +286,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # divide up images so they are evenly distributed across prompts
             for i in range(len(sample_config.prompts)):
                 test_image_paths.append(test_image_path_list[i % len(test_image_path_list)])
+
+        print_acc("sample", len(sample_config.prompts))
 
         for i in range(len(sample_config.prompts)):
             if sample_config.walk_seed:
@@ -352,10 +354,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 do_cfg_norm=sample_config.do_cfg_norm,
                 **extra_args
             ))
-
+            
         # post process
         gen_img_config_list = self.post_process_generate_image_config_list(gen_img_config_list)
-
+                 
         # if we have an ema, set it to validation mode
         if self.ema is not None:
             self.ema.eval()
@@ -363,16 +365,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # let adapter know we are sampling
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
-        
-        # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
 
+        print_acc(len(gen_img_config_list), self.sd.network is not None, "gen_img_config_list2",  self.ema,
+                  self.model_config.assistant_lora_path is not None, self.model_config.inference_lora_path is not None)
+        if gen_img_config_list:
+            print("[DEBUG] generate_images: after lora handling",gen_img_config_list)
+            # send to be generated
+            self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler) 
+            print("[DEBUG] generate_images: after lora handling1")
         
+        print("gen_img_config_list3", len(gen_img_config_list))
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = False
 
         if self.ema is not None:
             self.ema.train()
+
+        print("gen_img_config_list4", len(gen_img_config_list))
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
@@ -447,10 +456,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             combined_items.sort(key=os.path.getctime)
             
             num_saves_to_keep = self.save_config.max_step_saves_to_keep
-            
+
             if hasattr(self.sd, 'max_step_saves_to_keep_multiplier'):
                 num_saves_to_keep *= self.sd.max_step_saves_to_keep_multiplier
 
+            assert num_saves_to_keep > 0
+            
             # Use slicing with a check to avoid 'NoneType' error
             safetensors_to_remove = safetensors_files[
                                     :-num_saves_to_keep] if safetensors_files else []
@@ -1048,7 +1059,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
                         if random.random() < self.train_config.prompt_saturation_chance:
                             est_num_tokens = len(prompt.split(' '))
-                            if est_num_tokens < 77:
+                            if est_num_tokens < 77 and est_num_tokens > 0:
                                 num_repeats = int(77 / est_num_tokens) + 1
                                 prompt = ', '.join([prompt] * num_repeats)
 
@@ -1082,6 +1093,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # Standard Deviation: tensor([0.5623, 0.5295, 0.5347])
                         imgs_channel_mean = imgs.mean(dim=(2, 3), keepdim=True)
                         imgs_channel_std = imgs.std(dim=(2, 3), keepdim=True)
+                        assert imgs_channel_std.min() > 0, "Image channel std is too small, cannot standardize"
                         imgs = (imgs - imgs_channel_mean) / imgs_channel_std
                         target_mean = torch.tensor(target_mean_list, device=self.device_torch, dtype=dtype)
                         target_std = torch.tensor(target_std_list, device=self.device_torch, dtype=dtype)
@@ -1107,6 +1119,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                     latents_channel_mean = latents.mean(dim=(2, 3), keepdim=True)
                     latents_channel_std = latents.std(dim=(2, 3), keepdim=True)
+                    assert latents_channel_std.min() > 0, "Latent channel std is too small, cannot standardize"
                     latents = (latents - latents_channel_mean) / latents_channel_std
                     target_mean = torch.tensor(target_mean_list, device=self.device_torch, dtype=dtype)
                     target_std = torch.tensor(target_std_list, device=self.device_torch, dtype=dtype)
@@ -1528,6 +1541,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # set trainable params
         self.sd.adapter = self.adapter
 
+    @property
+    def network_config_safe(self):
+        # Use .module if wrapped by DDP, else direct
+        if hasattr(self, "module") and hasattr(self.module, "network_config"):
+            return self.module.network_config
+        return getattr(self, "network_config", None)
+
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
@@ -1715,14 +1735,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.hook_after_model_load()
         flush()
         if not self.is_fine_tuning:
-            if self.network_config is not None:
+            if self.network_config_safe is not None:
                 # TODO should we completely switch to LycorisSpecialNetwork?
-                network_kwargs = self.network_config.network_kwargs
+                network_kwargs = self.network_config_safe.network_kwargs
                 is_lycoris = False
-                is_lorm = self.network_config.type.lower() == 'lorm'
+                is_lorm = self.network_config_safe.type.lower() == 'lorm'
                 # default to LoCON if there are any conv layers or if it is named
                 NetworkClass = LoRASpecialNetwork
-                if self.network_config.type.lower() == 'locon' or self.network_config.type.lower() == 'lycoris':
+                if self.network_config_safe.type.lower() == 'locon' or self.network_config_safe.type.lower() == 'lycoris':
                     NetworkClass = LycorisSpecialNetwork
                     is_lycoris = True
 
@@ -1741,13 +1761,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.network = NetworkClass(
                     text_encoder=text_encoder,
                     unet=self.sd.get_model_to_train(),
-                    lora_dim=self.network_config.linear,
+                    lora_dim=self.network_config_safe.linear,
                     multiplier=1.0,
-                    alpha=self.network_config.linear_alpha,
+                    alpha=self.network_config_safe.linear_alpha,
                     train_unet=self.train_config.train_unet,
                     train_text_encoder=self.train_config.train_text_encoder,
-                    conv_lora_dim=self.network_config.conv,
-                    conv_alpha=self.network_config.conv_alpha,
+                    conv_lora_dim=self.network_config_safe.conv,
+                    conv_alpha=self.network_config_safe.conv_alpha,
                     is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
                     is_v2=self.model_config.is_v2,
                     is_v3=self.model_config.is_v3,
@@ -1757,14 +1777,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_lumina2=self.model_config.is_lumina2,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
-                    dropout=self.network_config.dropout,
+                    dropout=self.network_config_safe.dropout,
                     use_text_encoder_1=self.model_config.use_text_encoder_1,
                     use_text_encoder_2=self.model_config.use_text_encoder_2,
                     use_bias=is_lorm,
+
                     is_lorm=is_lorm,
-                    network_config=self.network_config,
-                    network_type=self.network_config.type,
-                    transformer_only=self.network_config.transformer_only,
+                    network_config=self.network_config_safe,
+                    network_type=self.network_config_safe.type,
+                    transformer_only=self.network_config_safe.transformer_only,
                     is_transformer=self.sd.is_transformer,
                     base_model=self.sd,
                     **network_kwargs
@@ -2037,7 +2058,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
             self.sample(self.step_num)
-        
+        print("Starting training loop...", self.accelerator.is_local_main_process)
         if self.accelerator.is_local_main_process:
             self.progress_bar = ToolkitProgressBar(
                 total=self.train_config.steps,
@@ -2083,7 +2104,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ###################################################################
         # TRAIN LOOP
         ###################################################################
-
+        print("Starting training loop... self.train_config.steps", self.train_config.steps)
 
         start_step_num = self.step_num
         did_first_flush = False
