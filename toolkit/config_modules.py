@@ -4,7 +4,7 @@ from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
 import random
 
 import torch
-import torchaudio
+
 
 from toolkit.prompt_utils import PromptEmbeds
 
@@ -1173,6 +1173,7 @@ class GenerateImageConfig:
                 raise ValueError(f"Unsupported video format {self.output_ext}")
         elif self.output_ext in ['wav', 'mp3']:
             # save audio file
+            import torchaudio
             torchaudio.save(
                 self.get_image_path(count, max_count), 
                 image[0].to('cpu'),

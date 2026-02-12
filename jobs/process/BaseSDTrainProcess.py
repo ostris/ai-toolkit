@@ -1048,7 +1048,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # do random prompt saturation by expanding the prompt to hit at least 77 tokens
                         if random.random() < self.train_config.prompt_saturation_chance:
                             est_num_tokens = len(prompt.split(' '))
-                            if est_num_tokens < 77:
+                            # Avoid division by zero
+                            if est_num_tokens > 0:
                                 num_repeats = int(77 / est_num_tokens) + 1
                                 prompt = ', '.join([prompt] * num_repeats)
 
@@ -1531,13 +1532,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def run(self):
         # torch.autograd.set_detect_anomaly(True)
         # run base process run
+        print_acc("=== [DEBUG] Entering BaseSDTrainProcess.run ===")
+        print_acc(f"Job name: {self.job.name}")
+        print_acc(f"Is fine tuning: {self.is_fine_tuning}")
+        print_acc(f"Model config: {self.model_config}")
+        print_acc(f"Train config: {self.train_config}")
+        print_acc(f"Network config: {self.network_config}")
+        print_acc(f"Adapter config: {self.adapter_config}")
+        print_acc(f"Embedding config: {self.embed_config}")
+        print_acc(f"Decorator config: {self.decorator_config}")
+        print_acc(f"Datasets: {self.datasets}")
+        print_acc(f"Datasets reg: {self.datasets_reg}")
+        print_acc(f"Device: {self.device_torch}")
+        print_acc(f"Custom pipeline: {self.custom_pipeline}")
         BaseTrainProcess.run(self)
+        print_acc("=== [DEBUG] After BaseTrainProcess.run ===")
         params = []
 
         ### HOOK ###
         self.hook_before_model_load()
         model_config_to_load = copy.deepcopy(self.model_config)
-
         if self.is_fine_tuning:
             # get the latest checkpoint
             # check to see if we have a latest save
@@ -1547,11 +1561,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                 model_config_to_load.name_or_path = latest_save_path
                 self.load_training_state_from_metadata(latest_save_path)
-
         ModelClass = get_model_class(self.model_config)
+        print(4, ModelClass, type(ModelClass), hasattr(ModelClass, 'get_train_scheduler'))
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
             sampler = ModelClass.get_train_scheduler()
+            print(5)
         else:
             # get the noise scheduler
             arch = 'sd'
@@ -1568,13 +1583,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 },
                 arch=arch,
             )
-
+        print(7)
         if self.train_config.train_refiner and self.model_config.refiner_name_or_path is not None and self.network_config is None:
             previous_refiner_save = self.get_latest_save_path(self.job.name + '_refiner')
             if previous_refiner_save is not None:
                 model_config_to_load.refiner_name_or_path = previous_refiner_save
                 self.load_training_state_from_metadata(previous_refiner_save)
-
+        print(8)
         self.sd = ModelClass(
             # todo handle single gpu and multi gpu here
             # device=self.device,
@@ -1584,7 +1599,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             custom_pipeline=self.custom_pipeline,
             noise_scheduler=sampler,
         )
-        
+        print(7)
         self.hook_after_sd_init_before_load()
         # run base sd process run
         self.sd.load_model()
@@ -2089,6 +2104,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         did_first_flush = False
         flush_next = False
         for step in range(start_step_num, self.train_config.steps):
+            print_acc(f"=== [DEBUG] Training step {step} ===")
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
             self.timer.start('train_loop')
