@@ -82,7 +82,7 @@ export default function SampleImageViewer({
       if (idx < 0 || idx >= sampleImages.length) return;
       onChange(sampleImages[idx]);
     },
-    [sampleImages, numSamples, onChange],
+    [sampleImages, onChange],
   );
 
   const currentIndex = useMemo(() => {
@@ -167,9 +167,11 @@ export default function SampleImageViewer({
           onCancel();
           break;
         case 'ArrowUp':
+          event.preventDefault();
           handleArrowUp();
           break;
         case 'ArrowDown':
+          event.preventDefault();
           handleArrowDown();
           break;
         case 'ArrowLeft':

@@ -15,6 +15,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.device import safe_module_to_device
 from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
 
@@ -202,6 +203,32 @@ class ZImageModel(BaseModel):
 
         flush()
 
+        # Load sampling transformer if a separate sampling_name_or_path is specified
+        self._sampling_transformer = None
+        if self.model_config.sampling_name_or_path is not None and self.model_config.sampling_name_or_path != model_path:
+            self.print_and_status_update("Loading sampling transformer")
+            sampling_model_path = self.model_config.sampling_name_or_path
+            sampling_transformer_path = sampling_model_path
+            sampling_transformer_subfolder = "transformer"
+            
+            if os.path.exists(sampling_model_path):
+                sampling_transformer_subfolder = None
+                sampling_transformer_path = os.path.join(sampling_model_path, "transformer")
+            
+            sampling_transformer = ZImageTransformer2DModel.from_pretrained(
+                sampling_transformer_path, subfolder=sampling_transformer_subfolder, torch_dtype=dtype
+            )
+            
+            if self.model_config.quantize:
+                self.print_and_status_update("Quantizing sampling transformer")
+                quantize_model(self, sampling_transformer)
+                flush()
+            
+            # Always keep sampling transformer on CPU
+            sampling_transformer.to("cpu")
+            self._sampling_transformer = sampling_transformer
+            flush()
+
         self.print_and_status_update("Text Encoder")
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype
@@ -279,15 +306,21 @@ class ZImageModel(BaseModel):
     def get_generation_pipeline(self):
         scheduler = ZImageModel.get_train_scheduler()
 
+        # Determine which transformer to use for sampling
+        transformer_for_sampling = self.transformer
+        if self._sampling_transformer is not None:
+            # Use sampling transformer, keep it on CPU (for testing / avoid OOM)
+            transformer_for_sampling = self._sampling_transformer
+
         pipeline: ZImagePipeline = ZImagePipeline(
             scheduler=scheduler,
             text_encoder=unwrap_model(self.text_encoder[0]),
             tokenizer=self.tokenizer[0],
             vae=unwrap_model(self.vae),
-            transformer=unwrap_model(self.transformer),
+            transformer=unwrap_model(transformer_for_sampling),
         )
 
-        pipeline = pipeline.to(self.device_torch)
+        # pipeline = pipeline.to(self.device_torch)
 
         return pipeline
 
@@ -300,48 +333,58 @@ class ZImageModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        self.model.to(self.device_torch, dtype=self.torch_dtype)
-        self.model.to(self.device_torch)
 
-        sc = self.get_bucket_divisibility()
-        gen_config.width = int(gen_config.width // sc * sc)
-        gen_config.height = int(gen_config.height // sc * sc)
+        if self._sampling_transformer is not None:
+            self.model.to("cpu")
+            self._sampling_transformer.to(self.device_torch, dtype=self.torch_dtype)
+        else:
+            self.model.to(self.device_torch, dtype=self.torch_dtype)
 
-        # ZImagePipeline expects prompt_embeds and negative_prompt_embeds to be
-        # List[torch.FloatTensor] where each element is [seq_len, dim].
-        # The pipeline concatenates these lists for CFG (not element-wise add).
-        cond_embeds = conditional_embeds.text_embeds
-        uncond_embeds = unconditional_embeds.text_embeds
+        try:
+            sc = self.get_bucket_divisibility()
+            gen_config.width = int(gen_config.width // sc * sc)
+            gen_config.height = int(gen_config.height // sc * sc)
 
-        # Convert rank-3 tensors back to list of rank-2 tensors
-        def to_embed_list(embeds):
-            if embeds is None:
-                return []
-            if isinstance(embeds, list):
+            # ZImagePipeline expects prompt_embeds and negative_prompt_embeds to be
+            # List[torch.FloatTensor] where each element is [seq_len, dim].
+            # The pipeline concatenates these lists for CFG (not element-wise add).
+            cond_embeds = conditional_embeds.text_embeds
+            uncond_embeds = unconditional_embeds.text_embeds
+
+            # Convert rank-3 tensors back to list of rank-2 tensors
+            def to_embed_list(embeds):
+                if embeds is None:
+                    return []
+                if isinstance(embeds, list):
+                    return embeds
+                if len(embeds.shape) == 3:
+                    # [batch, seq_len, dim] -> list of [seq_len, dim]
+                    return list(embeds.unbind(dim=0))
+                elif len(embeds.shape) == 2:
+                    # Already [seq_len, dim], wrap in list
+                    return [embeds]
                 return embeds
-            if len(embeds.shape) == 3:
-                # [batch, seq_len, dim] -> list of [seq_len, dim]
-                return list(embeds.unbind(dim=0))
-            elif len(embeds.shape) == 2:
-                # Already [seq_len, dim], wrap in list
-                return [embeds]
-            return embeds
 
-        cond_embeds_list = to_embed_list(cond_embeds)
-        uncond_embeds_list = to_embed_list(uncond_embeds)
+            cond_embeds_list = to_embed_list(cond_embeds)
+            uncond_embeds_list = to_embed_list(uncond_embeds)
 
-        img = pipeline(
-            prompt_embeds=cond_embeds_list,
-            negative_prompt_embeds=uncond_embeds_list,
-            height=gen_config.height,
-            width=gen_config.width,
-            num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            generator=generator,
-            **extra,
-        ).images[0]
-        return img
+            img = pipeline(
+                prompt_embeds=cond_embeds_list,
+                negative_prompt_embeds=uncond_embeds_list,
+                height=gen_config.height,
+                width=gen_config.width,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                generator=generator,
+                **extra,
+            ).images[0]
+            return img
+        finally:
+            # Unload sampling transformer from GPU and restore main model to device
+            if self._sampling_transformer is not None:
+                self._sampling_transformer.to("cpu")
+                self.model.to(self.device_torch, dtype=self.torch_dtype)
 
     def get_noise_prediction(
         self,
@@ -350,7 +393,8 @@ class ZImageModel(BaseModel):
         text_embeddings: PromptEmbeds,
         **kwargs,
     ):
-        self.model.to(self.device_torch)
+        if self.low_vram and next(self.model.parameters()).device != self.device_torch:
+            safe_module_to_device(self.model, self.device_torch)
 
         latent_model_input = latent_model_input.unsqueeze(2)
         latent_model_input_list = list(latent_model_input.unbind(dim=0))
@@ -431,6 +475,41 @@ class ZImageModel(BaseModel):
         meta_path = os.path.join(output_path, "aitk_meta.yaml")
         with open(meta_path, "w") as f:
             yaml.dump(meta, f)
+
+    def generate_images(
+        self,
+        image_configs: List[GenerateImageConfig],
+        sampler=None,
+    ):
+        """
+        Override generate_images to handle LoRA on sampling transformer.
+        When using _sampling_transformer with LoRA, temporarily swap self.network
+        to _sampling_network (which has LoRA applied to _sampling_transformer)
+        for the duration of generation.
+        """
+        saved_network = None
+        try:
+            # If using sampling transformer with LoRA, sync weights and swap network
+            if (
+                hasattr(self, '_sampling_transformer') 
+                and self._sampling_transformer is not None
+                and hasattr(self, '_sampling_network')
+                and self._sampling_network is not None
+                and hasattr(self, 'network')
+                and self.network is not None
+            ):
+                # Sync weights from training network to sampling network
+                self._sampling_network.load_state_dict(self.network.state_dict())
+                # Save current network and swap to sampling network
+                saved_network = self.network
+                self.network = self._sampling_network
+            
+            # Call parent's generate_images with possibly swapped network
+            return super().generate_images(image_configs, sampler)
+        finally:
+            # Restore original network
+            if saved_network is not None:
+                self.network = saved_network
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")
