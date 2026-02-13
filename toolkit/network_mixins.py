@@ -547,8 +547,8 @@ class ToolkitNetworkMixin:
             new_save_dict = {}
             for key, value in save_dict.items():
                 # lokr needs alpha
-                if key.endswith('.alpha') and self.network_type.lower() != "lokr":
-                    continue
+                # if key.endswith('.alpha') and self.network_type.lower() != "lokr":
+                #     continue
                 new_key = key
                 new_key = new_key.replace('lora_down', 'lora_A')
                 new_key = new_key.replace('lora_up', 'lora_B')
@@ -633,8 +633,8 @@ class ToolkitNetworkMixin:
                 # lora_down = lora_A
                 # lora_up = lora_B
                 # no alpha
-                if load_key.endswith('.alpha') and self.network_type.lower() != "lokr":
-                    continue
+                # if load_key.endswith('.alpha') and self.network_type.lower() != "lokr":
+                #     continue
                 load_key = load_key.replace('lora_A', 'lora_down')
                 load_key = load_key.replace('lora_B', 'lora_up')
                 # replace all . with $$

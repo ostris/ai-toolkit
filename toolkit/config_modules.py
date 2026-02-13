@@ -182,6 +182,8 @@ class NetworkConfig:
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
         self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
         self.dropout: Union[float, None] = kwargs.get('dropout', None)
+        self.rank_dropout: Union[float, None] = kwargs.get('rank_dropout', None)
+        self.module_dropout: Union[float, None] = kwargs.get('module_dropout', None)
         self.network_kwargs: dict = kwargs.get('network_kwargs', {})
 
         self.lorm_config: Union[LoRMConfig, None] = None
@@ -344,7 +346,7 @@ class DecoratorConfig:
         self.num_tokens: str = kwargs.get('num_tokens', 4)
 
 
-ContentOrStyleType = Literal['balanced', 'style', 'content']
+ContentOrStyleType = Literal['balanced', 'style', 'content', 'gaussian', 'fixed_cycle']
 LossTarget = Literal['noise', 'source', 'unaugmented', 'differential_noise']
 
 
@@ -353,6 +355,18 @@ class TrainConfig:
         self.noise_scheduler = kwargs.get('noise_scheduler', 'ddpm')
         self.content_or_style: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
         self.content_or_style_reg: ContentOrStyleType = kwargs.get('content_or_style', 'balanced')
+        self.gaussian_mean: float = kwargs.get('gaussian_mean', 0.5)
+        self.gaussian_std: float = kwargs.get('gaussian_std', 0.2)
+        self.gaussian_std_target: float = kwargs.get('gaussian_std_target', None)
+        self.timestep_bias_exponent: float = kwargs.get('timestep_bias_exponent', 3.0)
+        self.timestep_debug_log: int = kwargs.get('timestep_debug_log', 0)
+        # fixed_cycle: deterministic cycle over fixed timestep values (for Turbo LoRA reproducibility)
+        _default_fixed_cycle = [999, 875, 750, 625, 500, 375, 250, 125]
+        _fc = kwargs.get('fixed_cycle_timesteps', _default_fixed_cycle)
+        self.fixed_cycle_timesteps: Optional[List[float]] = _fc if (_fc is not None and len(_fc) > 0) else _default_fixed_cycle
+        self.fixed_cycle_seed: Optional[int] = kwargs.get('fixed_cycle_seed', None)
+        self.fixed_cycle_weight_peak_timesteps: Optional[List[float]] = kwargs.get('fixed_cycle_weight_peak_timesteps', [500, 375])
+        self.fixed_cycle_weight_sigma: float = kwargs.get('fixed_cycle_weight_sigma', 372.8)
         self.steps: int = kwargs.get('steps', 1000)
         self.lr = kwargs.get('lr', 1e-6)
         self.unet_lr = kwargs.get('unet_lr', self.lr)
@@ -464,6 +478,7 @@ class TrainConfig:
         # blank prompt preservation will preserve the model's knowledge of a blank prompt
         self.blank_prompt_preservation = kwargs.get('blank_prompt_preservation', False)
         self.blank_prompt_preservation_multiplier = kwargs.get('blank_prompt_preservation_multiplier', 1.0)
+        self.blank_prompt_probability = kwargs.get('blank_prompt_probability', 1.0)
         
         # legacy
         if match_adapter_assist and self.match_adapter_chance == 0.0:
@@ -666,6 +681,10 @@ class ModelConfig:
         # only setup for some models but will prevent having to download the te for
         # 20 different model variants
         self.extras_name_or_path = kwargs.get("extras_name_or_path", self.name_or_path)
+        
+        # for models that support it (e.g., zimage), a separate model path for sampling/inference
+        # training uses name_or_path, sampling uses sampling_name_or_path if set
+        self.sampling_name_or_path: Optional[str] = kwargs.get("sampling_name_or_path", None)
         
         # path to an accuracy recovery adapter, either local or remote
         self.accuracy_recovery_adapter = kwargs.get("accuracy_recovery_adapter", None)
