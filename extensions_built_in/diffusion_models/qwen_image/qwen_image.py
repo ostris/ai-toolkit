@@ -15,6 +15,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.device import safe_module_to_device
 import torch.nn.functional as F
 from toolkit.memory_management import MemoryManager
 from safetensors.torch import load_file
@@ -262,7 +263,8 @@ class QwenImageModel(BaseModel):
                 control_img = control_img.resize(
                     (gen_config.width, gen_config.height), Image.BILINEAR
                 )
-        self.model.to(self.device_torch)
+        if self.model_config.low_vram:
+            safe_module_to_device(self.model, self.device_torch)
 
         # flush for low vram if we are doing that
         flush_between_steps = self.model_config.low_vram
@@ -305,7 +307,8 @@ class QwenImageModel(BaseModel):
         text_embeddings: PromptEmbeds,
         **kwargs,
     ):
-        self.model.to(self.device_torch)
+        if self.model_config.low_vram:
+            safe_module_to_device(self.model, self.device_torch)
         batch_size, num_channels_latents, height, width = latent_model_input.shape
 
         ps = self.transformer.config.patch_size

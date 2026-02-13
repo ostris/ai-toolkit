@@ -279,12 +279,15 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             if self.network_type.lower() != "lokr" or not self.use_old_lokr_format:
                 self.peft_format = True
 
-        if self.peft_format:
-            # no alpha for peft
-            self.alpha = self.lora_dim
-            alpha = self.alpha
-            self.conv_alpha = self.conv_lora_dim
-            conv_alpha = self.conv_alpha
+        # Allow alpha for peft
+        # Todo: Folding Alpha on save
+        # 
+        # if self.peft_format:
+        #     # no alpha for peft
+        #     self.alpha = self.lora_dim
+        #     alpha = self.alpha
+        #     self.conv_alpha = self.conv_lora_dim
+        #     conv_alpha = self.conv_alpha
 
         self.full_train_in_out = full_train_in_out
 

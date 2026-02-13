@@ -11,13 +11,33 @@ export interface LossPoint {
 
 type SeriesMap = Record<string, LossPoint[]>;
 
+export type MetricFilter = 'loss' | 'learning_rate' | 'diff_guidance' | 'all' | 'other';
+
+function categorizeMetric(key: string): 'loss' | 'learning_rate' | 'diff_guidance' | 'other' {
+  if (key === 'learning_rate') return 'learning_rate';
+  if (key === 'diff_guidance_norm') return 'diff_guidance';
+  if (/loss/i.test(key)) return 'loss';
+  return 'other';
+}
+
+function matchesFilter(key: string, filter: MetricFilter): boolean {
+  if (filter === 'all') return true;
+  const category = categorizeMetric(key);
+  if (filter === 'other') return category === 'other';
+  return category === filter;
+}
+
 function isLossKey(key: string) {
   // treat anything containing "loss" as a loss-series
   // (covers loss, train_loss, val_loss, loss/xyz, etc.)
   return /loss/i.test(key);
 }
 
-export default function useJobLossLog(jobID: string, reloadInterval: null | number = null) {
+export default function useJobLossLog(
+  jobID: string, 
+  reloadInterval: null | number = null,
+  metricFilter: MetricFilter = 'loss'
+) {
   const [series, setSeries] = useState<SeriesMap>({});
   const [keys, setKeys] = useState<string[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'refreshing'>('idle');
@@ -28,12 +48,12 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
   // track last step per key so polling is incremental per series
   const lastStepByKeyRef = useRef<Record<string, number | null>>({});
 
-  const lossKeys = useMemo(() => {
-    const base = (keys ?? []).filter(isLossKey);
+  const filteredKeys = useMemo(() => {
+    const filtered = (keys ?? []).filter(k => matchesFilter(k, metricFilter));
     // if keys table is empty early on, fall back to just "loss"
-    if (base.length === 0) return ['loss'];
-    return base.sort();
-  }, [keys]);
+    if (filtered.length === 0 && metricFilter === 'loss') return ['loss'];
+    return filtered.sort();
+  }, [keys, metricFilter]);
 
   const refreshLoss = useCallback(async () => {
     if (!jobID) return;
@@ -54,10 +74,13 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
       const newKeys = first.keys ?? [];
       setKeys(newKeys);
 
-      const wantedLossKeys = (newKeys.filter(isLossKey).length ? newKeys.filter(isLossKey) : ['loss']).sort();
+      const wantedKeys = (newKeys.filter(k => matchesFilter(k, metricFilter)).length 
+        ? newKeys.filter(k => matchesFilter(k, metricFilter)) 
+        : (metricFilter === 'loss' ? ['loss'] : [])
+      ).sort();
 
       // Step 2: fetch each loss key incrementally (since_step per key if polling)
-      const requests = wantedLossKeys.map(k => {
+      const requests = wantedKeys.map(k => {
         const params: Record<string, any> = { key: k };
 
         if (reloadInterval && lastStepByKeyRef.current[k] != null) {
@@ -101,9 +124,9 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
             : (lastStepByKeyRef.current[k] ?? null);
         }
 
-        // remove stale loss keys that no longer exist (rare, but keeps UI clean)
+        // remove stale keys that no longer exist (rare, but keeps UI clean)
         for (const existingKey of Object.keys(next)) {
-          if (isLossKey(existingKey) && !wantedLossKeys.includes(existingKey)) {
+          if (matchesFilter(existingKey, metricFilter) && !wantedKeys.includes(existingKey)) {
             delete next[existingKey];
             delete lastStepByKeyRef.current[existingKey];
           }
@@ -120,7 +143,7 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     } finally {
       inFlightRef.current = false;
     }
-  }, [jobID, reloadInterval]);
+  }, [jobID, reloadInterval, metricFilter]);
 
   useEffect(() => {
     // reset when job changes
@@ -141,5 +164,5 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     }
   }, [jobID, reloadInterval, refreshLoss]);
 
-  return { series, keys, lossKeys, status, refreshLoss, setSeries };
+  return { series, keys, filteredKeys, status, refreshLoss, setSeries };
 }

@@ -531,12 +531,15 @@ export default function SimpleJob({
                 <SelectInput
                   label="Timestep Bias"
                   className="pt-2"
+                  docKey="train.content_or_style"
                   value={jobConfig.config.process[0].train.content_or_style}
                   onChange={value => setJobConfig(value, 'config.process[0].train.content_or_style')}
                   options={[
                     { value: 'balanced', label: 'Balanced' },
                     { value: 'content', label: 'High Noise' },
                     { value: 'style', label: 'Low Noise' },
+                    { value: 'gaussian', label: 'Gaussian (Normal)' },
+                    { value: 'fixed_cycle', label: 'Fixed Cycle' },
                   ]}
                 />
                 <SelectInput
@@ -551,6 +554,65 @@ export default function SimpleJob({
                     { value: 'stepped', label: 'Stepped Recovery' },
                   ]}
                 />
+                {jobConfig.config.process[0].train.content_or_style === 'fixed_cycle' && (
+                  <>
+                    <TextInput
+                      label="Fixed Cycle Timesteps"
+                      className="pt-2"
+                      docKey="train.fixed_cycle_timesteps"
+                      value={
+                        jobConfig.config.process[0].train.fixed_cycle_timesteps
+                          ? jobConfig.config.process[0].train.fixed_cycle_timesteps.join(', ')
+                          : '999, 875, 750, 625, 500, 375, 250, 125'
+                      }
+                      onChange={value => {
+                        const arr = value
+                          .split(',')
+                          .map(s => parseFloat(s.trim()))
+                          .filter(n => !isNaN(n));
+                        setJobConfig(arr, 'config.process[0].train.fixed_cycle_timesteps');
+                      }}
+                      placeholder="eg. 999, 875, 750, 625, 500, 375, 250, 125"
+                    />
+                    <NumberInput
+                      label="Fixed Cycle Seed (optional)"
+                      className="pt-2"
+                      docKey="train.fixed_cycle_seed"
+                      value={jobConfig.config.process[0].train.fixed_cycle_seed || ''}
+                      onChange={value => setJobConfig(value ? parseInt(value as string) : null, 'config.process[0].train.fixed_cycle_seed')}
+                      placeholder="eg. 42 (leave empty for no shuffle)"
+                      min={0}
+                    />
+                    <TextInput
+                      label="Fixed Cycle Weight Peak Timesteps (optional)"
+                      className="pt-2"
+                      docKey="train.fixed_cycle_weight_peak_timesteps"
+                      value={
+                        jobConfig.config.process[0].train.fixed_cycle_weight_peak_timesteps
+                          ? jobConfig.config.process[0].train.fixed_cycle_weight_peak_timesteps.join(', ')
+                          : '500, 375'
+                      }
+                      onChange={value => {
+                        const arr = value
+                          .split(',')
+                          .map(s => parseFloat(s.trim()))
+                          .filter(n => !isNaN(n));
+                        setJobConfig(arr.length > 0 ? arr : null, 'config.process[0].train.fixed_cycle_weight_peak_timesteps');
+                      }}
+                      placeholder="eg. 500, 375 (leave empty to disable)"
+                    />
+                    <NumberInput
+                      label="Fixed Cycle Weight Sigma (optional)"
+                      className="pt-2"
+                      docKey="train.fixed_cycle_weight_sigma"
+                      value={jobConfig.config.process[0].train.fixed_cycle_weight_sigma || 372.8}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.fixed_cycle_weight_sigma')}
+                      placeholder="eg. 372.8"
+                      min={0}
+                      step={0.1}
+                    />
+                  </>
+                )}
               </div>
               <div>
                 <FormGroup label="EMA (Exponential Moving Average)">
@@ -674,6 +736,21 @@ export default function SimpleJob({
                           }
                           placeholder="eg. 1.0"
                           min={0}
+                        />
+                        <NumberInput
+                          label="BPP Probability"
+                          docKey={'train.blank_prompt_probability'}
+                          className="pt-2"
+                          value={
+                            (jobConfig.config.process[0].train.blank_prompt_probability as number) ?? 1.0
+                          }
+                          onChange={value =>
+                            setJobConfig(value, 'config.process[0].train.blank_prompt_probability')
+                          }
+                          placeholder="eg. 0.1 for 10%, 1.0 for 100%"
+                          min={0}
+                          max={1}
+                          step={0.1}
                         />
                       </>
                     )}

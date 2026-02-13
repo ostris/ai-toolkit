@@ -1,7 +1,7 @@
 'use client';
 
 import { Job } from '@prisma/client';
-import useJobLossLog, { LossPoint } from '@/hooks/useJobLossLog';
+import useJobLossLog, { LossPoint, MetricFilter } from '@/hooks/useJobLossLog';
 import { useMemo, useState, useEffect } from 'react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
 
@@ -65,7 +65,8 @@ function strokeForKey(key: string) {
 }
 
 export default function JobLossGraph({ job }: Props) {
-  const { series, lossKeys, status, refreshLoss } = useJobLossLog(job.id, 2000);
+  const [metricFilter, setMetricFilter] = useState<MetricFilter>('loss');
+  const { series, filteredKeys, status, refreshLoss } = useJobLossLog(job.id, 2000, metricFilter);
 
   // Controls
   const [useLogScale, setUseLogScale] = useState(false);
@@ -91,18 +92,18 @@ export default function JobLossGraph({ job }: Props) {
   useEffect(() => {
     setEnabled(prev => {
       const next = { ...prev };
-      for (const k of lossKeys) {
+      for (const k of filteredKeys) {
         if (next[k] === undefined) next[k] = true;
       }
       // drop removed keys
       for (const k of Object.keys(next)) {
-        if (!lossKeys.includes(k)) delete next[k];
+        if (!filteredKeys.includes(k)) delete next[k];
       }
       return next;
     });
-  }, [lossKeys]);
+  }, [filteredKeys]);
 
-  const activeKeys = useMemo(() => lossKeys.filter(k => enabled[k] !== false), [lossKeys, enabled]);
+  const activeKeys = useMemo(() => filteredKeys.filter(k => enabled[k] !== false), [filteredKeys, enabled]);
 
   const perSeries = useMemo(() => {
     // Build per-series processed point arrays (raw + smoothed), then merge by step for charting.
@@ -318,7 +319,7 @@ export default function JobLossGraph({ job }: Props) {
 
       {/* Controls */}
       <div className="px-4 pb-2">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <label className="block text-xs text-gray-400 mb-2">Display</label>
             <div className="flex flex-wrap gap-2">
@@ -330,12 +331,43 @@ export default function JobLossGraph({ job }: Props) {
           </div>
 
           <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
+            <label className="block text-xs text-gray-400 mb-2">Metric type</label>
+            <div className="flex flex-wrap gap-2">
+              <ToggleButton 
+                checked={metricFilter === 'loss'} 
+                onClick={() => setMetricFilter('loss')} 
+                label="Loss" 
+              />
+              <ToggleButton 
+                checked={metricFilter === 'learning_rate'} 
+                onClick={() => setMetricFilter('learning_rate')} 
+                label="Learning Rate" 
+              />
+              <ToggleButton 
+                checked={metricFilter === 'diff_guidance'} 
+                onClick={() => setMetricFilter('diff_guidance')} 
+                label="Diff Guidance" 
+              />
+              <ToggleButton 
+                checked={metricFilter === 'all'} 
+                onClick={() => setMetricFilter('all')} 
+                label="All" 
+              />
+              <ToggleButton 
+                checked={metricFilter === 'other'} 
+                onClick={() => setMetricFilter('other')} 
+                label="Other" 
+              />
+            </div>
+          </div>
+
+          <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <label className="block text-xs text-gray-400 mb-2">Series</label>
-            {lossKeys.length === 0 ? (
-              <div className="text-sm text-gray-400">No loss keys found yet.</div>
+            {filteredKeys.length === 0 ? (
+              <div className="text-sm text-gray-400">No keys found yet.</div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                {lossKeys.map(k => (
+                {filteredKeys.map(k => (
                   <button
                     key={k}
                     type="button"
@@ -389,7 +421,7 @@ export default function JobLossGraph({ job }: Props) {
             <div className="mt-2 text-[11px] text-gray-500">UI downsample for huge runs.</div>
           </div>
 
-          <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 md:col-span-2">
+          <div className="bg-gray-950 border border-gray-800 rounded-lg p-3 md:col-span-3">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-xs text-gray-400">Window (last N points)</label>
               <span className="text-xs text-gray-300">{windowSize === 0 ? 'all' : windowSize.toLocaleString()}</span>

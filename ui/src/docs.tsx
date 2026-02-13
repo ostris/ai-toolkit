@@ -287,6 +287,78 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.blank_prompt_probability': {
+    title: 'BPP Probability',
+    description: (
+      <>
+        Controls how often the Blank Prompt Preservation check runs during training. 
+        Value between 0.0 and 1.0. Default is 1.0 (runs every step). 
+        Setting to 0.1 means BPP runs ~10% of steps, reducing training time by up to 45% 
+        while still preventing model degradation. Lower values give the model more freedom 
+        to adapt to new concepts between BPP corrections. Recommended: 0.1-0.2 for Turbo models.
+      </>
+    ),
+  },
+  'train.content_or_style': {
+    title: 'Timestep Bias',
+    description: (
+      <>
+        Controls how timesteps are sampled during training:
+        <br /><br />
+        <b>Balanced</b>: Uniform distribution across all timesteps.
+        <br /><br />
+        <b>High Noise</b>: Cubic distribution favoring earlier timesteps (more noise). Best for learning content/structure.
+        <br /><br />
+        <b>Low Noise</b>: Cubic distribution favoring later timesteps (less noise). Best for learning style/details.
+        <br /><br />
+        <b>Gaussian (Normal)</b>: Normal distribution with configurable center and spread. Use <code>gaussian_mean</code> and <code>gaussian_std</code> in YAML config:
+        <br />
+        • <code>gaussian_mean</code> (default 0.5): Center of distribution. Lower values (0.0-0.5) = more noise/earlier timesteps, higher values (0.5-1.0) = less noise/later timesteps.
+        <br />
+        • <code>gaussian_std</code> (default 0.2): Spread of distribution. Smaller = narrower focus, larger = wider coverage.
+        <br />
+        • <code>gaussian_std_target</code> (optional, default None): Enable curriculum learning. When set, gaussian_std will linearly interpolate from initial value to this target value during training. Example: start with gaussian_std: 0.001 (narrow distribution, focused training) → end with gaussian_std_target: 0.3 (wide distribution, diverse timestep coverage).
+        <br />
+        • <code>timestep_bias_exponent</code> (default 3.0): Controls the cubic bias exponent for content/style timestep distribution. Higher values create stronger bias toward edges (early timesteps for content, late timesteps for style). Lower values create more uniform distribution.
+        <br /><br />
+        <b>Fixed Cycle</b>: Deterministic cycle over a fixed list of timestep values. Same step number always gets the same timestep, so training is reproducible. Recommended for distilled/Turbo models (e.g. Z-Image-Turbo LoRA) that are sensitive to random timestep sampling. Configure via YAML: <code>fixed_cycle_timesteps</code>, <code>fixed_cycle_seed</code>, <code>fixed_cycle_weight_peak_timesteps</code>.
+      </>
+    ),
+  },
+  'train.fixed_cycle_timesteps': {
+    title: 'Fixed Cycle Timesteps',
+    description: (
+      <>
+        Used when <code>content_or_style</code> is <code>fixed_cycle</code>. List of timestep values (scheduler scale, typically 0–1000) to cycle through deterministically. At step <code>s</code>, the whole batch uses <code>fixed_cycle_timesteps[s % length]</code> (after optional shuffle by <code>fixed_cycle_seed</code>). Values are snapped to the nearest scheduler timestep.
+        <br /><br />
+        Default: <code>[999, 875, 750, 625, 500, 375, 250, 125]</code>. Set in config file (e.g. YAML) as an array of numbers.
+      </>
+    ),
+  },
+  'train.fixed_cycle_seed': {
+    title: 'Fixed Cycle Seed',
+    description: (
+      <>
+        Used when <code>content_or_style</code> is <code>fixed_cycle</code>. If set, the list <code>fixed_cycle_timesteps</code> is shuffled once at the start of training using this seed. Same seed gives the same cycle order and reproducible runs. If <code>null</code> or unset, the cycle uses the order from the config.
+      </>
+    ),
+  },
+  'train.fixed_cycle_weight_peak_timesteps': {
+    title: 'Fixed Cycle Weight Peak Timesteps',
+    description: (
+      <>
+        Used when <code>content_or_style</code> is <code>fixed_cycle</code>. Enables timestep-weighted loss (like <code>timestep_type: weighted</code>): loss is multiplied by weights with peaks at these timestep values. Default: <code>[500, 375]</code> so maximum weight is around 500 and 375. Set to <code>null</code> or empty to disable weighting. Set in config file as an array of numbers.
+      </>
+    ),
+  },
+  'train.fixed_cycle_weight_sigma': {
+    title: 'Fixed Cycle Weight Sigma',
+    description: (
+      <>
+        Used when <code>content_or_style</code> is <code>fixed_cycle</code> and <code>fixed_cycle_weight_peak_timesteps</code> is set. Standard deviation (sigma) for the Gaussian distribution used to weight loss around the peak timesteps. Controls the width of the Gaussian peaks — larger values create wider, flatter distributions, smaller values create sharper peaks. Default: <code>372.8</code>.
+      </>
+    ),
+  },
   'train.do_differential_guidance': {
     title: 'Differential Guidance',
     description: (

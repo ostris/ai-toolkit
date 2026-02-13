@@ -182,3 +182,7 @@ cython_debug/
 aitk_db.db
 /notes.md
 /data
+
+# ide
+.cursor
+.continue
