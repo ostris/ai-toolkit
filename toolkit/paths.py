@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 TOOLKIT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_ROOT = os.path.join(TOOLKIT_ROOT, 'config')
@@ -21,4 +22,13 @@ def get_path(path):
     # we allow absolute paths, but if it is not absolute, we assume it is relative to the toolkit root
     if not os.path.isabs(path):
         path = os.path.join(TOOLKIT_ROOT, path)
+    return path
+
+
+def normalize_model_path(path: Optional[str]) -> Optional[str]:
+    """Strip trailing path separators so Hugging Face transformers don't get empty basenames.
+    Avoids the 'The module name (originally ) is not a valid Python identifier' warning.
+    """
+    if isinstance(path, str):
+        return path.rstrip(os.sep).rstrip("/")
     return path

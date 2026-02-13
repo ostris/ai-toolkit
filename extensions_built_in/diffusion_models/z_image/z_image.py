@@ -1,5 +1,6 @@
 import os
-from typing import List, Optional
+import time
+from typing import List, Optional, Tuple
 
 import huggingface_hub
 import torch
@@ -17,7 +18,9 @@ from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.util.device import safe_module_to_device
 from toolkit.memory_management import MemoryManager
+from toolkit.paths import normalize_model_path
 from safetensors.torch import load_file
+import safetensors
 
 from transformers import AutoTokenizer, Qwen3ForCausalLM
 from diffusers import AutoencoderKL
@@ -36,6 +39,9 @@ scheduler_config = {
     "use_dynamic_shifting": False,
     "shift": 3.0,
 }
+
+# Set when safetensors patches are applied for debug_zimage_load (avoid double-wrap)
+_zimage_load_debug_patched = False
 
 
 class ZImageModel(BaseModel):
@@ -148,11 +154,45 @@ class ZImageModel(BaseModel):
         # tell the model to invert assistant on inference since we want remove lora effects
         self.invert_assistant_lora = True
 
-    def load_model(self):
+    def _load_sampling_transformer(self) -> Optional[ZImageTransformer2DModel]:
+        """Load a separate transformer for inference/sampling when sampling_name_or_path is set.
+        Returns None if not configured or when sampling path equals the training model path.
+        """
+        if (
+            self.model_config.sampling_name_or_path is None
+            or self.model_config.sampling_name_or_path == self.model_config.name_or_path
+        ):
+            return None
         dtype = self.torch_dtype
-        self.print_and_status_update("Loading ZImage model")
-        model_path = self.model_config.name_or_path
-        base_model_path = self.model_config.extras_name_or_path
+        self.print_and_status_update("Loading sampling transformer")
+        sampling_model_path = normalize_model_path(self.model_config.sampling_name_or_path)
+        sampling_transformer_path = sampling_model_path
+        sampling_transformer_subfolder = "transformer"
+
+        if os.path.exists(sampling_model_path):
+            sampling_transformer_subfolder = None
+            sampling_transformer_path = os.path.join(sampling_model_path, "transformer")
+
+        sampling_transformer = ZImageTransformer2DModel.from_pretrained(
+            sampling_transformer_path,
+            subfolder=sampling_transformer_subfolder,
+            torch_dtype=dtype,
+        )
+        if self.model_config.quantize:
+            self.print_and_status_update("Quantizing sampling transformer")
+            quantize_model(self, sampling_transformer)
+            flush()
+        # Always keep sampling transformer on CPU to save VRAM during training
+        sampling_transformer.to("cpu")
+        flush()
+        return sampling_transformer
+
+    def _load_transformer(self, model_path: str) -> Tuple[ZImageTransformer2DModel, str]:
+        """Load the training transformer and resolve base_model_path for VAE/text_encoder.
+        Returns (transformer, base_model_path). base_model_path is used for tokenizer, text_encoder, VAE.
+        """
+        dtype = self.torch_dtype
+        base_model_path = normalize_model_path(self.model_config.extras_name_or_path)
 
         self.print_and_status_update("Loading transformer")
 
@@ -161,20 +201,19 @@ class ZImageModel(BaseModel):
         if os.path.exists(transformer_path):
             transformer_subfolder = None
             transformer_path = os.path.join(transformer_path, "transformer")
-            # check if the path is a full checkpoint.
+            # Check if the path is a full checkpoint (contains text_encoder, vae, etc.)
             te_folder_path = os.path.join(model_path, "text_encoder")
-            # if we have the te, this folder is a full checkpoint, use it as the base
+
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
         transformer = ZImageTransformer2DModel.from_pretrained(
             transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
         )
-
-        # load assistant lora if specified
+        # Load assistant LoRA if specified (e.g. for ARA-style training)
         if self.model_config.assistant_lora_path is not None:
             self.load_training_adapter(transformer)
-            # set qtype to be float8 if it is qfloat8
+            # Set qtype to float8 if it is qfloat8 (quantize compatibility)
             if self.model_config.qtype == "qfloat8":
                 self.model_config.qtype = "float8"
 
@@ -202,39 +241,74 @@ class ZImageModel(BaseModel):
             transformer.to("cpu")
 
         flush()
+        return transformer, base_model_path
 
-        # Load sampling transformer if a separate sampling_name_or_path is specified
-        self._sampling_transformer = None
-        if self.model_config.sampling_name_or_path is not None and self.model_config.sampling_name_or_path != model_path:
-            self.print_and_status_update("Loading sampling transformer")
-            sampling_model_path = self.model_config.sampling_name_or_path
-            sampling_transformer_path = sampling_model_path
-            sampling_transformer_subfolder = "transformer"
-            
-            if os.path.exists(sampling_model_path):
-                sampling_transformer_subfolder = None
-                sampling_transformer_path = os.path.join(sampling_model_path, "transformer")
-            
-            sampling_transformer = ZImageTransformer2DModel.from_pretrained(
-                sampling_transformer_path, subfolder=sampling_transformer_subfolder, torch_dtype=dtype
-            )
-            
-            if self.model_config.quantize:
-                self.print_and_status_update("Quantizing sampling transformer")
-                quantize_model(self, sampling_transformer)
-                flush()
-            
-            # Always keep sampling transformer on CPU
-            sampling_transformer.to("cpu")
-            self._sampling_transformer = sampling_transformer
-            flush()
+    def load_model(self):
+        global _zimage_load_debug_patched
+        dtype = self.torch_dtype
+        self.print_and_status_update("Loading ZImage model")
+        model_path = normalize_model_path(self.model_config.name_or_path)
+
+        if self.model_config.debug_zimage_load and not _zimage_load_debug_patched:
+            log_func = self.print_and_status_update
+            orig_load_file = safetensors.torch.load_file
+            orig_safe_open = safetensors.safe_open
+
+            def _debug_path_and_size(path):
+                if path is not None and isinstance(path, (str, os.PathLike)) and os.path.isfile(path):
+                    path_str = os.path.abspath(path)
+                    try:
+                        size = os.path.getsize(path)
+                        return path_str, f" size={size}"
+                    except OSError:
+                        return path_str, ""
+                path_str = repr(path) if path else "<no path>"
+                return path_str, ""
+
+            def _wrapped_load_file(*args, **kwargs):
+                path = args[0] if args else kwargs.get("filename") or kwargs.get("path")
+                path_str, size_str = _debug_path_and_size(path)
+                start = time.perf_counter()
+                result = orig_load_file(*args, **kwargs)
+                duration = time.perf_counter() - start
+                log_func(f"[ZImage debug] load_file path={path_str}{size_str} duration={duration:.3f}s")
+                return result
+
+            def _wrapped_safe_open(*args, **kwargs):
+                path = args[0] if args else kwargs.get("filename") or kwargs.get("path")
+                path_str, size_str = _debug_path_and_size(path)
+                start = time.perf_counter()
+                result = orig_safe_open(*args, **kwargs)
+
+                class _WrappedCtx:
+                    def __enter__(_self):
+                        return result.__enter__()
+
+                    def __exit__(_self, *exc):
+                        duration = time.perf_counter() - start
+                        log_func(f"[ZImage debug] safe_open path={path_str}{size_str} duration={duration:.3f}s")
+                        return result.__exit__(*exc)
+
+                return _WrappedCtx()
+
+            safetensors.torch.load_file = _wrapped_load_file
+            safetensors.safe_open = _wrapped_safe_open
+            _zimage_load_debug_patched = True
+
+        if self.model_config.debug_zimage_load:
+            self.print_and_status_update("[ZImage debug] === Loading sampling transformer (from_pretrained) ===")
+        # Load sampling transformer first (if configured) to control peak VRAM
+        self._sampling_transformer = self._load_sampling_transformer()
+        if self.model_config.debug_zimage_load:
+            self.print_and_status_update("[ZImage debug] === Loading main transformer (from_pretrained) ===")
+        transformer, base_model_path = self._load_transformer(model_path)
 
         self.print_and_status_update("Text Encoder")
         tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
+            base_model_path, subfolder="tokenizer", dtype=dtype
         )
         text_encoder = Qwen3ForCausalLM.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
+            base_model_path, subfolder="text_encoder", dtype=dtype
         )
 
         if (
@@ -333,58 +407,45 @@ class ZImageModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
+        sc = self.get_bucket_divisibility()
+        gen_config.width = int(gen_config.width // sc * sc)
+        gen_config.height = int(gen_config.height // sc * sc)
 
-        if self._sampling_transformer is not None:
-            self.model.to("cpu")
-            self._sampling_transformer.to(self.device_torch, dtype=self.torch_dtype)
-        else:
-            self.model.to(self.device_torch, dtype=self.torch_dtype)
+        # ZImagePipeline expects prompt_embeds and negative_prompt_embeds to be
+        # List[torch.FloatTensor] where each element is [seq_len, dim].
+        # The pipeline concatenates these lists for CFG (not element-wise add).
+        cond_embeds = conditional_embeds.text_embeds
+        uncond_embeds = unconditional_embeds.text_embeds
 
-        try:
-            sc = self.get_bucket_divisibility()
-            gen_config.width = int(gen_config.width // sc * sc)
-            gen_config.height = int(gen_config.height // sc * sc)
-
-            # ZImagePipeline expects prompt_embeds and negative_prompt_embeds to be
-            # List[torch.FloatTensor] where each element is [seq_len, dim].
-            # The pipeline concatenates these lists for CFG (not element-wise add).
-            cond_embeds = conditional_embeds.text_embeds
-            uncond_embeds = unconditional_embeds.text_embeds
-
-            # Convert rank-3 tensors back to list of rank-2 tensors
-            def to_embed_list(embeds):
-                if embeds is None:
-                    return []
-                if isinstance(embeds, list):
-                    return embeds
-                if len(embeds.shape) == 3:
-                    # [batch, seq_len, dim] -> list of [seq_len, dim]
-                    return list(embeds.unbind(dim=0))
-                elif len(embeds.shape) == 2:
-                    # Already [seq_len, dim], wrap in list
-                    return [embeds]
+        # Convert rank-3 tensors back to list of rank-2 tensors
+        def to_embed_list(embeds):
+            if embeds is None:
+                return []
+            if isinstance(embeds, list):
                 return embeds
+            if len(embeds.shape) == 3:
+                # [batch, seq_len, dim] -> list of [seq_len, dim]
+                return list(embeds.unbind(dim=0))
+            elif len(embeds.shape) == 2:
+                # Already [seq_len, dim], wrap in list
+                return [embeds]
+            return embeds
 
-            cond_embeds_list = to_embed_list(cond_embeds)
-            uncond_embeds_list = to_embed_list(uncond_embeds)
+        cond_embeds_list = to_embed_list(cond_embeds)
+        uncond_embeds_list = to_embed_list(uncond_embeds)
 
-            img = pipeline(
-                prompt_embeds=cond_embeds_list,
-                negative_prompt_embeds=uncond_embeds_list,
-                height=gen_config.height,
-                width=gen_config.width,
-                num_inference_steps=gen_config.num_inference_steps,
-                guidance_scale=gen_config.guidance_scale,
-                latents=gen_config.latents,
-                generator=generator,
-                **extra,
-            ).images[0]
-            return img
-        finally:
-            # Unload sampling transformer from GPU and restore main model to device
-            if self._sampling_transformer is not None:
-                self._sampling_transformer.to("cpu")
-                self.model.to(self.device_torch, dtype=self.torch_dtype)
+        img = pipeline(
+            prompt_embeds=cond_embeds_list,
+            negative_prompt_embeds=uncond_embeds_list,
+            height=gen_config.height,
+            width=gen_config.width,
+            num_inference_steps=gen_config.num_inference_steps,
+            guidance_scale=gen_config.guidance_scale,
+            latents=gen_config.latents,
+            generator=generator,
+            **extra,
+        ).images[0]
+        return img
 
     def get_noise_prediction(
         self,

@@ -428,10 +428,18 @@ class BaseModel:
                 if network is not None:
                     assert network.is_active
 
+                # Load sampling transformer onto device if it exists
+                if self._sampling_transformer is not None:
+                    self.model.to("cpu")
+                    self._sampling_transformer.to(self.device_torch, dtype=self.torch_dtype)
+                else:
+                    self.model.to(self.device_torch, dtype=self.torch_dtype)
+
                 for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
                     gen_config = image_configs[i]
 
                     extra = {}
+
                     validation_image = None
                     if self.adapter is not None and gen_config.adapter_image_path is not None:
                         validation_image = Image.open(gen_config.adapter_image_path)
@@ -667,6 +675,11 @@ class BaseModel:
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
                     self.adapter.clear_memory()
+
+        # Unload sampling transformer from GPU and restore main model to device
+        if self._sampling_transformer is not None:
+            self._sampling_transformer.to("cpu")
+            self.model.to(self.device_torch, dtype=self.torch_dtype)
 
         # clear pipeline and cache to reduce vram usage
         del pipeline
