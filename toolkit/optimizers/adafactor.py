@@ -115,7 +115,7 @@ class Adafactor(torch.optim.Optimizer):
         relative_step=True,
         warmup_init=False,
         min_lr=1e-6,
-        max_lr=1e-2,
+        max_lr=1e-4,
         do_parameter_swapping=False,
         parameter_swapping_factor=0.1,
         stochastic_accumulation=True,
@@ -215,9 +215,8 @@ class Adafactor(torch.optim.Optimizer):
         if param_group["scale_parameter"]:
             param_scale = max(param_group["eps"][1], param_state["RMS"])
         lr = param_scale * rel_step_sz
-        # Ensure learning rate doesn't exceed max_lr when using relative_step
-        if param_group["relative_step"]:
-            lr = min(lr, param_group["max_lr"])
+        # Ensure learning rate is between min_lr and max_lr
+        lr = max(param_group["min_lr"], min(lr, param_group["max_lr"]))
         return lr
 
     @staticmethod
