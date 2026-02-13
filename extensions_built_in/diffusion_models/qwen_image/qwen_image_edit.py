@@ -16,6 +16,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 from toolkit.accelerator import get_accelerator, unwrap_model
 from optimum.quanto import freeze, QTensor
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.device import safe_module_to_device
 import torch.nn.functional as F
 
 from diffusers import (
@@ -89,7 +90,8 @@ class QwenImageEditModel(QwenImageModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        self.model.to(self.device_torch, dtype=self.torch_dtype)
+        if self.model_config.low_vram:
+            safe_module_to_device(self.model, self.device_torch, self.torch_dtype)
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)

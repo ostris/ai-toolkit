@@ -16,6 +16,7 @@ from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
 from toolkit.util.quantize import quantize_model
+from toolkit.util.device import safe_module_to_device
 from .wan22_pipeline import Wan22Pipeline
 from diffusers import WanTransformer3DModel
 
@@ -132,20 +133,23 @@ class DualWanTransformer3DModel(torch.nn.Module):
             # todo swap the loras as well
             if t_name != self._active_transformer_name:
                 if self.low_vram:
-                    getattr(self, self._active_transformer_name).to("cpu")
-                    getattr(self, t_name).to(self.device_torch)
+                    safe_module_to_device(
+                        getattr(self, self._active_transformer_name), torch.device("cpu")
+                    )
+                    safe_module_to_device(getattr(self, t_name), self.device_torch)
                     torch.cuda.empty_cache()
                 self._active_transformer_name = t_name
 
-        if self.transformer.device != hidden_states.device:
-            if self.low_vram:
-                # move other transformer to cpu
-                other_tname = (
-                    "transformer_1" if t_name == "transformer_2" else "transformer_2"
-                )
-                getattr(self, other_tname).to("cpu")
+        if self.low_vram and self.transformer.device != hidden_states.device:
+            # move other transformer to cpu
+            other_tname = (
+                "transformer_1" if t_name == "transformer_2" else "transformer_2"
+            )
+            safe_module_to_device(
+                getattr(self, other_tname), torch.device("cpu")
+            )
 
-            self.transformer.to(hidden_states.device)
+            safe_module_to_device(self.transformer, hidden_states.device)
 
         return self.transformer(
             hidden_states=hidden_states,
