@@ -1526,11 +1526,18 @@ class SDTrainer(BaseSDTrainProcess):
                                     self.device_torch, dtype=dtype
                                 )
                             else:
-                                embeds_to_use = self.cached_blank_embeds.clone().detach().to(
-                                    self.device_torch, dtype=dtype
-                                )
+                                # No cache on disk: use trigger_word instead of blank embedding
                                 if self.cached_trigger_embeds is not None and not is_reg:
                                     embeds_to_use = self.cached_trigger_embeds.clone().detach().to(
+                                        self.device_torch, dtype=dtype
+                                    )
+                                else:
+                                    if self.is_caching_text_embeddings:
+                                        raise ValueError(
+                                            "cache_text_embeddings is enabled but no cached embeds in batch. "
+                                            "Set trigger_word when using cache_text_embeddings so fallback is available when cache is missing."
+                                        )
+                                    embeds_to_use = self.cached_blank_embeds.clone().detach().to(
                                         self.device_torch, dtype=dtype
                                     )
                                 conditional_embeds = concat_prompt_embeds(
