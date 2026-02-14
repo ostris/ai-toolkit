@@ -27,7 +27,7 @@ from toolkit.memory_management import MemoryManager
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
+from toolkit.data_loader import get_dataloader_from_datasets, get_dataloader_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
@@ -2322,6 +2322,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             dataloader_reg = None
             dataloader_iterator_reg = None
 
+        # Sync epoch_num to datasets so resume from checkpoint keeps correct shuffle-for-cached-embeddings behavior
+        if dataloader is not None:
+            for dataset in get_dataloader_datasets(dataloader):
+                dataset.set_epoch_num(self.epoch_num)
+
         # zero any gradients
         optimizer.zero_grad()
 
@@ -2407,6 +2412,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 dataloader_iterator = iter(dataloader)
                                 trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
+                                for dataset in get_dataloader_datasets(dataloader):
+                                    dataset.set_epoch_num(self.epoch_num)
+                                    clear_embeddings_cache = not getattr(dataset.dataset_config, 'cache_text_embeddings', False)
+                                    if clear_embeddings_cache:
+                                        dataset.clear_cached_embeddings_memory()
                                 if self.train_config.gradient_accumulation_steps == -1:
                                     # if we are accumulating for an entire epoch, trigger a step
                                     self.is_grad_accumulation_step = False
