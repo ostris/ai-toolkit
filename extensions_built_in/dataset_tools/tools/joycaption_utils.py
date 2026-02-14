@@ -5,7 +5,7 @@ import torch
 import cv2
 import numpy as np
 from PIL import Image
-from typing import Union, List
+from typing import Union, List, Optional
 import tempfile
 import os
 
@@ -59,6 +59,9 @@ class JoyCaptionImageProcessor:
         max_new_tokens=512,
         temperature=0.6,
         top_p=0.9,
+        top_k: Optional[int] = None,
+        do_sample: bool = True,
+        clean_output: bool = True,
         system_prompt="You are a helpful image captioner."
     ):
 
@@ -111,11 +114,11 @@ class JoyCaptionImageProcessor:
             generate_ids = self.model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                do_sample=True,
+                do_sample=do_sample,
                 suppress_tokens=None,
                 use_cache=True,
                 temperature=temperature,
-                top_k=None,
+                top_k=top_k,
                 top_p=top_p,
             )[0]
 
@@ -126,12 +129,14 @@ class JoyCaptionImageProcessor:
         caption = self.processor.tokenizer.decode(
             generate_ids,
             skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
+            clean_up_tokenization_spaces=True
         )
-        caption = caption.strip()
+        caption = caption.replace('<|end_of_text|>', '').replace('<|finetune_right_pad_id|>', '').strip()
 
 
-        return clean_caption(caption, replacements=replacements)
+        if clean_output:
+            return clean_caption(caption, replacements=replacements)
+        return caption
 
     def extract_video_frames(
         self,
@@ -189,6 +194,9 @@ class JoyCaptionImageProcessor:
         max_new_tokens: int = 512,
         temperature: float = 0.6,
         top_p: float = 0.9,
+        top_k: Optional[int] = None,
+        do_sample: bool = True,
+        clean_output: bool = True,
         combine_method: str = "first",
         prompt: str = None
     ) -> str:
@@ -208,7 +216,10 @@ class JoyCaptionImageProcessor:
                 prompt=prompt,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
-                top_p=top_p
+                top_p=top_p,
+                top_k=top_k,
+                do_sample=do_sample,
+                clean_output=clean_output,
             )
             frame_captions.append(caption)
 
