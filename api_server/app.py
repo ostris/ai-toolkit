@@ -22,6 +22,12 @@ _tagger_model_path = None
 _audio_captioner = None
 _audio_model_path = None
 
+JOYCAPTION_LEGACY_PROMPT = "A descriptive caption for this image:"
+JOYCAPTION_LEGACY_MAX_NEW_TOKENS = 300
+JOYCAPTION_LEGACY_TEMPERATURE = 0.5
+JOYCAPTION_LEGACY_TOP_K = 10
+FLORENCE2_DEFAULT_MAX_NEW_TOKENS = 1024
+
 
 class SessionCreateRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, alias='sessionId')
@@ -44,12 +50,25 @@ class CaptionRequest(BaseModel):
     video_url: Optional[str] = Field(default=None, description="URL to video file")
     model_type: Optional[str] = Field(default="florence2", description="Model type: 'florence2' or 'joycaption'")
     model_path: Optional[str] = Field(default=None, description="Custom model path (default varies by model_type)")
-    max_new_tokens: Optional[int] = Field(default=1024, description="Maximum tokens to generate")
+    max_new_tokens: Optional[int] = Field(
+        default=None,
+        description="Maximum tokens to generate (default: 1024 for Florence2, 300 for JoyCaption)",
+        gt=0,
+    )
     num_beams: Optional[int] = Field(default=3, description="Number of beams for generation (Florence2 only)")
     task: Optional[str] = Field(default="<DETAILED_CAPTION>", description="Florence2 task type (Florence2 only)")
-    prompt: Optional[str] = Field(default=None, description="Custom prompt for JoyCaption (default: 'Write a long descriptive caption for this image in a formal tone.')")
-    temperature: Optional[float] = Field(default=0.6, description="Temperature for sampling (JoyCaption only)")
-    top_p: Optional[float] = Field(default=0.9, description="Top-p sampling parameter (JoyCaption only)")
+    prompt: Optional[str] = Field(
+        default=None,
+        description="Custom prompt for JoyCaption (default: old service style 'A descriptive caption for this image:')",
+    )
+    temperature: Optional[float] = Field(default=None, description="Temperature for sampling (JoyCaption only)")
+    top_p: Optional[float] = Field(default=None, description="Top-p sampling parameter (JoyCaption only)")
+    top_k: Optional[int] = Field(default=None, description="Top-k sampling parameter (JoyCaption only)", gt=0)
+    do_sample: Optional[bool] = Field(default=True, description="Whether to sample during generation (JoyCaption only)")
+    clean_output: Optional[bool] = Field(
+        default=False,
+        description="Apply dataset-style lowercase/comma cleaning to JoyCaption output (JoyCaption only)",
+    )
     num_frames: Optional[int] = Field(default=8, description="Number of frames to extract from video")
     sample_method: Optional[str] = Field(default="uniform", description="Frame sampling method: 'uniform' or 'first'")
     combine_method: Optional[str] = Field(default="first", description="Caption combining method: 'first', 'longest', or 'combined'")
@@ -541,22 +560,48 @@ def generate_caption(request: CaptionRequest):
                 temp_paths.append(video_path)
 
             if request.model_type == "joycaption":
+                joy_prompt = request.prompt if request.prompt is not None else JOYCAPTION_LEGACY_PROMPT
+                joy_max_new_tokens = (
+                    request.max_new_tokens
+                    if request.max_new_tokens is not None
+                    else JOYCAPTION_LEGACY_MAX_NEW_TOKENS
+                )
+                joy_temperature = (
+                    request.temperature
+                    if request.temperature is not None
+                    else JOYCAPTION_LEGACY_TEMPERATURE
+                )
+                joy_top_k = request.top_k if request.top_k is not None else JOYCAPTION_LEGACY_TOP_K
+                joy_do_sample = request.do_sample if request.do_sample is not None else True
+                if request.clean_output is not None:
+                    joy_clean_output = request.clean_output
+                else:
+                    # Combined mode expects comma-separated elements, so default to cleaned captions.
+                    joy_clean_output = request.combine_method == "combined"
                 caption = processor.generate_video_caption(
                     video_path=video_path,
                     num_frames=request.num_frames,
                     sample_method=request.sample_method,
-                    max_new_tokens=request.max_new_tokens,
-                    temperature=request.temperature,
+                    max_new_tokens=joy_max_new_tokens,
+                    temperature=joy_temperature,
                     top_p=request.top_p,
+                    top_k=joy_top_k,
+                    do_sample=joy_do_sample,
+                    clean_output=joy_clean_output,
                     combine_method=request.combine_method,
-                    prompt=request.prompt
+                    prompt=joy_prompt
                 )
             else: 
+                florence_max_new_tokens = (
+                    request.max_new_tokens
+                    if request.max_new_tokens is not None
+                    else FLORENCE2_DEFAULT_MAX_NEW_TOKENS
+                )
                 caption = processor.generate_video_caption(
                     video_path=video_path,
                     num_frames=request.num_frames,
                     sample_method=request.sample_method,
-                    max_new_tokens=request.max_new_tokens,
+                    max_new_tokens=florence_max_new_tokens,
                     num_beams=request.num_beams,
                     task=request.task,
                     combine_method=request.combine_method
@@ -624,17 +669,39 @@ def generate_caption(request: CaptionRequest):
             image = _load_image_from_source(request.image_path, request.image_url)
 
             if request.model_type == "joycaption":
+                joy_prompt = request.prompt if request.prompt is not None else JOYCAPTION_LEGACY_PROMPT
+                joy_max_new_tokens = (
+                    request.max_new_tokens
+                    if request.max_new_tokens is not None
+                    else JOYCAPTION_LEGACY_MAX_NEW_TOKENS
+                )
+                joy_temperature = (
+                    request.temperature
+                    if request.temperature is not None
+                    else JOYCAPTION_LEGACY_TEMPERATURE
+                )
+                joy_top_k = request.top_k if request.top_k is not None else JOYCAPTION_LEGACY_TOP_K
+                joy_do_sample = request.do_sample if request.do_sample is not None else True
+                joy_clean_output = request.clean_output if request.clean_output is not None else False
                 caption = processor.generate_caption(
                     image=image,
-                    prompt=request.prompt,
-                    max_new_tokens=request.max_new_tokens,
-                    temperature=request.temperature,
-                    top_p=request.top_p
+                    prompt=joy_prompt,
+                    max_new_tokens=joy_max_new_tokens,
+                    temperature=joy_temperature,
+                    top_p=request.top_p,
+                    top_k=joy_top_k,
+                    do_sample=joy_do_sample,
+                    clean_output=joy_clean_output,
                 )
             else:  
+                florence_max_new_tokens = (
+                    request.max_new_tokens
+                    if request.max_new_tokens is not None
+                    else FLORENCE2_DEFAULT_MAX_NEW_TOKENS
+                )
                 caption = processor.generate_caption(
                     image=image,
-                    max_new_tokens=request.max_new_tokens,
+                    max_new_tokens=florence_max_new_tokens,
                     num_beams=request.num_beams,
                     task=request.task
                 )

@@ -332,7 +332,7 @@ curl -X POST http://localhost:8000/caption/unload \
 | `video_url` | string | null | URL to video file |
 | `model_type` | string | "florence2" | Model to use: "florence2" or "joycaption" |
 | `model_path` | string | varies | Custom model path (overrides default) |
-| `max_new_tokens` | integer | 1024 (florence2)<br>512 (joycaption) | Maximum tokens to generate |
+| `max_new_tokens` | integer | 1024 (florence2)<br>300 (joycaption) | Maximum tokens to generate |
 | `num_frames` | integer | 8 | Number of frames to extract from video |
 | `sample_method` | string | "uniform" | Frame sampling: "uniform" or "first" |
 | `combine_method` | string | "first" | Caption combining: "first", "longest", or "combined" |
@@ -349,9 +349,12 @@ curl -X POST http://localhost:8000/caption/unload \
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `prompt` | string | "Write a long descriptive caption..." | Custom prompt for caption generation |
-| `temperature` | float | 0.6 | Sampling temperature (0.0-2.0)<br>Lower = more focused, Higher = more creative |
-| `top_p` | float | 0.9 | Nucleus sampling parameter (0.0-1.0)<br>Lower = more focused, Higher = more diverse |
+| `prompt` | string | "A descriptive caption for this image:" | Custom prompt for caption generation |
+| `temperature` | float | 0.5 | Sampling temperature (0.0-2.0)<br>Lower = more focused, Higher = more creative |
+| `top_p` | float | null | Nucleus sampling parameter (0.0-1.0)<br>Lower = more focused, Higher = more diverse |
+| `top_k` | integer | 10 | Top-k sampling parameter |
+| `do_sample` | boolean | true | Whether to sample during generation |
+| `clean_output` | boolean | false (`true` when `combine_method="combined"`) | Apply dataset-style lowercase/comma cleaning |
 
 ### Video Audio Captioning Parameters (Video Only)
 
