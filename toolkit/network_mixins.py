@@ -641,13 +641,13 @@ class ToolkitNetworkMixin:
                 load_key = load_key.replace('.', '$$')
                 load_key = load_key.replace('$$lora_down$$', '.lora_down.')
                 load_key = load_key.replace('$$lora_up$$', '.lora_up.')
-                
+                if load_key.endswith('$$alpha'):
+                    load_key = load_key[:-7] + '.alpha'
+
                 # patch lokr, not sure why we need to but whatever
                 if self.network_type.lower() == "lokr":
                     load_key = load_key.replace('$$lokr_w1', '.lokr_w1')
                     load_key = load_key.replace('$$lokr_w2', '.lokr_w2')
-                    if load_key.endswith('$$alpha'):
-                        load_key = load_key[:-7] + '.alpha'
             
             if self.network_type.lower() == "lokr":
                 # lora_transformer_transformer_blocks_7_attn_to_v.lokr_w1 to lycoris_transformer_blocks_7_attn_to_v.lokr_w1
