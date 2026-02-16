@@ -684,14 +684,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         print_acc(f"Saved checkpoint to {file_path}")
 
-        # save optimizer
+        # save optimizer (always unwrap so state matches the optimizer we load into before accelerator.prepare())
         if self.optimizer is not None:
             try:
                 filename = f'optimizer.pt'
                 file_path = os.path.join(self.save_root, filename)
                 try:
                     state_dict = unwrap_model(self.optimizer).state_dict()
-                except Exception as e:
+                except Exception:
                     state_dict = self.optimizer.state_dict()
                 torch.save(state_dict, file_path)
                 print_acc(f"Saved optimizer to {file_path}")
@@ -2221,7 +2221,27 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 try:
                     print_acc(f"Loading optimizer state from {optimizer_state_file_path}")
                     optimizer_state_dict = torch.load(optimizer_state_file_path, weights_only=True)
-                    optimizer.load_state_dict(optimizer_state_dict)
+                    
+                    # PyTorch maps optimizer state by param order; param count must match
+                    # or state will be applied to wrong parameters
+                    current_param_count = sum(
+                        len(g["params"]) for g in optimizer.param_groups
+                    )
+                    saved_param_count = sum(
+                        len(g["params"]) for g in optimizer_state_dict.get("param_groups", [])
+                    )
+                    
+                    if current_param_count != saved_param_count:
+                        print_acc(
+                            f"WARNING: Optimizer state NOT loaded: param count mismatch. "
+                            f"Current optimizer has {current_param_count} params, "
+                            f"but saved state has {saved_param_count} params. "
+                            "Training will continue with fresh optimizer state."
+                        )
+                    else:
+                        optimizer.load_state_dict(optimizer_state_dict)
+                        print_acc("Optimizer state restored successfully.")
+                    
                     del optimizer_state_dict
                     flush()
                 except Exception as e:
@@ -2508,6 +2528,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
                         print_acc(f"\nSaving at step {self.step_num}")
+                        # free memory before save to reduce OOM risk
+                        optimizer.zero_grad(set_to_none=True)
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        flush()
                         self.save(self.step_num)
                         self.ensure_params_requires_grad()
                         # clear any grads
