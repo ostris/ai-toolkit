@@ -1011,9 +1011,9 @@ class StableDiffusion:
                     model_path,
                     dtype=dtype,
                     device=self.device_torch,
-                    load_safety_checker=False,
                     requires_safety_checker=False,
                     safety_checker=None,
+                    feature_extractor=None,
                     # variant="fp16",
                     trust_remote_code=True,
                     **load_args
@@ -1023,10 +1023,9 @@ class StableDiffusion:
                     model_path,
                     dtype=dtype,
                     device=self.device_torch,
-                    load_safety_checker=False,
-                    requires_safety_checker=False,
                     torch_dtype=self.torch_dtype,
                     safety_checker=None,
+                    feature_extractor=None,
                     trust_remote_code=True,
                     **load_args
                 )

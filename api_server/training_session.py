@@ -5,6 +5,7 @@ import queue
 import sys
 import threading
 import time
+import traceback
 from collections import deque
 from typing import Any, Deque, Dict, Generator, List, Optional
 
@@ -118,7 +119,8 @@ class TrainingSession:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             final_status = 'error'
             self.error = f'{type(exc).__name__}: {exc}'
-            self._append_log(f'Exception raised in training thread: {self.error}\n')
+            tb = traceback.format_exc()
+            self._append_log(f'Exception raised in training thread: {self.error}\n{tb}\n')
         finally:
             try:
                 self.job.cleanup()
