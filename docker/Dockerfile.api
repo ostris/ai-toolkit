@@ -54,10 +54,38 @@ COPY . /app/ai-toolkit/
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt && \
     pip install setuptools==69.5.1 --no-cache-dir --break-system-packages
 
+# Pre-cache HuggingFace configs for offline from_single_file support (SD1/SD2/SDXL).
+# Only config/tokenizer files — not multi-GB weights.
+# Uses hf-mirror.com because HuggingFace has blocked our build server.
+# SD2 repos are gated — pass --secret id=hf-token,env=HF_TOKEN to include them.
+#
+# IMPORTANT: diffusers' from_single_file() uses DIFFUSERS_DEFAULT_PIPELINE_PATHS which maps
+# SD v1 to "stable-diffusion-v1-5/stable-diffusion-v1-5" (community org, NOT runwayml).
+# kohya_model_util.py still references "runwayml/stable-diffusion-v1-5" so we cache both.
+RUN HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+        stable-diffusion-v1-5/stable-diffusion-v1-5 --include "*.json" "*.txt" "*.model" && \
+    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+        runwayml/stable-diffusion-v1-5 --include "*.json" "*.txt" "*.model" && \
+    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+        stabilityai/stable-diffusion-xl-base-1.0 --include "*.json" "*.txt" "*.model" && \
+    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+        openai/clip-vit-large-patch14 --include "*.json" "*.txt" "*.model"
+# SD2 is gated on HuggingFace — download only if an HF token is provided
+RUN --mount=type=secret,id=hf-token,required=false \
+    if [ -f /run/secrets/hf-token ]; then \
+        HF_TOKEN=$(cat /run/secrets/hf-token) \
+        HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+            stabilityai/stable-diffusion-2-1 --include "*.json" "*.txt" "*.model"; \
+    fi
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose port for API server
 EXPOSE 8000
 
 WORKDIR /app/ai-toolkit
 
-# Start the API server
+# Start the API server via entrypoint (seeds HF cache before starting uvicorn)
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "api_server.app:app", "--host", "0.0.0.0", "--port", "8000"]
