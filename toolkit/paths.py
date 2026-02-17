@@ -25,10 +25,11 @@ def get_path(path):
     return path
 
 
-def normalize_model_path(path: Optional[str]) -> Optional[str]:
-    """Strip trailing path separators so Hugging Face transformers don't get empty basenames.
-    Avoids the 'The module name (originally ) is not a valid Python identifier' warning.
+def normalize_path(path: Optional[str]) -> Optional[str]:
+    """Strip leading/trailing whitespace and trailing path separators.
+    Use for any path: model dirs, LoRA/safetensors files, etc.
     """
-    if isinstance(path, str):
-        return path.rstrip(os.sep).rstrip("/")
-    return path
+    if not isinstance(path, str):
+        return path
+    path = path.strip()
+    return path.rstrip(os.sep).rstrip("/")
