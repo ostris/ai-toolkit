@@ -713,9 +713,10 @@ class ToolkitNetworkMixin:
             return self.load_weights(file, force_weight_mapping=True)
 
         info = self.load_state_dict(load_sd, False)
-        if len(extra_dict.keys()) == 0:
-            extra_dict = None
-        return extra_dict
+        del load_sd
+        if isinstance(file, str):
+            del weights_sd
+        return None
 
     @torch.no_grad()
     def _update_torch_multiplier(self: Network):
