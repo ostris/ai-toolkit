@@ -33,6 +33,7 @@ from diffusers import EMAModel
 import math
 from toolkit.train_tools import precondition_model_outputs_flow_match
 from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
+from toolkit.util.debug import memory_debug
 from toolkit.util.losses import wavelet_loss, stepped_loss
 import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
@@ -343,12 +344,15 @@ class SDTrainer(BaseSDTrainProcess):
 
                 # unload the text encoder
                 if self.is_caching_text_embeddings:
-                    unload_text_encoder(self.sd)
+                    with memory_debug(print_acc, "UNLOAD TEXT ENCODER"):
+                        unload_text_encoder(self.sd)
+                        flush()
                 else:
                     # todo once every model is tested to work, unload properly. Though, this will all be merged into one thing.
                     # keep legacy usage for now. 
-                    self.sd.text_encoder_to("cpu")
-                flush()
+                    with memory_debug(print_acc, "UNLOAD TEXT ENCODER"):
+                        self.sd.text_encoder_to("cpu")
+                        flush()
         
         if self.train_config.blank_prompt_preservation and self.cached_blank_embeds is None:
             # make sure we have this if not unloading

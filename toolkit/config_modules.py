@@ -6,6 +6,7 @@ import random
 import torch
 import torchaudio
 
+from toolkit.paths import normalize_path
 from toolkit.prompt_utils import PromptEmbeds
 
 ImgExt = Literal['jpg', 'png', 'webp']
@@ -36,6 +37,7 @@ class LoggingConfig:
         self.verbose: bool = kwargs.get('verbose', False)
         self.use_wandb: bool = kwargs.get('use_wandb', False)
         self.use_ui_logger: bool = kwargs.get('use_ui_logger', False)
+        self.debug: bool = kwargs.get('debug', False)
         self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
         self.run_name: str = kwargs.get('run_name', None)
 
@@ -219,7 +221,7 @@ class NetworkConfig:
         self.layer_offloading = kwargs.get('layer_offloading', False)
         
         # start from a pretrained lora
-        self.pretrained_lora_path = kwargs.get('pretrained_lora_path', None)
+        self.pretrained_lora_path = normalize_path(kwargs.get('pretrained_lora_path', None))
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']
