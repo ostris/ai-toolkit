@@ -202,8 +202,6 @@ class AIToolkitOxenLogger:
         Returns:
             Checkpoint path in format: {experiment_name}/checkpoints/step_{N}
         """
-        print(f"Main process: Getting checkpoint path for step {step}")
-        print(f"Main process: Experiment namesurya-custom: {self.experiment.name}")
         # This is required because the first one is the branch name and the second one is the directory the file is supposed to be saved in
         return f"{self.experiment.name}/checkpoints/step_{step}"
 
@@ -230,27 +228,20 @@ class AIToolkitOxenLogger:
 
             # Create a step-specific directory in checkpoints/{finetune_name}/step_{N}
             checkpoint_dst = self.get_checkpoint_path(step)
-            print(f"Main process: Checkpoint destination: {checkpoint_dst}")
 
             for checkpoint_path in checkpoint_files:
-                print(f"Main process: Adding checkpoint file: {checkpoint_path}")
+
                 if os.path.isfile(checkpoint_path):
                     # Get just the filename for the destination
                     filename = os.path.basename(checkpoint_path)
-                    print(f"Main process: Adding checkpoint file: {checkpoint_path} -> {checkpoint_dst}")
-                    self.workspace.add(checkpoint_path, dst=f"{checkpoint_dst}")
+                    self.workspace.add(checkpoint_path, dst=f"{checkpoint_dst}/{filename}")
                 elif os.path.isdir(checkpoint_path):
-                    print(f"Main process: Adding checkpoint directory: {checkpoint_path} -> {checkpoint_dst}")
                     # For directories, walk through and add all files
                     dir_name = os.path.basename(checkpoint_path)
                     for root, dirs, files in os.walk(checkpoint_path):
                         for file in files:
                             file_path = os.path.join(root, file)
                             rel_path = os.path.relpath(file_path, checkpoint_path)
-                            print(f"Main process: Adding checkpoint file: {file_path}")
-                            print(f"relative path: {rel_path}")
-                            print(f"directory name: {dir_name}")
-                            print(f"Main process: Adding checkpoint file: {file_path} -> {checkpoint_dst}/{dir_name}/{rel_path}")
                             self.workspace.add(file_path, dst=f"{checkpoint_dst}/{dir_name}/{rel_path}")
 
             print(f"Main process: Checkpoint saved successfully")
