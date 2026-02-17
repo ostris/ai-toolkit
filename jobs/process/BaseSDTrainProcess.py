@@ -2403,7 +2403,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # Save checkpoint to Oxen on sample steps if enabled
                         if self.oxen_logger and self.oxen_config.enabled and self.oxen_config.save_checkpoints_on_sample:
                             try:
-                                print_acc(f"Saving checkpoint for sample step {self.step_num}")
+                                print_acc(f"Saving checkpoint for sample step-surya-custom {self.step_num}")
                                 saved_files = self.save(self.step_num)
                                 if saved_files:
                                     self.oxen_logger.save_checkpoint(saved_files, self.step_num)

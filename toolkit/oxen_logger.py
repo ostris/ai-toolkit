@@ -202,6 +202,8 @@ class AIToolkitOxenLogger:
         Returns:
             Checkpoint path in format: {experiment_name}/checkpoints/step_{N}
         """
+        print(f"Main process: Getting checkpoint path for step {step}")
+        print(f"Main process: Experiment namesurya-custom: {self.experiment.name}")
         return f"{self.experiment.name}/checkpoints/step_{step}"
 
     def save_checkpoint(self, checkpoint_files, step: int):
