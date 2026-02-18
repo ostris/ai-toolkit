@@ -399,10 +399,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.ema.train()
         
         # Save sample images to Oxen if enabled
-        if self.oxen_logger and self.oxen_config.enabled:
+        if self.oxen_logger and self.oxen_config.enabled and step is not None:
             try:
                 sample_dir = os.path.join(self.save_root, "samples")
-                self.oxen_logger.add_samples(sample_dir)
+                self.oxen_logger.add_samples(sample_dir, step)
             except Exception as e:
                 print_acc(f"Warning: Failed to save sample images to Oxen: {e}")
         
@@ -2416,7 +2416,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         # Save checkpoint to Oxen on sample steps if enabled
                         if self.oxen_logger and self.oxen_config.enabled and self.oxen_config.save_checkpoints_on_sample:
                             try:
-                                print_acc(f"Saving checkpoint for sample step {self.step_num}")
                                 saved_files = self.save(self.step_num)
                                 if saved_files:
                                     self.oxen_logger.save_checkpoint(saved_files, self.step_num)
