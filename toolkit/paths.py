@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 TOOLKIT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_ROOT = os.path.join(TOOLKIT_ROOT, 'config')
@@ -22,3 +23,13 @@ def get_path(path):
     if not os.path.isabs(path):
         path = os.path.join(TOOLKIT_ROOT, path)
     return path
+
+
+def normalize_path(path: Optional[str]) -> Optional[str]:
+    """Strip leading/trailing whitespace and trailing path separators.
+    Use for any path: model dirs, LoRA/safetensors files, etc.
+    """
+    if not isinstance(path, str):
+        return path
+    path = path.strip()
+    return path.rstrip(os.sep).rstrip("/")

@@ -129,6 +129,8 @@ def quantize(
 def quantize_model(
     base_model: "BaseModel",
     model_to_quantize: torch.nn.Module,
+    use_accuracy_recovery: bool = True,
+    adapter_attr_name: str = "accuracy_recovery_adapter",
 ):
     from toolkit.dequantize import patch_dequantization_on_save
 
@@ -140,7 +142,7 @@ def quantize_model(
     # patch the state dict method
     patch_dequantization_on_save(model_to_quantize)
 
-    if base_model.model_config.accuracy_recovery_adapter is not None:
+    if use_accuracy_recovery and base_model.model_config.accuracy_recovery_adapter is not None:
         from toolkit.config_modules import NetworkConfig
         from toolkit.lora_special import LoRASpecialNetwork
 

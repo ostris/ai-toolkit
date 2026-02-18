@@ -25,6 +25,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
         self.timestep_type = "linear"
+        self._alphas_cumprod = None  # Lazy initialization
 
         with torch.no_grad():
             # create weights for timesteps
@@ -55,6 +56,60 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             self.linear_timesteps_weights = bsmntw_weighing
             self.linear_timesteps_weights2 = hbsmntw_weighing
             pass
+
+    def _compute_alphas_cumprod(self):
+        """
+        Compute equivalent alphas_cumprod for flow matching for SNR weighting compatibility.
+        
+        For flow matching: x_t = (1-t)*x_0 + t*noise
+        Equivalent SNR: (1-t)^2 / t^2
+        
+        For DDPM: SNR = alphas_cumprod / (1 - alphas_cumprod)
+        Therefore: alphas_cumprod = (1-t)^2
+        """
+        num_timesteps = 1000
+        # Create timesteps from 1000 to 0 (descending)
+        timesteps = torch.linspace(1000, 0, num_timesteps, device='cpu')
+        
+        # Normalize to [0, 1] range
+        t = timesteps / 1000.0
+        
+        # Clamp to avoid numerical issues at boundaries
+        t = torch.clamp(t, min=1e-8, max=1.0 - 1e-8)
+        
+        # Compute equivalent alphas_cumprod: (1-t)^2
+        # This gives correct SNR: alphas_cumprod / (1 - alphas_cumprod) = (1-t)^2 / t^2
+        alphas_cumprod = (1.0 - t) ** 2
+        
+        return alphas_cumprod
+
+    def compute_snr(self):
+        """
+        Compute SNR for each timestep in flow matching.
+        
+        For flow matching: x_t = (1-t)*x_0 + t*noise
+        Signal = (1-t)*x_0, Noise = t*noise
+        SNR = (1-t)^2 / t^2
+        """
+        num_timesteps = 1000
+        timesteps = torch.linspace(1000, 0, num_timesteps, device='cpu')
+        t = timesteps / 1000.0
+        
+        # Add small epsilon to avoid division by zero
+        epsilon = 1e-8
+        snr = ((1.0 - t) ** 2) / (t ** 2 + epsilon)
+        
+        return snr
+
+    @property
+    def alphas_cumprod(self):
+        """
+        Returns equivalent alphas_cumprod for flow matching.
+        This provides compatibility with SNR weighting functions in train_tools.py.
+        """
+        if self._alphas_cumprod is None:
+            self._alphas_cumprod = self._compute_alphas_cumprod()
+        return self._alphas_cumprod
 
     def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False, timestep_type="linear") -> torch.Tensor:
         # Get the indices of the timesteps

@@ -114,6 +114,39 @@ class PromptEmbeds:
                 pe.attention_mask = pe.attention_mask.expand(batch_size, -1)
         return pe
 
+    def shuffle_sequence(self) -> None:
+        """Shuffle token order along sequence dimension (dim=1), keeping first token fixed. In-place. No-op if seq_len <= 1."""
+        def make_perm(seq_len: int, device: torch.device) -> torch.Tensor:
+            if seq_len <= 1:
+                return torch.arange(seq_len, device=device, dtype=torch.long)
+            return torch.cat([
+                torch.zeros(1, device=device, dtype=torch.long),
+                1 + torch.randperm(seq_len - 1, device=device, dtype=torch.long),
+            ])
+        if isinstance(self.text_embeds, list) or isinstance(self.text_embeds, tuple):
+            te_list = list(self.text_embeds)
+            attn_list = list(self.attention_mask) if self.attention_mask is not None and isinstance(self.attention_mask, (list, tuple)) else None
+            attn_is_tuple = isinstance(self.attention_mask, tuple) if self.attention_mask is not None else False
+            for i, t in enumerate(te_list):
+                if t.dim() >= 2 and t.shape[1] > 1:
+                    perm = make_perm(t.shape[1], t.device)
+                    te_list[i] = t[:, perm, ...].contiguous()
+                    if attn_list is not None and i < len(attn_list):
+                        attn = attn_list[i]
+                        if attn.dim() >= 2 and attn.shape[1] > 1:
+                            attn_list[i] = attn[:, perm, ...].contiguous()
+                    elif self.attention_mask is not None and not isinstance(self.attention_mask, (list, tuple)) and i == 0:
+                        self.attention_mask = self.attention_mask[:, perm, ...].contiguous()
+            self.text_embeds = tuple(te_list) if isinstance(self.text_embeds, tuple) else te_list
+            if attn_list is not None:
+                self.attention_mask = tuple(attn_list) if attn_is_tuple else attn_list
+        else:
+            if self.text_embeds.dim() >= 2 and self.text_embeds.shape[1] > 1:
+                perm = make_perm(self.text_embeds.shape[1], self.text_embeds.device)
+                self.text_embeds = self.text_embeds[:, perm, ...].contiguous()
+                if self.attention_mask is not None and self.attention_mask.dim() >= 2 and self.attention_mask.shape[1] > 1:
+                    self.attention_mask = self.attention_mask[:, perm, ...].contiguous()
+
     def save(self, path: str):
         """
         Save the prompt embeds to a file.

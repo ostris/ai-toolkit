@@ -624,7 +624,16 @@ def add_all_snr_to_noise_scheduler(noise_scheduler, device):
     try:
         if hasattr(noise_scheduler, "all_snr"):
             return
-        # compute it
+        
+        # Handle flow matching schedulers that have compute_snr method
+        if hasattr(noise_scheduler, "compute_snr") and callable(getattr(noise_scheduler, "compute_snr")):
+            with torch.no_grad():
+                all_snr = noise_scheduler.compute_snr()
+                all_snr.requires_grad = False
+            noise_scheduler.all_snr = all_snr.to(device)
+            return
+        
+        # Standard DDPM/DDIM scheduler path
         with torch.no_grad():
             alphas_cumprod = noise_scheduler.alphas_cumprod
             sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
@@ -642,6 +651,15 @@ def add_all_snr_to_noise_scheduler(noise_scheduler, device):
 def get_all_snr(noise_scheduler, device):
     if hasattr(noise_scheduler, "all_snr"):
         return noise_scheduler.all_snr.to(device)
+    
+    # Handle flow matching schedulers that have compute_snr method
+    if hasattr(noise_scheduler, "compute_snr") and callable(getattr(noise_scheduler, "compute_snr")):
+        with torch.no_grad():
+            all_snr = noise_scheduler.compute_snr()
+            all_snr.requires_grad = False
+        return all_snr.to(device)
+    
+    # Standard DDPM/DDIM scheduler path
     # compute it
     with torch.no_grad():
         alphas_cumprod = noise_scheduler.alphas_cumprod

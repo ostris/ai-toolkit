@@ -547,8 +547,8 @@ class ToolkitNetworkMixin:
             new_save_dict = {}
             for key, value in save_dict.items():
                 # lokr needs alpha
-                if key.endswith('.alpha') and self.network_type.lower() != "lokr":
-                    continue
+                # if key.endswith('.alpha') and self.network_type.lower() != "lokr":
+                #     continue
                 new_key = key
                 new_key = new_key.replace('lora_down', 'lora_A')
                 new_key = new_key.replace('lora_up', 'lora_B')
@@ -633,21 +633,21 @@ class ToolkitNetworkMixin:
                 # lora_down = lora_A
                 # lora_up = lora_B
                 # no alpha
-                if load_key.endswith('.alpha') and self.network_type.lower() != "lokr":
-                    continue
+                # if load_key.endswith('.alpha') and self.network_type.lower() != "lokr":
+                #     continue
                 load_key = load_key.replace('lora_A', 'lora_down')
                 load_key = load_key.replace('lora_B', 'lora_up')
                 # replace all . with $$
                 load_key = load_key.replace('.', '$$')
                 load_key = load_key.replace('$$lora_down$$', '.lora_down.')
                 load_key = load_key.replace('$$lora_up$$', '.lora_up.')
-                
+                if load_key.endswith('$$alpha'):
+                    load_key = load_key[:-7] + '.alpha'
+
                 # patch lokr, not sure why we need to but whatever
                 if self.network_type.lower() == "lokr":
                     load_key = load_key.replace('$$lokr_w1', '.lokr_w1')
                     load_key = load_key.replace('$$lokr_w2', '.lokr_w2')
-                    if load_key.endswith('$$alpha'):
-                        load_key = load_key[:-7] + '.alpha'
             
             if self.network_type.lower() == "lokr":
                 # lora_transformer_transformer_blocks_7_attn_to_v.lokr_w1 to lycoris_transformer_blocks_7_attn_to_v.lokr_w1
@@ -713,9 +713,10 @@ class ToolkitNetworkMixin:
             return self.load_weights(file, force_weight_mapping=True)
 
         info = self.load_state_dict(load_sd, False)
-        if len(extra_dict.keys()) == 0:
-            extra_dict = None
-        return extra_dict
+        del load_sd
+        if isinstance(file, str):
+            del weights_sd
+        return None
 
     @torch.no_grad()
     def _update_torch_multiplier(self: Network):

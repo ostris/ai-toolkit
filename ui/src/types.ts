@@ -142,10 +142,15 @@ export interface TrainConfig {
   diff_output_preservation_class: string;
   blank_prompt_preservation?: boolean;
   blank_prompt_preservation_multiplier?: number;
+  blank_prompt_probability?: number;
   switch_boundary_every: number;
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
   do_differential_guidance?: boolean;
   differential_guidance_scale?: number;
+  fixed_cycle_timesteps?: number[];
+  fixed_cycle_seed?: number | null;
+  fixed_cycle_weight_peak_timesteps?: number[] | null;
+  fixed_cycle_weight_sigma?: number;
 }
 
 export interface QuantizeKwargsConfig {

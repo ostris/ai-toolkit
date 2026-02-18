@@ -598,7 +598,10 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
 
     def _get_single_item(self, index) -> 'FileItemDTO':
         file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
+        file_item._current_epoch_num = getattr(self, '_epoch_num', 0)
         file_item.load_and_process_image(self.transform)
+        if file_item.is_text_embedding_cached and file_item.prompt_embeds is not None:
+            self.file_list[index].prompt_embeds = file_item.prompt_embeds
         file_item.load_caption(self.caption_dict)
         return file_item
 

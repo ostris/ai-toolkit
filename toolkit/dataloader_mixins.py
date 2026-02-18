@@ -415,8 +415,9 @@ class CaptionProcessingDTOMixin:
                         new_token_list.append(token)
             token_list = new_token_list
 
-        if self.dataset_config.shuffle_tokens:
-            random.shuffle(token_list)
+        # Redundant code. Shuffling is performed in the code below.
+        # if self.dataset_config.shuffle_tokens:
+        #     random.shuffle(token_list)
 
         # join back together
         caption = ', '.join(token_list)
@@ -436,14 +437,17 @@ class CaptionProcessingDTOMixin:
                 #     trigger = self.dataset_config.random_triggers[int(random.random() * (len(self.dataset_config.random_triggers)))]
                 #     caption = caption + ', ' + trigger
 
-        if self.dataset_config.shuffle_tokens:
-            # shuffle again
+        if self.dataset_config.shuffle_tokens and not self.dataset_config.cache_text_embeddings:
+            # shuffle, keep first segment (until first comma) in place
             token_list = caption.split(',')
             # trim whitespace
             token_list = [x.strip() for x in token_list]
             # remove empty strings
             token_list = [x for x in token_list if x]
-            random.shuffle(token_list)
+            if len(token_list) > 1:
+                rest = token_list[1:]
+                random.shuffle(rest)
+                token_list = [token_list[0]] + rest
             caption = ', '.join(token_list)
         if caption == '':
             pass
@@ -578,6 +582,8 @@ class ImageProcessingDTOMixin:
                     img = img.transpose(Image.FLIP_TOP_BOTTOM)
                 
                 # Apply bucketing
+                if self.scale_to_width <= 0 or self.scale_to_height <= 0:
+                    raise ValueError(f"Invalid scale dimensions for video {self.path}: scale_to_width={self.scale_to_width}, scale_to_height={self.scale_to_height}")
                 img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
                 img = img.crop((
                     self.crop_x,
@@ -780,6 +786,8 @@ class ImageProcessingDTOMixin:
 
         if self.dataset_config.buckets:
             # scale and crop based on file item
+            if self.scale_to_width <= 0 or self.scale_to_height <= 0:
+                raise ValueError(f"Invalid scale dimensions for image {self.path}: scale_to_width={self.scale_to_width}, scale_to_height={self.scale_to_height}")
             img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
             # crop to x_crop, y_crop, x_crop + crop_width, y_crop + crop_height
             if img.width < self.crop_x + self.crop_width or img.height < self.crop_y + self.crop_height:
@@ -1961,6 +1969,9 @@ class TextEmbeddingFileItemDTOMixin:
         if self.prompt_embeds is None:
             # load it from disk
             self.prompt_embeds = PromptEmbeds.load(self.get_text_embedding_path())
+            if getattr(self, '_current_epoch_num', 0) > 0 and getattr(self.dataset_config, 'shuffle_tokens', False):
+                self.prompt_embeds.shuffle_sequence()
+                print_acc(f"Cached text embedding tokens shuffled (epoch {getattr(self, '_current_epoch_num', 0)})")
 
 class TextEmbeddingCachingMixin:
     def __init__(self: 'AiToolkitDataset', **kwargs):
@@ -1968,6 +1979,19 @@ class TextEmbeddingCachingMixin:
         if hasattr(super(), '__init__'):
             super().__init__(**kwargs)
         self.is_caching_text_embeddings = self.dataset_config.cache_text_embeddings
+        self._epoch_num: int = 0
+
+    def set_epoch_num(self: 'AiToolkitDataset', epoch_num: int) -> None:
+        self._epoch_num = epoch_num
+        if epoch_num > 0 and self.is_caching_text_embeddings and self.dataset_config.shuffle_tokens:
+            for file_item in self.file_list:
+                if getattr(file_item, 'prompt_embeds', None) is not None:
+                    file_item.prompt_embeds.shuffle_sequence()
+            print_acc(f"\nCached text embedding tokens shuffled (epoch {epoch_num})\n")
+
+    def clear_cached_embeddings_memory(self: 'AiToolkitDataset') -> None:
+        for file_item in self.file_list:
+            file_item.cleanup_text_embedding()
 
     def cache_text_embeddings(self: 'AiToolkitDataset'):
         with accelerator.main_process_first():

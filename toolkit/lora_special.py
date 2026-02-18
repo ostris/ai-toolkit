@@ -14,6 +14,7 @@ from toolkit.models.lokr import LokrModule
 from .config_modules import NetworkConfig
 from .lorm import count_parameters
 from .network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, ExtractableModuleMixin
+from toolkit.util.debug import memory_debug
 
 from toolkit.kohya_lora import LoRANetwork
 from toolkit.models.DoRA import DoRAModule
@@ -279,246 +280,250 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             if self.network_type.lower() != "lokr" or not self.use_old_lokr_format:
                 self.peft_format = True
 
-        if self.peft_format:
-            # no alpha for peft
-            self.alpha = self.lora_dim
-            alpha = self.alpha
-            self.conv_alpha = self.conv_lora_dim
-            conv_alpha = self.conv_alpha
+        # Allow alpha for peft
+        # Todo: Folding Alpha on save
+        # 
+        # if self.peft_format:
+        #     # no alpha for peft
+        #     self.alpha = self.lora_dim
+        #     alpha = self.alpha
+        #     self.conv_alpha = self.conv_lora_dim
+        #     conv_alpha = self.conv_alpha
 
         self.full_train_in_out = full_train_in_out
 
-        if modules_dim is not None:
-            print(f"create LoRA network from weights")
-        elif block_dims is not None:
-            print(f"create LoRA network from block_dims")
-            print(
-                f"neuron dropout: p={self.dropout}, rank dropout: p={self.rank_dropout}, module dropout: p={self.module_dropout}")
-            print(f"block_dims: {block_dims}")
-            print(f"block_alphas: {block_alphas}")
-            if conv_block_dims is not None:
-                print(f"conv_block_dims: {conv_block_dims}")
-                print(f"conv_block_alphas: {conv_block_alphas}")
-        else:
-            print(f"create LoRA network. base dim (rank): {lora_dim}, alpha: {alpha}")
-            print(
-                f"neuron dropout: p={self.dropout}, rank dropout: p={self.rank_dropout}, module dropout: p={self.module_dropout}")
-            if self.conv_lora_dim is not None:
+        with memory_debug(print, "create LoRA network"):
+            if modules_dim is not None:
+                print(f"create LoRA network from weights")
+            elif block_dims is not None:
+                print(f"create LoRA network from block_dims")
                 print(
-                    f"apply LoRA to Conv2d with kernel size (3,3). dim (rank): {self.conv_lora_dim}, alpha: {self.conv_alpha}")
+                    f"neuron dropout: p={self.dropout}, rank dropout: p={self.rank_dropout}, module dropout: p={self.module_dropout}")
+                print(f"block_dims: {block_dims}")
+                print(f"block_alphas: {block_alphas}")
+                if conv_block_dims is not None:
+                    print(f"conv_block_dims: {conv_block_dims}")
+                    print(f"conv_block_alphas: {conv_block_alphas}")
+            else:
+                print(f"create LoRA network. base dim (rank): {lora_dim}, alpha: {alpha}")
+                print(
+                    f"neuron dropout: p={self.dropout}, rank dropout: p={self.rank_dropout}, module dropout: p={self.module_dropout}")
+                if self.conv_lora_dim is not None:
+                    print(
+                        f"apply LoRA to Conv2d with kernel size (3,3). dim (rank): {self.conv_lora_dim}, alpha: {self.conv_alpha}")
 
-        # create module instances
-        def create_modules(
+            # create module instances
+            def create_modules(
                 is_unet: bool,
                 text_encoder_idx: Optional[int],  # None, 1, 2
                 root_module: torch.nn.Module,
                 target_replace_modules: List[torch.nn.Module],
-        ) -> List[LoRAModule]:
-            unet_prefix = self.LORA_PREFIX_UNET
-            if self.peft_format:
-                unet_prefix = self.PEFT_PREFIX_UNET
-            if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2 or self.is_transformer:
-                unet_prefix = f"lora_transformer"
+            ) -> List[LoRAModule]:
+                unet_prefix = self.LORA_PREFIX_UNET
                 if self.peft_format:
-                    unet_prefix = "transformer"
+                    unet_prefix = self.PEFT_PREFIX_UNET
+                if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2 or self.is_transformer:
+                    unet_prefix = f"lora_transformer"
+                    if self.peft_format:
+                        unet_prefix = "transformer"
 
-            prefix = (
-                unet_prefix
-                if is_unet
-                else (
-                    self.LORA_PREFIX_TEXT_ENCODER
-                    if text_encoder_idx is None
-                    else (self.LORA_PREFIX_TEXT_ENCODER1 if text_encoder_idx == 1 else self.LORA_PREFIX_TEXT_ENCODER2)
+                prefix = (
+                    unet_prefix
+                    if is_unet
+                    else (
+                        self.LORA_PREFIX_TEXT_ENCODER
+                        if text_encoder_idx is None
+                        else (self.LORA_PREFIX_TEXT_ENCODER1 if text_encoder_idx == 1 else self.LORA_PREFIX_TEXT_ENCODER2)
+                    )
                 )
-            )
-            loras = []
-            skipped = []
-            attached_modules = []
-            lora_shape_dict = {}
-            for name, module in root_module.named_modules():
-                if module.__class__.__name__ in target_replace_modules:
-                    for child_name, child_module in module.named_modules():
-                        is_linear = child_module.__class__.__name__ in LINEAR_MODULES
-                        is_conv2d = child_module.__class__.__name__ in CONV_MODULES
-                        is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
+                loras = []
+                skipped = []
+                attached_modules = []
+                lora_shape_dict = {}
+                for name, module in root_module.named_modules():
+                    if module.__class__.__name__ in target_replace_modules:
+                        for child_name, child_module in module.named_modules():
+                            is_linear = child_module.__class__.__name__ in LINEAR_MODULES
+                            is_conv2d = child_module.__class__.__name__ in CONV_MODULES
+                            is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
 
-                        lora_name = [prefix, name, child_name]
-                        # filter out blank
-                        lora_name = [x for x in lora_name if x and x != ""]
-                        lora_name = ".".join(lora_name)
-                        # if it doesnt have a name, it wil have two dots
-                        lora_name.replace("..", ".")
-                        clean_name = lora_name
-                        if self.peft_format:
-                            # we replace this on saving
-                            lora_name = lora_name.replace(".", "$$")
-                        else:
-                            lora_name = lora_name.replace(".", "_")
-
-                        skip = False
-                        if any([word in clean_name for word in self.ignore_if_contains]):
-                            skip = True
-
-                        # see if it is over threshold
-                        if count_parameters(child_module) < parameter_threshold:
-                            skip = True
-                        
-                        if self.transformer_only and is_unet:
-                            transformer_block_names = None
-                            if base_model is not None:
-                                transformer_block_names = base_model.get_transformer_block_names()
-                            
-                            if transformer_block_names is not None:
-                                if not any([name in lora_name for name in transformer_block_names]):
-                                    skip = True
+                            lora_name = [prefix, name, child_name]
+                            # filter out blank
+                            lora_name = [x for x in lora_name if x and x != ""]
+                            lora_name = ".".join(lora_name)
+                            # if it doesnt have a name, it wil have two dots
+                            lora_name.replace("..", ".")
+                            clean_name = lora_name
+                            if self.peft_format:
+                                # we replace this on saving
+                                lora_name = lora_name.replace(".", "$$")
                             else:
-                                if self.is_pixart:
-                                    if "transformer_blocks" not in lora_name:
-                                        skip = True
-                                if self.is_flux:
-                                    if "transformer_blocks" not in lora_name:
-                                        skip = True
-                                if self.is_lumina2:
-                                    if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
-                                        skip = True
-                                if  self.is_v3:
-                                    if "transformer_blocks" not in lora_name:
-                                        skip = True
+                                lora_name = lora_name.replace(".", "_")
+
+                            skip = False
+                            if any([word in clean_name for word in self.ignore_if_contains]):
+                                skip = True
+
+                            # see if it is over threshold
+                            if count_parameters(child_module) < parameter_threshold:
+                                skip = True
+                            
+                            if self.transformer_only and is_unet:
+                                transformer_block_names = None
+                                if base_model is not None:
+                                    transformer_block_names = base_model.get_transformer_block_names()
                                 
-                                # handle custom models
-                                if hasattr(root_module, 'transformer_blocks'):
-                                    if "transformer_blocks" not in lora_name:
+                                if transformer_block_names is not None:
+                                    if not any([name in lora_name for name in transformer_block_names]):
                                         skip = True
-                                        
-                                if hasattr(root_module, 'blocks'):
-                                    if "blocks" not in lora_name:
-                                        skip = True
-                                
-                                if hasattr(root_module, 'single_blocks'):
-                                    if "single_blocks" not in lora_name and "double_blocks" not in lora_name:
-                                        skip = True
-
-                        if (is_linear or is_conv2d) and not skip:
-
-                            if self.only_if_contains is not None:
-                                if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
-                                    continue
-
-                            dim = None
-                            alpha = None
-
-                            if modules_dim is not None:
-                                # モジュール指定あり
-                                if lora_name in modules_dim:
-                                    dim = modules_dim[lora_name]
-                                    alpha = modules_alpha[lora_name]
-                            else:
-                                # 通常、すべて対象とする
-                                if is_linear or is_conv2d_1x1:
-                                    dim = self.lora_dim
-                                    alpha = self.alpha
-                                elif self.conv_lora_dim is not None:
-                                    dim = self.conv_lora_dim
-                                    alpha = self.conv_alpha
-
-                            if dim is None or dim == 0:
-                                # skipした情報を出力
-                                if is_linear or is_conv2d_1x1 or (
-                                        self.conv_lora_dim is not None or conv_block_dims is not None):
-                                    skipped.append(lora_name)
-                                continue
-                            
-                            module_kwargs = {}
-                            
-                            if self.network_type.lower() == "lokr":
-                                module_kwargs["factor"] = self.network_config.lokr_factor
-                            
-                            if self.is_ara:
-                                module_kwargs["is_ara"] = True
-
-                            lora = module_class(
-                                lora_name,
-                                child_module,
-                                self.multiplier,
-                                dim,
-                                alpha,
-                                dropout=dropout,
-                                rank_dropout=rank_dropout,
-                                module_dropout=module_dropout,
-                                network=self,
-                                parent=module,
-                                use_bias=use_bias,
-                                **module_kwargs
-                            )
-                            loras.append(lora)
-                            if self.network_type.lower() == "lokr":
-                                try:
-                                    lora_shape_dict[lora_name] = [list(lora.lokr_w1.weight.shape), list(lora.lokr_w2.weight.shape)]
-                                except:
-                                    pass
-                            else:
-                                if self.full_rank:
-                                    lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape)]
                                 else:
-                                    lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)]
-            return loras, skipped
+                                    if self.is_pixart:
+                                        if "transformer_blocks" not in lora_name:
+                                            skip = True
+                                    if self.is_flux:
+                                        if "transformer_blocks" not in lora_name:
+                                            skip = True
+                                    if self.is_lumina2:
+                                        if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
+                                            skip = True
+                                    if  self.is_v3:
+                                        if "transformer_blocks" not in lora_name:
+                                            skip = True
+                                    
+                                    # handle custom models
+                                    if hasattr(root_module, 'transformer_blocks'):
+                                        if "transformer_blocks" not in lora_name:
+                                            skip = True
+                                            
+                                    if hasattr(root_module, 'blocks'):
+                                        if "blocks" not in lora_name:
+                                            skip = True
+                                    
+                                    if hasattr(root_module, 'single_blocks'):
+                                        if "single_blocks" not in lora_name and "double_blocks" not in lora_name:
+                                            skip = True
 
-        text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]
+                            if (is_linear or is_conv2d) and not skip:
 
-        # create LoRA for text encoder
-        # 毎回すべてのモジュールを作るのは無駄なので要検討
-        self.text_encoder_loras = []
-        skipped_te = []
-        if train_text_encoder:
-            for i, text_encoder in enumerate(text_encoders):
-                if not use_text_encoder_1 and i == 0:
-                    continue
-                if not use_text_encoder_2 and i == 1:
-                    continue
-                if len(text_encoders) > 1:
-                    index = i + 1
-                    print(f"create LoRA for Text Encoder {index}:")
-                else:
-                    index = None
-                    print(f"create LoRA for Text Encoder:")
+                                if self.only_if_contains is not None:
+                                    if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
+                                        continue
 
-                replace_modules = LoRANetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
+                                dim = None
+                                alpha = None
 
-                if self.is_pixart:
-                    replace_modules = ["T5EncoderModel"]
+                                if modules_dim is not None:
+                                    # モジュール指定あり
+                                    if lora_name in modules_dim:
+                                        dim = modules_dim[lora_name]
+                                        alpha = modules_alpha[lora_name]
+                                else:
+                                    # 通常、すべて対象とする
+                                    if is_linear or is_conv2d_1x1:
+                                        dim = self.lora_dim
+                                        alpha = self.alpha
+                                    elif self.conv_lora_dim is not None:
+                                        dim = self.conv_lora_dim
+                                        alpha = self.conv_alpha
 
-                text_encoder_loras, skipped = create_modules(False, index, text_encoder, replace_modules)
-                self.text_encoder_loras.extend(text_encoder_loras)
-                skipped_te += skipped
-        print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
+                                if dim is None or dim == 0:
+                                    # skipした情報を出力
+                                    if is_linear or is_conv2d_1x1 or (
+                                            self.conv_lora_dim is not None or conv_block_dims is not None):
+                                        skipped.append(lora_name)
+                                    continue
+                                
+                                module_kwargs = {}
+                                
+                                if self.network_type.lower() == "lokr":
+                                    module_kwargs["factor"] = self.network_config.lokr_factor
+                                
+                                if self.is_ara:
+                                    module_kwargs["is_ara"] = True
 
-        # extend U-Net target modules if conv2d 3x3 is enabled, or load from weights
-        target_modules = target_lin_modules
-        if modules_dim is not None or self.conv_lora_dim is not None or conv_block_dims is not None:
-            target_modules += target_conv_modules
+                                lora = module_class(
+                                    lora_name,
+                                    child_module,
+                                    self.multiplier,
+                                    dim,
+                                    alpha,
+                                    dropout=dropout,
+                                    rank_dropout=rank_dropout,
+                                    module_dropout=module_dropout,
+                                    network=self,
+                                    parent=module,
+                                    use_bias=use_bias,
+                                    **module_kwargs
+                                )
+                                loras.append(lora)
+                                if self.network_type.lower() == "lokr":
+                                    try:
+                                        lora_shape_dict[lora_name] = [list(lora.lokr_w1.weight.shape), list(lora.lokr_w2.weight.shape)]
+                                    except:
+                                        pass
+                                else:
+                                    if self.full_rank:
+                                        lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape)]
+                                    else:
+                                        lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)]
+                return loras, skipped
 
-        if is_v3:
-            target_modules = ["SD3Transformer2DModel"]
+            text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]
 
-        if is_pixart:
-            target_modules = ["PixArtTransformer2DModel"]
+            # create LoRA for text encoder
+            # 毎回すべてのモジュールを作るのは無駄なので要検討
+            self.text_encoder_loras = []
+            skipped_te = []
+            if train_text_encoder:
+                for i, text_encoder in enumerate(text_encoders):
+                    if not use_text_encoder_1 and i == 0:
+                        continue
+                    if not use_text_encoder_2 and i == 1:
+                        continue
+                    if len(text_encoders) > 1:
+                        index = i + 1
+                        print(f"create LoRA for Text Encoder {index}:")
+                    else:
+                        index = None
+                        print(f"create LoRA for Text Encoder:")
 
-        if is_auraflow:
-            target_modules = ["AuraFlowTransformer2DModel"]
+                    replace_modules = LoRANetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
 
-        if is_flux:
-            target_modules = ["FluxTransformer2DModel"]
-        
-        if is_lumina2:
-            target_modules = ["Lumina2Transformer2DModel"]
+                    if self.is_pixart:
+                        replace_modules = ["T5EncoderModel"]
 
-        if train_unet:
-            self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)
-        else:
-            self.unet_loras = []
-            skipped_un = []
-        print(f"create LoRA for U-Net: {len(self.unet_loras)} modules.")
+                    text_encoder_loras, skipped = create_modules(False, index, text_encoder, replace_modules)
+                    self.text_encoder_loras.extend(text_encoder_loras)
+                    skipped_te += skipped
+            print(f"create LoRA for Text Encoder: {len(self.text_encoder_loras)} modules.")
+
+            # extend U-Net target modules if conv2d 3x3 is enabled, or load from weights
+            target_modules = target_lin_modules
+            if modules_dim is not None or self.conv_lora_dim is not None or conv_block_dims is not None:
+                target_modules += target_conv_modules
+
+            if is_v3:
+                target_modules = ["SD3Transformer2DModel"]
+
+            if is_pixart:
+                target_modules = ["PixArtTransformer2DModel"]
+
+            if is_auraflow:
+                target_modules = ["AuraFlowTransformer2DModel"]
+
+            if is_flux:
+                target_modules = ["FluxTransformer2DModel"]
+            
+            if is_lumina2:
+                target_modules = ["Lumina2Transformer2DModel"]
+
+            if train_unet:
+                self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)
+            else:
+                self.unet_loras = []
+                skipped_un = []
+            print(f"create LoRA for U-Net: {len(self.unet_loras)} modules.")
 
         skipped = skipped_te + skipped_un
         if varbose and len(skipped) > 0:
@@ -576,6 +581,31 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                 self.unet_conv_out = copy.deepcopy(unet_conv_out)
                 unet.conv_in = self.unet_conv_in
                 unet.conv_out = self.unet_conv_out
+
+    def share_parameters_with(self, other: "LoRASpecialNetwork") -> None:
+        """
+        Share all trainable parameters with another network of the same structure.
+        Used so sampling_network uses the same LoRA weights as the training network
+        (one LoRA for both training and sampling, no copy/sync).
+        """
+        assert len(self.unet_loras) == len(other.unet_loras), "unet_loras length mismatch"
+        assert len(self.text_encoder_loras) == len(other.text_encoder_loras), "text_encoder_loras length mismatch"
+
+        def _share_lora_pair(my_lora: torch.nn.Module, other_lora: torch.nn.Module) -> None:
+            assert getattr(my_lora, "lora_name", None) == getattr(other_lora, "lora_name", None), (
+                f"lora name mismatch: {getattr(my_lora, 'lora_name', None)} vs {getattr(other_lora, 'lora_name', None)}"
+            )
+            for name, param in other_lora.named_parameters():
+                parts = name.split(".")
+                obj = my_lora
+                for p in parts[:-1]:
+                    obj = getattr(obj, p)
+                setattr(obj, parts[-1], param)
+
+        for my_lora, other_lora in zip(self.unet_loras, other.unet_loras):
+            _share_lora_pair(my_lora, other_lora)
+        for my_lora, other_lora in zip(self.text_encoder_loras, other.text_encoder_loras):
+            _share_lora_pair(my_lora, other_lora)
 
     def prepare_optimizer_params(self, text_encoder_lr, unet_lr, default_lr):
         # call Lora prepare_optimizer_params

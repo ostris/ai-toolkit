@@ -32,6 +32,8 @@ class Adafactor(torch.optim.Optimizer):
             Coefficient used to compute running averages of square
         beta1 (`float`, *optional*):
             Coefficient used for computing running averages of gradient
+            (first moment, like in Adam). If not None, enables momentum.
+            Suggested values: 0.9 (default), 0.95 or 0.99 for smoother updates.
         weight_decay (`float`, *optional*, defaults to 0.0):
             Weight decay (L2 penalty)
         scale_parameter (`bool`, *optional*, defaults to `True`):
@@ -40,6 +42,12 @@ class Adafactor(torch.optim.Optimizer):
             If True, time-dependent learning rate is computed instead of external learning rate
         warmup_init (`bool`, *optional*, defaults to `False`):
             Time-dependent learning rate computation depends on whether warm-up initialization is being used
+        min_lr (`float`, *optional*, defaults to `1e-6`):
+            Minimum learning rate multiplier for warmup phase when `warmup_init=True` and `relative_step=True`.
+            Controls the linear growth rate: `lr = min_lr * step` during warmup.
+        max_lr (`float`, *optional*, defaults to `1e-2`):
+            Maximum learning rate cap for relative step mode when `relative_step=True`.
+            Acts as upper bound for `min_step` when `warmup_init=False` or when warmup phase completes.
 
     This implementation handles low-precision (FP16, bfloat) values, but we have not thoroughly tested.
 
@@ -106,13 +114,15 @@ class Adafactor(torch.optim.Optimizer):
         scale_parameter=True,
         relative_step=True,
         warmup_init=False,
-        do_paramiter_swapping=False,
-        paramiter_swapping_factor=0.1,
+        min_lr=1e-6,
+        max_lr=1e-4,
+        do_parameter_swapping=False,
+        parameter_swapping_factor=0.1,
         stochastic_accumulation=True,
         stochastic_rounding=True,
     ):
         self.stochastic_rounding = stochastic_rounding
-        if lr is not None and relative_step:
+        if lr is not None and lr != 0 and relative_step:
             raise ValueError(
                 "Cannot combine manual `lr` and `relative_step=True` options")
         if warmup_init and not relative_step:
@@ -129,11 +139,17 @@ class Adafactor(torch.optim.Optimizer):
             "scale_parameter": scale_parameter,
             "relative_step": relative_step,
             "warmup_init": warmup_init,
+            "min_lr": min_lr,
+            "max_lr": max_lr,
         }
         super().__init__(params, defaults)
         
+        # Store LR limits so they can be reapplied after load_state_dict (restart with new config).
+        self._min_lr = min_lr
+        self._max_lr = max_lr
+
         self.base_lrs: List[float] = [
-            lr for group in self.param_groups
+            group['lr'] for group in self.param_groups
         ]
 
         self.is_stochastic_rounding_accumulation = False
@@ -148,60 +164,70 @@ class Adafactor(torch.optim.Optimizer):
                             stochastic_grad_accummulation
                         )
     
-        self.do_paramiter_swapping = do_paramiter_swapping
-        self.paramiter_swapping_factor = paramiter_swapping_factor
-        self._total_paramiter_size = 0
-        # count total paramiters
+        self.do_parameter_swapping = do_parameter_swapping
+        self.parameter_swapping_factor = parameter_swapping_factor
+        self._total_parameter_size = 0
+        # count total parameters
         for group in self.param_groups:
             for param in group['params']:
-                self._total_paramiter_size += torch.numel(param)
-        # pretty print total paramiters with comma seperation
-        print(f"Total training paramiters: {self._total_paramiter_size:,}")
+                self._total_parameter_size += torch.numel(param)
+        # pretty print total parameters with comma separation
+        print(f"Total training parameters: {self._total_parameter_size:,}")
         
-        # needs to be enabled to count paramiters
-        if self.do_paramiter_swapping:
-            self.enable_paramiter_swapping(self.paramiter_swapping_factor)
-        
-    
-    def enable_paramiter_swapping(self, paramiter_swapping_factor=0.1):
-        self.do_paramiter_swapping = True
-        self.paramiter_swapping_factor = paramiter_swapping_factor
+        # needs to be enabled to count parameters
+        if self.do_parameter_swapping:
+            self.enable_parameter_swapping(self.parameter_swapping_factor)
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        # Apply current run's min_lr/max_lr so changed config is used after restart.
+        for group in self.param_groups:
+            group["min_lr"] = self._min_lr
+            group["max_lr"] = self._max_lr
+
+    def enable_parameter_swapping(self, parameter_swapping_factor=0.1):
+        self.do_parameter_swapping = True
+        self.parameter_swapping_factor = parameter_swapping_factor
         # call it an initial time
-        self.swap_paramiters()
+        self.swap_parameters()
                     
-    def swap_paramiters(self):
+    def swap_parameters(self):
         all_params = []
-        # deactivate all paramiters
+        # deactivate all parameters
         for group in self.param_groups:
             for param in group['params']:
                 param.requires_grad_(False)
                 # remove any grad
                 param.grad = None
                 all_params.append(param)
-        # shuffle all paramiters
+        # shuffle all parameters
         random.shuffle(all_params)
         
-        # keep activating paramiters until we are going to go over the target paramiters
-        target_paramiters = int(self._total_paramiter_size * self.paramiter_swapping_factor)
-        total_paramiters = 0
+        # keep activating parameters until we are going to go over the target parameters
+        target_parameters = max(1, int(self._total_parameter_size * self.parameter_swapping_factor))
+        total_parameters = 0
         for param in all_params:
-            total_paramiters += torch.numel(param)
-            if total_paramiters >= target_paramiters:
+            param.requires_grad_(True)
+            total_parameters += torch.numel(param)
+            if total_parameters >= target_parameters:
                 break
-            else:
-                param.requires_grad_(True)
 
     @staticmethod
     def _get_lr(param_group, param_state):
         rel_step_sz = param_group["lr"]
         if param_group["relative_step"]:
-            min_step = 1e-6 * \
-                param_state["step"] if param_group["warmup_init"] else 1e-2
+            if param_group["warmup_init"]:
+                min_step = param_group["min_lr"] * param_state["step"]
+            else:
+                min_step = param_group["max_lr"]
             rel_step_sz = min(min_step, 1.0 / math.sqrt(param_state["step"]))
         param_scale = 1.0
         if param_group["scale_parameter"]:
             param_scale = max(param_group["eps"][1], param_state["RMS"])
-        return param_scale * rel_step_sz
+        lr = param_scale * rel_step_sz
+        # Ensure learning rate is between min_lr and max_lr
+        lr = max(param_group["min_lr"], min(lr, param_group["max_lr"]))
+        return lr
 
     @staticmethod
     def _get_options(param_group, param_shape):
@@ -234,11 +260,20 @@ class Adafactor(torch.optim.Optimizer):
 
     # adafactor manages its own lr
     def get_learning_rates(self):
-        lrs = [
-            self._get_lr(group, self.state[group["params"][0]])
-            for group in self.param_groups
-            if group["params"][0].grad is not None
-        ]
+        lrs = []
+        for group in self.param_groups:
+            # Find first param with initialized state
+            lr = None
+            for param in group["params"]:
+                if param in self.state and len(self.state[param]) > 0:
+                    lr = self._get_lr(group, self.state[param])
+                    break
+            if lr is not None:
+                lrs.append(lr)
+            elif group["lr"] is not None:
+                # Fallback to group lr if state not initialized
+                lrs.append(group["lr"])
+        
         if len(lrs) == 0:
             lrs = self.base_lrs  # if called before stepping
         return lrs
@@ -288,6 +323,7 @@ class Adafactor(torch.optim.Optimizer):
                     if factored:
                         state["exp_avg_sq_row"] = torch.zeros(
                             grad_shape[:-1]).to(grad)
+                        # For 2D tensors, grad_shape[:-2] is empty tuple, which is correct for column stats
                         state["exp_avg_sq_col"] = torch.zeros(
                             grad_shape[:-2] + grad_shape[-1:]).to(grad)
                     else:
@@ -306,8 +342,9 @@ class Adafactor(torch.optim.Optimizer):
                         state["exp_avg_sq"] = state["exp_avg_sq"].to(grad)
 
                 p_data_fp32 = p
+                is_quantized = isinstance(p_data_fp32, QBytesTensor)
                 
-                if isinstance(p_data_fp32, QBytesTensor):
+                if is_quantized:
                     p_data_fp32 = p_data_fp32.dequantize()
                 if p.dtype != torch.float32:
                     p_data_fp32 = p_data_fp32.clone().float()
@@ -356,8 +393,54 @@ class Adafactor(torch.optim.Optimizer):
 
                 p_data_fp32.add_(-update)
 
-                if p.dtype != torch.float32 and self.stochastic_rounding:
+                # Store update RMS for monitoring
+                state["update_rms"] = self._rms(update).item()
+
+                if (p.dtype != torch.float32 or is_quantized) and self.stochastic_rounding:
                     # apply stochastic rounding
                     copy_stochastic(p, p_data_fp32)
 
         return loss
+        
+    def get_avg_learning_rate(self):
+        lrs = self.get_learning_rates()
+        if len(lrs) == 0:
+            return 0.0
+        return sum(lrs) / len(lrs)
+
+    def get_update_rms(self):
+        """
+        Get RMS (root mean square) of weight updates for each parameter group.
+        
+        Returns:
+            List[float]: RMS of weight updates for each parameter group.
+                        Returns 0.0 for groups that haven't been updated yet.
+        """
+        update_rms_list = []
+        for group in self.param_groups:
+            group_rms_sum = 0.0
+            group_count = 0
+            for p in group["params"]:
+                if p in self.state and "update_rms" in self.state[p]:
+                    group_rms_sum += self.state[p]["update_rms"]
+                    group_count += 1
+            if group_count > 0:
+                update_rms_list.append(group_rms_sum / group_count)
+            else:
+                update_rms_list.append(0.0)
+        return update_rms_list
+
+    def get_avg_update_rms(self):
+        """
+        Get average RMS of weight updates across all parameter groups.
+        
+        This metric represents the average magnitude of weight changes per optimization step.
+        Useful for monitoring training stability and convergence.
+        
+        Returns:
+            float: Average RMS of weight updates across all parameter groups.
+        """
+        update_rms_list = self.get_update_rms()
+        if len(update_rms_list) == 0:
+            return 0.0
+        return sum(update_rms_list) / len(update_rms_list)

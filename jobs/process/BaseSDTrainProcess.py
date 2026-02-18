@@ -4,6 +4,7 @@ import inspect
 import json
 import random
 import shutil
+import time
 from collections import OrderedDict
 import os
 import re
@@ -26,7 +27,7 @@ from toolkit.memory_management import MemoryManager
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
+from toolkit.data_loader import get_dataloader_from_datasets, get_dataloader_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
@@ -71,6 +72,7 @@ import diffusers
 import hashlib
 
 from toolkit.util.blended_blur_noise import get_blended_blur_noise
+from toolkit.util.debug import memory_debug, set_debug_config
 from toolkit.util.get_model import get_model_class
 
 def flush():
@@ -98,6 +100,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.start_step = 0
         self.epoch_num = 0
         self.last_save_step = 0
+        # For logging timestep debugging
+        self._collected_indices = []
+        self._collected_timesteps = []
         # start at 1 so we can do a sample at the start
         self.grad_accumulation_step = 1
         # if true, then we do not do an optimizer step. We are accumulating gradients
@@ -127,6 +132,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.has_first_sample_requested = False
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
+        set_debug_config(self.logging_config)
         self.logger = create_logger(self.logging_config, config, self.save_root)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
@@ -469,14 +475,29 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
             for item in items_to_remove:
                 print_acc(f"Removing old save: {item}")
-                if os.path.isdir(item):
-                    shutil.rmtree(item)
-                else:
-                    os.remove(item)
-                # see if a yaml file with same name exists
-                yaml_file = os.path.splitext(item)[0] + ".yaml"
-                if os.path.exists(yaml_file):
-                    os.remove(yaml_file)
+                try:
+                    if os.path.isdir(item):
+                        shutil.rmtree(item)
+                    else:
+                        os.remove(item)
+                    # see if a yaml file with same name exists
+                    yaml_file = os.path.splitext(item)[0] + ".yaml"
+                    if os.path.exists(yaml_file):
+                        os.remove(yaml_file)
+                except PermissionError as e:
+                    print_acc(f"Could not remove {item}: {e}. Skipping (file may be in use).")
+                    try:
+                        time.sleep(2)
+                        if os.path.isdir(item):
+                            shutil.rmtree(item)
+                        else:
+                            os.remove(item)
+                        yaml_file = os.path.splitext(item)[0] + ".yaml"
+                        if os.path.exists(yaml_file):
+                            os.remove(yaml_file)
+                        print_acc(f"Retry succeeded: removed {item}")
+                    except PermissionError:
+                        print_acc(f"Retry failed for {item}. Leaving file in place.")
             if combined_items:
                 latest_item = combined_items[-1]
         return latest_item
@@ -665,14 +686,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         print_acc(f"Saved checkpoint to {file_path}")
 
-        # save optimizer
+        # save optimizer (always unwrap so state matches the optimizer we load into before accelerator.prepare())
         if self.optimizer is not None:
             try:
                 filename = f'optimizer.pt'
                 file_path = os.path.join(self.save_root, filename)
                 try:
                     state_dict = unwrap_model(self.optimizer).state_dict()
-                except Exception as e:
+                except Exception:
                     state_dict = self.optimizer.state_dict()
                 torch.save(state_dict, file_path)
                 print_acc(f"Saved optimizer to {file_path}")
@@ -854,12 +875,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
     def load_weights(self, path):
         if self.network is not None:
-            extra_weights = self.network.load_weights(path)
+            self.network.load_weights(path)
             self.load_training_state_from_metadata(path)
-            return extra_weights
         else:
             print_acc("load_weights not implemented for non-network models")
-            return None
 
     def apply_snr(self, seperated_loss, timesteps):
         if self.train_config.learnable_snr_gos:
@@ -1236,22 +1255,121 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # for style, it is best to favor later timesteps
 
                     orig_timesteps = torch.rand((batch_size,), device=latents.device)
+                    ntt = self.train_config.num_train_timesteps
 
                     if content_or_style == 'content':
-                        timestep_indices = orig_timesteps ** 3 * self.train_config.num_train_timesteps
+                        timestep_indices = (1 - orig_timesteps) ** self.train_config.timestep_bias_exponent * self.train_config.num_train_timesteps
                     elif content_or_style == 'style':
-                        timestep_indices = (1 - orig_timesteps ** 3) * self.train_config.num_train_timesteps
+                        timestep_indices = orig_timesteps ** self.train_config.timestep_bias_exponent * self.train_config.num_train_timesteps
 
                     timestep_indices = value_map(
                         timestep_indices,
                         0,
-                        self.train_config.num_train_timesteps - 1,
-                        min_noise_steps,
-                        max_noise_steps
+                        ntt,
+                        ntt - max_noise_steps,
+                        ntt - min_noise_steps
                     )
+
                     timestep_indices = timestep_indices.long().clamp(
-                        min_noise_steps,
-                        max_noise_steps
+                        ntt - max_noise_steps,
+                        ntt - min_noise_steps
+                    )
+
+                    timestep_indices.sort()
+                    
+                elif content_or_style == 'gaussian':
+                    # Gaussian (normal) distribution with configurable mean and std
+                    # gaussian_mean: controls the center of distribution (default 0.5)
+                    #   - Lower values (0.0-0.5): favor earlier timesteps (more noise)
+                    #   - Higher values (0.5-1.0): favor later timesteps (less noise)
+                    # gaussian_std: controls the spread of distribution (default 0.2)
+                    #   - Affects the shape: smaller = narrower, larger = wider
+                    
+                    # Curriculum learning: linearly interpolate gaussian_std if target is set
+                    if self.train_config.gaussian_std_target is not None:
+                        progress = self.step_num / self.train_config.steps
+                        current_std = self.train_config.gaussian_std + progress * (self.train_config.gaussian_std_target - self.train_config.gaussian_std)
+                    else:
+                        current_std = self.train_config.gaussian_std
+                    
+                    def truncated_normal_samples(batch_size, mu, sigma, device, low=0.0, high=1.0):
+                        # Convert mu and sigma to tensors to ensure all operations are handled by PyTorch
+                        # and to avoid TypeErrors with torch.special functions
+                        mu = torch.as_tensor(mu, device=device, dtype=torch.float32)
+                        sigma = torch.as_tensor(sigma, device=device, dtype=torch.float32)
+
+                        # Standardize the boundaries (calculate z-scores)
+                        alpha = (low - mu) / sigma
+                        beta = (high - mu) / sigma
+
+                        # Calculate Cumulative Distribution Function (CDF) values for the boundaries
+                        cdf_low = torch.special.ndtr(alpha)
+                        cdf_high = torch.special.ndtr(beta)
+
+                        # Generate uniform random samples in the [0, 1] range
+                        u = torch.rand((batch_size,), device=device)
+
+                        # Linearly interpolate between the boundary CDF values
+                        v = cdf_low + u * (cdf_high - cdf_low)
+
+                        # Clamp values to avoid numerical instability (infinities) when calling ndtri
+                        v = v.clamp(1e-7, 1 - 1e-7)
+
+                        # Apply the Inverse CDF (Quantile function) to transform samples to the truncated normal distribution
+                        samples = mu + sigma * torch.special.ndtri(v)
+                        
+                        return samples
+
+                    gaussian_samples = truncated_normal_samples(
+                        batch_size,
+                        self.train_config.gaussian_mean,
+                        current_std,
+                        latents.device
+                    )
+
+                    # Scale to num_train_timesteps
+                    timestep_indices = gaussian_samples * self.train_config.num_train_timesteps
+
+                    ntt = self.train_config.num_train_timesteps
+
+                    # Map to min/max_noise_steps range (same as content/style)
+                    timestep_indices = value_map(
+                        timestep_indices,
+                        0,
+                        ntt,
+                        ntt - max_noise_steps,
+                        ntt - min_noise_steps
+                    )
+
+                    timestep_indices = timestep_indices.long().clamp(
+                        ntt - max_noise_steps,
+                        ntt - min_noise_steps
+                    )
+
+                    timestep_indices.sort()
+                    
+                elif content_or_style == 'fixed_cycle':
+                    # Deterministic cycle over fixed timestep values (for Turbo LoRA reproducibility)
+                    timestep_list = self.train_config.fixed_cycle_timesteps
+                    if not timestep_list:
+                        raise ValueError("content_or_style is 'fixed_cycle' but fixed_cycle_timesteps is empty")
+                    resolved = getattr(self, '_fixed_cycle_resolved_timesteps', None)
+                    if resolved is None:
+                        list_copy = list(timestep_list)
+                        if self.train_config.fixed_cycle_seed is not None:
+                            random.Random(self.train_config.fixed_cycle_seed).shuffle(list_copy)
+                        st = self.sd.noise_scheduler.timesteps
+                        resolved = []
+                        for v in list_copy:
+                            v_t = torch.tensor(v, device=st.device, dtype=st.dtype)
+                            idx = (torch.abs(st - v_t)).argmin().item()
+                            resolved.append(st[idx].item())
+                        self._fixed_cycle_resolved_timesteps = resolved
+                    idx_cycle = self.step_num % len(resolved)
+                    t_val = resolved[idx_cycle]
+                    st = self.sd.noise_scheduler.timesteps
+                    timesteps = torch.full(
+                        (batch_size,), t_val, device=latents.device, dtype=st.dtype
                     )
                     
                 elif content_or_style == 'balanced':
@@ -1275,8 +1393,71 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     raise ValueError(f"Unknown content_or_style {content_or_style}")
             with self.timer('convert_timestep_indices_to_timesteps'):
-                # convert the timestep_indices to a timestep
-                timesteps = self.sd.noise_scheduler.timesteps[timestep_indices.long()]
+                # convert the timestep_indices to a timestep (fixed_cycle already set timesteps above)
+                if content_or_style != 'fixed_cycle':
+                    timesteps = self.sd.noise_scheduler.timesteps[timestep_indices.long()]
+                
+                # Debug logging for timestep distribution
+                if self.train_config.timestep_debug_log > 0:
+                    # Always collect data (fixed_cycle has no timestep_indices, use cycle index)
+                    if content_or_style == 'fixed_cycle':
+                        self._collected_indices.append(self.step_num % len(self._fixed_cycle_resolved_timesteps))
+                        self._collected_timesteps.extend(timesteps.cpu().tolist())
+                    else:
+                        self._collected_indices.extend(timestep_indices.cpu().tolist())
+                        self._collected_timesteps.extend(timesteps.cpu().tolist())
+                    
+                    # Log when we have enough samples
+                    if len(self._collected_indices) >= self.train_config.timestep_debug_log:
+                        scheduler_timesteps = self.sd.noise_scheduler.timesteps.cpu().tolist()
+                        
+                        print_acc(f"\n{'='*70}")
+                        print_acc(f"TIMESTEP DISTRIBUTION DEBUG")
+                        print_acc(f"{'='*70}")
+
+                        print_acc(f"Total scheduler timesteps length: {len(scheduler_timesteps)}")
+                        # print_acc(f"\nScheduler timesteps array (first 10): {scheduler_timesteps[:10]}")
+                        # print_acc(f"Scheduler timesteps array (last 10): {scheduler_timesteps[-10:]}")
+                        
+                        print_acc(f"\nFirst 10 timestep_indices (generated indices):")
+                        print_acc(f"{self._collected_indices[:10]}")
+                        print_acc(f"\nFirst 10 timesteps (actual values after indexing):")
+                        print_acc(f"{self._collected_timesteps[:10]}")
+
+                        print_acc(f"Config:")
+                        print_acc(f"  content_or_style: {content_or_style}")
+                        print_acc(f"  noise_scheduler: {self.train_config.noise_scheduler}")
+                        print_acc(f"  timestep_type: {self.train_config.timestep_type}")
+                        print_acc(f"  num_train_timesteps: {self.train_config.num_train_timesteps}")
+                        print_acc(f"  min_denoising_steps: {min_noise_steps}")
+                        print_acc(f"  max_denoising_steps: {max_noise_steps}")
+                        print_acc(f"  gaussian_mean: {self.train_config.gaussian_mean}")
+                        print_acc(f"  gaussian_std: {self.train_config.gaussian_std}")
+                        print_acc(f"  gaussian_std_target: {self.train_config.gaussian_std_target}")
+                        
+                        # Statistics
+                        num_samples = self.train_config.timestep_debug_log
+                        indices_min = min(self._collected_indices[:num_samples])
+                        indices_max = max(self._collected_indices[:num_samples])
+                        indices_mean = sum(self._collected_indices[:num_samples]) / num_samples
+                        
+                        timesteps_min = min(self._collected_timesteps[:num_samples])
+                        timesteps_max = max(self._collected_timesteps[:num_samples])
+                        timesteps_mean = sum(self._collected_timesteps[:num_samples]) / num_samples
+                        
+                        print_acc(f"\nStatistics ({num_samples} samples):")
+                        print_acc(f"  Indices: max={indices_max}, mean={indices_mean:.1f}, min={indices_min}")
+                        print_acc(f"  Timesteps: max={timesteps_max:.1f}, mean={timesteps_mean:.1f}, min={timesteps_min:.1f}")
+                        if self.train_config.gaussian_std_target is not None:
+                            progress = self.step_num / self.train_config.steps
+                            current_std = self.train_config.gaussian_std + progress * (self.train_config.gaussian_std_target - self.train_config.gaussian_std)
+                            percent = progress * 100.0
+                            print_acc(f"  current_std: {current_std:.3f} (progress: {percent:.1f}%)")
+                        print_acc(f"  Step: {self.step_num} ({self.step_num * 100 / self.train_config.steps:.1f}%)")
+                        print_acc(f"{'='*70}\n")
+                        
+                        self._collected_indices = []
+                        self._collected_timesteps = []
                 
             with self.timer('prepare_noise'):
                 # get noise
@@ -1758,6 +1939,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
                     dropout=self.network_config.dropout,
+                    rank_dropout=self.network_config.rank_dropout,
+                    module_dropout=self.network_config.module_dropout,
                     use_text_encoder_1=self.model_config.use_text_encoder_1,
                     use_text_encoder_2=self.model_config.use_text_encoder_2,
                     use_bias=is_lorm,
@@ -1806,6 +1989,65 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.network.prepare_grad_etc(text_encoder, unet)
                 flush()
 
+                # Create sampling network if sampling_transformer is specified and LoRA is used
+                if hasattr(self.sd, '_sampling_transformer') and self.sd._sampling_transformer is not None:
+                    with memory_debug(print_acc, "Creating sampling network"):
+                        print_acc("Creating sampling network for _sampling_transformer")
+                        sampling_network = NetworkClass(
+                            text_encoder=text_encoder,
+                            unet=self.sd._sampling_transformer,
+                            lora_dim=self.network_config.linear,
+                            multiplier=1.0,
+                            alpha=self.network_config.linear_alpha,
+                            train_unet=self.train_config.train_unet,
+                            train_text_encoder=self.train_config.train_text_encoder,
+                            conv_lora_dim=self.network_config.conv,
+                            conv_alpha=self.network_config.conv_alpha,
+                            is_sdxl=self.model_config.is_xl or self.model_config.is_ssd,
+                            is_v2=self.model_config.is_v2,
+                            is_v3=self.model_config.is_v3,
+                            is_pixart=self.model_config.is_pixart,
+                            is_auraflow=self.model_config.is_auraflow,
+                            is_flux=self.model_config.is_flux,
+                            is_lumina2=self.model_config.is_lumina2,
+                            is_ssd=self.model_config.is_ssd,
+                            is_vega=self.model_config.is_vega,
+                            dropout=self.network_config.dropout,
+                            rank_dropout=self.network_config.rank_dropout,
+                            module_dropout=self.network_config.module_dropout,
+                            use_text_encoder_1=self.model_config.use_text_encoder_1,
+                            use_text_encoder_2=self.model_config.use_text_encoder_2,
+                            use_bias=is_lorm,
+                            is_lorm=is_lorm,
+                            network_config=self.network_config,
+                            network_type=self.network_config.type,
+                            transformer_only=self.network_config.transformer_only,
+                            is_transformer=self.sd.is_transformer,
+                            base_model=self.sd,
+                            **network_kwargs
+                        )
+                        
+                        sampling_network.force_to(self.device_torch, dtype=torch.float32)
+                        sampling_network._update_torch_multiplier()
+                        
+                        sampling_network.apply_to(
+                            text_encoder,
+                            self.sd._sampling_transformer,
+                            self.train_config.train_text_encoder,
+                            self.train_config.train_unet
+                        )
+                        
+                        # Set can_merge_in same as main network (False if quantized/layer_offloading)
+                        if self.model_config.quantize or self.model_config.layer_offloading:
+                            sampling_network.can_merge_in = False
+                        
+                        # Store sampling network on model for use during generation
+                        self.sd._sampling_network = sampling_network
+                        # One LoRA for both: share parameters with training network (no copy/sync)
+                        if hasattr(sampling_network, "share_parameters_with"):
+                            sampling_network.share_parameters_with(self.network)
+                        flush()
+
                 # LyCORIS doesnt have default_lr
                 config = {
                     'text_encoder_lr': self.train_config.lr,
@@ -1831,13 +2073,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     lora_name = f"{lora_name}_LoRA"
 
                 latest_save_path = self.get_latest_save_path(lora_name)
-                extra_weights = None
                 if latest_save_path is not None:
-                    print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
-                    print_acc(f"Loading from {latest_save_path}")
-                    extra_weights = self.load_weights(latest_save_path)
-                    self.network.multiplier = 1.0
-                
+                    with memory_debug(print_acc, "pretrained_lora_load"):
+                        print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
+                        print_acc(f"Loading from {latest_save_path}")
+                        self.load_weights(latest_save_path)
+                        self.network.multiplier = 1.0
+                        flush()
+
                 if self.network_config.layer_offloading:
                     MemoryManager.attach(
                         self.network,
@@ -1983,7 +2226,27 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 try:
                     print_acc(f"Loading optimizer state from {optimizer_state_file_path}")
                     optimizer_state_dict = torch.load(optimizer_state_file_path, weights_only=True)
-                    optimizer.load_state_dict(optimizer_state_dict)
+                    
+                    # PyTorch maps optimizer state by param order; param count must match
+                    # or state will be applied to wrong parameters
+                    current_param_count = sum(
+                        len(g["params"]) for g in optimizer.param_groups
+                    )
+                    saved_param_count = sum(
+                        len(g["params"]) for g in optimizer_state_dict.get("param_groups", [])
+                    )
+                    
+                    if current_param_count != saved_param_count:
+                        print_acc(
+                            f"WARNING: Optimizer state NOT loaded: param count mismatch. "
+                            f"Current optimizer has {current_param_count} params, "
+                            f"but saved state has {saved_param_count} params. "
+                            "Training will continue with fresh optimizer state."
+                        )
+                    else:
+                        optimizer.load_state_dict(optimizer_state_dict)
+                        print_acc("Optimizer state restored successfully.")
+                    
                     del optimizer_state_dict
                     flush()
                 except Exception as e:
@@ -2036,7 +2299,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             print_acc("Skipping first sample due to config setting")
         elif self.step_num <= 1 or self.train_config.force_first_sample:
             print_acc("Generating baseline samples before training")
-            self.sample(self.step_num)
+            with memory_debug(print_acc, "Generating baseline samples before training"):
+                self.sample(self.step_num)
         
         if self.accelerator.is_local_main_process:
             self.progress_bar = ToolkitProgressBar(
@@ -2063,6 +2327,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             dataloader_reg = None
             dataloader_iterator_reg = None
+
+        # Sync epoch_num to datasets so resume from checkpoint keeps correct shuffle-for-cached-embeddings behavior
+        if dataloader is not None:
+            for dataset in get_dataloader_datasets(dataloader):
+                dataset.set_epoch_num(self.epoch_num)
 
         # zero any gradients
         optimizer.zero_grad()
@@ -2149,6 +2418,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 dataloader_iterator = iter(dataloader)
                                 trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
+                                for dataset in get_dataloader_datasets(dataloader):
+                                    dataset.set_epoch_num(self.epoch_num)
+                                    clear_embeddings_cache = not getattr(dataset.dataset_config, 'cache_text_embeddings', False)
+                                    if clear_embeddings_cache:
+                                        dataset.clear_cached_embeddings_memory()
                                 if self.train_config.gradient_accumulation_steps == -1:
                                     # if we are accumulating for an entire epoch, trigger a step
                                     self.is_grad_accumulation_step = False
@@ -2226,6 +2500,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # torch.cuda.empty_cache()
                 # if optimizer has get_lrs method, then use it
                 learning_rate = 0.0
+                update_rms = 0.0  # Average weight update RMS (for monitoring optimizer step magnitude)
                 if not did_oom and loss_dict is not None:
                     if hasattr(optimizer, 'get_avg_learning_rate'):
                         learning_rate = optimizer.get_avg_learning_rate()
@@ -2239,8 +2514,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         )
                     else:
                         learning_rate = optimizer.param_groups[0]['lr']
+                    
+                    # Get average weight update RMS if optimizer supports it (e.g., Adafactor)
+                    if hasattr(optimizer, 'get_avg_update_rms'):
+                        update_rms = optimizer.get_avg_update_rms()
 
                     prog_bar_string = f"lr: {learning_rate:.1e}"
+                    if update_rms > 0:
+                        prog_bar_string += f" upd: {update_rms:.2e}"
                     for key, value in loss_dict.items():
                         prog_bar_string += f" {key}: {value:.3e}"
 
@@ -2263,6 +2544,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
                         print_acc(f"\nSaving at step {self.step_num}")
+                        # free memory before save to reduce OOM risk
+                        optimizer.zero_grad(set_to_none=True)
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        flush()
                         self.save(self.step_num)
                         self.ensure_params_requires_grad()
                         # clear any grads
@@ -2300,6 +2586,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                         for key, value in loss_dict.items():
                                             self.writer.add_scalar(f"{key}", value, self.step_num)
                                         self.writer.add_scalar(f"lr", learning_rate, self.step_num)
+                                        # Log weight update RMS if available (shows optimizer step magnitude)
+                                        if update_rms > 0:
+                                            self.writer.add_scalar("train/update_rms", update_rms, self.step_num)
                                 if self.progress_bar is not None:
                                     self.progress_bar.unpause()
                         
@@ -2308,6 +2597,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.logger.log({
                                 'learning_rate': learning_rate,
                             })
+                            # Log differential guidance norm if available
+                            if hasattr(self, 'diff_guidance_norm') and self.diff_guidance_norm is not None:
+                                self.logger.log({
+                                    'diff_guidance_norm': self.diff_guidance_norm,
+                                })
+                                self.diff_guidance_norm = None
+                            # Log weight update RMS if available (Adafactor optimizer statistic)
+                            if update_rms > 0:
+                                self.logger.log({
+                                    'train/update_rms': update_rms,
+                                })
                             if loss_dict is not None:
                                 for key, value in loss_dict.items():
                                     self.logger.log({
@@ -2319,6 +2619,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.logger.log({
                                 'learning_rate': learning_rate,
                             })
+                            # Log differential guidance norm if available
+                            if hasattr(self, 'diff_guidance_norm') and self.diff_guidance_norm is not None:
+                                self.logger.log({
+                                    'diff_guidance_norm': self.diff_guidance_norm,
+                                })
+                                self.diff_guidance_norm = None
+                            # Log weight update RMS if available (Adafactor optimizer statistic)
+                            if update_rms > 0:
+                                self.logger.log({
+                                    'train/update_rms': update_rms,
+                                })
                             for key, value in loss_dict.items():
                                 self.logger.log({
                                     f'loss/{key}': value,

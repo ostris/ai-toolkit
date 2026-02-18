@@ -6,7 +6,6 @@ from typing import Union, Literal, List, Optional
 import numpy as np
 from diffusers import T2IAdapter, AutoencoderTiny, ControlNetModel
 
-import torch.functional as F
 from safetensors.torch import load_file
 from torch.utils.data import DataLoader, ConcatDataset
 
@@ -34,6 +33,7 @@ from diffusers import EMAModel
 import math
 from toolkit.train_tools import precondition_model_outputs_flow_match
 from toolkit.models.diffusion_feature_extraction import DiffusionFeatureExtractor, load_dfe
+from toolkit.util.debug import memory_debug
 from toolkit.util.losses import wavelet_loss, stepped_loss
 import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
@@ -112,6 +112,9 @@ class SDTrainer(BaseSDTrainProcess):
             self._guidance_loss_target_batch = float(self.train_config.guidance_loss_target[0])
         else:
             raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
+        
+        # store differential guidance norm metric for logging
+        self.diff_guidance_norm = None
 
 
     def before_model_load(self):
@@ -341,12 +344,15 @@ class SDTrainer(BaseSDTrainProcess):
 
                 # unload the text encoder
                 if self.is_caching_text_embeddings:
-                    unload_text_encoder(self.sd)
+                    with memory_debug(print_acc, "UNLOAD TEXT ENCODER"):
+                        unload_text_encoder(self.sd)
+                        flush()
                 else:
                     # todo once every model is tested to work, unload properly. Though, this will all be merged into one thing.
                     # keep legacy usage for now. 
-                    self.sd.text_encoder_to("cpu")
-                flush()
+                    with memory_debug(print_acc, "UNLOAD TEXT ENCODER"):
+                        self.sd.text_encoder_to("cpu")
+                        flush()
         
         if self.train_config.blank_prompt_preservation and self.cached_blank_embeds is None:
             # make sure we have this if not unloading
@@ -708,11 +714,14 @@ class SDTrainer(BaseSDTrainProcess):
                 
                 unconditional_target = unconditional_target * alpha
                 target = unconditional_target + guidance_scale * (target - unconditional_target)
-
-            if self.train_config.do_differential_guidance:
-                with torch.no_grad():
-                    guidance_scale = self.train_config.differential_guidance_scale
-                    target = noise_pred + guidance_scale * (target - noise_pred)
+                
+        if self.train_config.do_differential_guidance:
+            with torch.no_grad():
+                guidance_scale = self.train_config.differential_guidance_scale
+                diff_correction = guidance_scale * (target - noise_pred)
+                # Calculate L2 norm for monitoring
+                self.diff_guidance_norm = torch.norm(diff_correction).item()
+                target = noise_pred + diff_correction
             
         if target is None:
             target = noise
@@ -784,6 +793,22 @@ class SDTrainer(BaseSDTrainProcess):
                     v2=self.train_config.linear_timesteps2,
                     timestep_type=self.train_config.timestep_type
                 ).to(loss.device, dtype=loss.dtype)
+                if len(loss.shape) == 4:
+                    timestep_weight = timestep_weight.view(-1, 1, 1, 1).detach()
+                elif len(loss.shape) == 5:
+                    timestep_weight = timestep_weight.view(-1, 1, 1, 1, 1).detach()
+                loss = loss * timestep_weight
+            elif self.train_config.content_or_style == 'fixed_cycle' and self.train_config.fixed_cycle_weight_peak_timesteps:
+                # fixed_cycle: weight loss by Gaussian peaks at fixed_cycle_weight_peak_timesteps (e.g. 500, 375), mean-normalized
+                peaks = self.train_config.fixed_cycle_weight_peak_timesteps
+                sigma = self.train_config.fixed_cycle_weight_sigma
+                peaks_t = torch.tensor(peaks, device=timesteps.device, dtype=timesteps.dtype)
+                diff = timesteps.unsqueeze(1).float() - peaks_t.unsqueeze(0)
+                weight_per_timestep = torch.exp(-(diff / sigma) ** 2).max(dim=1)[0]
+                cycle_ts = torch.tensor(self.train_config.fixed_cycle_timesteps, device=timesteps.device, dtype=timesteps.dtype)
+                diff_cycle = cycle_ts.unsqueeze(1).float() - peaks_t.unsqueeze(0)
+                mean_w = torch.exp(-(diff_cycle / sigma) ** 2).max(dim=1)[0].mean().clamp(min=1e-8)
+                timestep_weight = (weight_per_timestep / mean_w).to(loss.device, dtype=loss.dtype)
                 if len(loss.shape) == 4:
                     timestep_weight = timestep_weight.view(-1, 1, 1, 1).detach()
                 elif len(loss.shape) == 5:
@@ -1505,11 +1530,18 @@ class SDTrainer(BaseSDTrainProcess):
                                     self.device_torch, dtype=dtype
                                 )
                             else:
-                                embeds_to_use = self.cached_blank_embeds.clone().detach().to(
-                                    self.device_torch, dtype=dtype
-                                )
+                                # No cache on disk: use trigger_word instead of blank embedding
                                 if self.cached_trigger_embeds is not None and not is_reg:
                                     embeds_to_use = self.cached_trigger_embeds.clone().detach().to(
+                                        self.device_torch, dtype=dtype
+                                    )
+                                else:
+                                    if self.is_caching_text_embeddings:
+                                        raise ValueError(
+                                            "cache_text_embeddings is enabled but no cached embeds in batch. "
+                                            "Set trigger_word when using cache_text_embeddings so fallback is available when cache is missing."
+                                        )
+                                    embeds_to_use = self.cached_blank_embeds.clone().detach().to(
                                         self.device_torch, dtype=dtype
                                     )
                                 conditional_embeds = concat_prompt_embeds(
@@ -1983,15 +2015,19 @@ class SDTrainer(BaseSDTrainProcess):
                             prior_pred=prior_to_calculate_loss,
                         )
                     
-                    if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
-                        # send the loss backwards otherwise checkpointing will fail
-                        self.accelerator.backward(loss)
-                        normal_loss = loss.detach() # dont send backward again
-                        
+                    # Determine if we should run BPP this step
+                    should_run_bpp = False
+                    if self.train_config.blank_prompt_preservation:
+                        should_run_bpp = random.random() < self.train_config.blank_prompt_probability
+                    
+                    # Flag to track if backward was already performed in preservation block
+                    backward_done = False
+                    
+                    if self.train_config.diff_output_preservation or should_run_bpp:
                         with torch.no_grad():
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
-                            elif self.train_config.blank_prompt_preservation:
+                            elif should_run_bpp:
                                 blank_embeds = self.cached_blank_embeds.clone().detach().to(
                                     self.device_torch, dtype=dtype
                                 )
@@ -2008,12 +2044,14 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                         multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
                         preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
-                        self.accelerator.backward(preservation_loss)
-
-                        loss = normal_loss + preservation_loss
-                        loss = loss.clone().detach()
-                        # require grad again so the backward wont fail
-                        loss.requires_grad_(True)
+                        
+                        # Combine main loss and preservation loss with loss_multiplier applied
+                        total_loss = loss * loss_multiplier.mean() + preservation_loss
+                        self.accelerator.backward(total_loss)
+                        
+                        # Detach total loss for logging and nan checks
+                        loss = total_loss.detach()
+                        backward_done = True
                         
                 # check if nan
                 if torch.isnan(loss):
@@ -2021,18 +2059,20 @@ class SDTrainer(BaseSDTrainProcess):
                     loss = torch.zeros_like(loss).requires_grad_(True)
 
                 with self.timer('backward'):
-                    # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
-                    loss = loss * loss_multiplier.mean()
-                    # IMPORTANT if gradient checkpointing do not leave with network when doing backward
-                    # it will destroy the gradients. This is because the network is a context manager
-                    # and will change the multipliers back to 0.0 when exiting. They will be
-                    # 0.0 for the backward pass and the gradients will be 0.0
-                    # I spent weeks on fighting this. DON'T DO IT
-                    # with fsdp_overlap_step_with_backward():
-                    # if self.is_bfloat:
-                    # loss.backward()
-                    # else:
-                    self.accelerator.backward(loss)
+                    # Only perform backward if not already done in preservation block
+                    if not backward_done:
+                        # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
+                        loss = loss * loss_multiplier.mean()
+                        # IMPORTANT if gradient checkpointing do not leave with network when doing backward
+                        # it will destroy the gradients. This is because the network is a context manager
+                        # and will change the multipliers back to 0.0 when exiting. They will be
+                        # 0.0 for the backward pass and the gradients will be 0.0
+                        # I spent weeks on fighting this. DON'T DO IT
+                        # with fsdp_overlap_step_with_backward():
+                        # if self.is_bfloat:
+                        # loss.backward()
+                        # else:
+                        self.accelerator.backward(loss)
 
         return loss.detach()
         # flush()

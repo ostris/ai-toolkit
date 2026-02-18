@@ -1,0 +1,79 @@
+---
+# Example configuration demonstrating warmup support for cosine_with_restarts scheduler
+# This is based on train_lora_flux_24gb.yaml with added warmup configuration
+
+job: extension
+config:
+  name: "flux_lora_with_warmup_v1"
+  process:
+    - type: 'sd_trainer'
+      training_folder: "output"
+      device: cuda:0
+      
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+      
+      save:
+        dtype: float16
+        save_every: 250
+        max_step_saves_to_keep: 4
+        push_to_hub: false
+      
+      datasets:
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          shuffle_tokens: false
+          cache_latents_to_disk: true
+          resolution: [ 512, 768, 1024 ]
+      
+      train:
+        batch_size: 1
+        steps: 2000
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        
+        # Learning rate scheduler with warmup
+        lr_scheduler: "cosine_with_restarts"
+        lr_scheduler_params:
+          warmup_steps: 100      # Linear warmup for first 100 steps (0 → lr)
+          T_mult: 2              # Double the restart period each time
+          eta_min: 1e-7          # Minimum learning rate
+        
+        # Alternative: cosine scheduler with warmup
+        # lr_scheduler: "cosine"
+        # lr_scheduler_params:
+        #   warmup_steps: 100    # Linear warmup for first 100 steps
+        #   eta_min: 1e-7        # Minimum learning rate
+        
+        # For backward compatibility (no warmup):
+        # lr_scheduler: "cosine_with_restarts"
+        # lr_scheduler_params:
+        #   T_mult: 2
+        #   eta_min: 1e-7
+        
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        is_flux: true
+        quantize: true
+      
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        prompts:
+          - "a photo of a cat"
+          - "a photo of a dog"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 20

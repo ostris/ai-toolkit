@@ -1,5 +1,6 @@
 import os
-from typing import List, Optional
+import time
+from typing import List, Optional, Tuple
 
 import huggingface_hub
 import torch
@@ -14,9 +15,13 @@ from toolkit.samplers.custom_flowmatch_sampler import (
 )
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
+from toolkit.util.debug import memory_debug
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
+from toolkit.util.device import safe_module_to_device
 from toolkit.memory_management import MemoryManager
+from toolkit.paths import normalize_path
 from safetensors.torch import load_file
+import safetensors
 
 from transformers import AutoTokenizer, Qwen3ForCausalLM
 from diffusers import AutoencoderKL
@@ -35,6 +40,9 @@ scheduler_config = {
     "use_dynamic_shifting": False,
     "shift": 3.0,
 }
+
+# Set when safetensors patches are applied for debug_zimage_load (avoid double-wrap)
+_zimage_load_debug_patched = False
 
 
 class ZImageModel(BaseModel):
@@ -147,11 +155,46 @@ class ZImageModel(BaseModel):
         # tell the model to invert assistant on inference since we want remove lora effects
         self.invert_assistant_lora = True
 
-    def load_model(self):
+    def _load_sampling_transformer(self) -> Optional[ZImageTransformer2DModel]:
+        """Load a separate transformer for inference/sampling when sampling_name_or_path is set.
+        Returns None if not configured or when sampling path equals the training model path.
+        """
+        if (
+            self.model_config.sampling_name_or_path is None
+            or self.model_config.sampling_name_or_path == self.model_config.name_or_path
+        ):
+            return None
         dtype = self.torch_dtype
-        self.print_and_status_update("Loading ZImage model")
-        model_path = self.model_config.name_or_path
-        base_model_path = self.model_config.extras_name_or_path
+        self.print_and_status_update("Loading sampling transformer")
+        sampling_model_path = normalize_path(self.model_config.sampling_name_or_path)
+        sampling_transformer_path = sampling_model_path
+        sampling_transformer_subfolder = "transformer"
+
+        if os.path.exists(sampling_model_path):
+            sampling_transformer_subfolder = None
+            sampling_transformer_path = os.path.join(sampling_model_path, "transformer")
+
+        sampling_transformer = ZImageTransformer2DModel.from_pretrained(
+            sampling_transformer_path,
+            subfolder=sampling_transformer_subfolder,
+            torch_dtype=dtype,
+            device_map="cpu",
+        )
+        if self.model_config.quantize:
+            self.print_and_status_update("Quantizing sampling transformer")
+            quantize_model(self, sampling_transformer)
+            flush()
+        # Already on CPU via device_map="cpu"; ensure it stays there
+        sampling_transformer.to("cpu")
+        flush()
+        return sampling_transformer
+
+    def _load_transformer(self, model_path: str) -> Tuple[ZImageTransformer2DModel, str]:
+        """Load the training transformer and resolve base_model_path for VAE/text_encoder.
+        Returns (transformer, base_model_path). base_model_path is used for tokenizer, text_encoder, VAE.
+        """
+        dtype = self.torch_dtype
+        base_model_path = normalize_path(self.model_config.extras_name_or_path)
 
         self.print_and_status_update("Loading transformer")
 
@@ -160,20 +203,19 @@ class ZImageModel(BaseModel):
         if os.path.exists(transformer_path):
             transformer_subfolder = None
             transformer_path = os.path.join(transformer_path, "transformer")
-            # check if the path is a full checkpoint.
+            # Check if the path is a full checkpoint (contains text_encoder, vae, etc.)
             te_folder_path = os.path.join(model_path, "text_encoder")
-            # if we have the te, this folder is a full checkpoint, use it as the base
+
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
         transformer = ZImageTransformer2DModel.from_pretrained(
             transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
         )
-
-        # load assistant lora if specified
+        # Load assistant LoRA if specified (e.g. for ARA-style training)
         if self.model_config.assistant_lora_path is not None:
             self.load_training_adapter(transformer)
-            # set qtype to be float8 if it is qfloat8
+            # Set qtype to float8 if it is qfloat8 (quantize compatibility)
             if self.model_config.qtype == "qfloat8":
                 self.model_config.qtype = "float8"
 
@@ -201,93 +243,165 @@ class ZImageModel(BaseModel):
             transformer.to("cpu")
 
         flush()
+        return transformer, base_model_path
+
+    def load_model(self):
+        global _zimage_load_debug_patched
+        dtype = self.torch_dtype
+        self.print_and_status_update("Loading ZImage model")
+        model_path = normalize_path(self.model_config.name_or_path)
+
+        if self.model_config.debug_zimage_load and not _zimage_load_debug_patched:
+            log_func = self.print_and_status_update
+            orig_load_file = safetensors.torch.load_file
+            orig_safe_open = safetensors.safe_open
+
+            def _debug_path_and_size(path):
+                if path is not None and isinstance(path, (str, os.PathLike)) and os.path.isfile(path):
+                    path_str = os.path.abspath(path)
+                    try:
+                        size = os.path.getsize(path)
+                        return path_str, f" size={size}"
+                    except OSError:
+                        return path_str, ""
+                path_str = repr(path) if path else "<no path>"
+                return path_str, ""
+
+            def _wrapped_load_file(*args, **kwargs):
+                path = args[0] if args else kwargs.get("filename") or kwargs.get("path")
+                path_str, size_str = _debug_path_and_size(path)
+                start = time.perf_counter()
+                result = orig_load_file(*args, **kwargs)
+                duration = time.perf_counter() - start
+                log_func(f"[ZImage debug] load_file path={path_str}{size_str} duration={duration:.3f}s")
+                return result
+
+            def _wrapped_safe_open(*args, **kwargs):
+                path = args[0] if args else kwargs.get("filename") or kwargs.get("path")
+                path_str, size_str = _debug_path_and_size(path)
+                start = time.perf_counter()
+                result = orig_safe_open(*args, **kwargs)
+
+                class _WrappedCtx:
+                    def __enter__(_self):
+                        return result.__enter__()
+
+                    def __exit__(_self, *exc):
+                        duration = time.perf_counter() - start
+                        log_func(f"[ZImage debug] safe_open path={path_str}{size_str} duration={duration:.3f}s")
+                        return result.__exit__(*exc)
+
+                return _WrappedCtx()
+
+            safetensors.torch.load_file = _wrapped_load_file
+            safetensors.safe_open = _wrapped_safe_open
+            _zimage_load_debug_patched = True
+
+        if self.model_config.debug_zimage_load:
+            self.print_and_status_update("[ZImage debug] === Loading sampling transformer (from_pretrained) ===")
+        # Load sampling transformer first (if configured) to control peak VRAM
+        with memory_debug(self.print_and_status_update, "Loading sampling transformer"):
+            self._sampling_transformer = self._load_sampling_transformer()
+        if self.model_config.debug_zimage_load:
+            self.print_and_status_update("[ZImage debug] === Loading main transformer (from_pretrained) ===")
+        with memory_debug(self.print_and_status_update, "Loading transformer"):
+            transformer, base_model_path = self._load_transformer(model_path)
 
         self.print_and_status_update("Text Encoder")
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
-        )
-        text_encoder = Qwen3ForCausalLM.from_pretrained(
-            base_model_path, subfolder="text_encoder", torch_dtype=dtype
-        )
-
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_text_encoder_percent > 0
-        ):
-            MemoryManager.attach(
-                text_encoder,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
+        with memory_debug(self.print_and_status_update, "Text Encoder"):
+            tokenizer = AutoTokenizer.from_pretrained(
+                base_model_path, subfolder="tokenizer", dtype=dtype
+            )
+            text_encoder = Qwen3ForCausalLM.from_pretrained(
+                base_model_path, subfolder="text_encoder", dtype=dtype
             )
 
-        text_encoder.to(self.device_torch, dtype=dtype)
-        flush()
+            if (
+                self.model_config.layer_offloading
+                and self.model_config.layer_offloading_text_encoder_percent > 0
+            ):
+                MemoryManager.attach(
+                    text_encoder,
+                    self.device_torch,
+                    offload_percent=self.model_config.layer_offloading_text_encoder_percent,
+                )
 
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
+            text_encoder.to(self.device_torch, dtype=dtype)
             flush()
 
+            if self.model_config.quantize_te:
+                self.print_and_status_update("Quantizing Text Encoder")
+                quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+                freeze(text_encoder)
+                flush()
+
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKL.from_pretrained(
-            base_model_path, subfolder="vae", torch_dtype=dtype
-        )
+        with memory_debug(self.print_and_status_update, "Loading VAE"):
+            vae = AutoencoderKL.from_pretrained(
+                base_model_path, subfolder="vae", torch_dtype=dtype
+            )
 
         self.noise_scheduler = ZImageModel.get_train_scheduler()
 
         self.print_and_status_update("Making pipe")
+        with memory_debug(self.print_and_status_update, "Making pipe"):
+            kwargs = {}
 
-        kwargs = {}
-
-        pipe: ZImagePipeline = ZImagePipeline(
-            scheduler=self.noise_scheduler,
-            text_encoder=None,
-            tokenizer=tokenizer,
-            vae=vae,
-            transformer=None,
-            **kwargs,
-        )
-        # for quantization, it works best to do these after making the pipe
-        pipe.text_encoder = text_encoder
-        pipe.transformer = transformer
+            pipe: ZImagePipeline = ZImagePipeline(
+                scheduler=self.noise_scheduler,
+                text_encoder=None,
+                tokenizer=tokenizer,
+                vae=vae,
+                transformer=None,
+                **kwargs,
+            )
+            # for quantization, it works best to do these after making the pipe
+            pipe.text_encoder = text_encoder
+            pipe.transformer = transformer
 
         self.print_and_status_update("Preparing Model")
+        with memory_debug(self.print_and_status_update, "Preparing Model"):
+            text_encoder = [pipe.text_encoder]
+            tokenizer = [pipe.tokenizer]
 
-        text_encoder = [pipe.text_encoder]
-        tokenizer = [pipe.tokenizer]
+            # leave it on cpu for now
+            if not self.low_vram:
+                pipe.transformer = pipe.transformer.to(self.device_torch)
 
-        # leave it on cpu for now
-        if not self.low_vram:
-            pipe.transformer = pipe.transformer.to(self.device_torch)
-
-        flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
-        text_encoder[0].requires_grad_(False)
-        text_encoder[0].eval()
-        flush()
+            flush()
+            # just to make sure everything is on the right device and dtype
+            text_encoder[0].to(self.device_torch)
+            text_encoder[0].requires_grad_(False)
+            text_encoder[0].eval()
+            flush()
 
         # save it to the model class
-        self.vae = vae
-        self.text_encoder = text_encoder  # list of text encoders
-        self.tokenizer = tokenizer  # list of tokenizers
-        self.model = pipe.transformer
-        self.pipeline = pipe
-        self.print_and_status_update("Model Loaded")
+        with memory_debug(self.print_and_status_update, "Model Loaded"):
+            self.vae = vae
+            self.text_encoder = text_encoder  # list of text encoders
+            self.tokenizer = tokenizer  # list of tokenizers
+            self.model = pipe.transformer
+            self.pipeline = pipe
+            self.print_and_status_update("Model Loaded")
 
     def get_generation_pipeline(self):
         scheduler = ZImageModel.get_train_scheduler()
+
+        # Determine which transformer to use for sampling
+        transformer_for_sampling = self.transformer
+        if self._sampling_transformer is not None:
+            # Use sampling transformer, keep it on CPU (for testing / avoid OOM)
+            transformer_for_sampling = self._sampling_transformer
 
         pipeline: ZImagePipeline = ZImagePipeline(
             scheduler=scheduler,
             text_encoder=unwrap_model(self.text_encoder[0]),
             tokenizer=self.tokenizer[0],
             vae=unwrap_model(self.vae),
-            transformer=unwrap_model(self.transformer),
+            transformer=unwrap_model(transformer_for_sampling),
         )
 
-        pipeline = pipeline.to(self.device_torch)
+        # pipeline = pipeline.to(self.device_torch)
 
         return pipeline
 
@@ -300,15 +414,36 @@ class ZImageModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        self.model.to(self.device_torch, dtype=self.torch_dtype)
-        self.model.to(self.device_torch)
-
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
+
+        # ZImagePipeline expects prompt_embeds and negative_prompt_embeds to be
+        # List[torch.FloatTensor] where each element is [seq_len, dim].
+        # The pipeline concatenates these lists for CFG (not element-wise add).
+        cond_embeds = conditional_embeds.text_embeds
+        uncond_embeds = unconditional_embeds.text_embeds
+
+        # Convert rank-3 tensors back to list of rank-2 tensors
+        def to_embed_list(embeds):
+            if embeds is None:
+                return []
+            if isinstance(embeds, list):
+                return embeds
+            if len(embeds.shape) == 3:
+                # [batch, seq_len, dim] -> list of [seq_len, dim]
+                return list(embeds.unbind(dim=0))
+            elif len(embeds.shape) == 2:
+                # Already [seq_len, dim], wrap in list
+                return [embeds]
+            return embeds
+
+        cond_embeds_list = to_embed_list(cond_embeds)
+        uncond_embeds_list = to_embed_list(uncond_embeds)
+
         img = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds,
-            negative_prompt_embeds=unconditional_embeds.text_embeds,
+            prompt_embeds=cond_embeds_list,
+            negative_prompt_embeds=uncond_embeds_list,
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
@@ -326,17 +461,33 @@ class ZImageModel(BaseModel):
         text_embeddings: PromptEmbeds,
         **kwargs,
     ):
-        self.model.to(self.device_torch)
+        if self.low_vram and next(self.model.parameters()).device != self.device_torch:
+            safe_module_to_device(self.model, self.device_torch)
 
         latent_model_input = latent_model_input.unsqueeze(2)
         latent_model_input_list = list(latent_model_input.unbind(dim=0))
 
         timestep_model_input = (1000 - timestep) / 1000
 
+        text_embeds = text_embeddings.text_embeds
+        if isinstance(text_embeds, torch.Tensor):
+            if len(text_embeds.shape) == 3:
+                # if it is a single batch tensor, unbind it into a list of tensors
+                text_embeds = list(text_embeds.unbind(dim=0))
+        elif isinstance(text_embeds, list):
+            # check if items are rank 3 (batch, length, dim)
+            if len(text_embeds[0].shape) == 3:
+                # flatten the list of batches into a single list of tensors
+                new_text_embeds = []
+                for t in text_embeds:
+                    if t is not None:
+                        new_text_embeds += list(t.unbind(dim=0))
+                text_embeds = new_text_embeds
+
         model_out_list = self.transformer(
             latent_model_input_list,
             timestep_model_input,
-            text_embeddings.text_embeds,
+            text_embeds,
         )[0]
 
         noise_pred = torch.stack([t.float() for t in model_out_list], dim=0)
@@ -355,6 +506,24 @@ class ZImageModel(BaseModel):
             do_classifier_free_guidance=False,
             device=self.device_torch,
         )
+        # encode_prompt returns list of rank-2 tensors [seq_len, dim]
+        # Pad to same length and stack into rank-3 tensor [batch, seq_len, dim]
+        # for compatibility with concat_prompt_embeds and predict_noise
+        if isinstance(prompt_embeds, list):
+            # Find max sequence length, TODO: Or just use 512?
+            max_seq_len = max(t.shape[0] for t in prompt_embeds)
+            # Pad each tensor to max length
+            padded = []
+            for t in prompt_embeds:
+                if t.shape[0] < max_seq_len:
+                    pad = torch.zeros(
+                        (max_seq_len - t.shape[0], t.shape[1]),
+                        dtype=t.dtype,
+                        device=t.device,
+                    )
+                    t = torch.cat([t, pad], dim=0)
+                padded.append(t)
+            prompt_embeds = torch.stack(padded, dim=0)
         pe = PromptEmbeds([prompt_embeds, None])
         return pe
 
@@ -374,6 +543,41 @@ class ZImageModel(BaseModel):
         meta_path = os.path.join(output_path, "aitk_meta.yaml")
         with open(meta_path, "w") as f:
             yaml.dump(meta, f)
+
+    def generate_images(
+        self,
+        image_configs: List[GenerateImageConfig],
+        sampler=None,
+    ):
+        """
+        Override generate_images to handle LoRA on sampling transformer.
+        When using _sampling_transformer with LoRA, temporarily swap self.network
+        to _sampling_network (which has LoRA applied to _sampling_transformer)
+        for the duration of generation.
+        """
+        saved_network = None
+        try:
+            # If using sampling transformer with LoRA, swap to sampling network (weights already shared)
+            if (
+                hasattr(self, '_sampling_transformer') 
+                and self._sampling_transformer is not None
+                and hasattr(self, '_sampling_network')
+                and self._sampling_network is not None
+                and hasattr(self, 'network')
+                and self.network is not None
+            ):
+                saved_network = self.network
+                self.network = self._sampling_network
+            
+            # Call parent's generate_images with possibly swapped network
+            return super().generate_images(image_configs, sampler)
+        finally:
+            # Restore original network
+            if saved_network is not None:
+                self.network = saved_network
+            # Ensure sampling transformer is off GPU (defense in depth)
+            if getattr(self, "_sampling_transformer", None) is not None:
+                self._sampling_transformer.to("cpu")
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")

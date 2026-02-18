@@ -76,6 +76,7 @@ config:
         log_every: 10 # log every this many steps
         use_wandb: false # not supported yet
         verbose: false
+        debug: false # enable to log CUDA memory around text encoder unload
 
 # You can put any information you want here, and it will be saved in the model.
 # The below is an example, but you can put your grocery list in it if you want.
