@@ -67,6 +67,8 @@ config:
         assistant_lora_path: "ostris/FLUX.1-schnell-training-adapter" # Required for flux schnell training
         is_flux: true
         quantize: true  # run 8bit mixed precision
+        # unet_path: "/path/to/custom_flux_transformer.safetensors"  # enable to load Flux safetensors checkpoints
+        # flux_reference: "black-forest-labs/FLUX.1-schnell"  # optional override for base diffusers components
         # low_vram is painfully slow to fuse in the adapter avoid it unless absolutely necessary
 #        low_vram: true  # uncomment this if the GPU is connected to your monitors. It will use less vram to quantize, but is slower.
       sample:
