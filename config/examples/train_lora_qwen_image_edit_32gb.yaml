@@ -61,7 +61,7 @@ config:
         # qtype_te: "qfloat8" Default float8 qquantization
         # to use the ARA use the | pipe to point to hf path, or a local path if you have one.
         # 3bit is required for 32GB
-        qtype: "uint3|qwen_image_edit_torchao_uint3.safetensors"
+        qtype: "uint3|ostris/accuracy_recovery_adapters/qwen_image_edit_torchao_uint3.safetensors"
         quantize_te: true
         qtype_te: "qfloat8"
         low_vram: true
