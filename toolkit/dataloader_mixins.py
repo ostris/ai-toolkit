@@ -766,10 +766,16 @@ class ImageProcessingDTOMixin:
             # throw error, they should match
             print_acc(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            self.scale_to_width, self.scale_to_height = max(self.scale_to_height, self.scale_to_width), min(self.scale_to_height, self.scale_to_width)
+            self.crop_width, self.crop_height = max(self.crop_width, self.crop_height), min(self.crop_width, self.crop_height)
+            self.crop_x, self.crop_y = max(self.crop_x, self.crop_y), min(self.crop_x, self.crop_y)
         elif h > w and self.scale_to_height < self.scale_to_width:
             # throw error, they should match
             print_acc(
                 f"unexpected values: w={w}, h={h}, file_item.scale_to_width={self.scale_to_width}, file_item.scale_to_height={self.scale_to_height}, file_item.path={self.path}")
+            self.scale_to_width, self.scale_to_height = min(self.scale_to_height, self.scale_to_width), max(self.scale_to_height, self.scale_to_width)
+            self.crop_width, self.crop_height = min(self.crop_width, self.crop_height), max(self.crop_width, self.crop_height)
+            self.crop_x, self.crop_y = min(self.crop_x, self.crop_y), max(self.crop_x, self.crop_y)
 
         if self.flip_x:
             # do a flip
