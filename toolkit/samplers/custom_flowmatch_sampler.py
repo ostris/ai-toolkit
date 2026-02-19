@@ -31,13 +31,19 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             num_timesteps = 1000
             # Bell-Shaped Mean-Normalized Timestep Weighting
             # bsmntw? need a better name
-
             x = torch.arange(num_timesteps, dtype=torch.float32)
-            y = torch.exp(-2 * ((x - num_timesteps / 2) / num_timesteps) ** 2)
-
+            print(13)
+            # Guard against division by zero
+            try:
+                denom = num_timesteps
+                y = torch.from_numpy(
+                    np.exp(-2 * ((x.numpy() - num_timesteps / 2) / denom) ** 2)
+                )
+            except ZeroDivisionError:
+                y = torch.ones_like(x)
+            print(15)
             # Shift minimum to 0
             y_shifted = y - y.min()
-
             # Scale to make mean 1
             bsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
 
@@ -180,8 +186,6 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             if self.config.invert_sigmas:
                 sigmas = 1.0 - sigmas
                 timesteps = sigmas * self.config.num_train_timesteps
-                sigmas = torch.cat(
-                    [sigmas, torch.ones(1, device=sigmas.device)])
             else:
                 sigmas = torch.cat(
                     [sigmas, torch.zeros(1, device=sigmas.device)])
