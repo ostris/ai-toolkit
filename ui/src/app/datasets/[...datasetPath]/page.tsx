@@ -2,18 +2,22 @@
 
 import { useEffect, useState, use, useMemo } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
-import { FaChevronLeft } from 'react-icons/fa';
+import { FaChevronLeft, FaFolder } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
+import Link from 'next/link';
 
-export default function DatasetPage({ params }: { params: { datasetName: string } }) {
+export default function DatasetPage({ params }: { params: { datasetPath: string[] } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
-  const usableParams = use(params as any) as { datasetName: string };
-  const datasetName = usableParams.datasetName;
+  const usableParams = use(params as any) as { datasetPath: string[] };
+
+  const datasetName = usableParams.datasetPath.join('/');
+  const pathSegments = usableParams.datasetPath;
+
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
   const refreshImageList = (dbName: string) => {
@@ -34,11 +38,40 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         setStatus('error');
       });
   };
+
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
     }
   }, [datasetName]);
+
+  const Breadcrumbs = useMemo(() => {
+    if (pathSegments.length <= 1) return null;
+
+    return (
+      <div className="flex items-center gap-1 text-sm text-gray-400 mb-2">
+        <Link href="/datasets" className="hover:text-gray-200">
+          Datasets
+        </Link>
+        {pathSegments.map((segment, index) => {
+          const path = pathSegments.slice(0, index + 1).join('/');
+          const isLast = index === pathSegments.length - 1;
+          return (
+            <span key={path} className="flex items-center gap-1">
+              <span className="text-gray-600">/</span>
+              {isLast ? (
+                <span className="text-gray-200">{segment}</span>
+              ) : (
+                <Link href={`/datasets/${path}`} className="hover:text-gray-200">
+                  {segment}
+                </Link>
+              )}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }, [pathSegments]);
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -90,6 +123,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     );
   }, [status, imgList.length]);
 
+  const displayName = pathSegments[pathSegments.length - 1];
+
   return (
     <>
       {/* Fixed top bar */}
@@ -99,8 +134,9 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             <FaChevronLeft />
           </Button>
         </div>
-        <div>
-          <h1 className="text-lg">Dataset: {datasetName}</h1>
+        <div className="flex items-center gap-2">
+          <FaFolder className="text-yellow-500" />
+          <h1 className="text-lg">Dataset: {displayName}</h1>
         </div>
         <div className="flex-1"></div>
         <div>
@@ -113,6 +149,14 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
       </TopBar>
       <MainContent>
+        {Breadcrumbs}
+
+        {pathSegments.length > 1 && (
+          <div className="mb-4 text-xs text-gray-500 font-mono">
+            Full path: {datasetName}
+          </div>
+        )}
+
         {PageInfoContent}
         {status === 'success' && imgList.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -135,3 +179,4 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     </>
   );
 }
+
