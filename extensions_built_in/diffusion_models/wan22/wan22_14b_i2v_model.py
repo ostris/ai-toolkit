@@ -80,6 +80,9 @@ class Wan2214bI2VModel(Wan2214bModel):
                 vae=self.vae
             )
 
+        else:
+            raise ValueError("I2V samples must have a control image")
+
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
