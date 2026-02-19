@@ -30,53 +30,24 @@ MOUNT_DIR = "/root/ai-toolkit/modal_output"  # modal_output, due to "cannot moun
 
 # define modal app
 image = (
-    modal.Image.debian_slim(python_version="3.11")
+    modal.Image.from_registry("nvidia/cuda:12.9.0-base-ubuntu24.04", add_python="3.12")
     # install required system and pip packages, more about this modal approach: https://modal.com/docs/examples/dreambooth_app
-    .apt_install("libgl1", "libglib2.0-0")
-    .pip_install(
-        "python-dotenv",
-        "torch", 
-        "diffusers[torch]", 
-        "transformers", 
-        "ftfy", 
-        "torchvision", 
-        "oyaml", 
-        "opencv-python", 
-        "albumentations",
-        "safetensors",
-        "lycoris-lora==1.8.3",
-        "flatten_json",
-        "pyyaml",
-        "tensorboard", 
-        "kornia", 
-        "invisible-watermark", 
-        "einops", 
-        "accelerate", 
-        "toml", 
-        "pydantic",
-        "omegaconf",
-        "k-diffusion",
-        "open_clip_torch",
-        "timm",
-        "prodigyopt",
-        "controlnet_aux==0.0.7",
-        "bitsandbytes",
-        "hf_transfer",
-        "lpips", 
-        "pytorch_fid", 
-        "optimum-quanto", 
-        "sentencepiece", 
-        "huggingface_hub", 
-        "peft"
+    .apt_install(
+        "libgl1",
+        "libglib2.0-0",
+        "git",
+        "build-essential",
+        "clang",
+        "pkg-config"
     )
+    .pip_install_from_requirements(
+        "requirements.txt",
+    )
+    .add_local_dir(".", "/root/ai-toolkit")
 )
 
-# mount for the entire ai-toolkit directory
-# example: "/Users/username/ai-toolkit" is the local directory, "/root/ai-toolkit" is the remote directory
-code_mount = modal.Mount.from_local_dir("/Users/username/ai-toolkit", remote_path="/root/ai-toolkit")
-
 # create the Modal app with the necessary mounts and volumes
-app = modal.App(name="flux-lora-training", image=image, mounts=[code_mount], volumes={MOUNT_DIR: model_volume})
+app = modal.App(name="flux-lora-training", image=image, volumes={MOUNT_DIR: model_volume})
 
 # Check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
