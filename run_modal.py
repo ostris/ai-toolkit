@@ -69,6 +69,22 @@ image = (
         "huggingface_hub", 
         "peft"
     )
+    .run_commands([
+            "apt update",
+            "apt install git -y",
+            "apt install git-lfs wget unzip -y",
+                    ])
+    .run_commands([
+                "apt-get install wget",
+                "wget https://developer.download.nvidia.com/compute/cuda/12.4.1/local_installers/cuda-repo-debian11-12-4-local_12.4.1-550.54.15-1_amd64.deb",
+                "dpkg -i cuda-repo-debian11-12-4-local_12.4.1-550.54.15-1_amd64.deb",
+                "cp /var/cuda-repo-debian11-12-4-local/cuda-*-keyring.gpg /usr/share/keyrings/",
+                "apt-get -y install software-properties-common",
+                "add-apt-repository contrib",
+                "apt-get update",
+                "apt-get -y install cuda-toolkit-12-4"
+                    ])
+        .env({"CUDA_HOME": "/usr/local/cuda-12"})
 )
 
 # mount for the entire ai-toolkit directory
