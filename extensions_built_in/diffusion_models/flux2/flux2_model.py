@@ -101,9 +101,9 @@ class Flux2Model(BaseModel):
                 torch_dtype=dtype,
             )
         )
-        text_encoder.to(self.device_torch, dtype=dtype)
-
-        flush()
+ 
+        if not self.model_config.low_vram:
+            text_encoder.to(self.device_torch, dtype=dtype)
 
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Mistral")
@@ -121,6 +121,10 @@ class Flux2Model(BaseModel):
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
+        if self.model_config.layer_offloading:
+            text_encoder.to('cpu')
+
+        flush()
         tokenizer = AutoProcessor.from_pretrained(MISTRAL_PATH)
         return text_encoder, tokenizer
 
@@ -155,7 +159,8 @@ class Flux2Model(BaseModel):
 
         transformer.load_state_dict(transformer_state_dict, assign=True)
 
-        transformer.to(self.quantize_device, dtype=dtype)
+        if not self.model_config.low_vram:
+            transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
             # patch the state dict method
@@ -163,9 +168,12 @@ class Flux2Model(BaseModel):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
+
+        if self.model_config.layer_offloading:
+            self.print_and_status_update("Moving transformer to CPU")
+            transformer.to("cpu")
         else:
             transformer.to(self.device_torch, dtype=dtype)
-        flush()
 
         if (
             self.model_config.layer_offloading
@@ -177,9 +185,7 @@ class Flux2Model(BaseModel):
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
             )
 
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+        flush()
 
         text_encoder, tokenizer = self.load_te()
 
@@ -234,7 +240,8 @@ class Flux2Model(BaseModel):
 
         flush()
         # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        if not self.model_config.low_vram and not self.model_config.layer_offloading:
+            text_encoder[0].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         pipe.transformer = pipe.transformer.to(self.device_torch)
