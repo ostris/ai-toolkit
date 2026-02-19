@@ -13,10 +13,11 @@ export async function POST(request: Request) {
     let datasetsPath = await getDatasetsRoot();
     let datasetPath = path.join(datasetsPath, name);
 
-    // if folder doesnt exist, create it
-    if (!fs.existsSync(datasetPath)) {
-      fs.mkdirSync(datasetPath);
+    if (fs.existsSync(datasetPath)) {
+      return NextResponse.json({ error: 'Dataset already exists' }, { status: 500 });
     }
+    // if folder doesnt exist, create it
+    fs.mkdirSync(datasetPath);
 
     return NextResponse.json({ success: true, name: name });
   } catch (error) {
