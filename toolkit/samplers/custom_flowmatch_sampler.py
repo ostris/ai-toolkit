@@ -25,36 +25,35 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
         super().__init__(*args, **kwargs)
         self.init_noise_sigma = 1.0
         self.timestep_type = "linear"
-
+        print(10)
         with torch.no_grad():
-            # create weights for timesteps
             num_timesteps = 1000
-            # Bell-Shaped Mean-Normalized Timestep Weighting
-            # bsmntw? need a better name
-
             x = torch.arange(num_timesteps, dtype=torch.float32)
-            y = torch.exp(-2 * ((x - num_timesteps / 2) / num_timesteps) ** 2)
 
-            # Shift minimum to 0
-            y_shifted = y - y.min()
-
-            # Scale to make mean 1
-            bsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
-
-            # only do half bell
-            hbsmntw_weighing = y_shifted * (num_timesteps / y_shifted.sum())
-
-            # flatten second half to max
-            hbsmntw_weighing[num_timesteps //
-                             2:] = hbsmntw_weighing[num_timesteps // 2:].max()
-
-            # Create linear timesteps from 1000 to 1
-            timesteps = torch.linspace(1000, 1, num_timesteps, device='cpu')
-
-            self.linear_timesteps = timesteps
-            self.linear_timesteps_weights = bsmntw_weighing
-            self.linear_timesteps_weights2 = hbsmntw_weighing
-            pass
+            divisor = num_timesteps if num_timesteps > 0 else 1
+            print(11, divisor)
+            safe_divisor = divisor if divisor != 0 else 1
+            a = (x - safe_divisor / 2)
+            print(123, safe_divisor,  torch.exp(-2 * (a / safe_divisor) ** 2))
+            # Prevent division by zero
+            try:
+                y = torch.exp(-2 * (a / safe_divisor) ** 2)
+                print(14, y)
+                y_shifted = y - y.min()
+                sum_y_shifted = y_shifted.sum()
+                print(14, sum_y_shifted)
+                scale_factor = safe_divisor / sum_y_shifted if sum_y_shifted != 0 else 1.0
+                bsmntw_weighing = y_shifted * scale_factor
+                print(15)
+                hbsmntw_weighing = y_shifted * scale_factor
+                hbsmntw_weighing[safe_divisor // 2:] = hbsmntw_weighing[safe_divisor // 2:].max()
+                timesteps = torch.linspace(1000, 1, safe_divisor, device='cpu')
+                self.linear_timesteps = timesteps
+                self.linear_timesteps_weights = bsmntw_weighing
+                self.linear_timesteps_weights2 = hbsmntw_weighing
+            except Exception as e:
+                print(e)
+        print(20)
 
     def get_weights_for_timesteps(self, timesteps: torch.Tensor, v2=False, timestep_type="linear") -> torch.Tensor:
         # Get the indices of the timesteps
@@ -88,21 +87,8 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
 
         return sigma
 
-    def add_noise(
-            self,
-            original_samples: torch.Tensor,
-            noise: torch.Tensor,
-            timesteps: torch.Tensor,
-    ) -> torch.Tensor:
-        t_01 = (timesteps / 1000).to(original_samples.device)
-        # forward ODE
-        noisy_model_input = (1.0 - t_01) * original_samples + t_01 * noise
-        # reverse ODE
-        # noisy_model_input = (1 - t_01) * noise + t_01 * original_samples
-        return noisy_model_input
 
-    def scale_model_input(self, sample: torch.Tensor, timestep: Union[float, torch.Tensor]) -> torch.Tensor:
-        return sample
+
 
     def set_train_timesteps(
         self,
