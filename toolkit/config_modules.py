@@ -683,6 +683,8 @@ class ModelConfig:
         # model paths for models that support it
         self.model_paths = kwargs.get("model_paths", {})
         
+        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
+        
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
         if self.arch is not None:
