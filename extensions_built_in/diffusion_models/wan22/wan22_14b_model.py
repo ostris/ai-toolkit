@@ -165,7 +165,7 @@ class Wan2214bModel(Wan21):
     arch = "wan22_14b"
     _wan_generation_scheduler_config = scheduler_configUniPC
     _wan_expand_timesteps = False
-    _wan_vae_path = "ai-toolkit/wan2.1-vae"
+    _wan_vae_path = None
 
     def __init__(
         self,
