@@ -17,7 +17,7 @@ config:
       # if a trigger word is specified, it will be added to captions of training data if it does not already exist
       # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
       # this is probably needed for 24GB cards when offloading TE to CPU
-      trigger_word: "p3r5on"
+      # trigger_word: "p3r5on"
       network:
         type: "lora"
         linear: 32
@@ -27,7 +27,7 @@ config:
         save_every: 250 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
         push_to_hub: false #change this to True to push your trained model to Hugging Face.
-        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
+        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in
 #       hf_repo_id: your-username/your-model-slug
 #       hf_private: true #whether the repo is private or public
       datasets:
@@ -38,11 +38,11 @@ config:
         # "C:\\path\\to\\images\\folder"
         # AI-Toolkit does not currently support video datasets, we will train on 1 frame at a time
         # it works well for characters, but not as well for "actions"
-        - folder_path: "/path/to/images/folder"
+        - folder_path: "data/ConanOBrien/images_txt"
           caption_ext: "txt"
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
           shuffle_tokens: false  # shuffle caption order, split by commas
-          cache_latents_to_disk: true  # leave this true unless you know what you're doing
+          cache_latents_to_disk: false  # leave this true unless you know what you're doing
           resolution: [ 632 ]  # will be around 480p
       train:
         batch_size: 1
@@ -68,15 +68,15 @@ config:
         dtype: bf16
         # required for 24GB cards
         # this will encode your trigger word and use those embeddings for every image in the dataset
-        unload_text_encoder: true
+        unload_text_encoder: false
       model:
         # huggingface model name or path
         name_or_path: "Wan-AI/Wan2.1-T2V-14B-Diffusers"
         arch: 'wan21'
         # these settings will save as much vram as possible
-        quantize: true
-        quantize_te: true
-        low_vram: true 
+        quantize: false
+        quantize_te: false
+        low_vram: false
       sample:
         sampler: "flowmatch"
         sample_every: 250 # sample every this many steps
@@ -89,9 +89,9 @@ config:
         prompts:
           # you can add [trigger] to the prompts here and it will be replaced with the trigger word
 #          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
-          - "dog playing the guitar, on stage, singing a song, laser lights, punk rocker"
-          - "a dog playing with a ball"
-        neg: ""  
+          - "Conan O'Brien on a cinematic 1960s-style late-night talk show black stage in a dark navy suit under dramatic spotlights on stage, with a glowing retro blue sign reading 'THE TED GILBERT SHOW' against a shadowy curtain backdrop."
+          - "Conan O'Brien sitting down with a guest in a 1960s-style late-night talk show scene."
+        neg: ""
         seed: 42
         walk_seed: true
         guidance_scale: 5
