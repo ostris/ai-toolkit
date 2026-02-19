@@ -412,6 +412,12 @@ class Flux2Model(BaseModel):
                 assert img_cond_seq_ids is not None, (
                     "You need to provide either both or neither of the sequence conditioning"
                 )
+                
+                # they might not be on the same device, do a sync. 
+                if img_input.device != img_cond_seq.device:
+                  img_cond_seq = img_cond_seq.to(img_input.device)
+                  img_cond_seq_ids = img_cond_seq_ids.to(img_input_ids.device)
+                
                 img_input = torch.cat((img_input, img_cond_seq), dim=1)
                 img_input_ids = torch.cat((img_input_ids, img_cond_seq_ids), dim=1)
 
