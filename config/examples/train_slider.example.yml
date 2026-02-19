@@ -49,7 +49,7 @@ config:
         optimizer: "adamw"
         # only constant for now
         lr_scheduler: "constant"
-        # we randomly denoise random num of steps form 1 to this number
+        # we randomly denoise random num of steps from 1 to this number
         # while training. Just leave it
         max_denoising_steps: 40
         # works great at 1. I do 1 even with my 4090.
@@ -72,7 +72,7 @@ config:
         is_v2: false  # for v2 models
         is_v_pred: false # for v-prediction models (most v2 models)
         # has some issues with the dual text encoder and the way we train sliders
-        # it works bit weights need to probably be higher to see it.
+        # it works, but weights need to probably be higher to see it.
         is_xl: false  # for SDXL models
 
       # saving config
@@ -101,7 +101,7 @@ config:
         #  --n [string]  # negative prompt, will inherit sample.neg if not set
         # Only 75 tokens allowed currently
         # I like to do a wide positive and negative spread so I can see a good range and stop
-        # early if the network is braking down
+        # early if the network is breaking down
         prompts:
           - "a woman in a coffee shop, black hat, blonde hair, blue jacket --m -5"
           - "a woman in a coffee shop, black hat, blonde hair, blue jacket --m -3"
@@ -136,7 +136,7 @@ config:
       logging:
         log_every: 10 # log every this many steps
         use_wandb: false # not supported yet
-        verbose: false # probably done need unless you are debugging
+        verbose: false # probably not needed, unless you are debugging
 
       # slider training config, best for last
       slider:
