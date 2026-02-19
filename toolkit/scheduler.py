@@ -15,8 +15,12 @@ def get_lr_scheduler(
             optimizer, **kwargs
         )
     elif name == "cosine_with_restarts":
-        if 'total_iters' in kwargs:
+        # Only use total_iters as T_0 if T_0 not already specified by user
+        if 'total_iters' in kwargs and 'T_0' not in kwargs:
             kwargs['T_0'] = kwargs.pop('total_iters')
+        elif 'total_iters' in kwargs:
+            # Remove total_iters if T_0 is already specified
+            kwargs.pop('total_iters')
         return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
             optimizer, **kwargs
         )
