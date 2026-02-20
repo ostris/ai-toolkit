@@ -1,0 +1,22 @@
+{
+    // tsconfig.worker.json
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es2020",
+        "outDir": "dist/cron",
+        "moduleResolution": "node",
+        "types": [
+            "node"
+        ],
+        "esModuleInterop": true,
+        "allowSyntheticDefaultImports": true,
+        "paths": {
+            "@/*": [
+                "./cron/*"
+            ]
+        }
+    },
+    "include": [
+        "cron/**/*.ts"
+    ]
+}

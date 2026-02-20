@@ -1,0 +1,90 @@
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_wan21_1b_lora_v1"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: cuda:0
+      # if a trigger word is specified, it will be added to captions of training data if it does not already exist
+      # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
+#      trigger_word: "p3r5on"
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+      save:
+        dtype: float16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+        push_to_hub: false #change this to True to push your trained model to Hugging Face.
+        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
+#       hf_repo_id: your-username/your-model-slug
+#       hf_private: true #whether the repo is private or public
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        # AI-Toolkit does not currently support video datasets, we will train on 1 frame at a time
+        # it works well for characters, but not as well for "actions"
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          shuffle_tokens: false  # shuffle caption order, split by commas
+          cache_latents_to_disk: true  # leave this true unless you know what you're doing
+          resolution: [ 632 ]  # will be around 480p
+      train:
+        batch_size: 1
+        steps: 2000  # total number of steps to train 500 - 4000 is a good range
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false  # probably won't work with wan
+        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        noise_scheduler: "flowmatch" # for training only
+        timestep_type: 'sigmoid'
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        optimizer_params:
+          weight_decay: 1e-4
+        # uncomment this to skip the pre training sample
+#        skip_first_sample: true
+        # uncomment to completely disable sampling
+#        disable_sampling: true
+        # ema will smooth out learning, but could slow it down. Recommended to leave on.
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+        dtype: bf16
+      model:
+        # huggingface model name or path
+        name_or_path: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+        arch: 'wan21'
+        quantize_te: true # saves vram
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250 # sample every this many steps
+        width: 832
+        height: 480
+        num_frames: 40
+        fps: 15
+        # samples take a long time. so use them sparingly
+        # samples will be animated webp files, if you don't see them animated, open in a browser.
+        prompts:
+          # you can add [trigger] to the prompts here and it will be replaced with the trigger word
+#          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+        neg: ""  
+        seed: 42
+        walk_seed: true
+        guidance_scale: 5
+        sample_steps: 30
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

@@ -1,0 +1,112 @@
+# HiDream training is still highly experimental. The settings here will take ~35.2GB of vram to train.
+# It is not possible to train on a single 24GB card yet, but I am working on it. If you have more VRAM
+# I highly recommend first disabling quantization on the model itself if you can. You can leave the TEs quantized.
+# HiDream has a mixture of experts that may take special training considerations that I do not
+# have implemented properly. The current implementation seems to work well for LoRA training, but
+# may not be effective for longer training runs. The implementation could change in future updates
+# so your results may vary when this happens.
+
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_hidream_lora_v1"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: cuda:0
+      # if a trigger word is specified, it will be added to captions of training data if it does not already exist
+      # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
+#      trigger_word: "p3r5on"
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+        network_kwargs:
+          # it is probably best to ignore the mixture of experts since only 2 are active each block. It works activating it, but I wouldnt.
+          # proper training of it is not fully implemented
+          ignore_if_contains:
+            - "ff_i.experts"
+            - "ff_i.gate"
+      save:
+        dtype: bfloat16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          resolution: [ 512, 768, 1024 ]  # hidream enjoys multiple resolutions
+      train:
+        batch_size: 1
+        steps: 3000  # total number of steps to train 500 - 4000 is a good range
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false  # wont work with hidream
+        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        noise_scheduler: "flowmatch" # for training only
+        timestep_type: shift # sigmoid, shift, linear
+        optimizer: "adamw8bit"
+        lr: 2e-4
+        # uncomment this to skip the pre training sample
+#        skip_first_sample: true
+        # uncomment to completely disable sampling
+#        disable_sampling: true
+        # uncomment to use new vell curved weighting. Experimental but may produce better results
+#        linear_timesteps: true
+
+        # ema will smooth out learning, but could slow it down. Defaults off
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+
+        # will probably need this if gpu supports it for hidream, other dtypes may not work correctly
+        dtype: bf16
+      model:
+        # the transformer will get grabbed from this hf repo
+        # warning ONLY train on Full. The dev and fast models are distilled and will break 
+        name_or_path: "HiDream-ai/HiDream-I1-Full"
+        # the extras will be grabbed from this hf repo. (text encoder, vae) 
+        extras_name_or_path: "HiDream-ai/HiDream-I1-Full"
+        arch: "hidream"
+        # both need to be quantized to train on 48GB currently
+        quantize: true
+        quantize_te: true
+        model_kwargs:
+          # llama is a gated model, It defaults to unsloth version, but you can set the llama path here
+          llama_model_path: "unsloth/Meta-Llama-3.1-8B-Instruct"
+      sample:
+        sampler: "flowmatch" # must match train.noise_scheduler
+        sample_every: 250 # sample every this many steps
+        width: 1024
+        height: 1024
+        prompts:
+          # you can add [trigger] to the prompts here and it will be replaced with the trigger word
+#          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "hipster man with a beard, building a chair, in a wood shop"
+          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+          - "a man holding a sign that says, 'this is a sign'"
+          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 25
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

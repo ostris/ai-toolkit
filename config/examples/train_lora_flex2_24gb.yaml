@@ -1,0 +1,165 @@
+# Note, Flex2 is a highly experimental WIP model. Finetuning a model with built in controls and inpainting has not 
+# been done before, so you will be experimenting with me on how to do it. This is my recommended setup, but this is highly
+# subject to change as we learn more about how Flex2 works.
+
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_flex2_lora_v1"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: cuda:0
+      # if a trigger word is specified, it will be added to captions of training data if it does not already exist
+      # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
+#      trigger_word: "p3r5on"
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+      save:
+        dtype: float16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+        push_to_hub: false #change this to True to push your trained model to Hugging Face.
+        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
+#       hf_repo_id: your-username/your-model-slug
+#       hf_private: true #whether the repo is private or public
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/folder"
+          # Flex2 is trained with controls and inpainting. If you want the model to truely understand how the 
+          # controls function with your dataset, it is a good idea to keep doing controls during training. 
+          # this will automatically generate the controls for you before training. The current script is not 
+          # fully optimized so this could be rather slow for large datasets, but it caches them to disk so it
+          # only needs to be done once. If you want to skip this step, you can set the controls to [] and it will
+          controls:
+            - "depth"
+            - "line"
+            - "pose"
+            - "inpaint"
+          
+          # you can make custom inpainting images as well. These images must be webp or png format with an alpha.
+          # just erase the part of the image you want to inpaint and save it as a webp or png. Again, erase your
+          # train target. So the person if training a person. The automatic controls above with inpaint will
+          # just run a background remover mask and erase the foreground, which works well for subjects.
+
+          # inpaint_path: "/my/impaint/images"
+          
+          # you can also specify existing control image pairs. It can handle multiple groups and will randomly
+          # select one for each step.
+
+          # control_path:
+          #   - "/my/custom/control/images"
+          #   - "/my/custom/control/images2"
+          
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          resolution: [ 512, 768, 1024 ]  # flex2 enjoys multiple resolutions
+      train:
+        batch_size: 1
+        # IMPORTANT! For Flex2, you must bypass the guidance embedder during training
+        bypass_guidance_embedding: true
+        
+        steps: 3000  # total number of steps to train 500 - 4000 is a good range
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false  # probably won't work with flex2
+        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        noise_scheduler: "flowmatch" # for training only
+        # shift works well for training fast and learning composition and style. 
+        # for just subject, you may want to change this to sigmoid
+        timestep_type: 'shift'  # 'linear', 'sigmoid', 'shift'
+        optimizer: "adamw8bit"
+        lr: 1e-4
+
+        optimizer_params:
+          weight_decay: 1e-5
+        # uncomment this to skip the pre training sample
+#        skip_first_sample: true
+        # uncomment to completely disable sampling
+#        disable_sampling: true
+        # uncomment to use new vell curved weighting. Experimental but may produce better results
+#        linear_timesteps: true
+
+        # ema will smooth out learning, but could slow it down. Defaults off
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+
+        # will probably need this if gpu supports it for flex, other dtypes may not work correctly
+        dtype: bf16
+      model:
+        # huggingface model name or path
+        name_or_path: "ostris/Flex.2-preview"
+        arch: "flex2"
+        quantize: true  # run 8bit mixed precision
+        quantize_te: true
+
+        # you can pass special training infor for controls to the model here
+        # percentages are decimal based so 0.0 is 0% and 1.0 is 100% of the time.
+        model_kwargs:
+          # inverts the inpainting mask, good to learn outpainting as well, recommended 0.0 for characters
+          invert_inpaint_mask_chance: 0.5
+          # this will do a normal t2i training step without inpaint when dropped out. REcommended if you want
+          # your lora to be able to inference with and without inpainting.
+          inpaint_dropout: 0.5
+          # randomly drops out the control image. Dropout recvommended if your want it to work without controls as well.
+          control_dropout: 0.5
+          # does a random inpaint blob. Usually a good idea to keep. Without it, the model will learn to always 100%
+          # fill the inpaint area with your subject. This is not always a good thing.
+          inpaint_random_chance: 0.5
+          # generates random inpaint blobs if you did not provide an inpaint image for your dataset. Inpaint breaks down fast
+          # if you are not training with it. Controls are a little more robust and can be left out,
+          # but when in doubt, always leave this on
+          do_random_inpainting: false
+          # does random blurring of the inpaint mask. Helps prevent weird edge artifacts for real workd inpainting. Leave on.
+          random_blur_mask: true
+          # applies a small amount of random dialition and restriction to the inpaint mask. Helps with edge artifacts.
+          # Leave on.
+          random_dialate_mask: true
+      sample:
+        sampler: "flowmatch" # must match train.noise_scheduler
+        sample_every: 250 # sample every this many steps
+        width: 1024
+        height: 1024
+        prompts:
+          # you can add [trigger] to the prompts here and it will be replaced with the trigger word
+          # - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
+
+          # you can use a single inpaint or single control image on your samples. 
+          # for controls, the ctrl_idx is 1, the images can be any name and image format. 
+          # use either a pose/line/depth image or whatever you are training with. An example is
+          # - "photo of [trigger] --ctrl_idx 1 --ctrl_img /path/to/control/image.jpg"
+
+          # for an inpainting image, it must be png/webp. Erase the part of the image you want to inpaint
+          # IMPORTANT! the inpaint images must be ctrl_idx 0 and have .inpaint.{ext} in the name for this to work right.
+          # - "photo of [trigger] --ctrl_idx 0 --ctrl_img /path/to/inpaint/image.inpaint.png"
+
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "hipster man with a beard, building a chair, in a wood shop"
+          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+          - "a man holding a sign that says, 'this is a sign'"
+          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+        neg: ""  # not used on flex2
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 25
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

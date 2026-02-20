@@ -1,0 +1,60 @@
+---
+
+job: generate # tells the runner what to do
+config:
+  name: "generate" # this is not really used anywhere currently but required by runner
+  process:
+    # process 1
+    - type: to_folder  # process images to a folder
+      output_folder: "output/gen"
+      device: cuda:0 # cpu, cuda:0, etc
+      generate:
+        # these are your defaults you can override most of them with flags
+        sampler: "ddpm" # ignored for now, will add later though ddpm is used regardless for now
+        width: 1024
+        height: 1024
+        neg: "cartoon, fake, drawing, illustration, cgi, animated, anime"
+        seed: -1 # -1 is random
+        guidance_scale: 7
+        sample_steps: 20
+        ext: ".png" # .png, .jpg, .jpeg, .webp
+
+        # here ate the flags you can use for prompts. Always start with
+        # your prompt first then add these flags after. You can use as many
+        # like
+        # photo of a baseball --n painting, ugly --w 1024 --h 1024 --seed 42 --cfg 7 --steps 20
+        # we will try to support all sd-scripts flags where we can
+
+        # FROM SD-SCRIPTS
+        # --n Treat everything until the next option as a negative prompt.
+        # --w Specify the width of the generated image.
+        # --h Specify the height of the generated image.
+        # --d Specify the seed for the generated image.
+        # --l Specify the CFG scale for the generated image.
+        # --s Specify the number of steps during generation.
+
+        # OURS and some QOL additions
+        # --p2 Prompt for the second text encoder (SDXL only)
+        # --n2 Negative prompt for the second text encoder (SDXL only)
+        # --gr Specify the guidance rescale for the generated image (SDXL only)
+        # --seed Specify the seed for the generated image same as --d
+        # --cfg Specify the CFG scale for the generated image same as --l
+        # --steps Specify the number of steps during generation same as --s
+
+        prompt_file: false # if true a txt file will be created next to images with prompt strings used
+        # prompts can also be a path to a text file with one prompt per line
+        # prompts: "/path/to/prompts.txt"
+        prompts:
+          - "photo of batman"
+          - "photo of superman"
+          - "photo of spiderman"
+          - "photo of a superhero --n batman superman spiderman"
+
+      model:
+        # huggingface name, relative prom project path, or absolute path to .safetensors or .ckpt
+        #      name_or_path: "runwayml/stable-diffusion-v1-5"
+        name_or_path: "/mnt/Models/stable-diffusion/models/stable-diffusion/Ostris/Ostris_Real_v1.safetensors"
+        is_v2: false  # for v2 models
+        is_v_pred: false # for v-prediction models (most v2 models)
+        is_xl: false  # for SDXL models
+        dtype: bf16
