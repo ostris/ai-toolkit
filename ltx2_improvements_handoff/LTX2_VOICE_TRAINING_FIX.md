@@ -10,7 +10,7 @@ If you've tried training an LTX-2 character LoRA and your output has garbled, si
 
 LTX-2 is a joint audio+video diffusion transformer. When you train a character LoRA, the model should learn both the person's appearance AND their voice. In practice, every single person training LTX-2 character LoRAs in `ostris/ai-toolkit` gets broken audio. The LoRA produces correct visuals but the voice is destroyed.
 
-This isn't a settings issue. There are **24 bugs and design flaws** in the training pipeline that collectively make voice training impossible.
+This isn't a settings issue. There are **25 bugs and design flaws** in the training pipeline that collectively make voice training impossible.
 
 ---
 
@@ -52,7 +52,13 @@ Using DoRA (weight-decomposed LoRA) with quantized models (`qfloat8`) caused cra
 
 **Fix:** Precise quantization type detection, safe forward wrappers, dtype enforcement in the memory manager, and SDPA attention mask safety nets. DoRA + quantization + layer offloading now works end to end.
 
-### 7. Multiple config/runtime crashes on LTX-2
+### 7. Auto-balance audio loss was broken — could only boost, never dampen
+
+The dynamic audio loss balancer was designed to keep audio and video loss in proportion. But the multiplier was clamped at minimum 1.0, meaning it could only INCREASE audio loss. In practice, LTX-2's raw audio loss is naturally ~2x larger than video loss. The computed multiplier (~0.18) was always clamped back to 1.0. The feature was dead code — `dyn_mult` showed 1.00 for the entire training run.
+
+**Fix:** Changed the clamp floor from 1.0 to 0.05. The multiplier now works bidirectionally — dampening audio when it's already dominant (common case), boosting when it's too small. `dyn_mult` actively adjusts throughout training.
+
+### 8. Multiple config/runtime crashes on LTX-2
 
 - `self.train_config` accessed on the model object instead of the trainer — crash on step 0
 - `min_snr_gamma` incompatible with flow-matching schedulers — crash on loss calculation
@@ -68,7 +74,7 @@ All fixed.
 
 ### Core Audio Fixes
 - Independent audio timestep sampling (the single biggest voice quality improvement)
-- Automatic audio loss balancing (EMA-based dynamic multiplier)
+- Bidirectional automatic audio loss balancing (EMA-based, dampens when audio > video, boosts when video > audio)
 - Robust multi-fallback audio extraction (torchaudio -> PyAV -> ffmpeg CLI)
 - Latent cache audio validation and automatic invalidation
 - Voice preservation regularizer for audio-free batches
@@ -318,4 +324,4 @@ A: Min-SNR loss weighting requires `alphas_cumprod` from DDPM-style schedulers. 
 
 Built on top of [Ostris AI-Toolkit](https://github.com/ostris/ai-toolkit). All changes are backward compatible — old configs without new keys work identically to before.
 
-24 bugs identified and fixed. Zero new dependencies added. All features use existing PyTorch, torchaudio, diffusers, and PyAV APIs.
+25 bugs identified and fixed. Zero new dependencies added. All features use existing PyTorch, torchaudio, diffusers, and PyAV APIs.

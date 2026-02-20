@@ -1,7 +1,7 @@
 # LTX-2 Character Training — Standard Operating Procedure (SOP)
 
-> **Version:** 3.11-final  
-> **Date:** 2026-02-19  
+> **Version:** 3.12  
+> **Date:** 2026-02-20  
 > **Scope:** All changes to `ostris/ai-toolkit` that fix voice-training failures, comprehensively improve character LoRA/DoRA quality for LTX-2, and resolve quantized-model compatibility issues.
 
 ---
@@ -53,6 +53,7 @@ Users training LTX-2 character LoRAs with `ai-toolkit` reported that LoRAs consi
 | 22 | **`print_and_status_update` called on trainer instead of model** — audio logging code in `SDTrainer.py` called `self.print_and_status_update(...)` but this method belongs to the model class, not the trainer (`DiffusionTrainer`) | `AttributeError` crash on every training step that had audio loss to log |
 | 23 | **No fallback audio decoder when torchaudio is broken** — the codebase had a single code path for audio loading (`torchaudio.load()`). When that failed, there was no alternative. The `av` package (PyAV, `av==16.0.1`) is already in `requirements.txt` and ships bundled FFmpeg libraries that work without system installs, but was never used for audio extraction | Audio extraction had a single point of failure with no recovery path |
 | 24 | **`hasattr(tensor, "dequantize")` matches ALL tensors in PyTorch 2.9+** — `dequantize()` is a method on the base `torch.Tensor` class, so `hasattr` returns True for every tensor, not just quantized ones. Code in `network_mixins.py` and `DoRA.py` used this check to decide whether to call `.dequantize()`, causing it to be called on regular float tensors inside the autograd graph. The backward pass then crashed because `derivative for dequantize is not implemented` | Training crash on first backward pass with `RuntimeError: derivative for dequantize is not implemented` |
+| 25 | **Auto-balance audio loss clamp floor of 1.0 prevented dampening** — the dynamic multiplier was clamped with `max(1.0, min(20.0, ...))`, meaning it could only boost audio UP, never scale it DOWN. In practice, LTX-2 raw audio loss (~0.45) is naturally larger than video loss (~0.25), so the computed multiplier (~0.18) was always clamped back to 1.0. The auto-balance feature was completely non-functional for the most common loss ratio | `dyn_mult` stuck at 1.00 for the entire training run; audio loss dominated video loss unchecked; auto-balance feature effectively dead code |
 
 ---
 
@@ -66,7 +67,7 @@ Users training LTX-2 character LoRAs with `ai-toolkit` reported that LoRAs consi
 
 #### B. Automatic Audio Loss Balancing (`auto_balance_audio_loss`)
 - **Files:** `SDTrainer.py`, `config_modules.py`
-- EMA-based (alpha=0.99) dynamic multiplier targeting audio at ~33% of video loss. Clamped [1.0, 20.0].
+- EMA-based (alpha=0.99) dynamic multiplier targeting audio at ~33% of video loss. Bidirectional clamp [0.05, 20.0] — scales audio DOWN when it naturally dominates (common on LTX-2), or UP when video dominates.
 
 #### C. Robust Mixed-Batch Audio Handling
 - **File:** `data_loader.py`
@@ -285,6 +286,12 @@ Users training LTX-2 character LoRAs with `ai-toolkit` reported that LoRAs consi
 - **Fix (v3.5):** Replaced with a patch on `torch.nn.functional.scaled_dot_product_attention` — the actual C-extension entry point that ALL diffusers attention backends ultimately call via `torch.nn.functional.scaled_dot_product_attention(...)`. The wrapper checks if `attn_mask` is a non-bool tensor whose dtype differs from `query.dtype`, and casts it to match. Guarded to apply only once.
 - **Impact:** This is the absolute lowest-level fallback. Any attention call anywhere in the stack — NATIVE, EFFICIENT, FLASH, MATH, cuDNN — that passes a mismatched mask will be transparently corrected. The patch only fires when the operation would otherwise crash, so there is zero performance or correctness cost for correctly-typed tensors.
 
+#### AQ. Bidirectional Auto-Balance Audio Loss (v3.12)
+- **File:** `extensions_built_in/sd_trainer/SDTrainer.py`
+- **Problem:** The `auto_balance_audio_loss` EMA-based dynamic multiplier was clamped with `max(1.0, min(20.0, dynamic_multiplier))`. This only allowed the multiplier to INCREASE audio loss (boost) — it could never decrease it below 1.0 (dampen). In practice, LTX-2's raw audio MSE loss (~0.45) is naturally larger than video loss (~0.25) due to the different latent space scales. The auto-balance computed a target multiplier of ~0.18, but the clamp forced it back to 1.0 every step. The feature was completely non-functional — `dyn_mult` stayed at 1.00 for the entire training run.
+- **Fix:** Changed the clamp floor from `1.0` to `0.05`: `max(0.05, min(20.0, dynamic_multiplier))`. The multiplier can now scale audio loss DOWN when audio naturally dominates, or UP when video dominates. The 0.05 floor prevents audio from being zeroed out entirely.
+- **Impact:** `dyn_mult` now actively adjusts throughout training, targeting audio at ~25% of total loss (33% of video loss). For the common case where raw audio loss > video loss, the multiplier will settle around 0.15–0.25, bringing the two modalities into proper balance. Audio still trains — just with proportional gradient weight.
+
 ---
 
 ## 4. Files Modified
@@ -299,7 +306,7 @@ Users training LTX-2 character LoRAs with `ai-toolkit` reported that LoRAs consi
 | `toolkit/network_mixins.py` | `extract_weight()` and LoRA forward dequantize TorchAO wrappers; unified `_org_forward_safe(...)` for all wrapped forward branches (including LORM); **v3.5:** output dtype preservation; **v3.11:** precise quantization type checks replacing `hasattr(t, "dequantize")` |
 | `toolkit/memory_management/manager_modules.py` | All 4 float-path materializers cast to `target_dtype`; belt-and-suspenders dtype enforcement at every `F.linear`/`F.conv2d` call site and backward matmul |
 | `extensions_built_in/diffusion_models/ltx2/ltx2.py` | Independent audio timestep; gradient checkpointing; SDPA enforcement; encode_audio silence; voice regularizer; connector unfreezing; scalar loss; module freezing; bool prompt attention masks; connector mask canonicalization to float32; **v3.5:** SDPA mask-dtype patch corrected from module-level to `torch.nn.functional.scaled_dot_product_attention`; **v3.6:** all `self.train_config` references converted to safe `getattr(self, 'train_config', None)` pattern |
-| `extensions_built_in/sd_trainer/SDTrainer.py` | Audio loss logging; auto-balance; strict audio; loss integration; **v3.7:** SNR/Min-SNR guard for flow-matching schedulers; **v3.9:** `print_and_status_update` fix |
+| `extensions_built_in/sd_trainer/SDTrainer.py` | Audio loss logging; auto-balance; strict audio; loss integration; **v3.7:** SNR/Min-SNR guard for flow-matching schedulers; **v3.9:** `print_and_status_update` fix; **v3.12:** bidirectional auto-balance clamp (0.05–20.0) |
 | `jobs/process/BaseSDTrainProcess.py` | rank_dropout/module_dropout passthrough; transformer compile target fix; compile assignment fix; dynamic noise-offset 4D/5D compatibility |
 | `ui/src/types.ts` | `NetworkConfig` additions (dropout fields); `TrainConfig` additions (independent_audio_timestep, noise_offset, min_snr_gamma, lr_scheduler) |
 | `ui/src/app/jobs/new/options.ts` | LTX-2 defaults (rank 32, alpha 32, rank_dropout 0.1, auto_balance on, noise_offset 0.05, min_snr 5.0); all new additionalSections |
@@ -435,7 +442,7 @@ No new dependencies. All changes use existing PyTorch, torchaudio, and diffusers
 ### Patch Delivery
 - **Full patch (baseline):** `ltx2-audio-fixes-v2.patch` — unified diffs for the complete v2/v3 implementation set
 - **Hotfix patch (v3):** `ltx2-audio-fixes-v3-hotfix.patch` — incremental fixes for video-safe `noise_offset`, compile assignment, and UI selector conflict cleanup
-- **Phase 3 files (v3.11):** `DoRA.py`, `network_mixins.py`, `manager_modules.py`, `ltx2.py`, `SDTrainer.py`, `dataloader_mixins.py`, `data_loader.py`, `options.ts` — quantization, layer-offloading, attention-mask dtype, `train_config` safe access, flow-matching SNR guard, latent cache audio invalidation, robust PyAV audio extraction fallback, audio logging fix, precise dequantize type checks
+- **Phase 3 files (v3.12):** `DoRA.py`, `network_mixins.py`, `manager_modules.py`, `ltx2.py`, `SDTrainer.py`, `dataloader_mixins.py`, `data_loader.py`, `options.ts` — quantization, layer-offloading, attention-mask dtype, `train_config` safe access, flow-matching SNR guard, latent cache audio invalidation, robust PyAV audio extraction fallback, audio logging fix, precise dequantize type checks, bidirectional auto-balance clamp
 - **SOP:** This document (`LTX2_AUDIO_SOP.md`)
 - **Zip archive:** `ltx2_improvements_handoff.zip` — all patches + SOP + all 16 modified source files
 
@@ -446,7 +453,7 @@ No new dependencies. All changes use existing PyTorch, torchaudio, and diffusers
 | # | Test | Expected Result |
 |---|------|-----------------|
 | 1 | Train LTX-2 LoRA with `independent_audio_timestep: true` | Audio quality noticeably improved vs coupled timestep |
-| 2 | Train with `auto_balance_audio_loss: true` | Dynamic multiplier visible in logs; voice quality preserved |
+| 2 | Train with `auto_balance_audio_loss: true` | Dynamic multiplier visible in logs and actively changing; `dyn_mult` settles to ~0.15–0.25 when audio > video (or >1.0 when video > audio); voice quality preserved |
 | 3 | Train with `network.type: dora`, rank 32 | DoRA loads and trains; identity retention potentially better than standard LoRA |
 | 4 | Train with `rank_dropout: 0.1` | Loss slightly higher but more stable; no overfitting on small datasets |
 | 5 | Train on mixed image + video dataset | Voice regularizer fires on image batches; no crashes |
@@ -477,3 +484,5 @@ No new dependencies. All changes use existing PyTorch, torchaudio, and diffusers
 | 30 | Audio loss logging during training | No `AttributeError` from `print_and_status_update`; audio loss values printed to console |
 | 31 | DoRA training with quantized model completes backward pass | No `derivative for dequantize is not implemented` error; training proceeds past step 0 |
 | 32 | LoRA training with quantized model completes backward pass | Same fix applies; no dequantize autograd crash |
+| 33 | Auto-balance `dyn_mult` changes over training | `dyn_mult` should NOT stay at 1.00; when raw audio loss > video loss, multiplier drops below 1.0; when audio < video, multiplier rises above 1.0 |
+| 34 | Auto-balance with audio > video (common LTX-2 case) | `dyn_mult` settles to ~0.15–0.25; `scaled` audio loss ≈ 33% of `video` loss in logs |

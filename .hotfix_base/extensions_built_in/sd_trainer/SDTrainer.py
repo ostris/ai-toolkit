@@ -927,7 +927,7 @@ class SDTrainer(BaseSDTrainProcess):
                 dynamic_multiplier = 1.0
             
             # clamp multiplier to sane values to prevent instability
-            dynamic_multiplier = max(1.0, min(20.0, dynamic_multiplier))
+            dynamic_multiplier = max(0.05, min(20.0, dynamic_multiplier))
             self.train_config.audio_loss_multiplier = dynamic_multiplier
 
         # check for audio loss
