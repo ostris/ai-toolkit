@@ -73,11 +73,16 @@ export default function SampleImages({ job }: SampleImagesProps) {
   const didFirstScroll = useRef(false);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
-      const jobConfig = JSON.parse(job.job_config) as JobConfig;
-      const sampleConfig = jobConfig.config.process[0].sample;
-      const numPrompts = sampleConfig.prompts ? sampleConfig.prompts.length : 0;
-      const numSamples = sampleConfig.samples.length;
-      return Math.max(numPrompts, numSamples, 1);
+      try {
+        const jobConfig = JSON.parse(job.job_config) as JobConfig;
+        const sampleConfig = jobConfig.config.process[0].sample;
+        const numPrompts = sampleConfig.prompts ? sampleConfig.prompts.length : 0;
+        const numSamples = sampleConfig.samples.length;
+        return Math.max(numPrompts, numSamples, 1);
+      } catch (error) {
+        console.error('Error parsing job config for numSamples:', error);
+        return 10;
+      }
     }
     return 10;
   }, [job]);
@@ -238,8 +243,13 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
   const sampleConfig = useMemo(() => {
     if (job?.job_config) {
-      const jobConfig = JSON.parse(job.job_config) as JobConfig;
-      return jobConfig.config.process[0].sample;
+      try {
+        const jobConfig = JSON.parse(job.job_config) as JobConfig;
+        return jobConfig.config.process[0].sample;
+      } catch (error) {
+        console.error('Error parsing job config for sampleConfig:', error);
+        return null;
+      }
     }
     return null;
   }, [job]);

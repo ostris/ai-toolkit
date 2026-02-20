@@ -5,6 +5,7 @@ import torch.nn as nn
 import numpy as np
 from diffusers.models.autoencoders.autoencoder_kl import AutoencoderKLOutput
 from diffusers.models.autoencoders.vae import DecoderOutput
+from ..device_utils import get_optimal_device
 
 
 class Config:
@@ -28,7 +29,7 @@ class FakeVAE(nn.Module):
     def __init__(self, scaling_factor=1.0):
         super().__init__()
         self._dtype = torch.float32
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = get_optimal_device()
         self.config = Config()
         self.config.scaling_factor = scaling_factor
 

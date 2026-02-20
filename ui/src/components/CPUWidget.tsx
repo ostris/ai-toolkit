@@ -7,7 +7,8 @@ interface CPUWidgetProps {
 }
 
 export default function CPUWidget({ cpu }: CPUWidgetProps) {
-  const formatMemory = (mb: number): string => {
+  const formatMemory = (mb: number | string): string => {
+    if (typeof mb === 'string' || isNaN(mb) || mb < 0) return 'N/A';
     return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
   };
 
@@ -50,12 +51,14 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
             <div className="flex items-center space-x-2 mb-1 mt-1">
               <Cpu className="w-4 h-4 text-gray-400" />
               <p className="text-xs text-gray-400">CPU Load</p>
-              <span className="text-xs text-gray-300 ml-auto">{cpu.currentLoad.toFixed(1)}%</span>
+              <span className="text-xs text-gray-300 ml-auto">
+                {typeof cpu.currentLoad === 'number' ? `${cpu.currentLoad.toFixed(1)}%` : 'N/A'}
+              </span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
               <div
                 className={`h-1 rounded-full transition-all ${getUtilizationColor(cpu.currentLoad)}`}
-                style={{ width: `${cpu.currentLoad}%` }}
+                style={{ width: typeof cpu.currentLoad === 'number' ? `${cpu.currentLoad}%` : '0%' }}
               />
             </div>
           </div>
@@ -64,13 +67,19 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
               <HardDrive className="w-4 h-4 text-blue-400" />
               <p className="text-xs text-gray-400">Memory</p>
               <span className="text-xs text-gray-300 ml-auto">
-                {(((cpu.totalMemory - cpu.availableMemory) / cpu.totalMemory) * 100).toFixed(1)}%
+                {typeof cpu.totalMemory === 'number' && typeof cpu.availableMemory === 'number' && cpu.totalMemory > 0
+                  ? `${(((cpu.totalMemory - cpu.availableMemory) / cpu.totalMemory) * 100).toFixed(1)}%`
+                  : 'N/A'}
               </span>
             </div>
             <div className="w-full bg-gray-700 rounded-full h-1">
               <div
                 className="h-1 rounded-full bg-blue-500 transition-all"
-                style={{ width: `${((cpu.totalMemory - cpu.availableMemory) / cpu.totalMemory) * 100}%` }}
+                style={{
+                  width: typeof cpu.totalMemory === 'number' && typeof cpu.availableMemory === 'number' && cpu.totalMemory > 0
+                    ? `${((cpu.totalMemory - cpu.availableMemory) / cpu.totalMemory) * 100}%`
+                    : '0%'
+                }}
               />
             </div>
             <p className="text-xs text-gray-400 mt-0.5">

@@ -2,6 +2,7 @@ import gc
 import os
 
 import torch
+from .device_utils import empty_cache
 
 
 def value_map(inputs, min_in, max_in, min_out, max_out):
@@ -9,7 +10,7 @@ def value_map(inputs, min_in, max_in, min_out, max_out):
 
 
 def flush(garbage_collect=True):
-    torch.cuda.empty_cache()
+    empty_cache()
     if garbage_collect:
         gc.collect()
 

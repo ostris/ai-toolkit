@@ -5,13 +5,14 @@ import torch.nn.functional as F
 from PIL import Image
 import time
 import random
+from ..device_utils import get_optimal_device
 
 
 def generate_random_mask(
     batch_size,
     height=256,
     width=256,
-    device='cuda',
+    device=None,
     min_coverage=0.2,
     max_coverage=0.8,
     num_blobs_range=(1, 3)
@@ -32,7 +33,13 @@ def generate_random_mask(
     Returns:
         torch.Tensor: Binary masks with shape (batch_size, 1, height, width)
     """
-    # Initialize masks on GPU
+    # Handle device auto-detection
+    if device is None:
+        device = get_optimal_device()
+    elif isinstance(device, str):
+        device = get_optimal_device(device)
+
+    # Initialize masks on selected device
     masks = torch.zeros((batch_size, 1, height, width), device=device)
 
     # Pre-compute coordinate grid on GPU
@@ -259,7 +266,7 @@ if __name__ == "__main__":
     batch_size = 20
     height = 256
     width = 256
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = get_optimal_device()
 
     print(f"Generating {batch_size} random blob masks on {device}...")
 

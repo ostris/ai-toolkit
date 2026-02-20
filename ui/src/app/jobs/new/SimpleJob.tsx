@@ -489,10 +489,35 @@ export default function SimpleJob({
                   label="Optimizer"
                   value={jobConfig.config.process[0].train.optimizer}
                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
-                  options={[
-                    { value: 'adamw8bit', label: 'AdamW8Bit' },
-                    { value: 'adafactor', label: 'Adafactor' },
-                  ]}
+                  options={
+                    (() => {
+                      const device = jobConfig.config.process[0].device;
+                      console.log('Current device:', device);
+                      // Also detect from navigator platform for safety
+                      const isMac = typeof window !== 'undefined' && navigator.platform.includes('Mac');
+                      console.log('Is Mac platform:', isMac);
+
+                      if (device === 'mps' || (device === 'cuda' && isMac)) {
+                        return [
+                          { value: 'adamw', label: 'AdamW (Recommended for MPS)' },
+                          { value: 'adam', label: 'Adam' },
+                          { value: 'adafactor', label: 'Adafactor' },
+                        ];
+                      } else {
+                        return [
+                          { value: 'adamw8bit', label: 'AdamW 8-Bit (CUDA Only)' },
+                          { value: 'adamw', label: 'AdamW' },
+                          { value: 'adam', label: 'Adam' },
+                          { value: 'adafactor', label: 'Adafactor' },
+                        ];
+                      }
+                    })()
+                  }
+                  helpText={
+                    jobConfig.config.process[0].device === 'mps'
+                      ? "8-bit optimizers require CUDA and are not available for MPS"
+                      : "8-bit optimizers provide memory savings but require CUDA"
+                  }
                 />
                 <NumberInput
                   label="Learning Rate"

@@ -64,9 +64,15 @@ export default function TrainingForm() {
         .then(data => {
           console.log('Clone Training:', data);
           setGpuIDs(data.gpu_ids);
-          const newJobConfig = migrateJobConfig(JSON.parse(data.job_config));
-          newJobConfig.config.name = `${newJobConfig.config.name}_copy`;
-          setJobConfig(newJobConfig);
+          try {
+            const newJobConfig = migrateJobConfig(JSON.parse(data.job_config));
+            newJobConfig.config.name = `${newJobConfig.config.name}_copy`;
+            setJobConfig(newJobConfig);
+          } catch (error) {
+            console.error('Error parsing job config for clone:', error);
+            // Use default config on error
+            setJobConfig(objectCopy(defaultJobConfig));
+          }
         })
         .catch(error => console.error('Error fetching training:', error));
     }
@@ -80,7 +86,13 @@ export default function TrainingForm() {
         .then(data => {
           console.log('Training:', data);
           setGpuIDs(data.gpu_ids);
-          setJobConfig(migrateJobConfig(JSON.parse(data.job_config)));
+          try {
+            setJobConfig(migrateJobConfig(JSON.parse(data.job_config)));
+          } catch (error) {
+            console.error('Error parsing job config for edit:', error);
+            // Use default config on error
+            setJobConfig(objectCopy(defaultJobConfig));
+          }
         })
         .catch(error => console.error('Error fetching training:', error));
     }

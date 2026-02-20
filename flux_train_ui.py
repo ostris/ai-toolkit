@@ -98,7 +98,8 @@ def create_dataset(*inputs):
 
 def run_captioning(images, concept_sentence, *captions):
     #Load internally to not consume resources for training
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    from toolkit.device_utils import get_optimal_device
+    device = get_optimal_device()
     torch_dtype = torch.float16
     model = AutoModelForCausalLM.from_pretrained(
         "multimodalart/Florence-2-large-no-flash-attn", torch_dtype=torch_dtype, trust_remote_code=True

@@ -67,7 +67,37 @@ export const markJobAsStopped = (jobID: string) => {
 };
 
 export const getJobConfig = (job: Job) => {
-  return JSON.parse(job.job_config) as JobConfig;
+  try {
+    if (!job.job_config) {
+      // Return a default job config if job_config is missing
+      return {
+        job: 'extension',
+        config: {
+          name: job.name || 'unknown',
+          process: [{
+            type: 'diffusion_trainer',
+            training_folder: 'output',
+            train: { steps: 1000 }
+          }]
+        }
+      } as JobConfig;
+    }
+    return JSON.parse(job.job_config) as JobConfig;
+  } catch (error) {
+    console.error('Error parsing job config:', error);
+    // Return a default job config if parsing fails
+    return {
+      job: 'extension',
+      config: {
+        name: job.name || 'unknown',
+        process: [{
+          type: 'diffusion_trainer',
+          training_folder: 'output',
+          train: { steps: 1000 }
+        }]
+      }
+    } as JobConfig;
+  }
 };
 
 export const getAvaliableJobActions = (job: Job) => {
@@ -91,6 +121,12 @@ export const getNumberOfSamples = (job: Job) => {
 };
 
 export const getTotalSteps = (job: Job) => {
-  const jobConfig = getJobConfig(job);
-  return jobConfig.config.process[0].train.steps;
+  try {
+    const jobConfig = getJobConfig(job);
+    const steps = jobConfig?.config?.process?.[0]?.train?.steps;
+    return typeof steps === 'number' && !isNaN(steps) && steps > 0 ? steps : 1000;
+  } catch (error) {
+    console.error('Error getting total steps:', error);
+    return 1000;
+  }
 };
