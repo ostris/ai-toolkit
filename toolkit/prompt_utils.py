@@ -247,25 +247,36 @@ class EncodedPromptPair:
 def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"], padding_side: str = "right") -> PromptEmbeds:
     # --- pad text_embeds ---
     if isinstance(prompt_embeds[0].text_embeds, (list, tuple)):
-        embed_list = []
-        for i in range(len(prompt_embeds[0].text_embeds)):
-            max_len = max(p.text_embeds[i].shape[1] for p in prompt_embeds)
-            padded = []
+        # Check if we have 2D tensors (ZImage format: list of 2D tensors where list length = batch size)
+        first_tensor = prompt_embeds[0].text_embeds[0]
+        if len(first_tensor.shape) == 2:
+            # ZImage format: each item has a list with one 2D tensor (seq_len, embed_dim)
+            # We should NOT concatenate - just collect all tensors into a flat list
+            text_embeds = []
             for p in prompt_embeds:
-                t = p.text_embeds[i]
-                if t.shape[1] < max_len:
-                    pad = torch.zeros(
-                        (t.shape[0], max_len - t.shape[1], *t.shape[2:]),
-                        dtype=t.dtype,
-                        device=t.device,
-                    )
-                    if padding_side == "right":
-                        t = torch.cat([t, pad], dim=1)
-                    else:
-                        t = torch.cat([pad, t], dim=1)
-                padded.append(t)
-            embed_list.append(torch.cat(padded, dim=0))
-        text_embeds = embed_list
+                for t in p.text_embeds:
+                    text_embeds.append(t)
+        else:
+            # Standard format: 3D tensors, concatenate along batch dimension
+            embed_list = []
+            for i in range(len(prompt_embeds[0].text_embeds)):
+                max_len = max(p.text_embeds[i].shape[1] for p in prompt_embeds)
+                padded = []
+                for p in prompt_embeds:
+                    t = p.text_embeds[i]
+                    if t.shape[1] < max_len:
+                        pad = torch.zeros(
+                            (t.shape[0], max_len - t.shape[1], *t.shape[2:]),
+                            dtype=t.dtype,
+                            device=t.device,
+                        )
+                        if padding_side == "right":
+                            t = torch.cat([t, pad], dim=1)
+                        else:
+                            t = torch.cat([pad, t], dim=1)
+                    padded.append(t)
+                embed_list.append(torch.cat(padded, dim=0))
+            text_embeds = embed_list
     else:
         max_len = max(p.text_embeds.shape[1] for p in prompt_embeds)
         padded = []
