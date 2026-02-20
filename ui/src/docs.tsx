@@ -47,8 +47,8 @@ const docs: { [key: string]: ConfigDoc } = {
     description: (
       <>
         The name of a diffusers repo on Huggingface or the local path to the base model you want to train from. The
-        folder needs to be in diffusers format for most models. For some models, such as SDXL and SD1, you can put the
-        path to an all in one safetensors checkpoint here.
+        folder needs to be in diffusers format for most models. For some models, such as Z-Image Turbo, SDXL and SD1, you can put the
+        path to a safetensors checkpoint here.
       </>
     ),
   },
