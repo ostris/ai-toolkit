@@ -1,10 +1,42 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import useFilesList from '@/hooks/useFilesList';
-import Link from 'next/link';
-import { Loader2, AlertCircle, Download, Box, Brain } from 'lucide-react';
+import { Loader2, AlertCircle, Download, Box, Brain, FolderInput, Check } from 'lucide-react';
+import { apiClient } from '@/utils/api';
 
 export default function FilesWidget({ jobID }: { jobID: string }) {
   const { files, status, refreshFiles } = useFilesList(jobID, 5000);
+  const [loraInstallPath, setLoraInstallPath] = useState('');
+  const [installingFiles, setInstallingFiles] = useState<Record<string, 'idle' | 'installing' | 'success' | 'error'>>(
+    {},
+  );
+
+  useEffect(() => {
+    apiClient
+      .get('/api/settings')
+      .then(res => res.data)
+      .then(data => {
+        setLoraInstallPath(data.LORA_INSTALL_PATH || '');
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleInstall = async (filePath: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setInstallingFiles(prev => ({ ...prev, [filePath]: 'installing' }));
+    try {
+      await apiClient.post('/api/files/install', { filePath });
+      setInstallingFiles(prev => ({ ...prev, [filePath]: 'success' }));
+      setTimeout(() => {
+        setInstallingFiles(prev => ({ ...prev, [filePath]: 'idle' }));
+      }, 2000);
+    } catch {
+      setInstallingFiles(prev => ({ ...prev, [filePath]: 'error' }));
+      setTimeout(() => {
+        setInstallingFiles(prev => ({ ...prev, [filePath]: 'idle' }));
+      }, 2000);
+    }
+  };
 
   const cleanSize = (size: number) => {
     if (size < 1024) {
@@ -47,11 +79,10 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
             {files.map((file, index) => {
               const fileName = file.path.split('/').pop() || '';
               const nameWithoutExt = fileName.replace('.safetensors', '');
+              const installStatus = installingFiles[file.path] || 'idle';
               return (
-                <a
+                <div
                   key={index}
-                  target="_blank"
-                  href={`/api/files/${encodeURIComponent(file.path)}`}
                   className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-800 transition-all duration-200"
                 >
                   <div className="flex items-center space-x-2 min-w-0">
@@ -65,13 +96,32 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
                       <span className="text-xs text-gray-500">.safetensors</span>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-3 flex-shrink-0">
-                    <span className="text-xs text-gray-400">{cleanSize(file.size)}</span>
-                    <div className="bg-purple-500 bg-opacity-0 group-hover:bg-opacity-10 rounded-full p-1 transition-all">
+                  <div className="flex items-center space-x-1 flex-shrink-0">
+                    <span className="text-xs text-gray-400 mr-2">{cleanSize(file.size)}</span>
+                    {loraInstallPath && (
+                      <button
+                        onClick={e => handleInstall(file.path, e)}
+                        disabled={installStatus === 'installing'}
+                        title={`Install to ${loraInstallPath}`}
+                        className="bg-green-500 bg-opacity-0 hover:bg-opacity-10 rounded-full p-1 transition-all disabled:opacity-50"
+                      >
+                        {installStatus === 'installing' && (
+                          <Loader2 className="w-3 h-3 text-green-400 animate-spin" />
+                        )}
+                        {installStatus === 'success' && <Check className="w-3 h-3 text-green-400" />}
+                        {installStatus === 'error' && <AlertCircle className="w-3 h-3 text-red-400" />}
+                        {installStatus === 'idle' && <FolderInput className="w-3 h-3 text-green-400" />}
+                      </button>
+                    )}
+                    <a
+                      href={`/api/files/${encodeURIComponent(file.path)}`}
+                      target="_blank"
+                      className="bg-purple-500 bg-opacity-0 hover:bg-opacity-10 rounded-full p-1 transition-all"
+                    >
                       <Download className="w-3 h-3 text-purple-400" />
-                    </div>
+                    </a>
                   </div>
-                </a>
+                </div>
               );
             })}
           </div>

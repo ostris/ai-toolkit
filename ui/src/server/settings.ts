@@ -67,6 +67,25 @@ export const getHFToken = async () => {
   return token;
 };
 
+export const getLoraInstallPath = async () => {
+  const key = 'LORA_INSTALL_PATH';
+  let loraPath = myCache.get(key) as string;
+  if (loraPath !== undefined) {
+    return loraPath;
+  }
+  let row = await prisma.settings.findFirst({
+    where: {
+      key: key,
+    },
+  });
+  loraPath = '';
+  if (row?.value && row.value !== '') {
+    loraPath = row.value;
+  }
+  myCache.set(key, loraPath);
+  return loraPath;
+};
+
 export const getDataRoot = async () => {
   const key = 'DATA_ROOT';
   let dataRoot = myCache.get(key) as string;

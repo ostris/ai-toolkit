@@ -7,6 +7,7 @@ export interface Settings {
   HF_TOKEN: string;
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
+  LORA_INSTALL_PATH: string;
 }
 
 export default function useSettings() {
@@ -14,6 +15,7 @@ export default function useSettings() {
     HF_TOKEN: '',
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
+    LORA_INSTALL_PATH: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
@@ -26,6 +28,7 @@ export default function useSettings() {
           HF_TOKEN: data.HF_TOKEN || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
+          LORA_INSTALL_PATH: data.LORA_INSTALL_PATH || '',
         });
         setIsLoaded(true);
       })
