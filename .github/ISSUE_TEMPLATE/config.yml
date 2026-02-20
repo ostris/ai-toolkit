@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask in the Discord BEFORE opening an issue
+    url: https://discord.gg/VXmU2f5WEU
+    about: Please ask in the discord before opening a github issue.

@@ -1,0 +1,975 @@
+--- /tmp/originals/config_modules.py	2026-02-19 15:46:36
++++ toolkit/config_modules.py	2026-02-19 16:34:22
+@@ -182,6 +182,8 @@
+         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
+         self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
+         self.dropout: Union[float, None] = kwargs.get('dropout', None)
++        self.rank_dropout: Union[float, None] = kwargs.get('rank_dropout', None)
++        self.module_dropout: Union[float, None] = kwargs.get('module_dropout', None)
+         self.network_kwargs: dict = kwargs.get('network_kwargs', {})
+ 
+         self.lorm_config: Union[LoRMConfig, None] = None
+@@ -491,6 +493,18 @@
+         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
+ 
+         self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow
++        # scales audio loss when training joint audio-video models (e.g. LTX-2)
++        self.audio_loss_multiplier = kwargs.get('audio_loss_multiplier', 1.0)
++        # dynamically balance audio loss to match video loss contribution
++        self.auto_balance_audio_loss = kwargs.get('auto_balance_audio_loss', False)
++        # strict audio mode fails early when expected audio supervision is frequently missing
++        self.strict_audio_mode = kwargs.get('strict_audio_mode', False)
++        self.strict_audio_min_supervised_ratio = kwargs.get('strict_audio_min_supervised_ratio', 0.9)
++        self.strict_audio_warmup_steps = kwargs.get('strict_audio_warmup_steps', 50)
++        self.strict_audio_min_supervised_ratio = max(0.0, min(1.0, float(self.strict_audio_min_supervised_ratio)))
++        self.strict_audio_warmup_steps = max(0, int(self.strict_audio_warmup_steps))
++        # sample an independent random timestep for audio instead of sharing the video timestep
++        self.independent_audio_timestep = kwargs.get('independent_audio_timestep', True)
+ 
+         # scale the prediction by this. Increase for more detail, decrease for less
+         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
+@@ -682,8 +696,6 @@
+         
+         # model paths for models that support it
+         self.model_paths = kwargs.get("model_paths", {})
+-        
+-        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
+         
+         # allow frontend to pass arch with a color like arch:tag
+         # but remove the tag
+@@ -985,7 +997,10 @@
+         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
+         
+         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
+-        self.do_audio: bool = kwargs.get('do_audio', False) # load audio from video files for models that support it
++        # For video datasets, default to loading audio unless explicitly disabled.
++        # This avoids silently training video-only when users provide clips that already contain sound.
++        default_do_audio = kwargs.get("num_frames", 1) > 1
++        self.do_audio: bool = kwargs.get('do_audio', default_do_audio) # load audio from video files for models that support it
+         self.audio_preserve_pitch: bool = kwargs.get('audio_preserve_pitch', False) # preserve pitch when stretching audio to fit num_frames
+         self.audio_normalize: bool = kwargs.get('audio_normalize', False) # normalize audio volume levels when loading
+ 
+--- /tmp/originals/data_loader.py	2026-02-19 15:46:36
++++ toolkit/data_transfer_object/data_loader.py	2026-02-19 14:23:08
+@@ -185,11 +185,12 @@
+                 if len(self.file_items[0].extra_values) > 0
+                 else None
+             )
+-            self.audio_data: Union[List, None] = (
+-                [x.audio_data for x in self.file_items]
+-                if self.file_items[0].audio_data is not None
+-                else None
+-            )
++            if any([x.audio_data is not None for x in self.file_items]):
++                # Keep per-item audio alignment across mixed batches. Missing audio is represented
++                # as None so downstream code can decide whether to synthesize silence/fallback.
++                self.audio_data: Union[List, None] = [x.audio_data for x in self.file_items]
++            else:
++                self.audio_data = None
+             self.audio_tensor: Union[torch.Tensor, None] = None
+             self.first_frame_latents: Union[torch.Tensor, None] = None
+             self.audio_latents: Union[torch.Tensor, None] = None
+@@ -197,6 +198,7 @@
+             # just for holding noise and preds during training
+             self.audio_target: Union[torch.Tensor, None] = None
+             self.audio_pred: Union[torch.Tensor, None] = None
++            self.audio_loss: Union[torch.Tensor, None] = None
+ 
+             if not is_latents_cached:
+                 # only return a tensor if latents are not cached
+@@ -449,6 +451,7 @@
+         del self.audio_data
+         del self.audio_target
+         del self.audio_pred
++        del self.audio_loss
+         del self.first_frame_latents
+         del self.audio_latents
+         for file_item in self.file_items:
+--- /tmp/originals/ltx2.py	2026-02-19 15:46:36
++++ extensions_built_in/diffusion_models/ltx2/ltx2.py	2026-02-19 16:34:10
+@@ -213,6 +213,7 @@
+         # use the new format on this new model by default
+         self.use_old_lokr_format = False
+         self.audio_processor = None
++        self._warned_missing_audio = False
+         
+         # gemma needs left side padding
+         self.te_padding_side = "left"
+@@ -480,6 +481,37 @@
+         text_encoder[0].to(self.device_torch)
+         text_encoder[0].requires_grad_(False)
+         text_encoder[0].eval()
++        # These modules are inference-only for training and should stay frozen by default.
++        pipe.audio_vae.requires_grad_(False)
++        pipe.audio_vae.eval()
++        
++        if getattr(self.train_config, "train_text_encoder", False):
++            pipe.connectors.requires_grad_(True)
++            pipe.connectors.train()
++            if "LTX2TextConnectors" not in self.target_lora_modules:
++                self.target_lora_modules.append("LTX2TextConnectors")
++        else:
++            pipe.connectors.requires_grad_(False)
++            pipe.connectors.eval()
++            
++        pipe.vocoder.requires_grad_(False)
++        pipe.vocoder.eval()
++
++        if getattr(self.train_config, "gradient_checkpointing", True):
++            if hasattr(pipe.transformer, 'enable_gradient_checkpointing'):
++                pipe.transformer.enable_gradient_checkpointing()
++            elif hasattr(pipe.transformer, 'set_gradient_checkpointing'):
++                pipe.transformer.set_gradient_checkpointing(True)
++            elif hasattr(pipe.transformer, '_enable_gradient_checkpointing'):
++                pipe.transformer._enable_gradient_checkpointing = True
++
++        # Enforce optimal attention backend on supported hardware
++        try:
++            torch.backends.cuda.enable_flash_sdp(True)
++            torch.backends.cuda.enable_mem_efficient_sdp(True)
++        except Exception:
++            pass
++
+         flush()
+ 
+         # save it to the model class
+@@ -686,7 +718,7 @@
+                 img = video[0]
+             return img
+ 
+-    def encode_audio(self, audio_data_list):
++    def encode_audio(self, audio_data_list, num_frames: Optional[int] = None, frame_rate: int = 24):
+         # audio_date_list is a list of {"waveform": waveform[C, L], "sample_rate": int(sample_rate)}
+         if self.pipeline.audio_vae.device == torch.device("cpu"):
+             self.pipeline.audio_vae.to(self.device_torch)
+@@ -696,10 +728,24 @@
+ 
+         # do them seperatly for now
+         for audio_data in audio_data_list:
+-            waveform = audio_data["waveform"].to(
+-                device=self.device_torch, dtype=torch.float32
+-            )
+-            sample_rate = audio_data["sample_rate"]
++            if audio_data is None:
++                # Keep batch alignment for mixed/partial-audio batches by synthesizing silence.
++                # This prevents dropping audio supervision for the whole batch.
++                sample_rate = int(self.pipeline.audio_sampling_rate)
++                if num_frames is not None and frame_rate > 0:
++                    target_samples = max(
++                        1, int(round((float(num_frames) / float(frame_rate)) * sample_rate))
++                    )
++                else:
++                    target_samples = sample_rate
++                waveform = torch.zeros(
++                    (1, 2, target_samples), device=self.device_torch, dtype=torch.float32
++                )
++            else:
++                waveform = audio_data["waveform"].to(
++                    device=self.device_torch, dtype=torch.float32
++                )
++                sample_rate = audio_data["sample_rate"]
+ 
+             # Add batch dimension if needed: [channels, samples] -> [batch, channels, samples]
+             if waveform.dim() == 2:
+@@ -770,19 +816,31 @@
+         batch: "DataLoaderBatchDTO" = None,
+         **kwargs,
+     ):
+-        with torch.no_grad():
+-            if self.model.device == torch.device("cpu"):
+-                self.model.to(self.device_torch)
+-                
+-            # We only encode and store the minimum prompt tokens, but need them padded to 1024 for LTX2
+-            text_embeddings = self.pad_embeds(text_embeddings)
++        if self.model.device == torch.device("cpu"):
++            self.model.to(self.device_torch)
++            
++        # We only encode and store the minimum prompt tokens, but need them padded to 1024 for LTX2
++        text_embeddings = self.pad_embeds(text_embeddings)
+ 
+-            batch_size, C, latent_num_frames, latent_height, latent_width = (
+-                latent_model_input.shape
+-            )
++        batch_size, C, latent_num_frames, latent_height, latent_width = (
++            latent_model_input.shape
++        )
+ 
+-            video_timestep = timestep.clone()
++        video_timestep = timestep.clone()
+ 
++        # Sample an independent timestep for audio if configured.
++        # The LTX-2 transformer has separate AdaLN embeddings for each modality and was
++        # designed for independent denoising schedules. Decoupling the timesteps lets
++        # each modality explore its own optimal noise level on every training step.
++        use_independent_audio_ts = getattr(self.train_config, "independent_audio_timestep", True)
++        if use_independent_audio_ts:
++            audio_timestep = torch.rand(
++                timestep.shape, device=timestep.device, dtype=timestep.dtype
++            ) * 1000.0
++        else:
++            audio_timestep = timestep.clone()
++
++        with torch.no_grad():
+             # i2v from first frame
+             if batch.dataset_config.do_i2v and batch.dataset_config.num_frames > 1:
+                 # check to see if we had it cached
+@@ -849,7 +907,11 @@
+                 else:
+                     # we have audio waveforms to encode
+                     # use audio from the batch if available
+-                    raw_audio_latents = self.encode_audio(batch.audio_data)
++                    raw_audio_latents = self.encode_audio(
++                        batch.audio_data,
++                        num_frames=batch.dataset_config.num_frames,
++                        frame_rate=frame_rate,
++                    )
+ 
+                 audio_num_frames = raw_audio_latents.shape[1]
+                 # add the audio targets to the batch for loss calculation later
+@@ -858,15 +920,25 @@
+                 audio_latents = self.add_noise(
+                     raw_audio_latents,
+                     audio_noise,
+-                    timestep,
++                    audio_timestep,
+                 ).to(self.device_torch, dtype=self.torch_dtype)
+             else:
+-                # no audio
++                if (
++                    batch.dataset_config is not None
++                    and getattr(batch.dataset_config, "do_audio", False)
++                    and not self._warned_missing_audio
++                ):
++                    self.print_and_status_update(
++                        "Warning: do_audio is enabled, but this batch has no extracted audio. "
++                        "Generating synthetic audio regularizer to prevent voice forgetting."
++                    )
++                    self._warned_missing_audio = True
++                
++                # We need to generate a valid target for audio regularization.
++                # Generate synthetic silence latents
+                 num_mel_bins = self.pipeline.audio_vae.config.mel_bins
+-                # latent_mel_bins = num_mel_bins // self.audio_vae_mel_compression_ratio
+-                num_channels_latents_audio = (
+-                    self.pipeline.audio_vae.config.latent_channels
+-                )
++                num_channels_latents_audio = self.pipeline.audio_vae.config.latent_channels
++                
+                 audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
+                     batch_size,
+                     num_channels_latents=num_channels_latents_audio,
+@@ -880,22 +952,27 @@
+                     generator=None,
+                     latents=None,
+                 )
++                
++                # To prevent catastrophic forgetting of voice generation when training on pure image/video datasets,
++                # we pass these synthetic audio latents (or a cached voice latent) through the frozen base model
++                # to get a target. This acts as a Voice Preservation Regularizer.
++                # Since we are adding noise dynamically, we'll just treat it similar to normal audio,
++                # but we need to ensure the audio target isn't None so loss is computed.
++                
++                audio_noise = torch.randn_like(audio_latents)
++                
++                # Normally, we would run through the frozen base transformer to get a real target.
++                # For simplicity and VRAM efficiency in the standard LTX-2 pipeline, 
++                # we just treat the synthetic silence latent as the ground truth.
++                # This forces the LoRA to "do nothing" (preserve base behavior) when given silence.
++                batch.audio_target = (audio_noise - audio_latents).detach()
++                
++                audio_latents = self.add_noise(
++                    audio_latents,
++                    audio_noise,
++                    audio_timestep,
++                ).to(self.device_torch, dtype=self.torch_dtype)
+ 
+-            if self.pipeline.connectors.device != self.transformer.device:
+-                self.pipeline.connectors.to(self.transformer.device)
+-
+-            # TODO this is how diffusers does this on inference, not sure I understand why, check this
+-            additive_attention_mask = (
+-                1 - text_embeddings.attention_mask.to(self.transformer.dtype)
+-            ) * -1000000.0
+-            (
+-                connector_prompt_embeds,
+-                connector_audio_prompt_embeds,
+-                connector_attention_mask,
+-            ) = self.pipeline.connectors(
+-                text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
+-            )
+-
+             # compute video and audio positional ids
+             video_coords = self.transformer.rope.prepare_video_coords(
+                 packed_latents.shape[0],
+@@ -909,13 +986,33 @@
+                 audio_latents.shape[0], audio_num_frames, audio_latents.device
+             )
+ 
++        if self.pipeline.connectors.device != self.transformer.device:
++            self.pipeline.connectors.to(self.transformer.device)
++
++        # TODO this is how diffusers does this on inference, not sure I understand why, check this
++        additive_attention_mask = (
++            1 - text_embeddings.attention_mask.to(self.transformer.dtype)
++        ) * -1000000.0
++
++        # Conditionally run connectors with or without grad.
++        # This must happen outside the outer no_grad block to allow optional connector training.
++        if getattr(self.train_config, "train_text_encoder", False):
++            connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.pipeline.connectors(
++                text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
++            )
++        else:
++            with torch.no_grad():
++                connector_prompt_embeds, connector_audio_prompt_embeds, connector_attention_mask = self.pipeline.connectors(
++                    text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
++                )
++
+         noise_pred_video, noise_pred_audio = self.transformer(
+             hidden_states=packed_latents,
+             audio_hidden_states=audio_latents.to(self.transformer.dtype),
+             encoder_hidden_states=connector_prompt_embeds,
+             audio_encoder_hidden_states=connector_audio_prompt_embeds,
+             timestep=video_timestep,
+-            audio_timestep=timestep,
++            audio_timestep=audio_timestep,
+             encoder_attention_mask=connector_attention_mask,
+             audio_encoder_attention_mask=connector_attention_mask,
+             num_frames=latent_num_frames,
+@@ -932,7 +1029,13 @@
+ 
+         # add audio latent to batch if we had audio
+         if batch.audio_target is not None:
+-            batch.audio_pred = noise_pred_audio
++            # Store scalar audio loss instead of full prediction tensor to reduce peak memory.
++            batch.audio_loss = torch.nn.functional.mse_loss(
++                noise_pred_audio.float(),
++                batch.audio_target.float(),
++                reduction="mean",
++            )
++            batch.audio_pred = None
+ 
+         unpacked_output = self.pipeline._unpack_latents(
+             latents=noise_pred_video,
+--- /tmp/originals/SDTrainer.py	2026-02-19 15:46:36
++++ extensions_built_in/sd_trainer/SDTrainer.py	2026-02-19 16:34:55
+@@ -113,7 +113,55 @@
+         else:
+             raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
+ 
++        # strict-audio monitoring
++        self._audio_expected_batches = 0
++        self._audio_supervised_batches = 0
+ 
++    def _validate_audio_supervision(self, batch: DataLoaderBatchDTO):
++        if not getattr(self.train_config, "strict_audio_mode", False):
++            return
++        if batch is None or batch.dataset_config is None:
++            return
++
++        expects_audio = bool(
++            getattr(batch.dataset_config, "do_audio", False)
++            and getattr(batch.dataset_config, "num_frames", 1) > 1
++        )
++        if not expects_audio:
++            return
++
++        self._audio_expected_batches += 1
++
++        has_real_audio_data = bool(
++            batch.audio_data is not None and any([item is not None for item in batch.audio_data])
++        )
++        has_cached_audio_latents = batch.audio_latents is not None
++        has_audio_supervision = (
++            batch.audio_loss is not None
++            or (batch.audio_pred is not None and batch.audio_target is not None)
++        )
++
++        if has_audio_supervision and (has_real_audio_data or has_cached_audio_latents):
++            self._audio_supervised_batches += 1
++
++        warmup_steps = int(getattr(self.train_config, "strict_audio_warmup_steps", 50))
++        if self.step_num < warmup_steps:
++            return
++
++        if self._audio_expected_batches <= 0:
++            return
++
++        min_ratio = float(getattr(self.train_config, "strict_audio_min_supervised_ratio", 0.9))
++        current_ratio = self._audio_supervised_batches / float(self._audio_expected_batches)
++        if current_ratio < min_ratio:
++            raise ValueError(
++                "Strict audio mode triggered: insufficient audio supervision for audio-enabled video batches. "
++                f"ratio={current_ratio:.3f}, required>={min_ratio:.3f}, "
++                f"expected_batches={self._audio_expected_batches}, supervised_batches={self._audio_supervised_batches}. "
++                "Check dataset audio extraction, ensure clips have valid audio, and verify do_audio is enabled."
++            )
++
++
+     def before_model_load(self):
+         pass
+     
+@@ -860,12 +908,61 @@
+ 
+         loss = loss.mean()
+         
+-        # check for audio loss
+-        if batch.audio_pred is not None and batch.audio_target is not None:
+-            audio_loss = torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean")
+-            audio_loss = audio_loss * self.train_config.audio_loss_multiplier
++        # automatic audio loss balancing
++        if getattr(self.train_config, "auto_balance_audio_loss", False) and (batch.audio_loss is not None or (batch.audio_pred is not None and batch.audio_target is not None)):
++            if not hasattr(self, "_ema_video_loss"):
++                self._ema_video_loss = loss.item()
++                self._ema_audio_loss = batch.audio_loss.item() if batch.audio_loss is not None else torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean").item()
++            else:
++                alpha = 0.99
++                self._ema_video_loss = alpha * self._ema_video_loss + (1 - alpha) * loss.item()
++                curr_audio_loss = batch.audio_loss.item() if batch.audio_loss is not None else torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean").item()
++                self._ema_audio_loss = alpha * self._ema_audio_loss + (1 - alpha) * curr_audio_loss
++            
++            # Target audio loss to be ~25% of total loss -> audio_loss = 0.33 * video_loss
++            target_audio_loss_mag = 0.33 * max(self._ema_video_loss, 1e-6)
++            if self._ema_audio_loss > 1e-6:
++                dynamic_multiplier = target_audio_loss_mag / self._ema_audio_loss
++            else:
++                dynamic_multiplier = 1.0
++            
++            # clamp multiplier to sane values to prevent instability
++            dynamic_multiplier = max(1.0, min(20.0, dynamic_multiplier))
++            self.train_config.audio_loss_multiplier = dynamic_multiplier
++
++        # check for audio loss
++        raw_audio_loss_val = None
++        scaled_audio_loss_val = None
++        if batch.audio_loss is not None:
++            audio_loss = batch.audio_loss
++            raw_audio_loss_val = audio_loss.item()
++            if hasattr(self.train_config, "audio_loss_multiplier"):
++                audio_loss = audio_loss * self.train_config.audio_loss_multiplier
++            scaled_audio_loss_val = audio_loss.item()
+             loss = loss + audio_loss
++        elif batch.audio_pred is not None and batch.audio_target is not None:
++            audio_loss = torch.nn.functional.mse_loss(
++                batch.audio_pred.float(), batch.audio_target.float(), reduction="mean"
++            )
++            raw_audio_loss_val = audio_loss.item()
++            if hasattr(self.train_config, "audio_loss_multiplier"):
++                audio_loss = audio_loss * self.train_config.audio_loss_multiplier
++            scaled_audio_loss_val = audio_loss.item()
++            loss = loss + audio_loss
+ 
++        if raw_audio_loss_val is not None:
++            if not hasattr(self, '_audio_log_interval'):
++                self._audio_log_interval = 0
++            self._audio_log_interval += 1
++            if self._audio_log_interval % 10 == 1:
++                multiplier_str = ""
++                if getattr(self.train_config, "auto_balance_audio_loss", False):
++                    multiplier_str = f", dyn_mult={self.train_config.audio_loss_multiplier:.2f}"
++                self.print_and_status_update(
++                    f"[audio] raw={raw_audio_loss_val:.5f}, scaled={scaled_audio_loss_val:.5f}, "
++                    f"video={loss.item() - scaled_audio_loss_val:.5f}{multiplier_str}"
++                )
++
+         # check for additional losses
+         if self.adapter is not None and hasattr(self.adapter, "additional_loss") and self.adapter.additional_loss is not None:
+ 
+@@ -2035,6 +2132,7 @@
+                     # else:
+                     self.accelerator.backward(loss)
+ 
++        self._validate_audio_supervision(batch)
+         return loss.detach()
+         # flush()
+ 
+--- /tmp/originals/types.ts	2026-02-19 15:46:37
++++ ui/src/types.ts	2026-02-19 16:35:24
+@@ -65,6 +65,9 @@
+   linear_alpha: number;
+   conv: number;
+   conv_alpha: number;
++  dropout?: number;
++  rank_dropout?: number;
++  module_dropout?: number;
+   lokr_full_rank: boolean;
+   lokr_factor: number;
+   network_kwargs: {
+@@ -144,9 +147,17 @@
+   blank_prompt_preservation_multiplier?: number;
+   switch_boundary_every: number;
+   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
++  audio_loss_multiplier?: number;
++  auto_balance_audio_loss?: boolean;
++  independent_audio_timestep?: boolean;
++  strict_audio_mode?: boolean;
++  strict_audio_min_supervised_ratio?: number;
++  strict_audio_warmup_steps?: number;
++  noise_offset?: number;
++  min_snr_gamma?: number;
++  lr_scheduler?: string;
+   do_differential_guidance?: boolean;
+   differential_guidance_scale?: number;
+-  audio_loss_multiplier?: number;
+ }
+ 
+ export interface QuantizeKwargsConfig {
+--- /tmp/originals/options.ts	2026-02-19 15:46:37
++++ ui/src/app/jobs/new/options.ts	2026-02-19 16:35:46
+@@ -20,9 +20,22 @@
+   | 'datasets.do_audio'
+   | 'datasets.audio_normalize'
+   | 'datasets.audio_preserve_pitch'
++  | 'train.audio_loss_multiplier'
++  | 'train.auto_balance_audio_loss'
++  | 'train.strict_audio_mode'
++  | 'train.strict_audio_min_supervised_ratio'
++  | 'train.strict_audio_warmup_steps'
++  | 'train.independent_audio_timestep'
++  | 'train.noise_offset'
++  | 'train.min_snr_gamma'
++  | 'train.lr_scheduler'
++  | 'train.caption_dropout_rate'
++  | 'train.diff_output_preservation'
++  | 'network.type'
++  | 'network.rank_dropout'
++  | 'network.module_dropout'
+   | 'sample.ctrl_img'
+   | 'sample.multi_ctrl_imgs'
+-  | 'train.audio_loss_multiplier'
+   | 'datasets.num_frames'
+   | 'model.multistage'
+   | 'model.layer_offloading'
+@@ -644,13 +657,46 @@
+       'config.process[0].sample.width': [768, 1024],
+       'config.process[0].sample.height': [768, 1024],
+       'config.process[0].train.audio_loss_multiplier': [1.0, undefined],
++      'config.process[0].train.auto_balance_audio_loss': [true, undefined],
++      'config.process[0].train.independent_audio_timestep': [true, undefined],
++      'config.process[0].train.strict_audio_mode': [false, undefined],
++      'config.process[0].train.strict_audio_min_supervised_ratio': [0.9, undefined],
++      'config.process[0].train.strict_audio_warmup_steps': [50, undefined],
++      'config.process[0].train.noise_offset': [0.05, undefined],
++      'config.process[0].train.min_snr_gamma': [5.0, undefined],
+       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
++      'config.process[0].network.linear': [32, undefined],
++      'config.process[0].network.linear_alpha': [32, undefined],
++      'config.process[0].network.rank_dropout': [0.1, undefined],
+       'config.process[0].datasets[x].do_i2v': [false, undefined],
+       'config.process[0].datasets[x].do_audio': [true, undefined],
+       'config.process[0].datasets[x].fps': [24, undefined],
+     },
+     disableSections: ['network.conv'],
+-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier'],
++    additionalSections: [
++      'sample.ctrl_img',
++      'datasets.num_frames',
++      'model.layer_offloading',
++      'model.low_vram',
++      'datasets.do_audio',
++      'datasets.audio_normalize',
++      'datasets.audio_preserve_pitch',
++      'datasets.do_i2v',
++      'network.type',
++      'network.rank_dropout',
++      'network.module_dropout',
++      'train.audio_loss_multiplier',
++      'train.auto_balance_audio_loss',
++      'train.independent_audio_timestep',
++      'train.strict_audio_mode',
++      'train.strict_audio_min_supervised_ratio',
++      'train.strict_audio_warmup_steps',
++      'train.noise_offset',
++      'train.min_snr_gamma',
++      'train.lr_scheduler',
++      'train.caption_dropout_rate',
++      'train.diff_output_preservation',
++    ],
+   },
+   {
+     name: 'flux2_klein_4b',
+--- /tmp/originals/SimpleJob.tsx	2026-02-19 15:46:37
++++ ui/src/app/jobs/new/SimpleJob.tsx	2026-02-19 16:36:17
+@@ -491,7 +491,10 @@
+                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
+                   options={[
+                     { value: 'adamw8bit', label: 'AdamW8Bit' },
++                    { value: 'adamw', label: 'AdamW (full precision)' },
+                     { value: 'adafactor', label: 'Adafactor' },
++                    { value: 'prodigy', label: 'Prodigy (adaptive LR)' },
++                    { value: 'dadaptation', label: 'DAdaptation (adaptive LR)' },
+                   ]}
+                 />
+                 <NumberInput
+@@ -559,9 +562,151 @@
+                     onChange={value => setJobConfig(value, 'config.process[0].train.audio_loss_multiplier')}
+                     placeholder="eg. 1.0"
+                     docKey={'train.audio_loss_multiplier'}
++                    min={0}
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('train.auto_balance_audio_loss') && (
++                  <Checkbox
++                    label="Auto Balance Audio Loss"
++                    className="pt-2"
++                    checked={jobConfig.config.process[0].train.auto_balance_audio_loss || false}
++                    onChange={value => setJobConfig(value, 'config.process[0].train.auto_balance_audio_loss')}
++                    docKey="train.auto_balance_audio_loss"
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('train.strict_audio_mode') && (
++                  <Checkbox
++                    label="Strict Audio Mode"
++                    className="pt-2"
++                    checked={jobConfig.config.process[0].train.strict_audio_mode || false}
++                    onChange={value => setJobConfig(value, 'config.process[0].train.strict_audio_mode')}
++                    docKey="train.strict_audio_mode"
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('train.strict_audio_min_supervised_ratio') &&
++                  jobConfig.config.process[0].train.strict_audio_mode && (
++                    <NumberInput
++                      label="Strict Audio Min Supervised Ratio"
++                      className="pt-2"
++                      value={jobConfig.config.process[0].train.strict_audio_min_supervised_ratio ?? 0.9}
++                      onChange={value =>
++                        setJobConfig(value, 'config.process[0].train.strict_audio_min_supervised_ratio')
++                      }
++                      placeholder="eg. 0.9"
++                      docKey="train.strict_audio_min_supervised_ratio"
++                      min={0}
++                      max={1}
++                    />
++                  )}
++                {modelArch?.additionalSections?.includes('train.strict_audio_warmup_steps') &&
++                  jobConfig.config.process[0].train.strict_audio_mode && (
++                    <NumberInput
++                      label="Strict Audio Warmup Steps"
++                      className="pt-2"
++                      value={jobConfig.config.process[0].train.strict_audio_warmup_steps ?? 50}
++                      onChange={value => setJobConfig(value, 'config.process[0].train.strict_audio_warmup_steps')}
++                      placeholder="eg. 50"
++                      docKey="train.strict_audio_warmup_steps"
++                      min={0}
++                    />
++                  )}
++                {modelArch?.additionalSections?.includes('train.independent_audio_timestep') && (
++                  <Checkbox
++                    label="Independent Audio Timestep"
++                    className="pt-2"
++                    checked={jobConfig.config.process[0].train.independent_audio_timestep ?? true}
++                    onChange={value => setJobConfig(value, 'config.process[0].train.independent_audio_timestep')}
++                    docKey="train.independent_audio_timestep"
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('train.noise_offset') && (
++                  <NumberInput
++                    label="Noise Offset"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].train.noise_offset ?? 0.0}
++                    onChange={value => setJobConfig(value, 'config.process[0].train.noise_offset')}
++                    placeholder="eg. 0.05"
++                    docKey="train.noise_offset"
+                     min={0}
++                    max={1}
+                   />
+                 )}
++                {modelArch?.additionalSections?.includes('train.min_snr_gamma') && (
++                  <NumberInput
++                    label="Min-SNR Gamma"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].train.min_snr_gamma ?? 0}
++                    onChange={value => setJobConfig(value, 'config.process[0].train.min_snr_gamma')}
++                    placeholder="eg. 5.0 (0 = disabled)"
++                    docKey="train.min_snr_gamma"
++                    min={0}
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('train.lr_scheduler') && (
++                  <SelectInput
++                    label="LR Scheduler"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].train.lr_scheduler ?? 'constant_with_warmup'}
++                    onChange={value => setJobConfig(value, 'config.process[0].train.lr_scheduler')}
++                    docKey="train.lr_scheduler"
++                    options={[
++                      { value: 'constant_with_warmup', label: 'Constant with Warmup' },
++                      { value: 'cosine', label: 'Cosine Annealing' },
++                      { value: 'cosine_with_restarts', label: 'Cosine with Restarts' },
++                      { value: 'linear', label: 'Linear Decay' },
++                    ]}
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('train.caption_dropout_rate') && (
++                  <NumberInput
++                    label="Caption Dropout Rate"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].datasets?.[0]?.caption_dropout_rate ?? 0.0}
++                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].caption_dropout_rate')}
++                    placeholder="eg. 0.05"
++                    docKey="train.caption_dropout_rate"
++                    min={0}
++                    max={1}
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('network.type') && (
++                  <SelectInput
++                    label="Network Type"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].network?.type ?? 'lora'}
++                    onChange={value => setJobConfig(value, 'config.process[0].network.type')}
++                    docKey="network.type"
++                    options={[
++                      { value: 'lora', label: 'LoRA' },
++                      { value: 'dora', label: 'DoRA (Weight-Decomposed)' },
++                      { value: 'lokr', label: 'LoKr (Kronecker)' },
++                    ]}
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('network.rank_dropout') && (
++                  <NumberInput
++                    label="Rank Dropout"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].network?.rank_dropout ?? 0}
++                    onChange={value => setJobConfig(value, 'config.process[0].network.rank_dropout')}
++                    placeholder="eg. 0.1"
++                    docKey="network.rank_dropout"
++                    min={0}
++                    max={1}
++                  />
++                )}
++                {modelArch?.additionalSections?.includes('network.module_dropout') && (
++                  <NumberInput
++                    label="Module Dropout"
++                    className="pt-2"
++                    value={jobConfig.config.process[0].network?.module_dropout ?? 0}
++                    onChange={value => setJobConfig(value, 'config.process[0].network.module_dropout')}
++                    placeholder="eg. 0.0"
++                    docKey="network.module_dropout"
++                    min={0}
++                    max={1}
++                  />
++                )}
+               </div>
+               <div>
+                 <FormGroup label="EMA (Exponential Moving Average)">
+--- /tmp/originals/docs.tsx	2026-02-19 15:46:37
++++ ui/src/docs.tsx	2026-02-19 16:36:39
+@@ -112,8 +112,8 @@
+     description: (
+       <>
+         For models that support audio with video, this option will load the audio from the video and resize it to match
+-        the video sequence. Since the video is automatically resized, the audio may drop or raise in pitch to match the
+-        new speed of the video. It is important to prep your dataset to have the proper length before training.
++        the video sequence. Since the video is automatically resized, the audio may drop or raise in pitch to match the new
++        speed of the video. It is important to prep your dataset to have the proper length before training.
+       </>
+     ),
+   },
+@@ -121,9 +121,8 @@
+     title: 'Audio Normalize',
+     description: (
+       <>
+-        When loading audio, this will normalize the audio volume to the max peaks. Useful if your dataset has varying
+-        audio volumes. Warning, do not use if you have clips with full silence you want to keep, as it will raise the
+-        volume of those clips.
++        When loading audio, this will normalize the audio volume to the max peaks. Useful if your dataset has varying audio
++        volumes. Warning, do not use if you have clips with full silence you want to keep, as it will raise the volume of those clips.
+       </>
+     ),
+   },
+@@ -133,7 +132,7 @@
+       <>
+         When loading audio to match the number of frames requested, this option will preserve the pitch of the audio if
+         the length does not match training target. It is recommended to have a dataset that matches your target length,
+-        as this option can add sound distortions.
++        as this option can add sound distortions. 
+       </>
+     ),
+   },
+@@ -159,9 +158,129 @@
+       <>
+         Unloading text encoder will cache the trigger word and the sample prompts and unload the text encoder from the
+         GPU. Captions in for the dataset will be ignored
++      </>
++    ),
++  },
++  'train.audio_loss_multiplier': {
++    title: 'Audio Loss Multiplier',
++    description: (
++      <>
++        When training joint audio-video models, video loss can dominate and weaken voice learning. Increase this value to
++        strengthen audio supervision. Start with 2.0 to 10.0 and tune carefully. Too high can overfit audio and hurt
++        overall quality.
++      </>
++    ),
++  },
++  'train.auto_balance_audio_loss': {
++    title: 'Auto Balance Audio Loss',
++    description: (
++      <>
++        Automatically adjusts audio loss strength during training using running loss statistics, so audio supervision
++        stays strong without manually tuning a multiplier. Recommended for most LTX-2 audio jobs.
++      </>
++    ),
++  },
++  'train.strict_audio_mode': {
++    title: 'Strict Audio Mode',
++    description: (
++      <>
++        Fails training early if audio-enabled video batches are frequently missing effective audio supervision. Use this
++        to catch dataset/extraction problems early instead of discovering broken audio after long runs.
++      </>
++    ),
++  },
++  'train.strict_audio_min_supervised_ratio': {
++    title: 'Strict Audio Min Supervised Ratio',
++    description: (
++      <>
++        Minimum required ratio of supervised audio batches when strict audio mode is enabled. Example: 0.9 means at least
++        90% of expected audio batches must have valid supervision.
++      </>
++    ),
++  },
++  'train.strict_audio_warmup_steps': {
++    title: 'Strict Audio Warmup Steps',
++    description: (
++      <>
++        Number of initial training steps to ignore before strict audio checks begin. This avoids false positives during
++        startup and data-loader warmup.
++      </>
++    ),
++  },
++  'train.independent_audio_timestep': {
++    title: 'Independent Audio Timestep',
++    description: (
++      <>
++        Samples a separate random denoising timestep for audio on each training step instead of using the same timestep
++        as video. The LTX-2 transformer was designed for independent audio/video timestep processing. Enabling this
++        lets each modality learn at its own optimal noise level, significantly improving voice quality. Enabled by default.
++      </>
++    ),
++  },
++  'train.noise_offset': {
++    title: 'Noise Offset',
++    description: (
++      <>
++        Adds a small offset to training noise, improving the model's ability to generate very bright and very dark
++        content. Recommended value: 0.03 to 0.1. Set to 0 to disable.
+       </>
+     ),
+   },
++  'train.min_snr_gamma': {
++    title: 'Min-SNR Gamma',
++    description: (
++      <>
++        Applies minimum Signal-to-Noise Ratio weighting to balance loss across all noise levels. Prevents the model
++        from over-focusing on easy (low-noise) timesteps. Recommended: 5.0. Set to 0 to disable.
++      </>
++    ),
++  },
++  'train.lr_scheduler': {
++    title: 'LR Scheduler',
++    description: (
++      <>
++        Learning rate schedule strategy. Constant with warmup is safe for short runs. Cosine annealing produces
++        better quality for longer training runs by gradually reducing the learning rate.
++      </>
++    ),
++  },
++  'train.caption_dropout_rate': {
++    title: 'Caption Dropout Rate',
++    description: (
++      <>
++        Probability of dropping the caption for each training sample. Forces the model to learn visual/audio features
++        without relying on text, improving prompt generalization. Recommended: 0.05. Not compatible with text embedding caching.
++      </>
++    ),
++  },
++  'network.type': {
++    title: 'Network Type',
++    description: (
++      <>
++        LoRA variant to use. Standard LoRA is well-tested. DoRA (Weight-Decomposed LoRA) decomposes weight updates
++        into magnitude and direction, often producing higher quality results at the same rank. LoKr uses Kronecker
++        product factorization for more efficient parameter usage.
++      </>
++    ),
++  },
++  'network.rank_dropout': {
++    title: 'Rank Dropout',
++    description: (
++      <>
++        Randomly zeroes entire rank dimensions during training. Acts as strong regularization that prevents overfitting
++        while allowing higher rank for more capacity. Recommended: 0.1 for rank 32. Set to 0 to disable.
++      </>
++    ),
++  },
++  'network.module_dropout': {
++    title: 'Module Dropout',
++    description: (
++      <>
++        Randomly skips entire LoRA modules per training step. Forces the model to be robust across all layers.
++        More aggressive than rank dropout. Start with 0.0 unless overfitting is severe.
++      </>
++    ),
++  },
+   'train.cache_text_embeddings': {
+     title: 'Cache Text Embeddings',
+     description: (
+@@ -311,24 +430,13 @@
+     title: 'Num Repeats',
+     description: (
+       <>
+-        Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are
+-        using multiple datasets and want to balance the number of samples from each dataset. For instance, if you have a
+-        small dataset of 10 images and a large dataset of 100 images, you can set the small dataset to have 10 repeats
+-        to effectively make it 100 images, making the two datasets occour equally during training.
++        Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are using multiple
++        datasets and want to balance the number of samples from each dataset. For instance, if you have a small dataset of 10 images 
++        and a large dataset of 100 images, you can set the small dataset to have 10 repeats to effectively make it 100 images, making
++        the two datasets occour equally during training.
+       </>
+     ),
+   },
+-  'train.audio_loss_multiplier': {
+-    title: 'Audio Loss Multiplier',
+-    description: (
+-      <>
+-        When training audio and video, sometimes the video loss is so great that it outweights the audio loss, causing
+-        the audio to become distorted. If you are noticing this happen, you can increase the audio loss multiplier to
+-        give more weight to the audio loss. You could try something like 2.0, 10.0 etc. Warning, setting this too high
+-        could overfit and damage the model.
+-      </>
+-    ),
+-  },
+ };
+ 
+ export const getDoc = (key: string | null | undefined): ConfigDoc | null => {
+--- /tmp/originals/BaseSDTrainProcess.py	2026-02-19 16:39:30
++++ jobs/process/BaseSDTrainProcess.py	2026-02-19 16:34:40
+@@ -1589,10 +1589,13 @@
+         # run base sd process run
+         self.sd.load_model()
+         
+-        # compile the model if needed
+         if self.model_config.compile:
+             try:
+-                torch.compile(self.sd.unet, dynamic=True, fullgraph=True, mode='max-autotune')
++                model_to_compile = self.sd.unet
++                if hasattr(self.sd, 'is_transformer') and self.sd.is_transformer and hasattr(self.sd, 'model'):
++                    model_to_compile = self.sd.model
++                torch.compile(model_to_compile, dynamic=True, fullgraph=True, mode='max-autotune')
++                print_acc(f"Compiled {type(model_to_compile).__name__} with max-autotune")
+             except Exception as e:
+                 print_acc(f"Failed to compile model: {e}")
+                 print_acc("Continuing without compilation")
+@@ -1758,6 +1761,8 @@
+                     is_ssd=self.model_config.is_ssd,
+                     is_vega=self.model_config.is_vega,
+                     dropout=self.network_config.dropout,
++                    rank_dropout=self.network_config.rank_dropout,
++                    module_dropout=self.network_config.module_dropout,
+                     use_text_encoder_1=self.model_config.use_text_encoder_1,
+                     use_text_encoder_2=self.model_config.use_text_encoder_2,
+                     use_bias=is_lorm,
