@@ -98,12 +98,15 @@ const GpuMonitor: React.FC = () => {
       );
     }
 
-    if (!gpuData.hasNvidiaSmi) {
+    if (!gpuData.hasGpuMonitor) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
-          <strong className="font-bold">No NVIDIA GPUs detected!</strong>
-          <span className="block sm:inline"> nvidia-smi is not available on this system.</span>
-          {gpuData.error && <p className="mt-2 text-sm">{gpuData.error}</p>}
+          <strong className="font-bold">No GPU Monitor detected!</strong>
+          {gpuData.error ? (
+            <span className="block sm:inline"> {gpuData.error}</span>
+          ) : (
+            <span className="block sm:inline"> neither nvidia-smi nor rocm-smi is available on this system.</span>
+          )}
         </div>
       );
     }
@@ -111,7 +114,7 @@ const GpuMonitor: React.FC = () => {
     if (gpuData.gpus.length === 0) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
-          <span className="block sm:inline">No GPUs found, but nvidia-smi is available.</span>
+          <span className="block sm:inline">No GPUs found, but GPU monitor is available.</span>
         </div>
       );
     }
