@@ -25,6 +25,7 @@ export interface GpuClocks {
 
 export interface GpuFan {
   speed: number;
+  rpm?: number;
 }
 
 export interface GpuInfo {
@@ -37,6 +38,7 @@ export interface GpuInfo {
   power: GpuPower;
   clocks: GpuClocks;
   fan: GpuFan;
+  telemetrySource?: string;
 }
 
 export interface CpuInfo {

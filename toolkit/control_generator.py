@@ -8,6 +8,7 @@ from PIL.ImageOps import exif_transpose
 from tqdm import tqdm
 
 from torchvision import transforms
+from toolkit import device_utils
 
 # supress all warnings
 import warnings
@@ -17,7 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 def flush(garbage_collect=True):
-    torch.cuda.empty_cache()
+    device_utils.empty_cache()
     if garbage_collect:
         gc.collect()
 
@@ -169,8 +170,9 @@ class ControlGenerator:
                                      0.229, 0.224, 0.225])
             ])
 
+            # Assuming self.device is correct
             input_images = transform_image(img).unsqueeze(
-                0).to('cuda').to(torch.float16)
+                0).to(device).to(torch.float16)
 
             # Prediction
             preds = self.control_bg_remover(input_images)[-1].sigmoid().cpu()
@@ -259,7 +261,7 @@ if __name__ == "__main__":
     for img_path in tqdm(img_list):
         for control in controls:
             start = time.time()
-            control_gen = ControlGenerator(torch.device('cuda'))
+            control_gen = ControlGenerator(device_utils.get_device())
             control_gen.debug = args.debug
             control_gen.regen = args.regen
             control_path = control_gen.get_control_path(img_path, control)

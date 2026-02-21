@@ -10,6 +10,7 @@ import gradio as gr
 from PIL import Image
 import torch
 import uuid
+from toolkit import device_utils
 import os
 import shutil
 import json
@@ -98,7 +99,7 @@ def create_dataset(*inputs):
 
 def run_captioning(images, concept_sentence, *captions):
     #Load internally to not consume resources for training
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = device_utils.get_device()
     torch_dtype = torch.float16
     model = AutoModelForCausalLM.from_pretrained(
         "multimodalart/Florence-2-large-no-flash-attn", torch_dtype=torch_dtype, trust_remote_code=True
@@ -232,11 +233,18 @@ def start_training(
 
     return f"Training completed successfully. Model saved as {slugged_lora_name}"
 
-config_yaml = '''
-device: cuda:0
+default_device = str(device_utils.get_device())
+if default_device == "cuda":
+    default_device = "cuda:0"
+
+default_quantize = "false" if default_device == "mps" else "true"
+default_optimizer = "adamw" if default_device == "mps" else "adamw8bit"
+
+config_yaml = f'''
+device: {default_device}
 model:
   is_flux: true
-  quantize: true
+  quantize: {default_quantize}
 network:
   linear: 16 #it will overcome the 'rank' parameter
   linear_alpha: 16 #you can have an alpha different than the ranking if you'd like
@@ -266,7 +274,7 @@ train:
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
   noise_scheduler: flowmatch 
-  optimizer: adamw8bit #options: prodigy, dadaptation, adamw, adamw8bit, lion, lion8bit
+  optimizer: {default_optimizer} #options: prodigy, dadaptation, adamw, adamw8bit, lion, lion8bit
   train_text_encoder: false #probably doesn't work for flux
   train_unet: true
 '''
