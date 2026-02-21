@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     }
 
     // delete it and return success
-    fs.rmdirSync(datasetPath, { recursive: true });
+    fs.rmSync(datasetPath, { recursive: true, force: true });
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to create dataset' }, { status: 500 });

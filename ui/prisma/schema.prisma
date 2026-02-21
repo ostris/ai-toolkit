@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:../../aitk_db.db"
+  url      = "file:../../aitk_db.db?connection_limit=1&socket_timeout=60&busy_timeout=5000"
 }
 
 model Settings {
