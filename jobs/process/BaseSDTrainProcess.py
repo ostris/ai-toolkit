@@ -1329,6 +1329,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.train_config.random_noise_multiplier > 0.0:
                     sigma = self.train_config.random_noise_multiplier
                     noise_multiplier = torch.exp(torch.randn(s, device=noise.device, dtype=noise.dtype) * sigma)
+                    noise *= noise_multiplier 
                 
             with self.timer('make_noisy_latents'):
 
