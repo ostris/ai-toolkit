@@ -123,6 +123,36 @@ def flush():
     gc.collect()
 
 
+def is_bnb_quantized(model) -> bool:
+    """
+    Check if a model is already quantized with BitsAndBytes.
+    BnB-quantized models cannot have their dtype changed via .to(dtype=...).
+    
+    Checks both:
+    1. model.quantization_config (HuggingFace standard)
+    2. Presence of BnB linear layers in the model (fallback detection)
+    """
+    # Check via quantization_config (standard HuggingFace way)
+    if hasattr(model, 'quantization_config') and model.quantization_config is not None:
+        config = model.quantization_config
+        if hasattr(config, 'load_in_8bit') and config.load_in_8bit:
+            return True
+        if hasattr(config, 'load_in_4bit') and config.load_in_4bit:
+            return True
+    
+    # Fallback: Check for BnB linear layers directly in the model
+    # This catches cases where quantization_config isn't properly set
+    try:
+        import bitsandbytes as bnb
+        for module in model.modules():
+            if isinstance(module, (bnb.nn.Linear8bitLt, bnb.nn.Linear4bit)):
+                return True
+    except ImportError:
+        pass  # bitsandbytes not installed
+    
+    return False
+
+
 UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。
 # VAE_SCALE_FACTOR = 8  # 2 ** (len(vae.config.block_out_channels) - 1) = 8
 
@@ -625,7 +655,6 @@ class StableDiffusion:
             self.print_and_status_update("Loading Flux model")
             # base_model_path = "black-forest-labs/FLUX.1-schnell"
             base_model_path = self.model_config.name_or_path_original
-            self.print_and_status_update("Loading transformer")
             subfolder = 'transformer'
             transformer_path = model_path
             local_files_only = False
@@ -639,26 +668,41 @@ class StableDiffusion:
                 if os.path.exists(te_folder_path):
                     base_model_path = model_path
 
-            transformer = FluxTransformer2DModel.from_pretrained(
-                transformer_path,
-                subfolder=subfolder,
-                torch_dtype=dtype,
-                # low_cpu_mem_usage=False,
-                # device_map=None
-            )
-            # hack in model gpu splitter
-            if self.model_config.split_model_over_gpus:
-                add_model_gpu_splitter_to_flux(
-                    transformer, 
-                    other_module_param_count_scale=self.model_config.split_model_other_module_param_count_scale
+            # Sequential loading: defer transformer loading to reduce peak RAM usage
+            # When enabled, we load text encoders first, then transformer separately
+            # This allows Flux to load with ~12GB RAM instead of ~32GB
+            if self.model_config.sequential_load:
+                self.print_and_status_update("Sequential loading enabled - deferring transformer load")
+                transformer = None  # Will be loaded after text encoders
+                # Store paths for later loading
+                self._deferred_transformer_path = transformer_path
+                self._deferred_transformer_subfolder = subfolder
+            else:
+                self.print_and_status_update("Loading transformer")
+                transformer = FluxTransformer2DModel.from_pretrained(
+                    transformer_path,
+                    subfolder=subfolder,
+                    torch_dtype=dtype,
+                    # low_cpu_mem_usage=False,
+                    # device_map=None
                 )
-            
-            if not self.low_vram:
-                # for low v ram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu
-                transformer.to(self.quantize_device, dtype=dtype)
-            flush()
+                # hack in model gpu splitter
+                if self.model_config.split_model_over_gpus:
+                    add_model_gpu_splitter_to_flux(
+                        transformer, 
+                        other_module_param_count_scale=self.model_config.split_model_other_module_param_count_scale
+                    )
+                
+                if not self.low_vram:
+                    # for low v ram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu
+                    transformer.to(self.quantize_device, dtype=dtype)
+                flush()
 
-            if self.model_config.assistant_lora_path is not None or self.model_config.inference_lora_path is not None:
+            # Skip LoRA loading if transformer is deferred (sequential_load mode)
+            if transformer is None and self.model_config.sequential_load:
+                # LoRA and quantization will be applied after deferred transformer load
+                pass
+            elif self.model_config.assistant_lora_path is not None or self.model_config.inference_lora_path is not None:
                 if self.model_config.inference_lora_path is not None and self.model_config.assistant_lora_path is not None:
                     raise ValueError("Cannot load both assistant lora and inference lora at the same time")
                 
@@ -766,16 +810,23 @@ class StableDiffusion:
                     pipe.unload_lora_weights()
             flush()
             
-            if self.model_config.quantize:
-                # patch the state dict method
-                patch_dequantization_on_save(transformer)
-                quantization_type = get_qtype(self.model_config.qtype)
-                self.print_and_status_update("Quantizing transformer")
-                quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
-                freeze(transformer)
-                transformer.to(self.device_torch)
-            else:
-                transformer.to(self.device_torch, dtype=dtype)
+            # Skip quantization if transformer is deferred (sequential_load mode)
+            if transformer is not None:
+                # Skip quantization if already BnB quantized
+                if self.model_config.quantize and not is_bnb_quantized(transformer):
+                    # patch the state dict method
+                    patch_dequantization_on_save(transformer)
+                    quantization_type = get_qtype(self.model_config.qtype)
+                    self.print_and_status_update("Quantizing transformer")
+                    quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
+                    freeze(transformer)
+                    transformer.to(self.device_torch)
+                elif self.model_config.quantize and is_bnb_quantized(transformer):
+                    self.print_and_status_update("Transformer is already BnB quantized, skipping quantization")
+                else:
+                    # BnB pre-quantized models cannot have .to() called at all - already on correct device
+                    if not is_bnb_quantized(transformer):
+                        transformer.to(self.device_torch, dtype=dtype)
 
             flush()
 
@@ -792,19 +843,26 @@ class StableDiffusion:
             text_encoder_2 = T5EncoderModel.from_pretrained(base_model_path, subfolder="text_encoder_2",
                                                             torch_dtype=dtype)
 
-            text_encoder_2.to(self.device_torch, dtype=dtype)
+            # BnB pre-quantized models cannot have .to() called at all - already on correct device
+            if not is_bnb_quantized(text_encoder_2):
+                text_encoder_2.to(self.device_torch, dtype=dtype)
             flush()
 
             if self.model_config.quantize_te:
-                self.print_and_status_update("Quantizing T5")
-                quantize(text_encoder_2, weights=get_qtype(self.model_config.qtype))
-                freeze(text_encoder_2)
-                flush()
+                if not is_bnb_quantized(text_encoder_2):
+                    self.print_and_status_update("Quantizing T5")
+                    quantize(text_encoder_2, weights=get_qtype(self.model_config.qtype))
+                    freeze(text_encoder_2)
+                    flush()
+                else:
+                    self.print_and_status_update("T5 is already BnB quantized, skipping quantization")
                 
             self.print_and_status_update("Loading CLIP")
             text_encoder = CLIPTextModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
             tokenizer = CLIPTokenizer.from_pretrained(base_model_path, subfolder="tokenizer", torch_dtype=dtype)
-            text_encoder.to(self.device_torch, dtype=dtype)
+            # BnB pre-quantized models cannot have .to() called at all - already on correct device
+            if not is_bnb_quantized(text_encoder):
+                text_encoder.to(self.device_torch, dtype=dtype)
 
             self.print_and_status_update("Making pipe")
             Pipe = FluxPipeline
@@ -826,16 +884,25 @@ class StableDiffusion:
             text_encoder = [pipe.text_encoder, pipe.text_encoder_2]
             tokenizer = [pipe.tokenizer, pipe.tokenizer_2]
 
-            pipe.transformer = pipe.transformer.to(self.device_torch)
+            # Only move transformer to device if it's loaded (not in sequential_load mode)
+            # And ONLY if not BnB quantized (already on device)
+            if pipe.transformer is not None and not is_bnb_quantized(pipe.transformer):
+                pipe.transformer = pipe.transformer.to(self.device_torch)
 
             flush()
-            text_encoder[0].to(self.device_torch)
+            # BnB models cannot have .to() called
+            if not is_bnb_quantized(text_encoder[0]):
+                text_encoder[0].to(self.device_torch)
             text_encoder[0].requires_grad_(False)
             text_encoder[0].eval()
-            text_encoder[1].to(self.device_torch)
+            
+            if not is_bnb_quantized(text_encoder[1]):
+                text_encoder[1].to(self.device_torch)
             text_encoder[1].requires_grad_(False)
             text_encoder[1].eval()
-            pipe.transformer = pipe.transformer.to(self.device_torch)
+            
+            if pipe.transformer is not None and not is_bnb_quantized(pipe.transformer):
+                pipe.transformer = pipe.transformer.to(self.device_torch)
             flush()
         elif self.model_config.is_lumina2:
             self.print_and_status_update("Loading Lumina2 model")
@@ -1125,6 +1192,71 @@ class StableDiffusion:
         
     def add_status_update_hook(self, func):
         self._status_update_hooks.append(func)
+    
+    def load_deferred_transformer(self):
+        """
+        Load the transformer that was deferred during sequential_load mode.
+        Call this after text encoder embeddings have been cached and text encoders unloaded.
+        This reduces peak RAM by not having transformer and text encoders loaded simultaneously.
+        """
+        if not hasattr(self, '_deferred_transformer_path') or self._deferred_transformer_path is None:
+            return  # Nothing to load
+        
+        from toolkit.train_tools import get_torch_dtype
+        dtype = get_torch_dtype(self.model_config.dtype)
+        
+        self.print_and_status_update("Loading deferred transformer (sequential_load mode)")
+        transformer = FluxTransformer2DModel.from_pretrained(
+            self._deferred_transformer_path,
+            subfolder=self._deferred_transformer_subfolder,
+            torch_dtype=dtype,
+        )
+        
+        # hack in model gpu splitter
+        if self.model_config.split_model_over_gpus:
+            from toolkit.models.flux import add_model_gpu_splitter_to_flux
+            add_model_gpu_splitter_to_flux(
+                transformer, 
+                other_module_param_count_scale=self.model_config.split_model_other_module_param_count_scale
+            )
+        
+        flush()
+        
+        # Apply quantization if needed
+        # Apply quantization if needed
+        if self.model_config.quantize:
+            # Skip if already BnB quantized
+            if not is_bnb_quantized(transformer):
+                from toolkit.dequantize import patch_dequantization_on_save
+                from optimum.quanto import freeze
+                from toolkit.util.quantize import quantize, get_qtype
+                
+                patch_dequantization_on_save(transformer)
+                quantization_type = get_qtype(self.model_config.qtype)
+                self.print_and_status_update("Quantizing transformer")
+                quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
+                freeze(transformer)
+                transformer.to(self.device_torch)
+            else:
+                self.print_and_status_update("Transformer is already BnB quantized, skipping quantization")
+        else:
+            # BnB pre-quantized models cannot have .to() called at all - already on correct device
+            if not is_bnb_quantized(transformer):
+                transformer.to(self.device_torch, dtype=dtype)
+        
+        flush()
+        
+        # Assign to pipeline
+        self.unet = transformer
+        if hasattr(self, 'pipeline') and self.pipeline is not None:
+            self.pipeline.transformer = transformer
+        
+        # Clear deferred state
+        self._deferred_transformer_path = None
+        self._deferred_transformer_subfolder = None
+        
+        self.print_and_status_update("Deferred transformer loaded successfully")
+
 
     @torch.no_grad()
     def generate_images(

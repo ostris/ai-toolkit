@@ -347,6 +347,11 @@ class SDTrainer(BaseSDTrainProcess):
                     # keep legacy usage for now. 
                     self.sd.text_encoder_to("cpu")
                 flush()
+                
+                # Load deferred transformer now that text encoders are unloaded
+                # This is for sequential_load mode to reduce peak RAM usage
+                if hasattr(self.sd, 'load_deferred_transformer'):
+                    self.sd.load_deferred_transformer()
         
         if self.train_config.blank_prompt_preservation and self.cached_blank_embeds is None:
             # make sure we have this if not unloading

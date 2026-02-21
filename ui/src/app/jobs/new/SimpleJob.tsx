@@ -219,13 +219,29 @@ export default function SimpleJob({
                 placeholder=""
               />
             )}
-            {modelArch?.additionalSections?.includes('model.low_vram') && (
+            {(modelArch?.additionalSections?.includes('model.low_vram') || modelArch?.additionalSections?.includes('model.sequential_load')) && (
               <FormGroup label="Options">
-                <Checkbox
-                  label="Low VRAM"
-                  checked={jobConfig.config.process[0].model.low_vram}
-                  onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
-                />
+                {modelArch?.additionalSections?.includes('model.low_vram') && (
+                  <Checkbox
+                    label="Low VRAM"
+                    checked={jobConfig.config.process[0].model.low_vram}
+                    onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('model.sequential_load') && (
+                  <Checkbox
+                    label="Sequential Load (Low RAM)"
+                    checked={jobConfig.config.process[0].model.sequential_load || false}
+                    onChange={value => {
+                      setJobConfig(value, 'config.process[0].model.sequential_load');
+                      // Sequential load requires cache_text_embeddings to work
+                      if (value) {
+                        setJobConfig(true, 'config.process[0].train.cache_text_embeddings');
+                      }
+                    }}
+                    docKey="model.sequential_load"
+                  />
+                )}
               </FormGroup>
             )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
