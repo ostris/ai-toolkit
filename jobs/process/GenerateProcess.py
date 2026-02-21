@@ -102,7 +102,7 @@ class GenerateProcess(BaseProcess):
             if self.model_config.is_lumina2:
                 arch = 'lumina2'
             sampler = get_sampler(
-                self.train_config.noise_scheduler,
+                self.generate_config.noise_scheduler,
                 {
                     "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
                 },
