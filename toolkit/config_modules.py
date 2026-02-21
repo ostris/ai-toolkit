@@ -6,6 +6,7 @@ import random
 import torch
 import torchaudio
 
+from toolkit import device_utils
 from toolkit.prompt_utils import PromptEmbeds
 
 ImgExt = Literal['jpg', 'png', 'webp']
@@ -953,6 +954,11 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+
+        if device_utils.is_mps_available():
+            # Force num_workers to 0 on MPS to avoid shared memory issues
+            self.num_workers = 0
+            self.prefetch_factor = None
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
@@ -1354,5 +1360,3 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
-
-    

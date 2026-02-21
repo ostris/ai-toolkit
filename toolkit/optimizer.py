@@ -61,8 +61,24 @@ def get_optimizer(
 
         optimizer = Adam8bit(params, lr=learning_rate, eps=1e-6, decouple=True, **optimizer_params)
     elif lower_type.endswith("8bit"):
-        import bitsandbytes
+        from toolkit import device_utils
+        if device_utils.get_device_name() == "mps":
+            print("Bitsandbytes 8-bit optimizers are not supported on MPS. Falling back to standard optimizer.")
+            if lower_type == "adam8bit":
+                return torch.optim.Adam(params, lr=learning_rate, eps=1e-6, **optimizer_params)
+            elif lower_type == "adamw8bit":
+                return torch.optim.AdamW(params, lr=learning_rate, eps=1e-6, **optimizer_params)
+            elif lower_type == "lion8bit":
+                try:
+                    from lion_pytorch import Lion
+                    return Lion(params, lr=learning_rate, **optimizer_params)
+                except ImportError:
+                    raise ImportError("Please install lion_pytorch to use Lion optimizer -> pip install lion-pytorch")
+            else:
+                # Fallback for ademamix or unknown - generic AdamW
+                return torch.optim.AdamW(params, lr=learning_rate, eps=1e-6, **optimizer_params)
 
+        import bitsandbytes
         if lower_type == "adam8bit":
             return bitsandbytes.optim.Adam8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
         if lower_type == "ademamix8bit":

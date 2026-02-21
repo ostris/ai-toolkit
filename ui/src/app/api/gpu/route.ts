@@ -10,6 +10,44 @@ export async function GET() {
     // Get platform
     const platform = os.platform();
     const isWindows = platform === 'win32';
+    const isMac = platform === 'darwin';
+
+    if (isMac) {
+      // Mock GPU for Mac (MPS)
+      const totalMem = Math.round(os.totalmem() / (1024 * 1024));
+      const freeMem = Math.round(os.freemem() / (1024 * 1024));
+      const usedMem = totalMem - freeMem;
+
+      return NextResponse.json({
+        hasNvidiaSmi: true, // Mock true to satisfy frontend
+        gpus: [{
+          index: 0,
+          name: "Apple Silicon (MPS)",
+          driverVersion: "N/A",
+          temperature: 0,
+          utilization: {
+            gpu: 0,
+            memory: Math.round((usedMem / totalMem) * 100),
+          },
+          memory: {
+            total: totalMem,
+            free: freeMem,
+            used: usedMem,
+          },
+          power: {
+            draw: 0,
+            limit: 0,
+          },
+          clocks: {
+            graphics: 0,
+            memory: 0,
+          },
+          fan: {
+            speed: 0,
+          },
+        }],
+      });
+    }
 
     // Check if nvidia-smi is available
     const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
