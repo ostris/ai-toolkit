@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
@@ -12,6 +12,7 @@ interface DatasetImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onSplit?: () => void;
   onEnlarge?: () => void;
   selected?: boolean;
   isSelectMode?: boolean;
@@ -25,6 +26,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   children,
   className = '',
   onDelete = () => {},
+  onSplit,
   onEnlarge,
   selected = false,
   isSelectMode = false,
@@ -100,6 +102,36 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       .catch(error => {
         console.error('Error rotating image:', error);
       });
+  };
+
+  const handleSplitVideo = () => {
+    openConfirm({
+      title: 'Split Video',
+      message: 'Enter the number of seconds per segment to split the video into.',
+      inputTitle: 'Seconds per segment (e.g. 30)',
+      confirmText: 'Split',
+      type: 'info',
+      onConfirm: (value?: string) => {
+        const seconds = parseInt(value || '', 10);
+        if (isNaN(seconds) || seconds < 1) {
+          openConfirm({
+            title: 'Invalid Input',
+            message: 'Please enter a valid number of seconds (minimum 1).',
+            confirmText: 'OK',
+            type: 'warning',
+          });
+          return;
+        }
+        apiClient
+          .post('/api/video/split', { videoPath: imageUrl, secondsPerSegment: seconds })
+          .then(() => {
+            onSplit?.();
+          })
+          .catch(error => {
+            console.error('Error splitting video:', error);
+          });
+      },
+    });
   };
 
   // Only fetch caption when the component is both in viewport and visible
@@ -290,6 +322,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                 aria-label="Rotate image right"
               >
                 <FaRedoAlt />
+              </button>
+            )}
+            {isItAVideo && (
+              <button
+                className="bg-gray-800 rounded-full p-2"
+                onClick={handleSplitVideo}
+                aria-label="Split video"
+              >
+                <FaCut />
               </button>
             )}
             <button
