@@ -71,6 +71,12 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setSelectedImages(new Set());
   }, []);
 
+  useEffect(() => {
+    if (isSelectMode && selectedImages.size === 0) {
+      setIsSelectMode(false);
+    }
+  }, [isSelectMode, selectedImages.size]);
+
   const handleBulkDelete = useCallback(async () => {
     const paths = Array.from(selectedImages);
     await Promise.all(
