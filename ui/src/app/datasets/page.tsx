@@ -38,7 +38,7 @@ export default function Datasets() {
         if (!imageStats[datasetName] && !statsLoading[datasetName]) {
           setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
           apiClient
-            .post('/api/datasets/imageStats', { datasetName }, { signal: abortController.signal })
+            .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
             .then(res => res.data)
             .then((data: ImageStats) => {
               if (!abortController.signal.aborted) {

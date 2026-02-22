@@ -9,10 +9,10 @@ interface ImageStats {
   resolutionBreakdown: { [resolution: string]: number };
 }
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   const datasetsPath = await getDatasetsRoot();
-  const body = await request.json();
-  const { datasetName } = body;
+  const { searchParams } = new URL(request.url);
+  const datasetName = searchParams.get('datasetName');
 
   // Validate datasetName
   if (!datasetName || typeof datasetName !== 'string' || datasetName.trim() === '') {
