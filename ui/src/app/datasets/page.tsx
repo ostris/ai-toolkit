@@ -17,6 +17,7 @@ import { Tooltip } from '@/components/Tooltip';
 interface ImageStats {
   totalCount: number;
   resolutionBreakdown: { [resolution: string]: number };
+  error?: boolean; // Flag to indicate if there was an error
 }
 
 export default function Datasets() {
@@ -48,6 +49,11 @@ export default function Datasets() {
             .catch(error => {
               if (!abortController.signal.aborted) {
                 console.error(`Error fetching image stats for ${datasetName}:`, error);
+                // Set error state so we can show "error fetching stats"
+                setImageStats(prev => ({ 
+                  ...prev, 
+                  [datasetName]: { totalCount: 0, resolutionBreakdown: {}, error: true } 
+                }));
                 setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
               }
             });
@@ -92,6 +98,11 @@ export default function Datasets() {
 
         if (!stats) {
           return <span className="text-gray-400">-</span>;
+        }
+
+        // If there was an error and no data, show error message
+        if (stats.error && stats.totalCount === 0) {
+          return <span className="text-red-400">Error fetching stats</span>;
         }
 
         // Sort resolutions by count (descending)

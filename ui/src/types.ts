@@ -146,6 +146,7 @@ export interface TrainConfig {
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
   do_differential_guidance?: boolean;
   differential_guidance_scale?: number;
+  audio_loss_multiplier?: number;
 }
 
 export interface QuantizeKwargsConfig {

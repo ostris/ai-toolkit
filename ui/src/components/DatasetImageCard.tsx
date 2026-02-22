@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
@@ -12,6 +12,7 @@ interface DatasetImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onEnlarge?: () => void;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -20,6 +21,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   children,
   className = '',
   onDelete = () => {},
+  onEnlarge,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -28,6 +30,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
+  const [imageKey, setImageKey] = useState<number>(Date.now());
   const isGettingCaption = useRef<boolean>(false);
 
   const fetchCaption = async () => {
@@ -66,6 +69,18 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       })
       .catch(error => {
         console.error('Error saving caption:', error);
+      });
+  };
+
+  const rotateImage = (direction: 'left' | 'right') => {
+    apiClient
+      .post('/api/img/rotate', { imgPath: imageUrl, direction })
+      .then(() => {
+        setLoaded(false);
+        setImageKey(prev => prev + 1);
+      })
+      .catch(error => {
+        console.error('Error rotating image:', error);
       });
   };
 
@@ -156,12 +171,14 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               )}
               {isItImage && (
                 <img
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  key={imageKey}
+                  src={`/api/img/${encodeURIComponent(imageUrl)}?v=${imageKey}`}
                   alt={alt}
                   onLoad={handleLoad}
+                  onClick={onEnlarge}
                   className={`w-full h-full object-contain transition-opacity duration-300 ${
                     loaded ? 'opacity-100' : 'opacity-0'
-                  }`}
+                  } ${onEnlarge ? 'cursor-pointer' : ''}`}
                 />
               )}
             </>
@@ -173,15 +190,36 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
           <div className="absolute top-1 right-1 flex space-x-2 z-10">
+            {onEnlarge && isItImage && (
+              <button
+                className="bg-gray-800 rounded-full p-2"
+                onClick={onEnlarge}
+                aria-label="Enlarge image"
+              >
+                <FaExpand />
+              </button>
+            )}
+            {isItImage && (
+              <button
+                className="bg-gray-800 rounded-full p-2"
+                onClick={() => rotateImage('left')}
+                aria-label="Rotate image left"
+              >
+                <FaUndoAlt />
+              </button>
+            )}
+            {isItImage && (
+              <button
+                className="bg-gray-800 rounded-full p-2"
+                onClick={() => rotateImage('right')}
+                aria-label="Rotate image right"
+              >
+                <FaRedoAlt />
+              </button>
+            )}
             <button
               className="bg-gray-800 rounded-full p-2"
               onClick={() => {
-                openConfirm({
-                  title: `Delete ${isItAVideo ? 'video' : 'image'}`,
-                  message: `Are you sure you want to delete this ${isItAVideo ? 'video' : 'image'}? This action cannot be undone.`,
-                  type: 'warning',
-                  confirmText: 'Delete',
-                  onConfirm: () => {
                     apiClient
                       .post('/api/img/delete', { imgPath: imageUrl })
                       .then(() => {
@@ -191,9 +229,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                       .catch(error => {
                         console.error('Error deleting image:', error);
                       });
-                  },
-                });
-              }}
+                  }}
             >
               <FaTrashAlt />
             </button>

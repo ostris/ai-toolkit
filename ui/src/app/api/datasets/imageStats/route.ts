@@ -31,16 +31,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid dataset path' }, { status: 400 });
   }
 
-  try {
-    // Check if folder exists
-    if (!fs.existsSync(datasetFolder)) {
-      return NextResponse.json({ error: `Folder '${datasetName}' not found` }, { status: 404 });
-    }
+  // Check if folder exists
+  if (!fs.existsSync(datasetFolder)) {
+    return NextResponse.json({ error: `Folder '${datasetName}' not found` }, { status: 404 });
+  }
 
+  // Initialize stats with defaults
+  let totalCount = 0;
+  const resolutionBreakdown: { [resolution: string]: number } = {};
+  let hasError = false;
+
+  try {
     // Find all images recursively
     const imageFiles = findImagesRecursively(datasetFolder);
-    const totalCount = imageFiles.length;
-    const resolutionBreakdown: { [resolution: string]: number } = {};
+    totalCount = imageFiles.length;
 
     // Get resolution for each image with concurrent processing
     const CONCURRENCY_LIMIT = 10;
@@ -71,17 +75,18 @@ export async function POST(request: Request) {
         })
       );
     }
-
-    const stats: ImageStats = {
-      totalCount,
-      resolutionBreakdown,
-    };
-
-    return NextResponse.json(stats);
   } catch (error) {
     console.error('Error calculating image stats:', error);
-    return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
+    hasError = true;
   }
+
+  // Always return stats with what we have, even if there were errors
+  const stats: ImageStats = {
+    totalCount,
+    resolutionBreakdown,
+  };
+
+  return NextResponse.json(stats);
 }
 
 /**
