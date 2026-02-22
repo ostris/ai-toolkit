@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState, use, useMemo } from 'react';
+import { useEffect, useState, use, useMemo, useCallback } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
+import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
+import { isAudio } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
@@ -15,6 +17,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const usableParams = use(params as any) as { datasetName: string };
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  const removeImageFromList = useCallback((imgPath: string) => {
+    setImgList(prev => prev.filter(x => x.img_path !== imgPath));
+  }, []);
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
@@ -100,7 +107,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           </Button>
         </div>
         <div>
-          <h1 className="text-lg">Dataset: {datasetName}</h1>
+          <h1 className="text-lg">Dataset: {datasetName}, Images: {imgList.length}</h1>
         </div>
         <div className="flex-1"></div>
         <div>
@@ -121,13 +128,19 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 key={img.img_path}
                 alt="image"
                 imageUrl={img.img_path}
-                onDelete={() => refreshImageList(datasetName)}
+                onDelete={() => removeImageFromList(img.img_path)}
+                onEnlarge={() => setSelectedImage(img.img_path)}
               />
             ))}
           </div>
         )}
       </MainContent>
       <AddImagesModal />
+      <DatasetImageViewer
+        imgPath={selectedImage}
+        images={imgList.map(img => img.img_path).filter(path => !isAudio(path))}
+        onChange={setSelectedImage}
+      />
       <FullscreenDropOverlay
         datasetName={datasetName}
         onComplete={() => refreshImageList(datasetName)}

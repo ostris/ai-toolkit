@@ -112,8 +112,8 @@ const docs: { [key: string]: ConfigDoc } = {
     description: (
       <>
         For models that support audio with video, this option will load the audio from the video and resize it to match
-        the video sequence. Since the video is automatically resized, the audio may drop or raise in pitch to match the new
-        speed of the video. It is important to prep your dataset to have the proper length before training.
+        the video sequence. Since the video is automatically resized, the audio may drop or raise in pitch to match the
+        new speed of the video. It is important to prep your dataset to have the proper length before training.
       </>
     ),
   },
@@ -121,8 +121,9 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Audio Normalize',
     description: (
       <>
-        When loading audio, this will normalize the audio volume to the max peaks. Useful if your dataset has varying audio
-        volumes. Warning, do not use if you have clips with full silence you want to keep, as it will raise the volume of those clips.
+        When loading audio, this will normalize the audio volume to the max peaks. Useful if your dataset has varying
+        audio volumes. Warning, do not use if you have clips with full silence you want to keep, as it will raise the
+        volume of those clips.
       </>
     ),
   },
@@ -132,7 +133,7 @@ const docs: { [key: string]: ConfigDoc } = {
       <>
         When loading audio to match the number of frames requested, this option will preserve the pitch of the audio if
         the length does not match training target. It is recommended to have a dataset that matches your target length,
-        as this option can add sound distortions. 
+        as this option can add sound distortions.
       </>
     ),
   },
@@ -310,10 +311,21 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Num Repeats',
     description: (
       <>
-        Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are using multiple
-        datasets and want to balance the number of samples from each dataset. For instance, if you have a small dataset of 10 images 
-        and a large dataset of 100 images, you can set the small dataset to have 10 repeats to effectively make it 100 images, making
-        the two datasets occour equally during training.
+        Number of Repeats will allow you to repeate the items in a dataset multiple times. This is useful when you are
+        using multiple datasets and want to balance the number of samples from each dataset. For instance, if you have a
+        small dataset of 10 images and a large dataset of 100 images, you can set the small dataset to have 10 repeats
+        to effectively make it 100 images, making the two datasets occour equally during training.
+      </>
+    ),
+  },
+  'train.audio_loss_multiplier': {
+    title: 'Audio Loss Multiplier',
+    description: (
+      <>
+        When training audio and video, sometimes the video loss is so great that it outweights the audio loss, causing
+        the audio to become distorted. If you are noticing this happen, you can increase the audio loss multiplier to
+        give more weight to the audio loss. You could try something like 2.0, 10.0 etc. Warning, setting this too high
+        could overfit and damage the model.
       </>
     ),
   },
