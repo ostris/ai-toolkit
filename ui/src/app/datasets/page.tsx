@@ -1,27 +1,78 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Modal } from '@/components/Modal';
 import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
-import { FaRegTrashAlt } from 'react-icons/fa';
+import { FaRegTrashAlt, FaInfoCircle } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { apiClient } from '@/utils/api';
 import { useRouter } from 'next/navigation';
+import { Tooltip } from '@/components/Tooltip';
+
+interface ImageStats {
+  totalCount: number;
+  resolutionBreakdown: { [resolution: string]: number };
+  error?: boolean; // Flag to indicate if there was an error
+}
 
 export default function Datasets() {
   const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
+  const [imageStats, setImageStats] = useState<{ [datasetName: string]: ImageStats }>({});
+  const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
+  const requestedDatasets = useRef<Set<string>>(new Set());
+
+  // Fetch image stats for each dataset
+  useEffect(() => {
+    const abortController = new AbortController();
+    
+    if (datasets.length > 0) {
+      datasets.forEach(datasetName => {
+        // Only fetch if we haven't already requested this dataset
+        if (!requestedDatasets.current.has(datasetName)) {
+          requestedDatasets.current.add(datasetName);
+          setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
+          
+          apiClient
+            .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
+            .then(res => res.data)
+            .then((data: ImageStats) => {
+              if (!abortController.signal.aborted) {
+                setImageStats(prev => ({ ...prev, [datasetName]: data }));
+                setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
+              }
+            })
+            .catch(error => {
+              if (!abortController.signal.aborted) {
+                console.error(`Error fetching image stats for ${datasetName}:`, error);
+                // Set error state so we can show "error fetching stats"
+                setImageStats(prev => ({ 
+                  ...prev, 
+                  [datasetName]: { totalCount: 0, resolutionBreakdown: {}, error: true } 
+                }));
+                setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
+              }
+            });
+        }
+      });
+    }
+
+    return () => {
+      abortController.abort();
+    };
+  }, [datasets]);
 
   // Transform datasets array into rows with objects
   const tableRows = datasets.map(dataset => ({
     name: dataset,
+    imageCount: dataset, // Pass dataset name to look up stats
     actions: dataset, // Pass full dataset name for actions
   }));
 
@@ -34,6 +85,58 @@ export default function Datasets() {
           {row.name}
         </Link>
       ),
+    },
+    {
+      title: 'Image Count',
+      key: 'imageCount',
+      className: 'w-32 text-center',
+      render: row => {
+        const datasetName = row.name;
+        const stats = imageStats[datasetName];
+        const loading = statsLoading[datasetName];
+
+        if (loading) {
+          return <span className="text-gray-400">Loading...</span>;
+        }
+
+        if (!stats) {
+          return <span className="text-gray-400">-</span>;
+        }
+
+        // If there was an error and no data, show error message
+        if (stats.error && stats.totalCount === 0) {
+          return <span className="text-red-400">Error fetching stats</span>;
+        }
+
+        // Sort resolutions by count (descending)
+        const sortedResolutions = Object.entries(stats.resolutionBreakdown).sort(
+          ([, countA], [, countB]) => countB - countA
+        );
+
+        const tooltipContent = (
+          <div className="text-left">
+            <div className="font-semibold mb-1">Resolution Breakdown:</div>
+            {sortedResolutions.length > 0 ? (
+              sortedResolutions.map(([resolution, count]) => (
+                <div key={resolution} className="text-xs">
+                  {resolution}: {count} {count === 1 ? 'image' : 'images'}
+                </div>
+              ))
+            ) : (
+              <div className="text-xs">No images found</div>
+            )}
+          </div>
+        );
+
+        return (
+          <div className="flex items-center justify-center gap-2">
+            <span className="text-gray-200">{stats.totalCount}</span>
+            <Tooltip content={tooltipContent}>
+              <FaInfoCircle className="text-gray-400 hover:text-gray-200 cursor-help" />
+            </Tooltip>
+          </div>
+        );
+      },
     },
     {
       title: 'Actions',
@@ -61,6 +164,19 @@ export default function Datasets() {
           .post('/api/datasets/delete', { name: datasetName })
           .then(() => {
             console.log('Dataset deleted:', datasetName);
+            // Clear stats for the deleted dataset
+            setImageStats(prev => {
+              const newStats = { ...prev };
+              delete newStats[datasetName];
+              return newStats;
+            });
+            setStatsLoading(prev => {
+              const newLoading = { ...prev };
+              delete newLoading[datasetName];
+              return newLoading;
+            });
+            // Remove from requested datasets so it can be fetched again if recreated
+            requestedDatasets.current.delete(datasetName);
             refreshDatasets();
           })
           .catch(error => {
