@@ -11,7 +11,6 @@ import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { isAudio } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
-import { openConfirm } from '@/components/ConfirmModal';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -72,27 +71,18 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setSelectedImages(new Set());
   }, []);
 
-  const handleBulkDelete = useCallback(() => {
-    const count = selectedImages.size;
-    openConfirm({
-      title: `Delete ${count} image${count !== 1 ? 's' : ''}`,
-      message: `Are you sure you want to delete ${count} selected image${count !== 1 ? 's' : ''}? This action cannot be undone.`,
-      confirmText: 'Delete',
-      type: 'danger',
-      onConfirm: async () => {
-        const paths = Array.from(selectedImages);
-        await Promise.all(
-          paths.map(imgPath =>
-            apiClient
-              .post('/api/img/delete', { imgPath })
-              .then(() => removeImageFromList(imgPath))
-              .catch(error => console.error('Error deleting image:', error)),
-          ),
-        );
-        setIsSelectMode(false);
-        setSelectedImages(new Set());
-      },
-    });
+  const handleBulkDelete = useCallback(async () => {
+    const paths = Array.from(selectedImages);
+    await Promise.all(
+      paths.map(imgPath =>
+        apiClient
+          .post('/api/img/delete', { imgPath })
+          .then(() => removeImageFromList(imgPath))
+          .catch(error => console.error('Error deleting image:', error)),
+      ),
+    );
+    setIsSelectMode(false);
+    setSelectedImages(new Set());
   }, [selectedImages, removeImageFromList]);
 
   const PageInfoContent = useMemo(() => {
