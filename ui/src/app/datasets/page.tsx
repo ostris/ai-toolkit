@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Modal } from '@/components/Modal';
 import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
@@ -27,6 +27,7 @@ export default function Datasets() {
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
   const [imageStats, setImageStats] = useState<{ [datasetName: string]: ImageStats }>({});
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
+  const requestedDatasets = useRef<Set<string>>(new Set());
 
   // Fetch image stats for each dataset
   useEffect(() => {
@@ -34,9 +35,11 @@ export default function Datasets() {
     
     if (datasets.length > 0) {
       datasets.forEach(datasetName => {
-        // Only fetch if we don't already have the stats and not currently loading
-        if (!imageStats[datasetName] && !statsLoading[datasetName]) {
+        // Only fetch if we haven't already requested this dataset
+        if (!requestedDatasets.current.has(datasetName)) {
+          requestedDatasets.current.add(datasetName);
           setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
+          
           apiClient
             .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
             .then(res => res.data)
@@ -64,7 +67,7 @@ export default function Datasets() {
     return () => {
       abortController.abort();
     };
-  }, [datasets, imageStats, statsLoading]);
+  }, [datasets]);
 
   // Transform datasets array into rows with objects
   const tableRows = datasets.map(dataset => ({
@@ -172,6 +175,8 @@ export default function Datasets() {
               delete newLoading[datasetName];
               return newLoading;
             });
+            // Remove from requested datasets so it can be fetched again if recreated
+            requestedDatasets.current.delete(datasetName);
             refreshDatasets();
           })
           .catch(error => {
