@@ -2,14 +2,14 @@
 
 import { useEffect, useState, use, useMemo, useCallback } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
-import { FaChevronLeft, FaTrashAlt, FaTimes } from 'react-icons/fa';
+import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
-import { isAudio } from '@/utils/basic';
+import { isAudio, isVideo } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
@@ -19,6 +19,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isSelectMode, setIsSelectMode] = useState<boolean>(false);
+  const [isMergeMode, setIsMergeMode] = useState<boolean>(false);
   const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
 
   const removeImageFromList = useCallback((imgPath: string) => {
@@ -68,6 +69,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
   const handleCancelSelect = useCallback(() => {
     setIsSelectMode(false);
+    setIsMergeMode(false);
     setSelectedImages(new Set());
   }, []);
 
@@ -90,6 +92,26 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setIsSelectMode(false);
     setSelectedImages(new Set());
   }, [selectedImages, removeImageFromList]);
+
+  const handleMergeStart = useCallback((imgPath: string) => {
+    setIsSelectMode(true);
+    setIsMergeMode(true);
+    setSelectedImages(new Set([imgPath]));
+  }, []);
+
+  const handleMergeClips = useCallback(async () => {
+    const videoPaths = Array.from(selectedImages).filter(p => isVideo(p)).sort();
+    if (videoPaths.length < 2) return;
+    try {
+      await apiClient.post('/api/video/merge', { videoPaths });
+      refreshImageList(datasetName);
+    } catch (error) {
+      console.error('Error merging videos:', error);
+    }
+    setIsSelectMode(false);
+    setIsMergeMode(false);
+    setSelectedImages(new Set());
+  }, [selectedImages, datasetName]);
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -153,18 +175,29 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               </Button>
             </div>
             <div>
-              <h1 className="text-lg">{selectedImages.size} image{selectedImages.size !== 1 ? 's' : ''} selected</h1>
+              <h1 className="text-lg">{selectedImages.size} {isMergeMode ? 'clip' : 'image'}{selectedImages.size !== 1 ? 's' : ''} selected</h1>
             </div>
             <div className="flex-1"></div>
             <div>
-              <Button
-                className="text-gray-200 bg-red-700 px-3 py-1 rounded-md flex items-center gap-2 disabled:opacity-50"
-                onClick={handleBulkDelete}
-                disabled={selectedImages.size === 0}
-              >
-                <FaTrashAlt />
-                Delete Selected
-              </Button>
+              {isMergeMode ? (
+                <Button
+                  className="text-gray-200 bg-blue-700 px-3 py-1 rounded-md flex items-center gap-2 disabled:opacity-50"
+                  onClick={handleMergeClips}
+                  disabled={Array.from(selectedImages).filter(p => isVideo(p)).length < 2}
+                >
+                  <FaObjectGroup />
+                  Merge Clips
+                </Button>
+              ) : (
+                <Button
+                  className="text-gray-200 bg-red-700 px-3 py-1 rounded-md flex items-center gap-2 disabled:opacity-50"
+                  onClick={handleBulkDelete}
+                  disabled={selectedImages.size === 0}
+                >
+                  <FaTrashAlt />
+                  Delete Selected
+                </Button>
+              )}
             </div>
           </>
         ) : (
@@ -191,7 +224,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       </TopBar>
       <MainContent>
         {isSelectMode && (
-          <p className="text-xs text-gray-400 mb-3">Click images to select or deselect. Press Cancel to exit select mode.</p>
+          <p className="text-xs text-gray-400 mb-3">
+            {isMergeMode
+              ? 'Click video clips to select them for merging. Press Cancel to exit.'
+              : 'Click images to select or deselect. Press Cancel to exit select mode.'}
+          </p>
         )}
         {PageInfoContent}
         {status === 'success' && imgList.length > 0 && (
@@ -203,6 +240,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 imageUrl={img.img_path}
                 onDelete={() => removeImageFromList(img.img_path)}
                 onSplit={() => refreshImageList(datasetName)}
+                onMerge={() => handleMergeStart(img.img_path)}
                 onEnlarge={() => setSelectedImage(img.img_path)}
                 isSelectMode={isSelectMode}
                 selected={selectedImages.has(img.img_path)}
