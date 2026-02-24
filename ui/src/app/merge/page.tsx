@@ -14,9 +14,6 @@ export default function MergeLoRAsPage() {
   const [lora2Path, setLora2Path] = useState('');
   const [outputName, setOutputName] = useState('merged_characters');
   const [dareDropRate, setDareDropRate] = useState(0.5);
-        <div className="max-w-4xl mx-auto py-8 space-y-6">
-
-          {status !== 'idle' && (
   const [status, setStatus] = useState<MergeStatus>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [outputPath, setOutputPath] = useState('');
