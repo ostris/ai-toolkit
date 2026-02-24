@@ -202,6 +202,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 alt="image"
                 imageUrl={img.img_path}
                 onDelete={() => removeImageFromList(img.img_path)}
+                onSplit={() => refreshImageList(datasetName)}
                 onEnlarge={() => setSelectedImage(img.img_path)}
                 isSelectMode={isSelectMode}
                 selected={selectedImages.has(img.img_path)}
