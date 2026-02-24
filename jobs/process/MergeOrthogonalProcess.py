@@ -42,41 +42,46 @@ def bilateral_subspace_orthogonalization(A: torch.Tensor, B: torch.Tensor, k_fra
 
 def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor, W_down1: torch.Tensor, W_down2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, int]:
     """
-    Magnitude/Direction Decoupling (DO-Merge style) with Exact Rank Preservation.
+    Magnitude/Direction Decoupling (DO-Merge style) with Exact Rank Preservation (No SVD).
     This solves the issue where one LoRA has massive weight magnitudes and overpowers the other
     during structure merging, even if their directional vectors are aligned.
+    
+    By distributing the calculated DO-Merge scalars directly into the down-projection matrices,
+    we achieve mathematically perfect concatenation with ZERO data loss, ZERO approximation error,
+    and instantaneous calculation speed (bypassing SVD entirely).
     """
-    # 1. Expand to full matrices to get true structural directions
+    # 1. Expand to full matrices to calculate norms
     W1 = torch.matmul(W_up1.float(), W_down1.float())
     W2 = torch.matmul(W_up2.float(), W_down2.float())
     
-    # 2. Decouple Magnitude and Direction
+    # 2. Calculate true magnitudes
     mag1 = torch.norm(W1, p='fro') + 1e-8
     mag2 = torch.norm(W2, p='fro') + 1e-8
     
+    # 3. Calculate the direction sum norm to properly re-normalize the combination
     dir1 = W1 / mag1
     dir2 = W2 / mag2
+    dir_sum = dir1 + dir2
+    norm_dir_sum = torch.norm(dir_sum, p='fro') + 1e-8
     
-    # 3. Merge Directions and Magnitudes independently
-    # We average the directions, but we blend magnitudes using geometric mean to prevent explosion
-    merged_dir = (dir1 + dir2) / 2.0
-    merged_dir = merged_dir / (torch.norm(merged_dir, p='fro') + 1e-8) # re-normalize
+    # 4. Calculate the balanced target magnitude (Geometric Mean)
+    merged_mag = torch.sqrt(mag1 * mag2)
     
-    merged_mag = torch.sqrt(mag1 * mag2) # Geometric mean of magnitudes balances dominant LoRAs
+    # 5. Calculate final scaling factors for each LoRA to achieve the exact DO-Merge equation
+    # The mathematical equation: W_full = (merged_mag / norm_dir_sum) * (W1 / mag1 + W2 / mag2)
+    global_scalar = merged_mag / norm_dir_sum
     
-    # 4. Reconstruct and extract EXACT rank (Rank A + Rank B) to prevent any data loss
-    W_full = merged_dir * merged_mag
+    scale1 = global_scalar / mag1
+    scale2 = global_scalar / mag2
     
-    # EXACT rank preservation (no dynamic compression)
-    target_rank = W_up1.shape[1] + W_up2.shape[1]
-    optimal_rank = min(target_rank, min(W_full.shape))
+    # 6. Apply scalars to the down matrices and concatenate (100% exact math, 0 data loss, 0 SVD)
+    down1_new = W_down1.float() * scale1
+    down2_new = W_down2.float() * scale2
     
-    # SPEED OPTIMIZATION: Use randomized low-rank SVD (100x faster than full SVD)
-    U, S, V = torch.svd_lowrank(W_full, q=optimal_rank)
+    lora_up_new = torch.cat([W_up1.float(), W_up2.float()], dim=1)
+    lora_down_new = torch.cat([down1_new, down2_new], dim=0)
     
-    S_sqrt = torch.sqrt(S)
-    lora_up_new = U * S_sqrt.unsqueeze(0)
-    lora_down_new = S_sqrt.unsqueeze(1) * V.t()
+    optimal_rank = lora_up_new.shape[1]
     
     return lora_up_new.to(W_up1.dtype), lora_down_new.to(W_down1.dtype), optimal_rank
 
