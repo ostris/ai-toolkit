@@ -1,10 +1,50 @@
-# AI Toolkit by Ostris
+# ⚡ AI Toolkit: The BIG DADDY VERSION
+**By Ostris & Contributors**
 
-AI Toolkit is an all in one training suite for diffusion models. I try to support all the latest models on consumer grade hardware. Image and video models. It can be run as a GUI or CLI. It is designed to be easy to use but still have every feature imaginable.
+*Welcome to the bleeding edge.*
 
-## Support My Work
+AI Toolkit is an all-in-one training suite for diffusion models. We support the latest models on consumer-grade hardware. But this fork? **This fork is about action.**
 
-If you enjoy my projects or use them commercially, please consider sponsoring me. Every bit helps! 💖
+We believe in the true spirit of Open Source: When something is broken, we don't wait for a corporate patch or a slow PR review. We build the fix, we push the math to the absolute limit, and we release it to the community *now*.
+
+## 🔥 WHAT MAKES THIS FORK DIFFERENT?
+
+While standard repositories wait around, we have pushed this suite into the **2026 DO-Merge Generation**. We have fundamentally rewritten how this toolkit handles Multi-Concept generation and Audio processing for LTX-2. 
+
+### 1. The LTX-2 Omni-Merge (DO-Merge Framework)
+Standard character merging (ZipLoRA, TIES, SVD) is mathematically flawed. It causes visual bleeding, deep-fried anatomy, and destroyed identities. We fixed it.
+
+*   **Bilateral Subspace Orthogonalization (BSO):** We mathematically isolate Cross-Attention (Prompt Triggers), Audio, and Temporal layers. *Your characters will never share the same dimensional space. Their faces, voices, and movements will never bleed together.*
+*   **Magnitude & Direction Decoupling (DO-Merge):** We physically decouple the volume (Magnitude) from the structure (Direction) in Spatial/MLP layers. *One character's LoRA will no longer "crush" or overpower the other.*
+*   **Exact Rank Concatenation:** SVD truncation loses data. We strictly use `Rank A + Rank B` concatenation. *Zero data loss.*
+
+**Result:** Flawless, zero-bleed multi-character generation in a single prompt.
+
+### 2. Audio Training Excellence
+LTX-2 is an Audio-Video model, but most trainers ignore the audio. We unlocked it.
+*   **Full `ComboVae` Integration:** We directly encode raw `.wav` files into log-mel spectrograms during the DiT training pass.
+*   **`audio_a2v_cross_attn` Unleashed:** You can now train the model to associate your specific text prompts with highly specific voices, sound effects, and acoustic profiles.
+
+### 3. We Fixed The UI
+The standard Prisma queue system for merges was causing white-page crashes and hanging jobs. We bypassed it. The Next.js UI now executes merges directly against the Python backend with live, real-time polling. *It just works.*
+
+---
+
+## 🔮 THE FUTURE OF THIS FORK
+We are not stopping here. The goal of the **BIG DADDY VERSION** is to be the ultimate, zero-compromise testbed for generative AI engineering. 
+
+**Upcoming Priorities:**
+1.  **Dynamic Entropy Pruning (LEP):** Pushing LoRA compression further without losing fidelity.
+2.  **Omni-Merge for SDXL & FLUX:** Bringing the DO-Merge mathematical framework to pure image models.
+3.  **Real-Time Audio-Video Sliders:** Letting you dynamically adjust the weight of the *visual* vs the *acoustic* training in the UI post-merge.
+
+If you have a crazy idea, build it and push it. This is where the magic happens.
+
+---
+
+## Support The Original Creator
+
+This fork is built on the phenomenal foundation laid by Ostris. If you use this toolkit commercially, please support the original author! 💖
 
 [Sponsor on GitHub](https://github.com/orgs/ostris) | [Support on Patreon](https://www.patreon.com/ostris) | [Donate on PayPal](https://www.paypal.com/donate/?hosted_button_id=9GEFUKC8T9R9W)
 
