@@ -1,9 +1,9 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
 import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup } from 'react-icons/fa';
-import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
+import VideoTrimModal from './VideoTrimModal';
 import { isVideo, isAudio } from '@/utils/basic';
 
 interface DatasetImageCardProps {
@@ -13,6 +13,7 @@ interface DatasetImageCardProps {
   className?: string;
   onDelete?: () => void;
   onSplit?: () => void;
+  onTrim?: () => void;
   onMerge?: () => void;
   onEnlarge?: () => void;
   selected?: boolean;
@@ -28,6 +29,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   className = '',
   onDelete = () => {},
   onSplit,
+  onTrim,
   onMerge,
   onEnlarge,
   selected = false,
@@ -43,6 +45,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
   const [imageKey, setImageKey] = useState<number>(Date.now());
+  const [isVideoEditOpen, setIsVideoEditOpen] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPress = useRef<boolean>(false);
@@ -106,34 +109,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       });
   };
 
-  const handleSplitVideo = () => {
-    openConfirm({
-      title: 'Split Video',
-      message: 'Enter the number of seconds per segment to split the video into.',
-      inputTitle: 'Seconds per segment (e.g. 30)',
-      confirmText: 'Split',
-      type: 'info',
-      onConfirm: (value?: string) => {
-        const seconds = parseInt(value || '', 10);
-        if (isNaN(seconds) || seconds < 1) {
-          openConfirm({
-            title: 'Invalid Input',
-            message: 'Please enter a valid number of seconds (minimum 1).',
-            confirmText: 'OK',
-            type: 'warning',
-          });
-          return;
-        }
-        apiClient
-          .post('/api/video/split', { videoPath: imageUrl, secondsPerSegment: seconds })
-          .then(() => {
-            onSplit?.();
-          })
-          .catch(error => {
-            console.error('Error splitting video:', error);
-          });
-      },
-    });
+  const handleVideoEdit = () => {
+    setIsVideoEditOpen(true);
   };
 
   // Only fetch caption when the component is both in viewport and visible
@@ -328,8 +305,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             {isItAVideo && (
               <button
                 className="bg-gray-800 rounded-full p-2"
-                onClick={handleSplitVideo}
-                aria-label="Split video"
+                onClick={handleVideoEdit}
+                aria-label="Edit video (trim or split)"
               >
                 <FaCut />
               </button>
@@ -400,6 +377,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>
         )}
       </div>
+      {isItAVideo && (
+        <VideoTrimModal
+          videoUrl={imageUrl}
+          isOpen={isVideoEditOpen}
+          onClose={() => setIsVideoEditOpen(false)}
+          onTrim={() => { setIsVideoEditOpen(false); onTrim?.(); }}
+          onSplit={() => { setIsVideoEditOpen(false); onSplit?.(); }}
+        />
+      )}
     </div>
   );
 };
