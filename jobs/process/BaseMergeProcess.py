@@ -37,7 +37,7 @@ class BaseMergeProcess(BaseProcess):
 
         for key in list(state_dict.keys()):
             v = state_dict[key]
-            v = v.detach().clone().to("cpu").to(self.torch_dtype)
+            v = v.detach().clone().to("cpu").to(self.torch_dtype).contiguous()
             state_dict[key] = v
 
         # having issues with meta
