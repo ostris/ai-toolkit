@@ -635,30 +635,118 @@ class LTX2Model(BaseModel):
         conditional_embeds = self.pad_embeds(conditional_embeds)
         unconditional_embeds = self.pad_embeds(unconditional_embeds)
 
-        video, audio = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            prompt_attention_mask=conditional_embeds.attention_mask.to(
-                self.device_torch
-            ),
-            negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
-                self.device_torch
-            ),
-            height=gen_config.height,
-            width=gen_config.width,
-            num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            num_frames=gen_config.num_frames,
-            generator=generator,
-            return_dict=False,
-            output_type="np" if is_video else "pil",
-            **extra,
-        )
+        # --- FREEFUSE LOGIC ---
+        if getattr(gen_config, 'use_freefuse', False) and len(getattr(gen_config, 'freefuse_concepts', [])) > 0:
+            import toolkit.models.freefuse as freefuse
+            
+            # 1. Initialize State & Find Tokens
+            ff_state = freefuse.FreeFuseState(concepts=gen_config.freefuse_concepts, extract_step=gen_config.freefuse_extract_step)
+            ff_state.find_token_indices(self.tokenizer[0], gen_config.prompt, padding_side=self.te_padding_side)
+            freefuse.FreeFuseState.set_instance(ff_state)
+            
+            # 2. Inject Processor
+            freefuse.inject_freefuse_processor(pipeline.transformer, ff_state)
+            
+            # 3. Phase 1: Extract (Run for N steps and halt)
+            ff_state.phase = 1
+            latents_clone = gen_config.latents.clone() if gen_config.latents is not None else None
+            if latents_clone is None:
+                # generate latents manually to ensure phase 1 and phase 2 match perfectly
+                num_channels_latents = pipeline.transformer.config.in_channels
+                latents_clone = pipeline.prepare_latents(
+                    1,
+                    num_channels_latents,
+                    gen_config.num_frames,
+                    gen_config.height,
+                    gen_config.width,
+                    self.torch_dtype,
+                    self.device_torch,
+                    generator,
+                    None
+                )
+                gen_config.latents = latents_clone
+            
+            def stop_callback(pipe, step_index, timestep, callback_kwargs):
+                if step_index >= ff_state.extract_step:
+                    pipe._interrupt = True
+                return callback_kwargs
+            
+            print(f"Running FreeFuse Phase 1 (Extraction) for {ff_state.extract_step} steps...")
+            
+            try:
+                _ = pipeline(
+                    prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                    prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch),
+                    negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                    negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch),
+                    height=gen_config.height,
+                    width=gen_config.width,
+                    num_inference_steps=gen_config.num_inference_steps,
+                    guidance_scale=gen_config.guidance_scale,
+                    latents=latents_clone.clone(),
+                    num_frames=gen_config.num_frames,
+                    generator=generator,
+                    return_dict=False,
+                    output_type="latent",
+                    callback_on_step_end=stop_callback,
+                    **extra,
+                )
+            except Exception as e:
+                pass
+            
+            # 4. Process Maps
+            ff_state.calculate_routing_masks()
+            print("FreeFuse Phase 1 Complete. Masks calculated.")
+            
+            # 5. Phase 2: Generate
+            ff_state.phase = 2
+            
+            video, audio = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch),
+                height=gen_config.height,
+                width=gen_config.width,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                latents=latents_clone.clone(),
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="np" if is_video else "pil",
+                **extra,
+            )
+            
+            # 6. Cleanup
+            freefuse.remove_freefuse_processor(pipeline.transformer)
+            freefuse.FreeFuseState.set_instance(None)
+            
+        else:
+            video, audio = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                prompt_attention_mask=conditional_embeds.attention_mask.to(
+                    self.device_torch
+                ),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
+                    self.device_torch
+                ),
+                height=gen_config.height,
+                width=gen_config.width,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="np" if is_video else "pil",
+                **extra,
+            )
         if self.low_vram:
             # Restore no tiling
             pipeline.vae.use_tiling = False

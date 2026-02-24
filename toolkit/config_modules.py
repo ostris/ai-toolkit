@@ -73,6 +73,10 @@ class SampleItem:
         
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
+        
+        self.use_freefuse: bool = kwargs.get('use_freefuse', getattr(sample_config, 'use_freefuse', False))
+        self.freefuse_concepts: List[dict] = kwargs.get('freefuse_concepts', getattr(sample_config, 'freefuse_concepts', []))
+        self.freefuse_extract_step: int = kwargs.get('freefuse_extract_step', getattr(sample_config, 'freefuse_extract_step', 4))
 
 class SampleConfig:
     def __init__(self, **kwargs):
@@ -109,6 +113,10 @@ class SampleConfig:
         self.samples = [SampleItem(self, **item) for item in raw_samples]
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
+        
+        self.use_freefuse: bool = kwargs.get('use_freefuse', False)
+        self.freefuse_concepts: List[dict] = kwargs.get('freefuse_concepts', [])
+        self.freefuse_extract_step: int = kwargs.get('freefuse_extract_step', 4)
         
     @property
     def prompts(self):
@@ -1046,6 +1054,9 @@ class GenerateImageConfig:
             fps: int = 15,
             ctrl_idx: int = 0,
             do_cfg_norm: bool = False,
+            use_freefuse: bool = False,
+            freefuse_concepts: Optional[List[dict]] = None,
+            freefuse_extract_step: int = 4,
     ):
         self.width: int = width
         self.height: int = height
@@ -1117,6 +1128,10 @@ class GenerateImageConfig:
         self.logger = logger
         
         self.do_cfg_norm: bool = do_cfg_norm
+        
+        self.use_freefuse: bool = use_freefuse
+        self.freefuse_concepts: List[dict] = freefuse_concepts if freefuse_concepts is not None else []
+        self.freefuse_extract_step: int = freefuse_extract_step
 
     def set_gen_time(self, gen_time: int = None):
         if gen_time is not None:

@@ -27,6 +27,9 @@ def get_job(
     if job == 'extension':
         from jobs import ExtensionJob
         return ExtensionJob(config)
+    if job == 'MergeJob':
+        from jobs import MergeJob
+        return MergeJob(config)
 
     # elif job == 'train':
     #     from jobs import TrainJob

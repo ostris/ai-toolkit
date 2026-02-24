@@ -19,10 +19,8 @@ export default function useJobsList(onlyActive = false, reloadInterval: null | n
           console.log('Error fetching jobs:', data.error);
           setStatus('error');
         } else {
-          if (onlyActive) {
-            data.jobs = data.jobs.filter((job: Job) => ['running', 'queued', 'stopping'].includes(job.status));
-          }
-          setJobs(data.jobs);
+          const list = Array.isArray(data.jobs) ? data.jobs : [];
+          setJobs(onlyActive ? list.filter((job: Job) => ['running', 'queued', 'stopping'].includes(job.status)) : list);
           setStatus('success');
         }
       })

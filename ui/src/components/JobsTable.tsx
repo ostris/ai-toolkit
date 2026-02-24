@@ -43,22 +43,29 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
       title: 'Steps',
       key: 'steps',
       render: row => {
-        const jobConfig: JobConfig = JSON.parse(row.job_config);
-        const totalSteps = jobConfig.config.process[0].train.steps;
-
-        return (
-          <div>
-            <div className="text-xs text-gray-400">
-              {row.step} / {totalSteps}
+        try {
+          const jobConfig: JobConfig = JSON.parse(row.job_config);
+          const process0 = jobConfig?.config?.process?.[0];
+          const totalSteps = process0?.train?.steps;
+          if (totalSteps == null || typeof totalSteps !== 'number') {
+            return <span className="text-xs text-gray-500">—</span>;
+          }
+          return (
+            <div>
+              <div className="text-xs text-gray-400">
+                {row.step} / {totalSteps}
+              </div>
+              <div className="bg-gray-700 rounded-full h-1.5">
+                <div
+                  className="bg-blue-500 h-1.5 rounded-full"
+                  style={{ width: `${(row.step / totalSteps) * 100}%` }}
+                />
+              </div>
             </div>
-            <div className="bg-gray-700 rounded-full h-1.5">
-              <div
-                className="bg-blue-500 h-1.5 rounded-full"
-                style={{ width: `${(row.step / totalSteps) * 100}%` }}
-              ></div>
-            </div>
-          </div>
-        );
+          );
+        } catch {
+          return <span className="text-xs text-gray-500">—</span>;
+        }
       },
     },
     {
@@ -165,8 +172,14 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
                       <span className="text-red-400 mr-2">Queue Stopped</span>
                       <button
                         onClick={async () => {
-                          await startQueue(gpuKey);
-                          refresh();
+                          try {
+                            await startQueue(gpuKey);
+                            refresh();
+                          } catch (e) {
+                            console.error('Start queue failed:', e);
+                            alert('Failed to start queue. Check console (F12) and server logs.');
+                            refresh();
+                          }
                         }}
                         className="ml-4 text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded"
                       >
