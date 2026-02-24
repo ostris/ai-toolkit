@@ -40,6 +40,24 @@ def bilateral_subspace_orthogonalization(A: torch.Tensor, B: torch.Tensor, k_fra
     return A_ortho, B_ortho
 
 
+def frobenius_norm_product(U: torch.Tensor, D: torch.Tensor) -> torch.Tensor:
+    """
+    Computes the Frobenius norm of (U @ D) in O(R^2 * d) time instead of O(d^2) time.
+    norm(U @ D)^2 = tr(D^T U^T U D) = tr(U^T U D D^T)
+    """
+    UT_U = torch.matmul(U.t(), U)
+    D_DT = torch.matmul(D, D.t())
+    return torch.sqrt(torch.abs(torch.trace(torch.matmul(UT_U, D_DT))))
+
+def trace_product(U1: torch.Tensor, D1: torch.Tensor, U2: torch.Tensor, D2: torch.Tensor) -> torch.Tensor:
+    """
+    Computes the trace of (U1 @ D1)^T @ (U2 @ D2) efficiently.
+    tr(D1^T U1^T U2 D2) = tr(D2 D1^T U1^T U2)
+    """
+    U1T_U2 = torch.matmul(U1.t(), U2)
+    D2_D1T = torch.matmul(D2, D1.t())
+    return torch.trace(torch.matmul(D2_D1T, U1T_U2))
+
 def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor, W_down1: torch.Tensor, W_down2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, int]:
     """
     Magnitude/Direction Decoupling (DO-Merge style) with Exact Rank Preservation (No SVD).
@@ -50,31 +68,27 @@ def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor
     we achieve mathematically perfect concatenation with ZERO data loss, ZERO approximation error,
     and instantaneous calculation speed (bypassing SVD entirely).
     """
-    # 1. Expand to full matrices to calculate norms
-    W1 = torch.matmul(W_up1.float(), W_down1.float())
-    W2 = torch.matmul(W_up2.float(), W_down2.float())
+    # 1. Calculate true magnitudes efficiently without expanding to full [d_out, d_in] matrices
+    mag1 = frobenius_norm_product(W_up1.float(), W_down1.float()) + 1e-8
+    mag2 = frobenius_norm_product(W_up2.float(), W_down2.float()) + 1e-8
     
-    # 2. Calculate true magnitudes
-    mag1 = torch.norm(W1, p='fro') + 1e-8
-    mag2 = torch.norm(W2, p='fro') + 1e-8
+    # 2. Calculate the direction sum norm efficiently
+    # norm(dir1 + dir2)^2 = 2 + 2 * tr(dir1^T dir2)
+    cross_trace = trace_product(W_up1.float(), W_down1.float(), W_up2.float(), W_down2.float())
+    norm_dir_sum_sq = 2.0 + 2.0 * cross_trace / (mag1 * mag2)
+    norm_dir_sum_sq = torch.clamp(norm_dir_sum_sq, min=1e-8)
+    norm_dir_sum = torch.sqrt(norm_dir_sum_sq)
     
-    # 3. Calculate the direction sum norm to properly re-normalize the combination
-    dir1 = W1 / mag1
-    dir2 = W2 / mag2
-    dir_sum = dir1 + dir2
-    norm_dir_sum = torch.norm(dir_sum, p='fro') + 1e-8
-    
-    # 4. Calculate the balanced target magnitude (Geometric Mean)
+    # 3. Calculate the balanced target magnitude (Geometric Mean)
     merged_mag = torch.sqrt(mag1 * mag2)
     
-    # 5. Calculate final scaling factors for each LoRA to achieve the exact DO-Merge equation
-    # The mathematical equation: W_full = (merged_mag / norm_dir_sum) * (W1 / mag1 + W2 / mag2)
+    # 4. Calculate final scaling factors for each LoRA to achieve the exact DO-Merge equation
     global_scalar = merged_mag / norm_dir_sum
     
     scale1 = global_scalar / mag1
     scale2 = global_scalar / mag2
     
-    # 6. Apply scalars to the down matrices and concatenate (100% exact math, 0 data loss, 0 SVD)
+    # 5. Apply scalars to the down matrices and concatenate (100% exact math, 0 data loss, 0 SVD)
     down1_new = W_down1.float() * scale1
     down2_new = W_down2.float() * scale2
     
