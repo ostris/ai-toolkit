@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
@@ -13,6 +13,7 @@ interface DatasetImageCardProps {
   className?: string;
   onDelete?: () => void;
   onSplit?: () => void;
+  onMerge?: () => void;
   onEnlarge?: () => void;
   selected?: boolean;
   isSelectMode?: boolean;
@@ -27,6 +28,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   className = '',
   onDelete = () => {},
   onSplit,
+  onMerge,
   onEnlarge,
   selected = false,
   isSelectMode = false,
@@ -285,7 +287,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           {isSelectMode && (
             <div
               className={classNames(
-                'absolute inset-0 rounded-t-lg transition-colors duration-150 flex items-start justify-start p-2 pointer-events-none',
+                'absolute inset-0 rounded-t-lg transition-colors duration-150 flex items-start justify-start p-2',
                 selected ? 'bg-blue-500/30' : 'bg-transparent',
               )}
             >
@@ -330,6 +332,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                 aria-label="Split video"
               >
                 <FaCut />
+              </button>
+            )}
+            {isItAVideo && onMerge && (
+              <button
+                className="bg-gray-800 rounded-full p-2"
+                onClick={onMerge}
+                aria-label="Merge video clips"
+              >
+                <FaObjectGroup />
               </button>
             )}
             <button
