@@ -40,9 +40,9 @@ def bilateral_subspace_orthogonalization(A: torch.Tensor, B: torch.Tensor, k_fra
     return A_ortho, B_ortho
 
 
-def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor, W_down1: torch.Tensor, W_down2: torch.Tensor, energy_threshold: float = 0.99) -> tuple[torch.Tensor, torch.Tensor, int]:
+def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor, W_down1: torch.Tensor, W_down2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, int]:
     """
-    Magnitude/Direction Decoupling (DO-Merge style) combined with DRC.
+    Magnitude/Direction Decoupling (DO-Merge style) with Exact Rank Preservation.
     This solves the issue where one LoRA has massive weight magnitudes and overpowers the other
     during structure merging, even if their directional vectors are aligned.
     """
@@ -64,16 +64,14 @@ def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor
     
     merged_mag = torch.sqrt(mag1 * mag2) # Geometric mean of magnitudes balances dominant LoRAs
     
-    # 4. Reconstruct and compress
+    # 4. Reconstruct and extract EXACT rank (Rank A + Rank B) to prevent any data loss
     W_full = merged_dir * merged_mag
     
     U, S, V = torch.svd(W_full)
     
-    total_energy = torch.sum(S ** 2)
-    cumulative_energy = torch.cumsum(S ** 2, dim=0) / (total_energy + 1e-8)
-    
-    optimal_rank = torch.searchsorted(cumulative_energy, energy_threshold).item() + 1
-    optimal_rank = max(1, min(optimal_rank, min(W_full.shape)))
+    # EXACT rank preservation (no dynamic compression)
+    target_rank = W_up1.shape[1] + W_up2.shape[1]
+    optimal_rank = min(target_rank, min(W_full.shape))
     
     S_sqrt = torch.sqrt(S[:optimal_rank])
     lora_up_new = U[:, :optimal_rank] * S_sqrt.unsqueeze(0)
@@ -194,7 +192,7 @@ class MergeOrthogonalProcess(BaseMergeProcess):
             else:
                 # --- STRUCTURE/MLP: MAGNITUDE/DIRECTION DECOUPLING (DO-Merge style) ---
                 # Averages directions but balances their magnitudes so one doesn't crush the other.
-                up_merge, down_merge, final_rank = decoupled_magnitude_direction_merge(up1_scaled, up2_scaled, down1_scaled, down2_scaled, energy_threshold=0.995)
+                up_merge, down_merge, final_rank = decoupled_magnitude_direction_merge(up1_scaled, up2_scaled, down1_scaled, down2_scaled)
             
             # Reshape back if conv
             if is_conv:
