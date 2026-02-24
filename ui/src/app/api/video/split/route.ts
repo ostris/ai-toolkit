@@ -46,10 +46,11 @@ export async function POST(request: Request) {
 
     await execFileAsync('ffmpeg', [
       '-i', videoPath,
-      '-c', 'copy',
-      '-map', '0',
-      '-segment_time', `${seconds}`,
+      '-c:v', 'libx264',
+      '-c:a', 'aac',
+      '-force_key_frames', `expr:gte(t,n_forced*${seconds})`,
       '-f', 'segment',
+      '-segment_time', `${seconds}`,
       '-reset_timestamps', '1',
       outputPattern,
     ]);
