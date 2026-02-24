@@ -252,7 +252,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   className={`w-full h-full object-contain`}
                   autoPlay={false}
                   loop
-                  muted
                   controls
                 />
               )}
