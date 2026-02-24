@@ -45,6 +45,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
   const [imageKey, setImageKey] = useState<number>(Date.now());
+  const [videoKey, setVideoKey] = useState<number>(Date.now());
   const [isVideoEditOpen, setIsVideoEditOpen] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -227,7 +228,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             <>
               {isItAVideo && (
                 <video
-                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  key={videoKey}
+                  src={`/api/img/${encodeURIComponent(imageUrl)}?v=${videoKey}`}
                   className={`w-full h-full object-contain`}
                   autoPlay={false}
                   loop
@@ -382,7 +384,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           videoUrl={imageUrl}
           isOpen={isVideoEditOpen}
           onClose={() => setIsVideoEditOpen(false)}
-          onTrim={() => { setIsVideoEditOpen(false); onTrim?.(); }}
+          onTrim={() => { setIsVideoEditOpen(false); setVideoKey(Date.now()); onTrim?.(); }}
           onSplit={() => { setIsVideoEditOpen(false); onSplit?.(); }}
         />
       )}
