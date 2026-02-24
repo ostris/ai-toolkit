@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
@@ -13,6 +13,10 @@ interface DatasetImageCardProps {
   className?: string;
   onDelete?: () => void;
   onEnlarge?: () => void;
+  selected?: boolean;
+  isSelectMode?: boolean;
+  onLongPress?: () => void;
+  onSelect?: () => void;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -22,6 +26,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   className = '',
   onDelete = () => {},
   onEnlarge,
+  selected = false,
+  isSelectMode = false,
+  onLongPress,
+  onSelect,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -32,6 +40,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [savedCaption, setSavedCaption] = useState<string>('');
   const [imageKey, setImageKey] = useState<number>(Date.now());
   const isGettingCaption = useRef<boolean>(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPress = useRef<boolean>(false);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimer.current) {
+        clearTimeout(longPressTimer.current);
+      }
+    };
+  }, []);
 
   const fetchCaption = async () => {
     if (isGettingCaption.current || isCaptionLoaded) return;
@@ -136,6 +154,39 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     }
   };
 
+  const handlePointerDown = () => {
+    didLongPress.current = false;
+    longPressTimer.current = setTimeout(() => {
+      didLongPress.current = true;
+      onLongPress?.();
+    }, 500);
+  };
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+
+  const handlePointerUp = () => clearLongPress();
+  const handlePointerLeave = () => clearLongPress();
+  const handlePointerCancel = () => clearLongPress();
+
+  const handleCardClick = (e: React.MouseEvent) => {
+    if (didLongPress.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      didLongPress.current = false;
+      return;
+    }
+    if (isSelectMode) {
+      e.preventDefault();
+      e.stopPropagation();
+      onSelect?.();
+    }
+  };
+
   const isCaptionCurrent = caption.trim() === savedCaption;
 
   const isItAVideo = isVideo(imageUrl);
@@ -143,7 +194,17 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const isItImage = !isItAVideo && !isItAudio;
 
   return (
-    <div className={`flex flex-col ${className}`}>
+    <div
+      className={classNames(`flex flex-col ${className}`, {
+        'ring-2 ring-blue-500 rounded-lg': selected,
+      })}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerLeave}
+      onPointerCancel={handlePointerCancel}
+      onContextMenu={e => e.preventDefault()}
+      onClick={handleCardClick}
+    >
       {/* Square image container */}
       <div
         ref={cardRef}
@@ -175,10 +236,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   src={`/api/img/${encodeURIComponent(imageUrl)}?v=${imageKey}`}
                   alt={alt}
                   onLoad={handleLoad}
-                  onClick={onEnlarge}
+                  onClick={isSelectMode ? undefined : onEnlarge}
                   className={`w-full h-full object-contain transition-opacity duration-300 ${
                     loaded ? 'opacity-100' : 'opacity-0'
-                  } ${onEnlarge ? 'cursor-pointer' : ''}`}
+                  } ${onEnlarge && !isSelectMode ? 'cursor-pointer' : ''}`}
                 />
               )}
             </>
@@ -189,6 +250,20 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </div>
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
+          {/* Selection overlay */}
+          {isSelectMode && (
+            <div
+              className={classNames(
+                'absolute inset-0 rounded-t-lg transition-colors duration-150 flex items-start justify-start p-2 pointer-events-none',
+                selected ? 'bg-blue-500/30' : 'bg-transparent',
+              )}
+            >
+              <FaCheckCircle
+                className={classNames('w-6 h-6 transition-colors duration-150', selected ? 'text-blue-400' : 'text-gray-500')}
+              />
+            </div>
+          )}
+          {!isSelectMode && (
           <div className="absolute top-1 right-1 flex space-x-2 z-10">
             {onEnlarge && isItImage && (
               <button
@@ -234,6 +309,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               <FaTrashAlt />
             </button>
           </div>
+          )}
         </div>
         {inViewport && isVisible && !isItAudio && (
           <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300 w-full">

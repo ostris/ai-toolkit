@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use, useMemo, useCallback } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
-import { FaChevronLeft } from 'react-icons/fa';
+import { FaChevronLeft, FaTrashAlt, FaTimes } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
@@ -18,6 +18,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [isSelectMode, setIsSelectMode] = useState<boolean>(false);
+  const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
 
   const removeImageFromList = useCallback((imgPath: string) => {
     setImgList(prev => prev.filter(x => x.img_path !== imgPath));
@@ -46,6 +48,48 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       refreshImageList(datasetName);
     }
   }, [datasetName]);
+
+  const handleLongPress = useCallback((imgPath: string) => {
+    setIsSelectMode(true);
+    setSelectedImages(new Set([imgPath]));
+  }, []);
+
+  const handleSelect = useCallback((imgPath: string) => {
+    setSelectedImages(prev => {
+      const next = new Set(prev);
+      if (next.has(imgPath)) {
+        next.delete(imgPath);
+      } else {
+        next.add(imgPath);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleCancelSelect = useCallback(() => {
+    setIsSelectMode(false);
+    setSelectedImages(new Set());
+  }, []);
+
+  useEffect(() => {
+    if (isSelectMode && selectedImages.size === 0) {
+      setIsSelectMode(false);
+    }
+  }, [isSelectMode, selectedImages.size]);
+
+  const handleBulkDelete = useCallback(async () => {
+    const paths = Array.from(selectedImages);
+    await Promise.all(
+      paths.map(imgPath =>
+        apiClient
+          .post('/api/img/delete', { imgPath })
+          .then(() => removeImageFromList(imgPath))
+          .catch(error => console.error('Error deleting image:', error)),
+      ),
+    );
+    setIsSelectMode(false);
+    setSelectedImages(new Set());
+  }, [selectedImages, removeImageFromList]);
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -101,25 +145,54 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     <>
       {/* Fixed top bar */}
       <TopBar>
-        <div>
-          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
-            <FaChevronLeft />
-          </Button>
-        </div>
-        <div>
-          <h1 className="text-lg">Dataset: {datasetName}, Images: {imgList.length}</h1>
-        </div>
-        <div className="flex-1"></div>
-        <div>
-          <Button
-            className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
-            onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
-          >
-            Add Images
-          </Button>
-        </div>
+        {isSelectMode ? (
+          <>
+            <div>
+              <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={handleCancelSelect}>
+                <FaTimes />
+              </Button>
+            </div>
+            <div>
+              <h1 className="text-lg">{selectedImages.size} image{selectedImages.size !== 1 ? 's' : ''} selected</h1>
+            </div>
+            <div className="flex-1"></div>
+            <div>
+              <Button
+                className="text-gray-200 bg-red-700 px-3 py-1 rounded-md flex items-center gap-2 disabled:opacity-50"
+                onClick={handleBulkDelete}
+                disabled={selectedImages.size === 0}
+              >
+                <FaTrashAlt />
+                Delete Selected
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
+                <FaChevronLeft />
+              </Button>
+            </div>
+            <div>
+              <h1 className="text-lg">Dataset: {datasetName}, Images: {imgList.length}</h1>
+            </div>
+            <div className="flex-1"></div>
+            <div>
+              <Button
+                className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
+                onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
+              >
+                Add Images
+              </Button>
+            </div>
+          </>
+        )}
       </TopBar>
       <MainContent>
+        {isSelectMode && (
+          <p className="text-xs text-gray-400 mb-3">Click images to select or deselect. Press Cancel to exit select mode.</p>
+        )}
         {PageInfoContent}
         {status === 'success' && imgList.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -130,6 +203,10 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 imageUrl={img.img_path}
                 onDelete={() => removeImageFromList(img.img_path)}
                 onEnlarge={() => setSelectedImage(img.img_path)}
+                isSelectMode={isSelectMode}
+                selected={selectedImages.has(img.img_path)}
+                onLongPress={() => handleLongPress(img.img_path)}
+                onSelect={() => handleSelect(img.img_path)}
               />
             ))}
           </div>
