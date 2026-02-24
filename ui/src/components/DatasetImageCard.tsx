@@ -287,7 +287,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           {isSelectMode && (
             <div
               className={classNames(
-                'absolute inset-0 rounded-t-lg transition-colors duration-150 flex items-start justify-start p-2 pointer-events-none',
+                'absolute inset-0 rounded-t-lg transition-colors duration-150 flex items-start justify-start p-2',
                 selected ? 'bg-blue-500/30' : 'bg-transparent',
               )}
             >

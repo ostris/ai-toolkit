@@ -76,6 +76,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   useEffect(() => {
     if (isSelectMode && selectedImages.size === 0) {
       setIsSelectMode(false);
+      setIsMergeMode(false);
     }
   }, [isSelectMode, selectedImages.size]);
 
