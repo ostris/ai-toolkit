@@ -111,20 +111,60 @@ class MergeOrthogonalProcess(BaseMergeProcess):
         
         module_keys_1 = {}
         for key in lora_1.keys():
-            if 'lora_up' in key or 'lora_down' in key or 'alpha' in key:
-                base_name = key.split('.lora_')[0]
+            if '.lora_up.' in key or '.lora_down.' in key or '.lora_A.' in key or '.lora_B.' in key or '.alpha' in key:
+                if '.lora_A.' in key:
+                    base_name = key.split('.lora_A.')[0]
+                    sub_key = 'down.weight' if 'weight' in key else 'down.bias'
+                    is_peft = True
+                elif '.lora_B.' in key:
+                    base_name = key.split('.lora_B.')[0]
+                    sub_key = 'up.weight' if 'weight' in key else 'up.bias'
+                    is_peft = True
+                elif '.lora_down.' in key:
+                    base_name = key.split('.lora_down.')[0]
+                    sub_key = 'down.weight' if 'weight' in key else 'down.bias'
+                    is_peft = False
+                elif '.lora_up.' in key:
+                    base_name = key.split('.lora_up.')[0]
+                    sub_key = 'up.weight' if 'weight' in key else 'up.bias'
+                    is_peft = False
+                elif '.alpha' in key:
+                    base_name = key.split('.alpha')[0]
+                    sub_key = 'alpha'
+                    is_peft = None # inherit from weights
+                else:
+                    continue
+                    
                 if base_name not in module_keys_1:
-                    module_keys_1[base_name] = {}
-                sub_key = key.split('.lora_')[-1]
+                    module_keys_1[base_name] = {'is_peft': False}
+                
                 module_keys_1[base_name][sub_key] = lora_1[key]
+                if is_peft is True:
+                    module_keys_1[base_name]['is_peft'] = True
                 
         module_keys_2 = {}
         for key in lora_2.keys():
-            if 'lora_up' in key or 'lora_down' in key or 'alpha' in key:
-                base_name = key.split('.lora_')[0]
+            if '.lora_up.' in key or '.lora_down.' in key or '.lora_A.' in key or '.lora_B.' in key or '.alpha' in key:
+                if '.lora_A.' in key:
+                    base_name = key.split('.lora_A.')[0]
+                    sub_key = 'down.weight' if 'weight' in key else 'down.bias'
+                elif '.lora_B.' in key:
+                    base_name = key.split('.lora_B.')[0]
+                    sub_key = 'up.weight' if 'weight' in key else 'up.bias'
+                elif '.lora_down.' in key:
+                    base_name = key.split('.lora_down.')[0]
+                    sub_key = 'down.weight' if 'weight' in key else 'down.bias'
+                elif '.lora_up.' in key:
+                    base_name = key.split('.lora_up.')[0]
+                    sub_key = 'up.weight' if 'weight' in key else 'up.bias'
+                elif '.alpha' in key:
+                    base_name = key.split('.alpha')[0]
+                    sub_key = 'alpha'
+                else:
+                    continue
+
                 if base_name not in module_keys_2:
                     module_keys_2[base_name] = {}
-                sub_key = key.split('.lora_')[-1]
                 module_keys_2[base_name][sub_key] = lora_2[key]
                 
         shared_modules = set(module_keys_1.keys()).intersection(set(module_keys_2.keys()))
@@ -199,17 +239,31 @@ class MergeOrthogonalProcess(BaseMergeProcess):
                 up_merge = up_merge.view(up_merge.shape[0], up_merge.shape[1], up1.shape[2], up1.shape[3])
                 down_merge = down_merge.view(down_merge.shape[0], down_merge.shape[1], down1.shape[2], down1.shape[3])
                 
-            merged_state_dict[f"{base_name}.lora_up.weight"] = up_merge.to(up1.dtype)
-            merged_state_dict[f"{base_name}.lora_down.weight"] = down_merge.to(down1.dtype)
+            is_peft = m1.get('is_peft', False)
+            if is_peft:
+                merged_state_dict[f"{base_name}.lora_B.weight"] = up_merge.to(up1.dtype)
+                merged_state_dict[f"{base_name}.lora_A.weight"] = down_merge.to(down1.dtype)
+            else:
+                merged_state_dict[f"{base_name}.lora_up.weight"] = up_merge.to(up1.dtype)
+                merged_state_dict[f"{base_name}.lora_down.weight"] = down_merge.to(down1.dtype)
+                
             merged_state_dict[f"{base_name}.alpha"] = torch.tensor(final_rank, dtype=up_merge.dtype)
             
+        def extract_base_name(key):
+            if '.lora_A.' in key: return key.split('.lora_A.')[0]
+            if '.lora_B.' in key: return key.split('.lora_B.')[0]
+            if '.lora_down.' in key: return key.split('.lora_down.')[0]
+            if '.lora_up.' in key: return key.split('.lora_up.')[0]
+            if '.alpha' in key: return key.split('.alpha')[0]
+            return key
+
         for key in lora_1.keys():
-            base_name = key.split('.lora_')[0]
+            base_name = extract_base_name(key)
             if base_name not in shared_modules:
                 merged_state_dict[key] = lora_1[key]
                 
         for key in lora_2.keys():
-            base_name = key.split('.lora_')[0]
+            base_name = extract_base_name(key)
             if base_name not in shared_modules:
                 merged_state_dict[key] = lora_2[key]
                 
