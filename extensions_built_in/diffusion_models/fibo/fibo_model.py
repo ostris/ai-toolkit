@@ -54,12 +54,6 @@ class FiboModel(BaseModel):
         self.is_transformer = True
         self.target_lora_modules = ['BriaFiboTransformer2DModel']
 
-        # FIBO requires 'shift' timestep type for proper dynamic shifting during training
-        self.default_timestep_type = 'shift'
-
-        # FIBO uses shifted logit-normal timestep sampling (matches official fine-tuning)
-        self.default_content_or_style = 'shifted_logit_normal'
-
         # Will be set during load_model
         self.latents_mean = None
         self.latents_std = None

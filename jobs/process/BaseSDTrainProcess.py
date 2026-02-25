@@ -1164,13 +1164,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.timestep_type == 'one_step',
                     ])
                     
-                    timestep_type = 'linear' if linear_timesteps else None
-                    if timestep_type is None:
-                        # Check if model specifies a required timestep type (e.g., FIBO needs 'shift')
-                        if hasattr(self.sd, 'default_timestep_type') and self.sd.default_timestep_type is not None:
-                            timestep_type = self.sd.default_timestep_type
-                        else:
-                            timestep_type = self.train_config.timestep_type
+                    timestep_type = 'linear' if linear_timesteps else self.train_config.timestep_type
                     
                     if self.train_config.timestep_type == 'next_sample':
                         # simulate a sample
@@ -1218,11 +1212,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 content_or_style = self.train_config.content_or_style
                 if is_reg:
                     content_or_style = self.train_config.content_or_style_reg
-
-                # Check if model specifies a default content_or_style (e.g., FIBO uses 'shifted_logit_normal')
-                # Only use the model default if user hasn't explicitly set a non-default value
-                if content_or_style == 'balanced' and hasattr(self.sd, 'default_content_or_style') and self.sd.default_content_or_style is not None:
-                    content_or_style = self.sd.default_content_or_style
 
                 # if self.train_config.timestep_sampling == 'style' or self.train_config.timestep_sampling == 'content':
                 if self.train_config.timestep_type == 'next_sample':
@@ -1281,40 +1270,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             device=self.device_torch
                         )
                     timestep_indices = timestep_indices.long()
-                elif content_or_style == 'shifted_logit_normal':
-                    # Shifted logit-normal timestep sampling (matches official FIBO fine-tuning)
-                    # See: https://github.com/Bria-AI/FIBO/blob/main/src/fine_tuning/fine_tune_utils.py
-
-                    # Calculate sequence length from latent shape (H*W for FIBO with patch_size=1)
-                    h, w = latents.shape[2], latents.shape[3]
-                    seq_length = h * w
-
-                    # Calculate shift based on sequence length (linear interpolation)
-                    min_tokens, max_tokens = 256, 4096
-                    min_shift, max_shift = 0.5, 1.15
-                    m = (max_shift - min_shift) / (max_tokens - min_tokens)
-                    b = min_shift - m * min_tokens
-                    shift = m * seq_length + b
-
-                    # 10% chance to use uniform sampling, 90% shifted logit-normal
-                    uniform_prob = 0.1
-                    should_use_uniform = torch.rand(batch_size, device=self.device_torch) < uniform_prob
-
-                    # Sample from shifted logit-normal: sigmoid(randn * std + shift)
-                    std = 1.0
-                    normal_samples = torch.randn(batch_size, device=self.device_torch) * std + shift
-                    sigmas = torch.sigmoid(normal_samples)
-
-                    # For uniform samples, replace with uniform [0, 1]
-                    if should_use_uniform.any():
-                        sigmas[should_use_uniform] = torch.rand(should_use_uniform.sum(), device=self.device_torch)
-
-                    # Convert sigmas to timestep indices
-                    # sigmas are in [0, 1], we need indices into the scheduler's timesteps
-                    # For flowmatch, timesteps go from 1000 to 1, so index 0 = 1000, index 999 = 1
-                    # sigma=1 should map to high noise (low index), sigma=0 to low noise (high index)
-                    timestep_indices = ((1 - sigmas) * (num_train_timesteps - 1)).long()
-                    timestep_indices = timestep_indices.clamp(min_noise_steps, max_noise_steps)
                 else:
                     raise ValueError(f"Unknown content_or_style {content_or_style}")
             with self.timer('convert_timestep_indices_to_timesteps'):
