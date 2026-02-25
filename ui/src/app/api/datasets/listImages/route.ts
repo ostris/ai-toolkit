@@ -49,9 +49,9 @@ function findImagesRecursively(dir: string): string[] {
       // If it's a directory, recursively search it
       results = results.concat(findImagesRecursively(itemPath));
     } else {
-      // If it's a file, check if it's an image
+      // If it's a file, check if it's an image and not trashed
       const ext = path.extname(itemPath).toLowerCase();
-      if (imageExtensions.includes(ext)) {
+      if (imageExtensions.includes(ext) && !item.startsWith('trash_')) {
         results.push(itemPath);
       }
     }

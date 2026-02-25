@@ -326,13 +326,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               className="bg-gray-800 rounded-full p-2"
               onClick={() => {
                     apiClient
-                      .post('/api/img/delete', { imgPath: imageUrl })
+                      .post('/api/img/trash', { imgPath: imageUrl })
                       .then(() => {
-                        console.log('Image deleted:', imageUrl);
+                        console.log('Image moved to trash:', imageUrl);
                         onDelete();
                       })
                       .catch(error => {
-                        console.error('Error deleting image:', error);
+                        console.error('Error moving image to trash:', error);
                       });
                   }}
             >
