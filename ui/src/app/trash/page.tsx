@@ -158,7 +158,9 @@ export default function TrashPage() {
         ) : (
           <>
             <div>
-              <h1 className="text-2xl font-semibold text-gray-100">Trash</h1>
+              <h1 className="text-2xl font-semibold text-gray-100">
+                Trash{status === 'success' ? `, Files: ${imgList.length}` : ''}
+              </h1>
             </div>
             <div className="flex-1"></div>
             {imgList.length > 0 && (
