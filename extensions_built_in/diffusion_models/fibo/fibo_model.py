@@ -106,7 +106,9 @@ class FiboModel(BaseModel):
             self.latents_std = None
 
         self.print_and_status_update("Moving transformer to device")
-        transformer.to(self.quantize_device, dtype=dtype)
+        if not self.low_vram:
+            # for low vram, we leave it on the cpu. Quantizes slower, but allows training on primary gpu
+            transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
             patch_dequantization_on_save(transformer)
@@ -175,11 +177,12 @@ class FiboModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        # FIBO pipeline requires prompt strings (not pre-computed embeds) because
-        # it needs both prompt_embeds and prompt_layers for DimFusion.
-        # The pipeline's encode_prompt has a bug when only prompt_embeds is passed.
+        has_cached_layers = (
+            hasattr(conditional_embeds, 'text_encoder_layers')
+            and conditional_embeds.text_encoder_layers is not None
+        )
+
         call_kwargs = {
-            'prompt': gen_config.prompt,
             'height': gen_config.height,
             'width': gen_config.width,
             'num_inference_steps': gen_config.num_inference_steps,
@@ -188,14 +191,93 @@ class FiboModel(BaseModel):
             'generator': generator,
         }
 
-        # Add negative prompt for CFG
-        if gen_config.guidance_scale > 1.0:
-            call_kwargs['negative_prompt'] = gen_config.negative_prompt or ""
+        if has_cached_layers:
+            # Use pre-computed embeddings — the text encoder may be unloaded
+            # (replaced with FakeTextEncoder) when cache_text_embeddings is enabled.
+            # The FIBO pipeline's encode_prompt doesn't support passing prompt_layers
+            # directly, so we monkey-patch it to return our pre-computed values.
+            original_encode_prompt = pipeline.encode_prompt
+            self._inject_cached_embeds(
+                pipeline, call_kwargs, gen_config,
+                conditional_embeds, unconditional_embeds,
+            )
+            try:
+                call_kwargs.update(extra)
+                img = pipeline(**call_kwargs).images[0]
+            finally:
+                pipeline.encode_prompt = original_encode_prompt
+        else:
+            # No cached layers — use raw prompt strings (text encoder must be loaded)
+            call_kwargs['prompt'] = gen_config.prompt
+            if gen_config.guidance_scale > 1.0:
+                call_kwargs['negative_prompt'] = gen_config.negative_prompt or ""
+            call_kwargs.update(extra)
+            img = pipeline(**call_kwargs).images[0]
 
-        call_kwargs.update(extra)
-
-        img = pipeline(**call_kwargs).images[0]
         return img
+
+    def _inject_cached_embeds(
+        self, pipeline, call_kwargs, gen_config,
+        conditional_embeds, unconditional_embeds,
+    ):
+        """Monkey-patch pipeline.encode_prompt to return pre-computed embeddings.
+
+        The FIBO pipeline requires both prompt_embeds and prompt_layers (all
+        intermediate text encoder hidden states) for DimFusion. Its encode_prompt
+        doesn't support passing prompt_layers as a parameter, so we temporarily
+        replace encode_prompt with a closure that returns our cached values.
+        The caller is responsible for restoring the original encode_prompt.
+        """
+        dtype = self.unet.dtype
+        device = pipeline._execution_device
+
+        # Extract positive embeddings
+        pos_embeds = conditional_embeds.text_embeds.to(device=device, dtype=dtype)
+        pos_layers = [layer.to(device=device, dtype=dtype) for layer in conditional_embeds.text_encoder_layers]
+        pos_mask = conditional_embeds.attention_mask
+        if pos_mask is not None:
+            pos_mask = pos_mask.to(device=device, dtype=dtype)
+
+        # Extract negative embeddings (for CFG)
+        neg_embeds = None
+        neg_layers = None
+        neg_mask = None
+
+        if gen_config.guidance_scale > 1.0:
+            neg_embeds = unconditional_embeds.text_embeds.to(device=device, dtype=dtype)
+            neg_layers = [layer.to(device=device, dtype=dtype) for layer in unconditional_embeds.text_encoder_layers]
+            neg_mask = unconditional_embeds.attention_mask
+            if neg_mask is not None:
+                neg_mask = neg_mask.to(device=device, dtype=dtype)
+
+            # Pad positive and negative to the same sequence length
+            max_tokens = max(neg_embeds.shape[1], pos_embeds.shape[1])
+
+            pos_embeds, pos_mask = pipeline.pad_embedding(pos_embeds, max_tokens, attention_mask=pos_mask)
+            pos_layers = [pipeline.pad_embedding(layer, max_tokens)[0] for layer in pos_layers]
+
+            neg_embeds, neg_mask = pipeline.pad_embedding(neg_embeds, max_tokens, attention_mask=neg_mask)
+            neg_layers = [pipeline.pad_embedding(layer, max_tokens)[0] for layer in neg_layers]
+        else:
+            max_tokens = pos_embeds.shape[1]
+            pos_embeds, pos_mask = pipeline.pad_embedding(pos_embeds, max_tokens, attention_mask=pos_mask)
+            pos_layers = [pipeline.pad_embedding(layer, max_tokens)[0] for layer in pos_layers]
+
+        text_ids = torch.zeros(pos_embeds.shape[0], max_tokens, 3, device=device, dtype=dtype)
+
+        # Replace encode_prompt with closure returning pre-computed values
+        def patched_encode_prompt(**_kwargs):
+            return (
+                pos_embeds, neg_embeds, text_ids,
+                pos_mask, neg_mask,
+                pos_layers, neg_layers,
+            )
+
+        pipeline.encode_prompt = patched_encode_prompt
+
+        # Pass prompt_embeds so pipeline derives batch_size from its shape
+        # (instead of from a prompt string, which we don't provide)
+        call_kwargs['prompt_embeds'] = pos_embeds
 
     def get_noise_prediction(
         self,
@@ -260,26 +342,24 @@ class FiboModel(BaseModel):
             self.unet.config.num_single_layers
         )
 
-        if hasattr(text_embeddings, 'text_encoder_layers') and text_embeddings.text_encoder_layers is not None:
-            te_layers = [
-                layer.to(self.device_torch, cast_dtype)
-                for layer in text_embeddings.text_encoder_layers
-            ]
+        if not hasattr(text_embeddings, 'text_encoder_layers') or text_embeddings.text_encoder_layers is None:
+            raise ValueError(
+                "FIBO requires text_encoder_layers for DimFusion but they are missing. "
+                "If using cache_text_embeddings, delete the cache and re-run to regenerate it."
+            )
 
-            # Pad or truncate layers to match transformer's expected count
-            if len(te_layers) >= total_num_layers:
-                # Remove first layers to keep the last ones
-                te_layers = te_layers[len(te_layers) - total_num_layers:]
-            else:
-                # Duplicate last layer to fill the gap
-                te_layers = te_layers + [te_layers[-1]] * (total_num_layers - len(te_layers))
+        te_layers = [
+            layer.to(self.device_torch, cast_dtype)
+            for layer in text_embeddings.text_encoder_layers
+        ]
+
+        # Pad or truncate layers to match transformer's expected count
+        if len(te_layers) >= total_num_layers:
+            # Remove first layers to keep the last ones
+            te_layers = te_layers[len(te_layers) - total_num_layers:]
         else:
-            # Fallback: create layers from text_embeds if text_encoder_layers not available
-            # text_embeds is concatenation of last 2 hidden states (4096 = 2048 + 2048)
-            # Use the last hidden state portion (second 2048 dims) for all layers
-            text_embeds = text_embeddings.text_embeds.to(self.device_torch, cast_dtype)
-            fallback_layer = text_embeds[..., 2048:]  # Last 2048 dims (last hidden state)
-            te_layers = [fallback_layer] * total_num_layers
+            # Duplicate last layer to fill the gap
+            te_layers = te_layers + [te_layers[-1]] * (total_num_layers - len(te_layers))
 
         transformer_kwargs['text_encoder_layers'] = te_layers
 

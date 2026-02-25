@@ -156,7 +156,16 @@ def concat_prompt_embeddings(
         pooled_embeds = torch.cat(
             [unconditional.pooled_embeds, conditional.pooled_embeds]
         ).repeat_interleave(n_imgs, dim=0)
-    return PromptEmbeds([text_embeds, pooled_embeds])
+    pe = PromptEmbeds([text_embeds, pooled_embeds])
+
+    # Preserve text_encoder_layers (for DimFusion models like FIBO)
+    if hasattr(unconditional, 'text_encoder_layers') and unconditional.text_encoder_layers is not None:
+        pe.text_encoder_layers = [
+            torch.cat([u_layer, c_layer]).repeat_interleave(n_imgs, dim=0)
+            for u_layer, c_layer in zip(unconditional.text_encoder_layers, conditional.text_encoder_layers)
+        ]
+
+    return pe
 
 
 def addnet_hash_safetensors(b):
