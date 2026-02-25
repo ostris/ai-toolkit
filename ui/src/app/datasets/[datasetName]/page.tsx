@@ -85,9 +85,9 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     await Promise.all(
       paths.map(imgPath =>
         apiClient
-          .post('/api/img/delete', { imgPath })
+          .post('/api/img/trash', { imgPath })
           .then(() => removeImageFromList(imgPath))
-          .catch(error => console.error('Error deleting image:', error)),
+          .catch(error => console.error('Error moving image to trash:', error)),
       ),
     );
     setIsSelectMode(false);
