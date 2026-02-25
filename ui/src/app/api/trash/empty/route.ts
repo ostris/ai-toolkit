@@ -37,16 +37,21 @@ function findTrashedFilesRecursively(dir: string): string[] {
   const mediaExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav'];
   let results: string[] = [];
 
-  const items = fs.readdirSync(dir);
+  let items;
+  try {
+    items = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    console.warn(`Could not read directory ${dir}:`, error);
+    return results;
+  }
 
   for (const item of items) {
-    const itemPath = path.join(dir, item);
-    const stat = fs.statSync(itemPath);
+    const itemPath = path.join(dir, item.name);
 
-    if (stat.isDirectory() && item !== '_controls' && !item.startsWith('.')) {
+    if (item.isDirectory() && item.name !== '_controls' && !item.name.startsWith('.')) {
       results = results.concat(findTrashedFilesRecursively(itemPath));
-    } else if (item.startsWith('trash_')) {
-      const ext = path.extname(itemPath).toLowerCase();
+    } else if (item.isFile() && item.name.startsWith('trash_')) {
+      const ext = path.extname(item.name).toLowerCase();
       if (mediaExtensions.includes(ext)) {
         results.push(itemPath);
       }
