@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup, FaArrowsAlt } from 'react-icons/fa';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
 import VideoTrimModal from './VideoTrimModal';
+import MoveImageModal from './MoveImageModal';
 import { isVideo, isAudio } from '@/utils/basic';
 
 interface DatasetImageCardProps {
@@ -16,6 +17,8 @@ interface DatasetImageCardProps {
   onTrim?: () => void;
   onMerge?: () => void;
   onEnlarge?: () => void;
+  onMove?: (operation: 'move' | 'copy') => void;
+  currentDataset?: string;
   selected?: boolean;
   isSelectMode?: boolean;
   onLongPress?: () => void;
@@ -32,6 +35,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onTrim,
   onMerge,
   onEnlarge,
+  onMove,
+  currentDataset = '',
   selected = false,
   isSelectMode = false,
   onLongPress,
@@ -47,6 +52,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [imageKey, setImageKey] = useState<number>(Date.now());
   const [videoKey, setVideoKey] = useState<number>(Date.now());
   const [isVideoEditOpen, setIsVideoEditOpen] = useState<boolean>(false);
+  const [isMoveModalOpen, setIsMoveModalOpen] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPress = useRef<boolean>(false);
@@ -324,6 +330,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             )}
             <button
               className="bg-gray-800 rounded-full p-2"
+              onClick={() => setIsMoveModalOpen(true)}
+              aria-label="Move or copy to another dataset"
+            >
+              <FaArrowsAlt />
+            </button>
+            <button
+              className="bg-gray-800 rounded-full p-2"
               onClick={() => {
                     apiClient
                       .post('/api/img/trash', { imgPath: imageUrl })
@@ -388,6 +401,18 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           onSplit={() => { setIsVideoEditOpen(false); onSplit?.(); }}
         />
       )}
+      <MoveImageModal
+        isOpen={isMoveModalOpen}
+        onClose={() => setIsMoveModalOpen(false)}
+        imageUrl={imageUrl}
+        currentDataset={currentDataset}
+        onComplete={(operation) => {
+          if (operation === 'move') {
+            onDelete();
+          }
+          onMove?.(operation);
+        }}
+      />
     </div>
   );
 };

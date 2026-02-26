@@ -239,6 +239,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 key={img.img_path}
                 alt="image"
                 imageUrl={img.img_path}
+                currentDataset={datasetName}
                 onDelete={() => removeImageFromList(img.img_path)}
                 onSplit={() => refreshImageList(datasetName)}
                 onMerge={() => handleMergeStart(img.img_path)}
