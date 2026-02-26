@@ -18,7 +18,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { url, dataset } = body;
+    const { url, dataset, format, title, cookies_file } = body;
 
     if (!url || !url.trim()) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
@@ -28,7 +28,13 @@ export async function POST(request: Request) {
     }
 
     const download = await prisma.videoDownload.create({
-      data: { url: url.trim(), dataset: dataset.trim() },
+      data: {
+        url: url.trim(),
+        dataset: dataset.trim(),
+        format: format?.trim() ?? '',
+        title: title?.trim() ?? '',
+        cookies_file: cookies_file?.trim() ?? '',
+      },
     });
     return NextResponse.json(download);
   } catch (error) {

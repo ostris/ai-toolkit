@@ -41,15 +41,20 @@ model Job {
 }
 
 model VideoDownload {
-  id         String   @id @default(uuid())
-  url        String
-  dataset    String
-  status     String   @default("pending")
-  progress   Float    @default(0)
-  error      String   @default("")
-  filename   String   @default("")
-  created_at DateTime @default(now())
-  updated_at DateTime @updatedAt
+  id           String   @id @default(uuid())
+  url          String
+  dataset      String
+  status       String   @default("pending")
+  progress     Float    @default(0)
+  error        String   @default("")
+  filename     String   @default("")
+  title        String   @default("")
+  filesize     String   @default("")
+  speed        String   @default("")
+  format       String   @default("")
+  cookies_file String   @default("")
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
 
   @@index([status])
 }
