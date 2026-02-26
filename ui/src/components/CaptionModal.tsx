@@ -12,13 +12,22 @@ interface CaptionModalProps {
   onCaptionGenerated?: (caption: string) => void;
 }
 
+const MODEL_LITE = 'prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1';
+const MODEL_FULL = 'prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it';
+
+const MODEL_OPTIONS = [
+  { value: MODEL_LITE, label: 'Qwen3-VL 4B (Lite · ~5–8 GB VRAM, fast)' },
+  { value: MODEL_FULL, label: 'Qwen3-VL 8B (Full · ~10–14 GB VRAM, max quality)' },
+];
+
 const DEFAULT_SYSTEM_PROMPT =
-  'Describe the image in exhaustive detail. Be clinical and precise. Include all visible elements, their positions, colors, textures, and any relevant context.';
+  'Describe the subject and overall scene in detail.';
 
 export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGenerated }: CaptionModalProps) {
   const [mounted, setMounted] = useState(false);
   const [triggerWord, setTriggerWord] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
+  const [modelId, setModelId] = useState(MODEL_LITE);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedCaption, setGeneratedCaption] = useState<string | null>(null);
@@ -48,6 +57,7 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
         imgPath: imageUrl,
         triggerWord: triggerWord.trim(),
         systemPrompt: systemPrompt.trim(),
+        modelId,
       });
       const caption = res.data?.caption ?? '';
       setGeneratedCaption(caption);
@@ -88,6 +98,24 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
 
               <div className="space-y-4">
                 <div>
+                  <label className="block text-sm text-gray-400 mb-1">Model</label>
+                  <select
+                    value={modelId}
+                    onChange={e => setModelId(e.target.value)}
+                    disabled={isGenerating}
+                    className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 disabled:opacity-50"
+                    aria-label="Model"
+                  >
+                    {MODEL_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Model auto-downloads on first use. 4B is faster; 8B produces higher-quality captions.
+                  </p>
+                </div>
+
+                <div>
                   <label className="block text-sm text-gray-400 mb-1">Trigger Word</label>
                   <input
                     type="text"
@@ -104,17 +132,17 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-400 mb-1">System Prompt</label>
+                  <label className="block text-sm text-gray-400 mb-1">Caption Focus</label>
                   <textarea
                     value={systemPrompt}
                     onChange={e => setSystemPrompt(e.target.value)}
-                    rows={4}
+                    rows={3}
                     disabled={isGenerating}
                     className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 resize-none disabled:opacity-50"
-                    aria-label="System prompt"
+                    aria-label="Caption focus"
                   />
                   <p className="mt-1 text-xs text-gray-500">
-                    Instructions for how the image should be captioned.
+                    Tell the model what to focus on (e.g. "Describe clothing style and fit in detail.").
                   </p>
                 </div>
 

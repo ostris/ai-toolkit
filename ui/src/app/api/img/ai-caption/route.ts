@@ -11,10 +11,15 @@ const execFileAsync = promisify(execFile);
 const SCRIPT_PATH = path.join(TOOLKIT_ROOT, 'scripts', 'caption_image.py');
 const PYTHON_EXECUTABLE = process.env.PYTHON_EXECUTABLE || 'python3';
 
+const ALLOWED_MODELS = new Set([
+  'prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1',
+  'prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it',
+]);
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { imgPath, triggerWord, systemPrompt } = body;
+    const { imgPath, triggerWord, systemPrompt, modelId } = body;
 
     if (!imgPath || typeof imgPath !== 'string') {
       return NextResponse.json({ error: 'imgPath is required' }, { status: 400 });
@@ -23,6 +28,11 @@ export async function POST(request: Request) {
     // Security: prevent path traversal
     if (imgPath.includes('..')) {
       return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
+    }
+
+    const resolvedModelId = modelId || 'prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1';
+    if (!ALLOWED_MODELS.has(resolvedModelId)) {
+      return NextResponse.json({ error: 'Invalid model ID' }, { status: 400 });
     }
 
     const datasetsPath = await getDatasetsRoot();
@@ -45,6 +55,7 @@ export async function POST(request: Request) {
       '--img_path', imgPath,
       '--trigger_word', (triggerWord || '').toString(),
       '--system_prompt', (systemPrompt || '').toString(),
+      '--model_id', resolvedModelId,
     ];
 
     const { stdout } = await execFileAsync(PYTHON_EXECUTABLE, args, {
