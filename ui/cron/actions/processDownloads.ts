@@ -23,12 +23,15 @@ const getYtDlpPath = (): string => {
   return 'yt-dlp';
 };
 
+const CLOUDFLARE_403_RE = /Got HTTP Error 403.*Cloudflare/i;
+
 const runDownload = (
   downloadId: string,
   url: string,
   outputDir: string,
   format: string,
   cookiesFile: string,
+  impersonate = false,
 ): void => {
   const ytDlpPath = getYtDlpPath();
 
@@ -47,6 +50,10 @@ const runDownload = (
     args.push('--cookies', trimmedCookies);
   }
 
+  if (impersonate) {
+    args.push('--extractor-args', 'generic:impersonate');
+  }
+
   args.push(url);
 
   const proc = spawn(ytDlpPath, args);
@@ -62,6 +69,7 @@ const runDownload = (
   let stdoutBuffer = '';
   let stderrBuffer = '';
   let lastError = '';
+  let needsImpersonate = false;
 
   // yt-dlp progress line: [download]   1.2% of   150.23MiB at   2.34MiB/s ETA 01:03:45
   const progressRe = /\[download\]\s+(\d+\.?\d*)%\s+of\s+([\d.]+\s*\S+)\s+at\s+([\d.]+\s*\S+\/s)/;
@@ -110,6 +118,9 @@ const runDownload = (
       processLine(line);
       if (line.trim()) {
         lastError = line.trim();
+        if (CLOUDFLARE_403_RE.test(line)) {
+          needsImpersonate = true;
+        }
       }
     }
   });
@@ -133,6 +144,13 @@ const runDownload = (
       prisma.videoDownload
         .update({ where: { id: downloadId }, data: { status: 'completed', progress: 100, filename } })
         .catch(err => console.error(`[downloads] Failed to mark completed for ${downloadId}:`, err));
+    } else if (!impersonate && needsImpersonate) {
+      // Retry with impersonation to bypass Cloudflare anti-bot challenge
+      console.log(`[downloads] Retrying ${downloadId} with --extractor-args "generic:impersonate" due to Cloudflare 403`);
+      await prisma.videoDownload
+        .update({ where: { id: downloadId }, data: { status: 'downloading', progress: 0, error: '' } })
+        .catch(err => console.error(`[downloads] Failed to reset status for retry ${downloadId}:`, err));
+      runDownload(downloadId, url, outputDir, format, cookiesFile, true);
     } else {
       const errorMsg = lastError || `yt-dlp exited with code ${code}`;
       prisma.videoDownload
