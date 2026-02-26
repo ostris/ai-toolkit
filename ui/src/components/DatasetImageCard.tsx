@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup, FaComment } from 'react-icons/fa';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
 import VideoTrimModal from './VideoTrimModal';
+import CaptionModal from './CaptionModal';
 import { isVideo, isAudio } from '@/utils/basic';
 
 interface DatasetImageCardProps {
@@ -47,6 +48,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [imageKey, setImageKey] = useState<number>(Date.now());
   const [videoKey, setVideoKey] = useState<number>(Date.now());
   const [isVideoEditOpen, setIsVideoEditOpen] = useState<boolean>(false);
+  const [isCaptionModalOpen, setIsCaptionModalOpen] = useState<boolean>(false);
   const isGettingCaption = useRef<boolean>(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPress = useRef<boolean>(false);
@@ -324,6 +326,13 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             )}
             <button
               className="bg-gray-800 rounded-full p-2"
+              onClick={() => setIsCaptionModalOpen(true)}
+              aria-label="Generate AI caption"
+            >
+              <FaComment />
+            </button>
+            <button
+              className="bg-gray-800 rounded-full p-2"
               onClick={() => {
                     apiClient
                       .post('/api/img/trash', { imgPath: imageUrl })
@@ -388,6 +397,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           onSplit={() => { setIsVideoEditOpen(false); onSplit?.(); }}
         />
       )}
+      <CaptionModal
+        imageUrl={imageUrl}
+        isOpen={isCaptionModalOpen}
+        onClose={() => setIsCaptionModalOpen(false)}
+        onCaptionGenerated={(newCaption) => {
+          setCaption(newCaption);
+          setSavedCaption(newCaption);
+        }}
+      />
     </div>
   );
 };
