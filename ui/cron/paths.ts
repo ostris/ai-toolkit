@@ -8,6 +8,18 @@ export const defaultDataRoot = path.join(TOOLKIT_ROOT, 'data');
 
 console.log('TOOLKIT_ROOT:', TOOLKIT_ROOT);
 
+export const getDatasetsRoot = async () => {
+  const key = 'DATASETS_FOLDER';
+  let row = await prisma.settings.findFirst({
+    where: { key },
+  });
+  let datasetsRoot = defaultDatasetsFolder;
+  if (row?.value && row.value !== '') {
+    datasetsRoot = row.value;
+  }
+  return datasetsRoot as string;
+};
+
 export const getTrainingFolder = async () => {
   const key = 'TRAINING_FOLDER';
   let row = await prisma.settings.findFirst({
