@@ -6,6 +6,9 @@ import { TOOLKIT_ROOT, getDatasetsRoot } from '../paths';
 
 const MAX_CONCURRENT = 2;
 
+// Statuses set by the user intentionally — don't overwrite on process close.
+const STOPPED_STATUSES = new Set(['cancelled']);
+
 const getYtDlpPath = (): string => {
   const isWindows = process.platform === 'win32';
   const venvDirs = ['.venv', 'venv'];
@@ -29,7 +32,11 @@ const runDownload = (
 ): void => {
   const ytDlpPath = getYtDlpPath();
 
-  const args: string[] = ['--newline', '-o', path.join(outputDir, '%(title)s.%(ext)s')];
+  const args: string[] = [
+    '--newline',
+    '--merge-output-format', 'mp4',
+    '-o', path.join(outputDir, '%(title)s.%(ext)s'),
+  ];
 
   if (format && format.trim()) {
     args.push('-f', format.trim());
@@ -43,6 +50,13 @@ const runDownload = (
   args.push(url);
 
   const proc = spawn(ytDlpPath, args);
+
+  // Store PID so the API can terminate the process on cancel/pause
+  if (proc.pid) {
+    prisma.videoDownload
+      .update({ where: { id: downloadId }, data: { pid: proc.pid } })
+      .catch(err => console.error(`[downloads] Failed to store PID for ${downloadId}:`, err));
+  }
 
   let filename = '';
   let stdoutBuffer = '';
@@ -100,22 +114,36 @@ const runDownload = (
     }
   });
 
-  proc.on('close', (code: number | null) => {
+  proc.on('close', async (code: number | null) => {
+    // Always clear the PID and speed — process is no longer running
+    await prisma.videoDownload
+      .update({ where: { id: downloadId }, data: { pid: null, speed: '' } })
+      .catch(err => console.error(`[downloads] Failed to clear PID for ${downloadId}:`, err));
+
+    // Don't overwrite a status the user set intentionally (cancelled/paused)
+    const current = await prisma.videoDownload
+      .findUnique({ where: { id: downloadId }, select: { status: true } })
+      .catch(() => null);
+
+    if (current && STOPPED_STATUSES.has(current.status)) {
+      return;
+    }
+
     if (code === 0) {
       prisma.videoDownload
-        .update({ where: { id: downloadId }, data: { status: 'completed', progress: 100, speed: '', filename } })
+        .update({ where: { id: downloadId }, data: { status: 'completed', progress: 100, filename } })
         .catch(err => console.error(`[downloads] Failed to mark completed for ${downloadId}:`, err));
     } else {
       const errorMsg = lastError || `yt-dlp exited with code ${code}`;
       prisma.videoDownload
-        .update({ where: { id: downloadId }, data: { status: 'failed', speed: '', error: errorMsg } })
+        .update({ where: { id: downloadId }, data: { status: 'failed', error: errorMsg } })
         .catch(err => console.error(`[downloads] Failed to mark failed for ${downloadId}:`, err));
     }
   });
 
   proc.on('error', (err: Error) => {
     prisma.videoDownload
-      .update({ where: { id: downloadId }, data: { status: 'failed', speed: '', error: err.message } })
+      .update({ where: { id: downloadId }, data: { status: 'failed', speed: '', pid: null, error: err.message } })
       .catch(dbErr => console.error(`[downloads] Failed to mark error for ${downloadId}:`, dbErr));
   });
 };

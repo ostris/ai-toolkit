@@ -8,18 +8,25 @@ import { openConfirm } from '@/components/ConfirmModal';
 import { Button } from '@headlessui/react';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
-import { FaRegTrashAlt, FaChevronDown, FaChevronUp } from 'react-icons/fa';
-import { VideoInfo } from '../api/downloads/info/route';
+import { FaRegTrashAlt, FaChevronDown, FaChevronUp, FaBan, FaRedo } from 'react-icons/fa';
+
+interface VideoInfo {
+  title: string;
+  duration: number | null;
+  thumbnail: string | null;
+  resolutions: { label: string; format: string }[];
+}
 
 interface VideoDownload {
   id: string;
   url: string;
   dataset: string;
-  status: 'pending' | 'downloading' | 'completed' | 'failed';
+  status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   error: string;
   filename: string;
   title: string;
+  thumbnail: string;
   filesize: string;
   speed: string;
   format: string;
@@ -33,6 +40,7 @@ const statusColors: Record<string, string> = {
   downloading: 'text-blue-400',
   completed: 'text-green-400',
   failed: 'text-red-400',
+  cancelled: 'text-yellow-500',
 };
 
 const statusLabels: Record<string, string> = {
@@ -40,6 +48,7 @@ const statusLabels: Record<string, string> = {
   downloading: 'Downloading',
   completed: 'Completed',
   failed: 'Failed',
+  cancelled: 'Cancelled',
 };
 
 function formatDuration(seconds: number | null): string {
@@ -103,7 +112,7 @@ export default function DownloadsPage() {
       setInfoError('Please enter a URL first.');
       return;
     }
-    if (fetchedUrlRef.current === newUrl.trim()) return; // already fetched
+    if (fetchedUrlRef.current === newUrl.trim()) return;
 
     setIsFetching(true);
     setVideoInfo(null);
@@ -114,7 +123,6 @@ export default function DownloadsPage() {
       const res = await apiClient.get(`/api/downloads/info?url=${encodeURIComponent(newUrl.trim())}`);
       setVideoInfo(res.data);
       fetchedUrlRef.current = newUrl.trim();
-      // Default to best quality
       if (res.data.resolutions?.length > 0) {
         setNewFormat(res.data.resolutions[0].format);
       }
@@ -154,6 +162,7 @@ export default function DownloadsPage() {
         dataset: newDataset.trim(),
         format: newFormat.trim(),
         title: videoInfo?.title ?? '',
+        thumbnail: videoInfo?.thumbnail ?? '',
         cookies_file: newCookiesFile.trim(),
       });
       setNewUrl('');
@@ -170,10 +179,32 @@ export default function DownloadsPage() {
     }
   };
 
+  const handleCancel = (download: VideoDownload) => {
+    openConfirm({
+      title: 'Cancel Download',
+      message: `Cancel this download?\n${download.title || download.url}`,
+      type: 'warning',
+      confirmText: 'Cancel Download',
+      onConfirm: () => {
+        apiClient
+          .post('/api/downloads/cancel', { id: download.id })
+          .then(() => fetchDownloads())
+          .catch(error => console.error('Error cancelling download:', error));
+      },
+    });
+  };
+
+  const handleRequeue = (download: VideoDownload) => {
+    apiClient
+      .post('/api/downloads/requeue', { id: download.id })
+      .then(() => fetchDownloads())
+      .catch(error => console.error('Error requeueing download:', error));
+  };
+
   const handleDelete = (download: VideoDownload) => {
     openConfirm({
       title: 'Remove Download',
-      message: `Remove this download from the queue?\n${download.url}`,
+      message: `Remove this download from the queue?\n${download.title || download.url}`,
       type: 'warning',
       confirmText: 'Remove',
       onConfirm: () => {
@@ -192,17 +223,31 @@ export default function DownloadsPage() {
       title: 'Video',
       key: 'url',
       render: row => (
-        <div>
-          {row.title && <div className="text-gray-200 text-sm mb-0.5 truncate max-w-xs" title={row.title}>{row.title}</div>}
-          <a
-            href={row.url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-blue-400 hover:text-blue-300 text-xs truncate max-w-xs block"
-            title={row.url}
-          >
-            {row.url.length > 60 ? row.url.slice(0, 60) + '…' : row.url}
-          </a>
+        <div className="flex gap-3 items-start">
+          {row.thumbnail && /^https?:\/\//i.test(row.thumbnail) && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={row.thumbnail}
+              alt={row.title || row.url}
+              className="w-20 h-12 object-cover rounded flex-shrink-0 bg-gray-800"
+            />
+          )}
+          <div className="min-w-0">
+            {row.title && (
+              <div className="text-gray-200 text-sm mb-0.5 truncate max-w-xs" title={row.title}>
+                {row.title}
+              </div>
+            )}
+            <a
+              href={row.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-400 hover:text-blue-300 text-xs truncate max-w-xs block"
+              title={row.url}
+            >
+              {row.url.length > 60 ? row.url.slice(0, 60) + '…' : row.url}
+            </a>
+          </div>
         </div>
       ),
     },
@@ -240,9 +285,7 @@ export default function DownloadsPage() {
               <div className="w-full bg-gray-700 rounded-full h-2">
                 <div className="bg-green-500 h-2 rounded-full" style={{ width: '100%' }} />
               </div>
-              {row.filesize && (
-                <div className="text-xs text-gray-400 mt-1">{row.filesize}</div>
-              )}
+              {row.filesize && <div className="text-xs text-gray-400 mt-1">{row.filesize}</div>}
               {row.filename && (
                 <div className="text-xs text-gray-500 mt-0.5 truncate" title={row.filename}>
                   {row.filename}
@@ -264,9 +307,14 @@ export default function DownloadsPage() {
                   style={{ width: `${row.progress}%` }}
                 />
               </div>
-              {row.filesize && (
-                <div className="text-xs text-gray-400 mt-1">{row.filesize}</div>
-              )}
+              {row.filesize && <div className="text-xs text-gray-400 mt-1">{row.filesize}</div>}
+            </div>
+          );
+        }
+        if (row.status === 'cancelled') {
+          return (
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div className="bg-yellow-600 h-2 rounded-full" style={{ width: `${row.progress}%` }} />
             </div>
           );
         }
@@ -286,16 +334,41 @@ export default function DownloadsPage() {
     {
       title: 'Actions',
       key: 'actions',
-      className: 'w-14 text-right',
+      className: 'w-24 text-right',
       render: row => (
-        <button
-          className="text-gray-200 hover:bg-red-600 p-2 rounded-full transition-colors"
-          onClick={() => handleDelete(row)}
-          disabled={row.status === 'downloading'}
-          title={row.status === 'downloading' ? 'Cannot remove an active download' : 'Remove'}
-        >
-          <FaRegTrashAlt className={row.status === 'downloading' ? 'opacity-30' : ''} />
-        </button>
+        <div className="flex gap-1 justify-end">
+          {/* Cancel: stop an active or pending download */}
+          {(row.status === 'downloading' || row.status === 'pending') && (
+            <button
+              className="text-gray-300 hover:bg-yellow-600 p-2 rounded-full transition-colors"
+              onClick={() => handleCancel(row)}
+              title="Cancel download"
+            >
+              <FaBan />
+            </button>
+          )}
+
+          {/* Re-queue: retry cancelled or failed downloads */}
+          {(row.status === 'cancelled' || row.status === 'failed') && (
+            <button
+              className="text-gray-300 hover:bg-blue-600 p-2 rounded-full transition-colors"
+              onClick={() => handleRequeue(row)}
+              title="Re-queue download"
+            >
+              <FaRedo />
+            </button>
+          )}
+
+          {/* Delete: remove from the list entirely (not available while actively downloading) */}
+          <button
+            className="text-gray-200 hover:bg-red-600 p-2 rounded-full transition-colors"
+            onClick={() => handleDelete(row)}
+            disabled={row.status === 'downloading'}
+            title={row.status === 'downloading' ? 'Cancel the download first' : 'Remove'}
+          >
+            <FaRegTrashAlt className={row.status === 'downloading' ? 'opacity-30' : ''} />
+          </button>
+        </div>
       ),
     },
   ];
@@ -375,7 +448,7 @@ export default function DownloadsPage() {
                 </datalist>
               </div>
 
-              {/* Resolution selector — always visible once info is fetched, otherwise a free-text input */}
+              {/* Resolution selector */}
               <div className="w-full sm:w-56">
                 <label className="block text-xs mb-1 mt-2 text-gray-300">Resolution / Format</label>
                 {videoInfo && videoInfo.resolutions.length > 0 ? (

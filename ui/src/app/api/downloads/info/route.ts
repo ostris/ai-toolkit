@@ -35,7 +35,7 @@ interface YtDlpFormat {
   format_note?: string;
 }
 
-export interface VideoInfo {
+interface VideoInfo {
   title: string;
   duration: number | null;
   thumbnail: string | null;
@@ -54,13 +54,13 @@ function buildResolutions(formats: YtDlpFormat[]): { label: string; format: stri
   const sorted = Array.from(heights).sort((a, b) => b - a);
 
   const options: { label: string; format: string }[] = [
-    { label: 'Best quality', format: 'bestvideo+bestaudio/best' },
+    { label: 'Best quality (mp4)', format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best' },
   ];
 
   for (const h of sorted) {
     options.push({
       label: `${h}p`,
-      format: `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`,
+      format: `bestvideo[height<=${h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`,
     });
   }
 
