@@ -18,7 +18,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { url, dataset, format, title, cookies_file } = body;
+    const { url, dataset, format, title, thumbnail, cookies_file } = body;
 
     if (!url || !url.trim()) {
       return NextResponse.json({ error: 'URL is required' }, { status: 400 });
@@ -33,6 +33,7 @@ export async function POST(request: Request) {
         dataset: dataset.trim(),
         format: format?.trim() ?? '',
         title: title?.trim() ?? '',
+        thumbnail: thumbnail?.trim() ?? '',
         cookies_file: cookies_file?.trim() ?? '',
       },
     });

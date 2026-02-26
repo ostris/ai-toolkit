@@ -49,10 +49,12 @@ model VideoDownload {
   error        String   @default("")
   filename     String   @default("")
   title        String   @default("")
+  thumbnail    String   @default("")
   filesize     String   @default("")
   speed        String   @default("")
   format       String   @default("")
   cookies_file String   @default("")
+  pid          Int?
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
