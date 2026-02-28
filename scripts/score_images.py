@@ -11,7 +11,8 @@ import csv
 
 METRIC_AESTHETIC = 'aesthetic-predictor-v2-5'
 METRIC_BRISQUE = 'brisque'
-ALL_METRICS = [METRIC_AESTHETIC, METRIC_BRISQUE]
+METRIC_MOTION_BLUR = 'motion-blur'
+ALL_METRICS = [METRIC_AESTHETIC, METRIC_BRISQUE, METRIC_MOTION_BLUR]
 
 def get_csv_path(img_path: str) -> str:
     base, _ = os.path.splitext(img_path)
@@ -66,6 +67,7 @@ def main():
     try:
         import torch
         import numpy as np
+        import cv2
         from aesthetic_predictor_v2_5 import convert_v2_5_from_siglip
         from PIL import Image
         import piq
@@ -109,6 +111,14 @@ def main():
                     save_score(img_path, METRIC_BRISQUE, brisque_score)
                 except Exception as e:
                     print(f'WARN:Failed to compute {METRIC_BRISQUE} for {img_path}: {e}', flush=True)
+
+            if not has_score(img_path, METRIC_MOTION_BLUR):
+                try:
+                    gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+                    motion_blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+                    save_score(img_path, METRIC_MOTION_BLUR, motion_blur_score)
+                except Exception as e:
+                    print(f'WARN:Failed to compute {METRIC_MOTION_BLUR} for {img_path}: {e}', flush=True)
 
         except Exception as e:
             print(f'WARN:Failed to open {img_path}: {e}', flush=True)
