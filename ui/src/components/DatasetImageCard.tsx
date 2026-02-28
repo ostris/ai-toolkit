@@ -424,15 +424,25 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       </div>
       {scores && Object.keys(scores).length > 0 && (
         <div className="w-full px-2 py-1 bg-gray-900 rounded-b-lg flex flex-wrap gap-1">
-          {Object.entries(scores).map(([metric, value]) => (
-            <span
-              key={metric}
-              className="text-xs bg-gray-700 text-gray-200 px-2 py-0.5 rounded-full"
-              title={metric}
-            >
-              {metric === 'aesthetic-predictor-v2-5' ? '✨' : metric}: {value.toFixed(2)}
-            </span>
-          ))}
+          {Object.entries(scores).map(([metric, value]) => {
+            let label: string;
+            if (metric === 'aesthetic-predictor-v2-5') {
+              label = `✨ ${value.toFixed(2)}`;
+            } else if (metric === 'brisque') {
+              label = `📐 ${value.toFixed(2)}`;
+            } else {
+              label = `${metric}: ${value.toFixed(2)}`;
+            }
+            return (
+              <span
+                key={metric}
+                className="text-xs bg-gray-700 text-gray-200 px-2 py-0.5 rounded-full"
+                title={metric}
+              >
+                {label}
+              </span>
+            );
+          })}
         </div>
       )}
       {isItAVideo && (
