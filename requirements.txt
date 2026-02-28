@@ -41,3 +41,4 @@ av==16.0.1
 torchcodec
 yt-dlp[default,curl-cffi]
 piq
+aesthetic_predictor_v2_5
