@@ -430,7 +430,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
               className="text-xs bg-gray-700 text-gray-200 px-2 py-0.5 rounded-full"
               title={metric}
             >
-              {metric === 'aesthetic-predictor-v2-5' ? '✨' : metric}: {value.toFixed(2)}
+              {metric}: {value.toFixed(2)}
             </span>
           ))}
         </div>
