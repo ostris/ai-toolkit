@@ -6,7 +6,6 @@ import { FaComment } from 'react-icons/fa';
 
 interface BulkCaptionModalProps {
   isOpen: boolean;
-  imageCount: number;
   onClose: () => void;
   onStart: (options: { modelId: string; triggerWord: string; systemPrompt: string }) => void;
 }
@@ -21,7 +20,7 @@ const MODEL_OPTIONS = [
 
 const DEFAULT_SYSTEM_PROMPT = 'Describe the subject and overall scene in detail.';
 
-export default function BulkCaptionModal({ isOpen, imageCount, onClose, onStart }: BulkCaptionModalProps) {
+export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCaptionModalProps) {
   const [mounted, setMounted] = useState(false);
   const [triggerWord, setTriggerWord] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
@@ -124,7 +123,7 @@ export default function BulkCaptionModal({ isOpen, imageCount, onClose, onStart 
                 className="rounded-md bg-blue-700 hover:bg-blue-500 px-3 py-2 text-sm font-semibold text-white flex items-center gap-2"
               >
                 <FaComment className="w-3 h-3" />
-                Caption {imageCount} Image{imageCount !== 1 ? 's' : ''}
+                Caption Images
               </button>
             </div>
           </DialogPanel>
