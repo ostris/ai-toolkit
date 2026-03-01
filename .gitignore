@@ -12,6 +12,8 @@ build/
 develop-eggs/
 dist/
 downloads/
+!ui/src/app/downloads/
+!ui/src/app/api/downloads/
 eggs/
 .eggs/
 lib/
@@ -182,3 +184,6 @@ cython_debug/
 aitk_db.db
 /notes.md
 /data
+
+output/*
+output
