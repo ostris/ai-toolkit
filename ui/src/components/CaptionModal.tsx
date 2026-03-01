@@ -16,8 +16,8 @@ const MODEL_LITE = 'prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1';
 const MODEL_FULL = 'prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it';
 
 const MODEL_OPTIONS = [
-  { value: MODEL_LITE, label: 'Qwen3-VL 4B (Lite · ~5–8 GB VRAM, fast)' },
-  { value: MODEL_FULL, label: 'Qwen3-VL 8B (Full · ~10–14 GB VRAM, max quality)' },
+  { value: MODEL_LITE, label: 'Qwen3-VL-4B-Instruct-abliterated-v1 (~5–8 GB VRAM, fast)' },
+  { value: MODEL_FULL, label: 'Qwen3-VL-8B-Instruct-abliterated-v1 (~10–14 GB VRAM, max quality)' },
 ];
 
 const DEFAULT_SYSTEM_PROMPT =
