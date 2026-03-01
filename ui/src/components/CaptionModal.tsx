@@ -62,6 +62,7 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
       const caption = res.data?.caption ?? '';
       setGeneratedCaption(caption);
       onCaptionGenerated?.(caption);
+      onClose();
     } catch (err: any) {
       const msg = err?.response?.data?.error || 'Failed to generate caption';
       setError(msg);

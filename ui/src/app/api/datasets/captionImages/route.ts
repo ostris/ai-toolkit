@@ -108,7 +108,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Captioning already in progress' }, { status: 409 });
   }
 
-  const images = findCaptionableFiles(datasetFolder);
+  const allImages = findCaptionableFiles(datasetFolder);
+  const images = allImages.filter(imgPath => {
+    const base = imgPath.slice(0, imgPath.lastIndexOf('.'));
+    return !fs.existsSync(base + '.txt');
+  });
   const total = images.length;
 
   const state: CaptioningState = { status: 'running', captioned: 0, total };

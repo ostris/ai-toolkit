@@ -42,6 +42,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [captioningStatus, setCaptioningStatus] = useState<CaptioningStatus | null>(null);
   const [isBulkCaptionModalOpen, setIsBulkCaptionModalOpen] = useState(false);
   const captioningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevCaptionedCountRef = useRef<number>(0);
+  const [captionRefreshKey, setCaptionRefreshKey] = useState<number>(0);
   const removeImageFromList = useCallback((imgPath: string) => {
     setImgList(prev => prev.filter(x => x.img_path !== imgPath));
   }, []);
@@ -197,11 +199,16 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
 
   const startCaptioningPoll = useCallback(() => {
     stopCaptioningPoll();
+    prevCaptionedCountRef.current = 0;
     captioningPollRef.current = setInterval(async () => {
       try {
         const res = await apiClient.get(`/api/datasets/captionImages?datasetName=${encodeURIComponent(datasetName)}`);
         const data: CaptioningStatus = res.data;
         setCaptioningStatus(data);
+        if (data.captioned > prevCaptionedCountRef.current) {
+          prevCaptionedCountRef.current = data.captioned;
+          setCaptionRefreshKey(k => k + 1);
+        }
         if (data.status !== 'running') {
           stopCaptioningPoll();
         }
@@ -441,6 +448,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 onLongPress={() => handleLongPress(img.img_path)}
                 onSelect={() => handleSelect(img.img_path)}
                 scoreRefreshKey={scoreRefreshKey}
+                captionRefreshKey={captionRefreshKey}
               />
             ))}
           </div>
@@ -449,7 +457,6 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       <AddImagesModal />
       <BulkCaptionModal
         isOpen={isBulkCaptionModalOpen}
-        imageCount={imgList.length}
         onClose={() => setIsBulkCaptionModalOpen(false)}
         onStart={handleStartCaptioning}
       />

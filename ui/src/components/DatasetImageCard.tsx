@@ -25,6 +25,7 @@ interface DatasetImageCardProps {
   onLongPress?: () => void;
   onSelect?: () => void;
   scoreRefreshKey?: number;
+  captionRefreshKey?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -44,6 +45,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onLongPress,
   onSelect,
   scoreRefreshKey,
+  captionRefreshKey = 0,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -71,8 +73,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     };
   }, []);
 
-  const fetchCaption = async () => {
-    if (isGettingCaption.current || isCaptionLoaded) return;
+  const fetchCaption = async (force = false) => {
+    if (isGettingCaption.current || (!force && isCaptionLoaded)) return;
     isGettingCaption.current = true;
     apiClient
       .post(`/api/caption/get`, { imgPath: imageUrl })
@@ -158,6 +160,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       fetchScores();
     }
   }, [scoreRefreshKey]);
+
+  // Re-fetch caption when captionRefreshKey changes (e.g., during bulk captioning)
+  // Only re-fetch cards that don't yet have a saved caption
+  useEffect(() => {
+    if (captionRefreshKey && inViewport && isVisible && savedCaption === '') {
+      isGettingCaption.current = false;
+      fetchCaption(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionRefreshKey]);
 
   useEffect(() => {
     // Create intersection observer to check viewport visibility
