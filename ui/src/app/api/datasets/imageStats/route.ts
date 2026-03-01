@@ -2,11 +2,34 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { getDatasetsRoot } from '@/server/settings';
+import { videoExtensions } from '@/utils/basic';
+
+const execFileAsync = promisify(execFile);
 
 interface ImageStats {
   totalCount: number;
+  imageCount: number;
+  videoCount: number;
+  totalVideoDuration: number;
   resolutionBreakdown: { [resolution: string]: number };
+}
+
+async function getVideoDuration(videoPath: string): Promise<number> {
+  try {
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      videoPath,
+    ]);
+    const duration = parseFloat(stdout.trim());
+    return isNaN(duration) ? 0 : duration;
+  } catch {
+    return 0;
+  }
 }
 
 export async function GET(request: Request) {
@@ -38,6 +61,9 @@ export async function GET(request: Request) {
 
   // Initialize stats with defaults
   let totalCount = 0;
+  let imageCount = 0;
+  let videoCount = 0;
+  let totalVideoDuration = 0;
   const resolutionBreakdown: { [resolution: string]: number } = {};
   let hasError = false;
 
@@ -46,21 +72,33 @@ export async function GET(request: Request) {
     const imageFiles = findImagesRecursively(datasetFolder);
     totalCount = imageFiles.length;
 
-    // Get resolution for each image with concurrent processing
+    // Separate video files from image files in a single pass
+    const videoFiles: string[] = [];
+    const nonVideoFiles: string[] = [];
+    for (const f of imageFiles) {
+      if (videoExtensions.includes(path.extname(f).toLowerCase())) {
+        videoFiles.push(f);
+      } else {
+        nonVideoFiles.push(f);
+      }
+    }
+    imageCount = nonVideoFiles.length;
+    videoCount = videoFiles.length;
+
+    // Get video durations concurrently
     const CONCURRENCY_LIMIT = 10;
-    for (let i = 0; i < imageFiles.length; i += CONCURRENCY_LIMIT) {
-      const batch = imageFiles.slice(i, i + CONCURRENCY_LIMIT);
+    for (let i = 0; i < videoFiles.length; i += CONCURRENCY_LIMIT) {
+      const batch = videoFiles.slice(i, i + CONCURRENCY_LIMIT);
+      const durations = await Promise.all(batch.map(vp => getVideoDuration(vp)));
+      totalVideoDuration += durations.reduce((sum, d) => sum + d, 0);
+    }
+
+    // Get resolution for each image with concurrent processing
+    for (let i = 0; i < nonVideoFiles.length; i += CONCURRENCY_LIMIT) {
+      const batch = nonVideoFiles.slice(i, i + CONCURRENCY_LIMIT);
       await Promise.allSettled(
         batch.map(async imgPath => {
           try {
-            const ext = path.extname(imgPath).toLowerCase();
-            // Skip video files for now as getting their resolution requires different approach
-            if (['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'].includes(ext)) {
-              const videoKey = 'video (resolution unavailable)';
-              resolutionBreakdown[videoKey] = (resolutionBreakdown[videoKey] || 0) + 1;
-              return;
-            }
-
             const metadata = await sharp(imgPath).metadata();
             const width = metadata.width || 0;
             const height = metadata.height || 0;
@@ -83,6 +121,9 @@ export async function GET(request: Request) {
   // Always return stats with what we have, even if there were errors
   const stats: ImageStats = {
     totalCount,
+    imageCount,
+    videoCount,
+    totalVideoDuration,
     resolutionBreakdown,
   };
 
