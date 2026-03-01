@@ -13,6 +13,14 @@ import { apiClient } from '@/utils/api';
 import { isAudio, isVideo, formatDuration } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 
+interface ImageMetadataEntry {
+  img_path: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  scores?: Record<string, number>;
+}
+
 interface ScoringStatus {
   status: 'idle' | 'running' | 'completed' | 'cancelled' | 'error';
   scored: number;
@@ -45,8 +53,24 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const prevCaptionedCountRef = useRef<number>(0);
   const [captionRefreshKey, setCaptionRefreshKey] = useState<number>(0);
   const [totalVideoDuration, setTotalVideoDuration] = useState<number>(0);
+  const [sortBy, setSortBy] = useState<string>('filename');
+  const [imageMetadata, setImageMetadata] = useState<Record<string, ImageMetadataEntry>>({});
   const removeImageFromList = useCallback((imgPath: string) => {
     setImgList(prev => prev.filter(x => x.img_path !== imgPath));
+  }, []);
+
+  const refreshImageMetadata = useCallback((dbName: string) => {
+    apiClient
+      .get(`/api/datasets/imageMetadata?datasetName=${encodeURIComponent(dbName)}`)
+      .then(res => res.data)
+      .then((data: { images: ImageMetadataEntry[] }) => {
+        const map: Record<string, ImageMetadataEntry> = {};
+        for (const entry of data.images) {
+          map[entry.img_path] = entry;
+        }
+        setImageMetadata(map);
+      })
+      .catch(() => {});
   }, []);
 
   const refreshImageList = (dbName: string) => {
@@ -75,6 +99,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         .then(res => res.data)
         .then(data => setTotalVideoDuration(data.totalVideoDuration ?? 0))
         .catch(() => {});
+      refreshImageMetadata(datasetName);
     }
   }, [datasetName]);
 
@@ -100,6 +125,70 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setIsMergeMode(false);
     setSelectedImages(new Set());
   }, []);
+
+  const sortOptions = useMemo(() => {
+    const options: { value: string; label: string }[] = [
+      { value: 'filename', label: 'Filename' },
+    ];
+    const hasVideos = imgList.some(img => isVideo(img.img_path));
+    const hasImages = imgList.some(img => !isVideo(img.img_path) && !isAudio(img.img_path));
+    if (hasVideos) {
+      options.push({ value: 'duration:asc', label: 'Duration (Ascending)' });
+      options.push({ value: 'duration:desc', label: 'Duration (Descending)' });
+    }
+    if (hasImages) {
+      options.push({ value: 'resolution:asc', label: 'Resolution (Small to Large)' });
+      options.push({ value: 'resolution:desc', label: 'Resolution (Large to Small)' });
+      const metrics = new Set<string>();
+      for (const meta of Object.values(imageMetadata)) {
+        if (meta.scores) {
+          for (const key of Object.keys(meta.scores)) {
+            metrics.add(key);
+          }
+        }
+      }
+      for (const metric of Array.from(metrics).sort()) {
+        options.push({ value: `score:${metric}:asc`, label: `${metric} (Ascending)` });
+        options.push({ value: `score:${metric}:desc`, label: `${metric} (Descending)` });
+      }
+    }
+    return options;
+  }, [imgList, imageMetadata]);
+
+  const sortedImgList = useMemo(() => {
+    const list = [...imgList];
+    if (sortBy === 'filename') {
+      return list.sort((a, b) => a.img_path.localeCompare(b.img_path));
+    }
+    const parts = sortBy.split(':');
+    const type = parts[0];
+    const dir = parts[parts.length - 1] as 'asc' | 'desc';
+    if (type === 'duration') {
+      return list.sort((a, b) => {
+        const dA = imageMetadata[a.img_path]?.duration ?? 0;
+        const dB = imageMetadata[b.img_path]?.duration ?? 0;
+        return dir === 'asc' ? dA - dB : dB - dA;
+      });
+    }
+    if (type === 'resolution') {
+      return list.sort((a, b) => {
+        const mA = imageMetadata[a.img_path];
+        const mB = imageMetadata[b.img_path];
+        const pA = (mA?.width ?? 0) * (mA?.height ?? 0);
+        const pB = (mB?.width ?? 0) * (mB?.height ?? 0);
+        return dir === 'asc' ? pA - pB : pB - pA;
+      });
+    }
+    if (type === 'score') {
+      const metric = parts.slice(1, -1).join(':');
+      return list.sort((a, b) => {
+        const sA = imageMetadata[a.img_path]?.scores?.[metric] ?? 0;
+        const sB = imageMetadata[b.img_path]?.scores?.[metric] ?? 0;
+        return dir === 'asc' ? sA - sB : sB - sA;
+      });
+    }
+    return list;
+  }, [imgList, sortBy, imageMetadata]);
 
   useEffect(() => {
     if (isSelectMode && selectedImages.size === 0) {
@@ -172,6 +261,12 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   useEffect(() => {
     return () => stopScoringPoll();
   }, [stopScoringPoll]);
+
+  useEffect(() => {
+    if (scoreRefreshKey > 0 && datasetName) {
+      refreshImageMetadata(datasetName);
+    }
+  }, [scoreRefreshKey, datasetName, refreshImageMetadata]);
 
   const handleScoreImages = useCallback(async () => {
     try {
@@ -452,26 +547,40 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         )}
         {PageInfoContent}
         {status === 'success' && imgList.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {imgList.map(img => (
-              <DatasetImageCard
-                key={img.img_path}
-                alt="image"
-                imageUrl={img.img_path}
-                currentDataset={datasetName}
-                onDelete={() => removeImageFromList(img.img_path)}
-                onSplit={() => refreshImageList(datasetName)}
-                onMerge={() => handleMergeStart(img.img_path)}
-                onEnlarge={() => setSelectedImage(img.img_path)}
-                isSelectMode={isSelectMode}
-                selected={selectedImages.has(img.img_path)}
-                onLongPress={() => handleLongPress(img.img_path)}
-                onSelect={() => handleSelect(img.img_path)}
-                scoreRefreshKey={scoreRefreshKey}
-                captionRefreshKey={captionRefreshKey}
-              />
-            ))}
-          </div>
+          <>
+            <div className="flex items-center gap-2 mb-4">
+              <label className="text-sm text-gray-400 whitespace-nowrap">Sort by:</label>
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="bg-gray-700 text-gray-200 text-sm px-2 py-1 rounded-md border border-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                {sortOptions.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {sortedImgList.map(img => (
+                <DatasetImageCard
+                  key={img.img_path}
+                  alt="image"
+                  imageUrl={img.img_path}
+                  currentDataset={datasetName}
+                  onDelete={() => removeImageFromList(img.img_path)}
+                  onSplit={() => refreshImageList(datasetName)}
+                  onMerge={() => handleMergeStart(img.img_path)}
+                  onEnlarge={() => setSelectedImage(img.img_path)}
+                  isSelectMode={isSelectMode}
+                  selected={selectedImages.has(img.img_path)}
+                  onLongPress={() => handleLongPress(img.img_path)}
+                  onSelect={() => handleSelect(img.img_path)}
+                  scoreRefreshKey={scoreRefreshKey}
+                  captionRefreshKey={captionRefreshKey}
+                />
+              ))}
+            </div>
+          </>
         )}
       </MainContent>
       <AddImagesModal />
@@ -482,7 +591,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       />
       <DatasetImageViewer
         imgPath={selectedImage}
-        images={imgList.map(img => img.img_path).filter(path => !isAudio(path))}
+        images={sortedImgList.map(img => img.img_path).filter(path => !isAudio(path))}
         onChange={setSelectedImage}
       />
       <FullscreenDropOverlay
