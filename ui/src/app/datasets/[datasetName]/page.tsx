@@ -133,8 +133,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     const hasVideos = imgList.some(img => isVideo(img.img_path));
     const hasImages = imgList.some(img => !isVideo(img.img_path) && !isAudio(img.img_path));
     if (hasVideos) {
-      options.push({ value: 'duration:asc', label: 'Duration (Ascending)' });
-      options.push({ value: 'duration:desc', label: 'Duration (Descending)' });
+      options.push({ value: 'duration:asc', label: 'Duration (Lowest to Highest)' });
+      options.push({ value: 'duration:desc', label: 'Duration (Highest to Lowest)' });
     }
     if (hasImages) {
       options.push({ value: 'resolution:asc', label: 'Resolution (Small to Large)' });
@@ -148,8 +148,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         }
       }
       for (const metric of Array.from(metrics).sort()) {
-        options.push({ value: `score:${metric}:asc`, label: `${metric} (Ascending)` });
-        options.push({ value: `score:${metric}:desc`, label: `${metric} (Descending)` });
+        options.push({ value: `score:${metric}:asc`, label: `${metric} (Lowest to Highest)` });
+        options.push({ value: `score:${metric}:desc`, label: `${metric} (Highest to Lowest)` });
       }
     }
     return options;
