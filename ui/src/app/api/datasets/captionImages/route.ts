@@ -111,7 +111,9 @@ export async function POST(request: Request) {
   const allImages = findCaptionableFiles(datasetFolder);
   const images = allImages.filter(imgPath => {
     const base = imgPath.slice(0, imgPath.lastIndexOf('.'));
-    return !fs.existsSync(base + '.txt');
+    const txtPath = base + '.txt';
+    if (!fs.existsSync(txtPath)) return true;
+    return fs.readFileSync(txtPath, 'utf-8').trim().length === 0;
   });
   const total = images.length;
 
