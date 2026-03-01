@@ -58,7 +58,18 @@ def caption_image(img_path: str, trigger_word: str, system_prompt: str, model_id
     from PIL import Image
     import torch
     from transformers import Qwen3VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
-    from qwen_vl_utils import process_vision_info
+
+    def process_vision_info(messages):
+        """Minimal inline replacement for qwen_vl_utils.process_vision_info."""
+        image_inputs, video_inputs = [], []
+        for msg in messages:
+            for content in msg.get('content', []):
+                if isinstance(content, dict):
+                    if content.get('type') == 'image':
+                        image_inputs.append(content['image'])
+                    elif content.get('type') == 'video':
+                        video_inputs.append(content['video'])
+        return image_inputs, video_inputs
 
     # Determine if this is a video file
     video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.webm'}

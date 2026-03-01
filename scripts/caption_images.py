@@ -64,8 +64,19 @@ def build_instruction(trigger: str, lora_focus: str) -> str:
 
 
 def generate_caption(model, processor, device, image, instruction: str, trigger: str) -> str:
-    from qwen_vl_utils import process_vision_info
     import torch
+
+    def process_vision_info(messages):
+        """Minimal inline replacement for qwen_vl_utils.process_vision_info."""
+        image_inputs, video_inputs = [], []
+        for msg in messages:
+            for content in msg.get('content', []):
+                if isinstance(content, dict):
+                    if content.get('type') == 'image':
+                        image_inputs.append(content['image'])
+                    elif content.get('type') == 'video':
+                        video_inputs.append(content['video'])
+        return image_inputs, video_inputs
 
     messages = [
         {
