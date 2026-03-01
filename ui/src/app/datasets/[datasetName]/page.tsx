@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
-import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
+import { LuImageOff, LuLoader, LuBan, LuFolderOpen } from 'react-icons/lu';
 import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
@@ -389,6 +389,13 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
               >
                 Add Images
+              </Button>
+              <Button
+                className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md flex items-center gap-2"
+                onClick={() => apiClient.post('/api/open-folder', { datasetName }).catch(error => console.error('Error opening folder:', error))}
+              >
+                <LuFolderOpen />
+                Open Folder
               </Button>
             </div>
           </>
