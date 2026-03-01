@@ -1,16 +1,31 @@
 'use client';
 
-import { useEffect, useState, use, useMemo, useCallback } from 'react';
+import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
+import BulkCaptionModal from '@/components/BulkCaptionModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { isAudio, isVideo } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
+
+interface ScoringStatus {
+  status: 'idle' | 'running' | 'completed' | 'cancelled' | 'error';
+  scored: number;
+  total: number;
+  error?: string;
+}
+
+interface CaptioningStatus {
+  status: 'idle' | 'running' | 'completed' | 'cancelled' | 'error';
+  captioned: number;
+  total: number;
+  error?: string;
+}
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -21,7 +36,14 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [isSelectMode, setIsSelectMode] = useState<boolean>(false);
   const [isMergeMode, setIsMergeMode] = useState<boolean>(false);
   const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
-
+  const [scoringStatus, setScoringStatus] = useState<ScoringStatus | null>(null);
+  const [scoreRefreshKey, setScoreRefreshKey] = useState<number>(0);
+  const scoringPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [captioningStatus, setCaptioningStatus] = useState<CaptioningStatus | null>(null);
+  const [isBulkCaptionModalOpen, setIsBulkCaptionModalOpen] = useState(false);
+  const captioningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevCaptionedCountRef = useRef<number>(0);
+  const [captionRefreshKey, setCaptionRefreshKey] = useState<number>(0);
   const removeImageFromList = useCallback((imgPath: string) => {
     setImgList(prev => prev.filter(x => x.img_path !== imgPath));
   }, []);
@@ -113,6 +135,125 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setIsMergeMode(false);
     setSelectedImages(new Set());
   }, [selectedImages, datasetName]);
+
+  const stopScoringPoll = useCallback(() => {
+    if (scoringPollRef.current) {
+      clearInterval(scoringPollRef.current);
+      scoringPollRef.current = null;
+    }
+  }, []);
+
+  const startScoringPoll = useCallback(() => {
+    stopScoringPoll();
+    scoringPollRef.current = setInterval(async () => {
+      try {
+        const res = await apiClient.get(`/api/datasets/scoreImages?datasetName=${encodeURIComponent(datasetName)}`);
+        const data: ScoringStatus = res.data;
+        setScoringStatus(data);
+        if (data.status !== 'running') {
+          stopScoringPoll();
+          if (data.status === 'completed') {
+            setScoreRefreshKey(k => k + 1);
+          }
+        }
+      } catch (error) {
+        console.error('Error polling scoring status:', error);
+        stopScoringPoll();
+      }
+    }, 1000);
+  }, [datasetName, stopScoringPoll]);
+
+  useEffect(() => {
+    return () => stopScoringPoll();
+  }, [stopScoringPoll]);
+
+  const handleScoreImages = useCallback(async () => {
+    try {
+      const res = await apiClient.post('/api/datasets/scoreImages', { datasetName });
+      const data: ScoringStatus = res.data;
+      setScoringStatus(data);
+      if (data.status === 'running') {
+        startScoringPoll();
+      }
+    } catch (error: any) {
+      console.error('Error starting scoring:', error);
+    }
+  }, [datasetName, startScoringPoll]);
+
+  const handleCancelScoring = useCallback(async () => {
+    try {
+      await apiClient.delete(`/api/datasets/scoreImages?datasetName=${encodeURIComponent(datasetName)}`);
+      setScoringStatus(null);
+      stopScoringPoll();
+    } catch (error) {
+      console.error('Error cancelling scoring:', error);
+    }
+  }, [datasetName, stopScoringPoll]);
+
+  const stopCaptioningPoll = useCallback(() => {
+    if (captioningPollRef.current) {
+      clearInterval(captioningPollRef.current);
+      captioningPollRef.current = null;
+    }
+  }, []);
+
+  const startCaptioningPoll = useCallback(() => {
+    stopCaptioningPoll();
+    prevCaptionedCountRef.current = 0;
+    captioningPollRef.current = setInterval(async () => {
+      try {
+        const res = await apiClient.get(`/api/datasets/captionImages?datasetName=${encodeURIComponent(datasetName)}`);
+        const data: CaptioningStatus = res.data;
+        setCaptioningStatus(data);
+        if (data.captioned > prevCaptionedCountRef.current) {
+          prevCaptionedCountRef.current = data.captioned;
+          setCaptionRefreshKey(k => k + 1);
+        }
+        if (data.status !== 'running') {
+          stopCaptioningPoll();
+        }
+      } catch (error) {
+        console.error('Error polling captioning status:', error);
+        stopCaptioningPoll();
+      }
+    }, 1000);
+  }, [datasetName, stopCaptioningPoll]);
+
+  useEffect(() => {
+    return () => stopCaptioningPoll();
+  }, [stopCaptioningPoll]);
+
+  const handleStartCaptioning = useCallback(
+    async (options: { modelId: string; triggerWord: string; systemPrompt: string }) => {
+      setIsBulkCaptionModalOpen(false);
+      try {
+        const res = await apiClient.post('/api/datasets/captionImages', {
+          datasetName,
+          triggerWord: options.triggerWord,
+          systemPrompt: options.systemPrompt,
+          modelId: options.modelId,
+        });
+        const data: CaptioningStatus = res.data;
+        setCaptioningStatus(data);
+        if (data.status === 'running') {
+          startCaptioningPoll();
+        }
+      } catch (error: any) {
+        console.error('Error starting captioning:', error);
+      }
+    },
+    [datasetName, startCaptioningPoll],
+  );
+
+  const handleCancelCaptioning = useCallback(async () => {
+    try {
+      await apiClient.delete(`/api/datasets/captionImages?datasetName=${encodeURIComponent(datasetName)}`);
+      setCaptioningStatus(null);
+      stopCaptioningPoll();
+    } catch (error) {
+      console.error('Error cancelling captioning:', error);
+    }
+  }, [datasetName, stopCaptioningPoll]);
 
   const PageInfoContent = useMemo(() => {
     let icon = null;
@@ -212,7 +353,37 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               <h1 className="text-lg">Dataset: {datasetName}, Images: {imgList.length}</h1>
             </div>
             <div className="flex-1"></div>
-            <div>
+            <div className="flex gap-2">
+              {scoringStatus?.status === 'running' ? (
+                <Button
+                  className="text-gray-200 bg-red-700 px-3 py-1 rounded-md"
+                  onClick={handleCancelScoring}
+                >
+                  Cancel Scoring
+                </Button>
+              ) : (
+                <Button
+                  className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
+                  onClick={handleScoreImages}
+                >
+                  Score Images
+                </Button>
+              )}
+              {captioningStatus?.status === 'running' ? (
+                <Button
+                  className="text-gray-200 bg-red-700 px-3 py-1 rounded-md"
+                  onClick={handleCancelCaptioning}
+                >
+                  Cancel Captioning
+                </Button>
+              ) : (
+                <Button
+                  className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
+                  onClick={() => setIsBulkCaptionModalOpen(true)}
+                >
+                  Caption Images
+                </Button>
+              )}
               <Button
                 className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
                 onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
@@ -224,6 +395,34 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         )}
       </TopBar>
       <MainContent>
+        {scoringStatus?.status === 'running' && (
+          <div className="mb-4">
+            <div className="flex justify-between text-sm text-gray-400 mb-1">
+              <span>Scoring images...</span>
+              <span>{scoringStatus.scored} / {scoringStatus.total}</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: scoringStatus.total > 0 ? `${(scoringStatus.scored / scoringStatus.total) * 100}%` : '0%' }}
+              />
+            </div>
+          </div>
+        )}
+        {captioningStatus?.status === 'running' && (
+          <div className="mb-4">
+            <div className="flex justify-between text-sm text-gray-400 mb-1">
+              <span>Captioning images...</span>
+              <span>{captioningStatus.captioned} / {captioningStatus.total}</span>
+            </div>
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                style={{ width: captioningStatus.total > 0 ? `${(captioningStatus.captioned / captioningStatus.total) * 100}%` : '0%' }}
+              />
+            </div>
+          </div>
+        )}
         {isSelectMode && (
           <p className="text-xs text-gray-400 mb-3">
             {isMergeMode
@@ -248,12 +447,19 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 selected={selectedImages.has(img.img_path)}
                 onLongPress={() => handleLongPress(img.img_path)}
                 onSelect={() => handleSelect(img.img_path)}
+                scoreRefreshKey={scoreRefreshKey}
+                captionRefreshKey={captionRefreshKey}
               />
             ))}
           </div>
         )}
       </MainContent>
       <AddImagesModal />
+      <BulkCaptionModal
+        isOpen={isBulkCaptionModalOpen}
+        onClose={() => setIsBulkCaptionModalOpen(false)}
+        onStart={handleStartCaptioning}
+      />
       <DatasetImageViewer
         imgPath={selectedImage}
         images={imgList.map(img => img.img_path).filter(path => !isAudio(path))}
