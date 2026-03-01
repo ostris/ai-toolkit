@@ -5,6 +5,11 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/re
 import { FaComment } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
 
+interface CaptionPreset {
+  name: string;
+  content: string;
+}
+
 interface CaptionModalProps {
   imageUrl: string;
   isOpen: boolean;
@@ -31,8 +36,15 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedCaption, setGeneratedCaption] = useState<string | null>(null);
+  const [presets, setPresets] = useState<CaptionPreset[]>([]);
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    apiClient.get('/api/caption-presets').then((res: any) => {
+      setPresets(res.data?.presets ?? []);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -134,6 +146,20 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
 
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Caption Focus</label>
+                  {presets.length > 0 && (
+                    <select
+                      defaultValue=""
+                      disabled={isGenerating}
+                      onChange={e => { if (e.target.value) setSystemPrompt(e.target.value); }}
+                      className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 mb-2 disabled:opacity-50"
+                      aria-label="Caption preset"
+                    >
+                      <option value="">— select a preset —</option>
+                      {presets.map(p => (
+                        <option key={p.name} value={p.content}>{p.name}</option>
+                      ))}
+                    </select>
+                  )}
                   <textarea
                     value={systemPrompt}
                     onChange={e => setSystemPrompt(e.target.value)}

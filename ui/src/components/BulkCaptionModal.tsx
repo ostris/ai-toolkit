@@ -3,6 +3,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaComment } from 'react-icons/fa';
+import { apiClient } from '@/utils/api';
+
+interface CaptionPreset {
+  name: string;
+  content: string;
+}
 
 interface BulkCaptionModalProps {
   isOpen: boolean;
@@ -25,8 +31,15 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
   const [triggerWord, setTriggerWord] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [modelId, setModelId] = useState(MODEL_LITE);
+  const [presets, setPresets] = useState<CaptionPreset[]>([]);
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    apiClient.get('/api/caption-presets').then((res: any) => {
+      setPresets(res.data?.presets ?? []);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!isOpen) {
@@ -95,6 +108,19 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
 
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">Caption Focus</label>
+                  {presets.length > 0 && (
+                    <select
+                      defaultValue=""
+                      onChange={e => { if (e.target.value) setSystemPrompt(e.target.value); }}
+                      className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 mb-2"
+                      aria-label="Caption preset"
+                    >
+                      <option value="">— select a preset —</option>
+                      {presets.map(p => (
+                        <option key={p.name} value={p.content}>{p.name}</option>
+                      ))}
+                    </select>
+                  )}
                   <textarea
                     value={systemPrompt}
                     onChange={e => setSystemPrompt(e.target.value)}
