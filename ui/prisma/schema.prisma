@@ -39,3 +39,24 @@ model Job {
   @@index([status])
   @@index([gpu_ids])
 }
+
+model VideoDownload {
+  id           String   @id @default(uuid())
+  url          String
+  dataset      String
+  status       String   @default("pending")
+  progress     Float    @default(0)
+  error        String   @default("")
+  filename     String   @default("")
+  title        String   @default("")
+  thumbnail    String   @default("")
+  filesize     String   @default("")
+  speed        String   @default("")
+  format       String   @default("")
+  cookies_file String   @default("")
+  pid          Int?
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@index([status])
+}
