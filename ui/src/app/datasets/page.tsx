@@ -13,9 +13,13 @@ import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { apiClient } from '@/utils/api';
 import { useRouter } from 'next/navigation';
 import { Tooltip } from '@/components/Tooltip';
+import { formatDuration } from '@/utils/basic';
 
 interface ImageStats {
   totalCount: number;
+  imageCount: number;
+  videoCount: number;
+  totalVideoDuration: number;
   resolutionBreakdown: { [resolution: string]: number };
   error?: boolean; // Flag to indicate if there was an error
 }
@@ -55,7 +59,7 @@ export default function Datasets() {
                 // Set error state so we can show "error fetching stats"
                 setImageStats(prev => ({ 
                   ...prev, 
-                  [datasetName]: { totalCount: 0, resolutionBreakdown: {}, error: true } 
+                  [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true } 
                 }));
                 setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
               }
@@ -130,11 +134,43 @@ export default function Datasets() {
 
         return (
           <div className="flex items-center justify-center gap-2">
-            <span className="text-gray-200">{stats.totalCount}</span>
+            <span className="text-gray-200">{stats.imageCount}</span>
             <Tooltip content={tooltipContent}>
               <FaInfoCircle className="text-gray-400 hover:text-gray-200 cursor-help" />
             </Tooltip>
           </div>
+        );
+      },
+    },
+    {
+      title: 'Video Count',
+      key: 'videoCount',
+      className: 'w-40 text-center',
+      render: row => {
+        const datasetName = row.name;
+        const stats = imageStats[datasetName];
+        const loading = statsLoading[datasetName];
+
+        if (loading) {
+          return <span className="text-gray-400">Loading...</span>;
+        }
+
+        if (!stats) {
+          return <span className="text-gray-400">-</span>;
+        }
+
+        if (stats.error && stats.totalCount === 0) {
+          return <span className="text-gray-400">-</span>;
+        }
+
+        if (stats.videoCount === 0) {
+          return <span className="text-gray-400">0</span>;
+        }
+
+        return (
+          <span className="text-gray-200">
+            {stats.videoCount} ({formatDuration(stats.totalVideoDuration)})
+          </span>
         );
       },
     },
