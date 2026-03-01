@@ -23,6 +23,7 @@ interface DatasetImageCardProps {
   isSelectMode?: boolean;
   onLongPress?: () => void;
   onSelect?: () => void;
+  scoreRefreshKey?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -41,6 +42,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   isSelectMode = false,
   onLongPress,
   onSelect,
+  scoreRefreshKey,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -53,7 +55,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [videoKey, setVideoKey] = useState<number>(Date.now());
   const [isVideoEditOpen, setIsVideoEditOpen] = useState<boolean>(false);
   const [isMoveModalOpen, setIsMoveModalOpen] = useState<boolean>(false);
+  const [scores, setScores] = useState<Record<string, number> | null>(null);
   const isGettingCaption = useRef<boolean>(false);
+  const isGettingScores = useRef<boolean>(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPress = useRef<boolean>(false);
 
@@ -86,6 +90,23 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       })
       .finally(() => {
         isGettingCaption.current = false;
+      });
+  };
+
+  const fetchScores = () => {
+    if (isGettingScores.current) return;
+    isGettingScores.current = true;
+    apiClient
+      .get(`/api/datasets/imageScores?imgPath=${encodeURIComponent(imageUrl)}`)
+      .then(res => res.data)
+      .then(data => {
+        setScores(data.scores || {});
+      })
+      .catch(error => {
+        console.error('Error fetching scores:', error);
+      })
+      .finally(() => {
+        isGettingScores.current = false;
       });
   };
 
@@ -124,8 +145,17 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   useEffect(() => {
     if (inViewport && isVisible) {
       fetchCaption();
+      fetchScores();
     }
   }, [inViewport, isVisible]);
+
+  // Re-fetch scores when scoreRefreshKey changes (e.g., after scoring completes)
+  useEffect(() => {
+    if (scoreRefreshKey !== undefined && inViewport && isVisible) {
+      isGettingScores.current = false;
+      fetchScores();
+    }
+  }, [scoreRefreshKey]);
 
   useEffect(() => {
     // Create intersection observer to check viewport visibility
@@ -392,6 +422,19 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>
         )}
       </div>
+      {scores && Object.keys(scores).length > 0 && (
+        <div className="w-full px-2 py-1 bg-gray-900 rounded-b-lg flex flex-wrap gap-1">
+          {Object.entries(scores).map(([metric, value]) => (
+            <span
+              key={metric}
+              className="text-xs bg-gray-700 text-gray-200 px-2 py-0.5 rounded-full"
+              title={metric}
+            >
+              {metric}: {value.toFixed(2)}
+            </span>
+          ))}
+        </div>
+      )}
       {isItAVideo && (
         <VideoTrimModal
           videoUrl={imageUrl}
