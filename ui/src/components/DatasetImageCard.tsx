@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup, FaArrowsAlt } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup, FaComment, FaArrowsAlt } from 'react-icons/fa';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
 import VideoTrimModal from './VideoTrimModal';
+import CaptionModal from './CaptionModal';
 import MoveImageModal from './MoveImageModal';
 import { isVideo, isAudio } from '@/utils/basic';
 
@@ -24,6 +25,7 @@ interface DatasetImageCardProps {
   onLongPress?: () => void;
   onSelect?: () => void;
   scoreRefreshKey?: number;
+  captionRefreshKey?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -43,6 +45,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onLongPress,
   onSelect,
   scoreRefreshKey,
+  captionRefreshKey = 0,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -54,6 +57,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const [imageKey, setImageKey] = useState<number>(Date.now());
   const [videoKey, setVideoKey] = useState<number>(Date.now());
   const [isVideoEditOpen, setIsVideoEditOpen] = useState<boolean>(false);
+  const [isCaptionModalOpen, setIsCaptionModalOpen] = useState<boolean>(false);
   const [isMoveModalOpen, setIsMoveModalOpen] = useState<boolean>(false);
   const [scores, setScores] = useState<Record<string, number> | null>(null);
   const isGettingCaption = useRef<boolean>(false);
@@ -69,8 +73,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     };
   }, []);
 
-  const fetchCaption = async () => {
-    if (isGettingCaption.current || isCaptionLoaded) return;
+  const fetchCaption = async (force = false) => {
+    if (isGettingCaption.current || (!force && isCaptionLoaded)) return;
     isGettingCaption.current = true;
     apiClient
       .post(`/api/caption/get`, { imgPath: imageUrl })
@@ -156,6 +160,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       fetchScores();
     }
   }, [scoreRefreshKey]);
+
+  // Re-fetch caption when captionRefreshKey changes (e.g., during bulk captioning)
+  // Only re-fetch cards that don't yet have a saved caption
+  useEffect(() => {
+    if (captionRefreshKey && inViewport && isVisible && savedCaption === '') {
+      isGettingCaption.current = false;
+      fetchCaption(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionRefreshKey]);
 
   useEffect(() => {
     // Create intersection observer to check viewport visibility
@@ -360,9 +374,14 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             )}
             <button
               className="bg-gray-800 rounded-full p-2"
+              onClick={() => setIsCaptionModalOpen(true)}
+              aria-label="Generate AI caption">
+              <FaComment />
+            </button>
+            <button
+              className="bg-gray-800 rounded-full p-2"
               onClick={() => setIsMoveModalOpen(true)}
-              aria-label="Move or copy to another dataset"
-            >
+              aria-label="Move or copy to another dataset">
               <FaArrowsAlt />
             </button>
             <button
@@ -444,6 +463,15 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           onSplit={() => { setIsVideoEditOpen(false); onSplit?.(); }}
         />
       )}
+      <CaptionModal
+        imageUrl={imageUrl}
+        isOpen={isCaptionModalOpen}
+        onClose={() => setIsCaptionModalOpen(false)}
+        onCaptionGenerated={(newCaption) => {
+          setCaption(newCaption);
+          setSavedCaption(newCaption);
+        }}
+      />
       <MoveImageModal
         isOpen={isMoveModalOpen}
         onClose={() => setIsMoveModalOpen(false)}
