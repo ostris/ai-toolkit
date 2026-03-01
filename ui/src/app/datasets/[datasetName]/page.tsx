@@ -10,7 +10,7 @@ import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import BulkCaptionModal from '@/components/BulkCaptionModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
-import { isAudio, isVideo } from '@/utils/basic';
+import { isAudio, isVideo, formatDuration } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 
 interface ScoringStatus {
@@ -44,6 +44,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const captioningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevCaptionedCountRef = useRef<number>(0);
   const [captionRefreshKey, setCaptionRefreshKey] = useState<number>(0);
+  const [totalVideoDuration, setTotalVideoDuration] = useState<number>(0);
   const removeImageFromList = useCallback((imgPath: string) => {
     setImgList(prev => prev.filter(x => x.img_path !== imgPath));
   }, []);
@@ -69,6 +70,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
+      apiClient
+        .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`)
+        .then(res => res.data)
+        .then(data => setTotalVideoDuration(data.totalVideoDuration ?? 0))
+        .catch(() => {});
     }
   }, [datasetName]);
 
@@ -350,7 +356,14 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               </Button>
             </div>
             <div>
-              <h1 className="text-lg">Dataset: {datasetName}, Images: {imgList.length}</h1>
+              <h1 className="text-lg">
+                Dataset: {datasetName}, Images: {imgList.filter(img => !isVideo(img.img_path) && !isAudio(img.img_path)).length}
+                {(() => {
+                  const videoCount = imgList.filter(img => isVideo(img.img_path)).length;
+                  if (videoCount === 0) return null;
+                  return `, Videos: ${videoCount} (${formatDuration(totalVideoDuration)})`;
+                })()}
+              </h1>
             </div>
             <div className="flex-1"></div>
             <div className="flex gap-2">
