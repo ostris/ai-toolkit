@@ -35,14 +35,13 @@ export async function POST(request: Request) {
 
     const dir = path.dirname(videoPath);
     const base = path.basename(videoPath, path.extname(videoPath));
-    const audioPath = path.join(dir, `${base}_audio.mp3`);
+    const audioPath = path.join(dir, `${base}_audio.wav`);
 
     await execFileAsync('ffmpeg', [
       '-y',
       '-i', videoPath,
       '-vn',
-      '-acodec', 'libmp3lame',
-      '-q:a', '2',
+      '-acodec', 'pcm_s16le',
       audioPath,
     ]);
 
