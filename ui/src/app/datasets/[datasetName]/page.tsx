@@ -130,18 +130,20 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setSelectedImages(new Set());
   }, []);
 
-  // Ctrl+A: select all images when in select mode
+  // Ctrl+A: select all images; Escape: exit select mode
   useEffect(() => {
     if (!isSelectMode) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault();
         setSelectedImages(new Set(imgList.map(img => img.img_path)));
+      } else if (e.key === 'Escape') {
+        handleCancelSelect();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSelectMode, imgList]);
+  }, [isSelectMode, imgList, handleCancelSelect]);
 
   const sortOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [
@@ -583,7 +585,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           <p className="text-xs text-gray-400 mb-3">
             {isMergeMode
               ? 'Click video clips to select them for merging. Press Cancel to exit.'
-              : 'Click images to select or deselect. Press Ctrl+A to select all. Press Cancel to exit select mode.'}
+              : 'Click images to select or deselect. Press Ctrl+A to select all. Press Escape or Cancel to exit select mode.'}
           </p>
         )}
         {PageInfoContent}
