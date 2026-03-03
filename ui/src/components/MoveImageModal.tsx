@@ -5,12 +5,13 @@ import { apiClient } from '@/utils/api';
 interface MoveImageModalProps {
   isOpen: boolean;
   onClose: () => void;
-  imageUrl: string;
+  imageUrl?: string;
+  imageUrls?: string[];
   currentDataset: string;
-  onComplete: (operation: 'move' | 'copy') => void;
+  onComplete: (operation: 'move' | 'copy', movedPaths?: string[]) => void;
 }
 
-const MoveImageModal: React.FC<MoveImageModalProps> = ({ isOpen, onClose, imageUrl, currentDataset, onComplete }) => {
+const MoveImageModal: React.FC<MoveImageModalProps> = ({ isOpen, onClose, imageUrl, imageUrls, currentDataset, onComplete }) => {
   const [datasets, setDatasets] = useState<string[]>([]);
   const [targetDataset, setTargetDataset] = useState<string>('');
   const [operation, setOperation] = useState<'move' | 'copy'>('move');
@@ -40,9 +41,19 @@ const MoveImageModal: React.FC<MoveImageModalProps> = ({ isOpen, onClose, imageU
     if (!targetDataset) return;
     setIsLoading(true);
     setError(null);
+    let paths: string[];
+    if (imageUrls && imageUrls.length > 0) {
+      paths = imageUrls;
+    } else if (imageUrl) {
+      paths = [imageUrl];
+    } else {
+      paths = [];
+    }
     try {
-      await apiClient.post('/api/img/move', { imgPath: imageUrl, targetDataset, operation });
-      onComplete(operation);
+      await Promise.all(
+        paths.map(imgPath => apiClient.post('/api/img/move', { imgPath, targetDataset, operation })),
+      );
+      onComplete(operation, paths);
       onClose();
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to move/copy file');
@@ -51,8 +62,10 @@ const MoveImageModal: React.FC<MoveImageModalProps> = ({ isOpen, onClose, imageU
     }
   };
 
+  const bulkCount = imageUrls && imageUrls.length > 0 ? imageUrls.length : 0;
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Move / Copy to Dataset" size="sm">
+    <Modal isOpen={isOpen} onClose={onClose} title={bulkCount > 1 ? `Move / Copy ${bulkCount} Files to Dataset` : 'Move / Copy to Dataset'} size="sm">
       <form onSubmit={handleSubmit} className="space-y-4 text-gray-200">
         {datasets.length === 0 ? (
           <>
