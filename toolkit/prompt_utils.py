@@ -161,6 +161,8 @@ class PromptEmbeds:
         text_encoder_layers = []
         is_list = False
         for key in sorted(state_dict.keys()):
+            if key.startswith("text_encoder_layer_"):
+                continue
             if key.startswith("text_embed_"):
                 is_list = True
                 text_embeds.append(state_dict[key])
@@ -172,8 +174,16 @@ class PromptEmbeds:
                 attention_mask.append(state_dict[key])
             elif key == "attention_mask":
                 attention_mask.append(state_dict[key])
-            elif key.startswith("text_encoder_layer_"):
-                text_encoder_layers.append(state_dict[key])
+
+        layer_keys = sorted(
+            (k for k in state_dict.keys() if k.startswith("text_encoder_layer_")),
+            key=lambda k: (
+                0,
+                int(k[len("text_encoder_layer_"):]),
+            ) if k[len("text_encoder_layer_"):].isdigit() else (1, k),
+        )
+        for key in layer_keys:
+            text_encoder_layers.append(state_dict[key])
         pe = cls(None)
         pe.text_embeds = text_embeds
         if len(text_embeds) == 1 and not is_list:
@@ -325,8 +335,24 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"], padding_side: str 
 
     # --- text_encoder_layers (for DimFusion models like FIBO) ---
     text_encoder_layers = None
-    if hasattr(prompt_embeds[0], 'text_encoder_layers') and prompt_embeds[0].text_encoder_layers is not None:
-        num_layers = len(prompt_embeds[0].text_encoder_layers)
+    has_text_encoder_layers = [
+        hasattr(p, 'text_encoder_layers') and p.text_encoder_layers is not None
+        for p in prompt_embeds
+    ]
+    if any(has_text_encoder_layers) and not all(has_text_encoder_layers):
+        raise ValueError(
+            "Inconsistent PromptEmbeds: some items have text_encoder_layers and others do not. "
+            "This usually indicates mixed cached text embeddings. Delete and regenerate the cache."
+        )
+    if all(has_text_encoder_layers):
+        layer_counts = [len(p.text_encoder_layers) for p in prompt_embeds]
+        if len(set(layer_counts)) != 1:
+            raise ValueError(
+                "Inconsistent text_encoder_layers count across PromptEmbeds. "
+                "This usually indicates mixed cached text embeddings. Delete and regenerate the cache."
+            )
+
+        num_layers = layer_counts[0]
         text_encoder_layers = []
         for layer_idx in range(num_layers):
             max_len_layer = max(p.text_encoder_layers[layer_idx].shape[1] for p in prompt_embeds)

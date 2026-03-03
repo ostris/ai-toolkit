@@ -159,7 +159,24 @@ def concat_prompt_embeddings(
     pe = PromptEmbeds([text_embeds, pooled_embeds])
 
     # Preserve text_encoder_layers (for DimFusion models like FIBO)
-    if hasattr(unconditional, 'text_encoder_layers') and unconditional.text_encoder_layers is not None:
+    unconditional_has_layers = (
+        hasattr(unconditional, 'text_encoder_layers')
+        and unconditional.text_encoder_layers is not None
+    )
+    conditional_has_layers = (
+        hasattr(conditional, 'text_encoder_layers')
+        and conditional.text_encoder_layers is not None
+    )
+    if unconditional_has_layers != conditional_has_layers:
+        raise ValueError(
+            "Inconsistent PromptEmbeds: unconditional and conditional must both have text_encoder_layers "
+            "or both omit them."
+        )
+    if unconditional_has_layers and conditional_has_layers:
+        if len(unconditional.text_encoder_layers) != len(conditional.text_encoder_layers):
+            raise ValueError(
+                "Inconsistent text_encoder_layers count between unconditional and conditional PromptEmbeds."
+            )
         pe.text_encoder_layers = [
             torch.cat([u_layer, c_layer]).repeat_interleave(n_imgs, dim=0)
             for u_layer, c_layer in zip(unconditional.text_encoder_layers, conditional.text_encoder_layers)

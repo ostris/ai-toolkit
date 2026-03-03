@@ -1,5 +1,4 @@
-import os
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List
 
 import torch
 from optimum.quanto import QTensor, freeze
@@ -72,7 +71,6 @@ class FiboModel(BaseModel):
 
         # Import diffusers components
         from diffusers import BriaFiboPipeline
-        from transformers import AutoTokenizer
 
         self.print_and_status_update("Loading FIBO pipeline")
 
@@ -453,7 +451,7 @@ class FiboModel(BaseModel):
             device=None,
             dtype=None
     ):
-        """Encode images to latents with Wan VAE normalization."""
+        """Encode images to latents with FIBO VAE normalization."""
         if device is None:
             device = self.vae_device_torch
         if dtype is None:
@@ -486,7 +484,7 @@ class FiboModel(BaseModel):
 
         images = torch.stack(image_list)
 
-        # Wan VAE expects 5D input for video: (B, C, T, H, W)
+        # FIBO VAE expects 5D input for video: (B, C, T, H, W)
         # Add temporal dimension for image encoding
         images_5d = images.unsqueeze(2)
         latents = self.vae.encode(images_5d).latent_dist.mean
@@ -508,7 +506,7 @@ class FiboModel(BaseModel):
             device=None,
             dtype=None
     ):
-        """Decode latents to images with Wan VAE denormalization."""
+        """Decode latents to images with FIBO VAE denormalization."""
         if device is None:
             device = self.device
         if dtype is None:
@@ -530,7 +528,7 @@ class FiboModel(BaseModel):
             latents_std = self.latents_std.to(latents.device, dtype=latents.dtype)
             latents = latents / latents_std + latents_mean
 
-        # Wan VAE expects 5D input for video: (B, C, T, H, W)
+        # FIBO VAE expects 5D input for video: (B, C, T, H, W)
         # Add temporal dimension
         latents_5d = latents.unsqueeze(2)
         images = self.vae.decode(latents_5d).sample
