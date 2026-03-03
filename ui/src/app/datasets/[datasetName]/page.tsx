@@ -2,13 +2,14 @@
 
 import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
 import { LuImageOff, LuLoader, LuBan, LuFolderOpen } from 'react-icons/lu';
-import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt } from 'react-icons/fa';
+import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt, FaCodeBranch } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
 import BulkCaptionModal from '@/components/BulkCaptionModal';
 import MoveImageModal from '@/components/MoveImageModal';
+import BulkSplitModal from '@/components/BulkSplitModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { isAudio, isVideo, formatDuration } from '@/utils/basic';
@@ -51,6 +52,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [captioningStatus, setCaptioningStatus] = useState<CaptioningStatus | null>(null);
   const [isBulkCaptionModalOpen, setIsBulkCaptionModalOpen] = useState(false);
   const [isBulkMoveModalOpen, setIsBulkMoveModalOpen] = useState(false);
+  const [isBulkSplitModalOpen, setIsBulkSplitModalOpen] = useState(false);
   const captioningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevCaptionedCountRef = useRef<number>(0);
   const [captionRefreshKey, setCaptionRefreshKey] = useState<number>(0);
@@ -128,6 +130,19 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
     setSelectedImages(new Set());
   }, []);
 
+  // Ctrl+A: select all images when in select mode
+  useEffect(() => {
+    if (!isSelectMode) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        setSelectedImages(new Set(imgList.map(img => img.img_path)));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSelectMode, imgList]);
+
   const sortOptions = useMemo(() => {
     const options: { value: string; label: string }[] = [
       { value: 'filename', label: 'Filename' },
@@ -198,6 +213,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       setIsMergeMode(false);
     }
   }, [isSelectMode, selectedImages.size]);
+
+  const allSelectedAreVideos = useMemo(
+    () => selectedImages.size > 0 && Array.from(selectedImages).every(p => isVideo(p)),
+    [selectedImages],
+  );
 
   const handleBulkDelete = useCallback(async () => {
     const paths = Array.from(selectedImages);
@@ -435,6 +455,15 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 </Button>
               ) : (
                 <div className="flex gap-2">
+                  {allSelectedAreVideos && (
+                    <Button
+                      className="text-gray-200 bg-blue-700 px-3 py-1 rounded-md flex items-center gap-2"
+                      onClick={() => setIsBulkSplitModalOpen(true)}
+                    >
+                      <FaCodeBranch />
+                      Split Videos
+                    </Button>
+                  )}
                   <Button
                     className="text-gray-200 bg-blue-700 px-3 py-1 rounded-md flex items-center gap-2 disabled:opacity-50"
                     onClick={() => setIsBulkMoveModalOpen(true)}
@@ -554,7 +583,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           <p className="text-xs text-gray-400 mb-3">
             {isMergeMode
               ? 'Click video clips to select them for merging. Press Cancel to exit.'
-              : 'Click images to select or deselect. Press Cancel to exit select mode.'}
+              : 'Click images to select or deselect. Press Ctrl+A to select all. Press Cancel to exit select mode.'}
           </p>
         )}
         {PageInfoContent}
@@ -613,6 +642,17 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           setIsSelectMode(false);
           setSelectedImages(new Set());
           setIsBulkMoveModalOpen(false);
+        }}
+      />
+      <BulkSplitModal
+        isOpen={isBulkSplitModalOpen}
+        onClose={() => setIsBulkSplitModalOpen(false)}
+        videoPaths={Array.from(selectedImages).filter(p => isVideo(p))}
+        onComplete={() => {
+          setIsSelectMode(false);
+          setSelectedImages(new Set());
+          setIsBulkSplitModalOpen(false);
+          refreshImageList(datasetName);
         }}
       />
       <DatasetImageViewer
