@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode, KeyboardEvent } from 'react';
-import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup, FaComment, FaArrowsAlt } from 'react-icons/fa';
+import { FaTrashAlt, FaEye, FaEyeSlash, FaExpand, FaUndoAlt, FaRedoAlt, FaCheckCircle, FaCut, FaObjectGroup, FaComment, FaArrowsAlt, FaMusic } from 'react-icons/fa';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
 import AudioPlayer from './AudioPlayer';
@@ -19,6 +19,7 @@ interface DatasetImageCardProps {
   onMerge?: () => void;
   onEnlarge?: () => void;
   onMove?: (operation: 'move' | 'copy') => void;
+  onExtractAudio?: () => void;
   currentDataset?: string;
   selected?: boolean;
   isSelectMode?: boolean;
@@ -39,6 +40,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onMerge,
   onEnlarge,
   onMove,
+  onExtractAudio,
   currentDataset = '',
   selected = false,
   isSelectMode = false,
@@ -370,6 +372,24 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                 aria-label="Merge video clips"
               >
                 <FaObjectGroup />
+              </button>
+            )}
+            {isItAVideo && (
+              <button
+                className="bg-gray-800 rounded-full p-2"
+                onClick={() => {
+                  apiClient
+                    .post('/api/video/extractAudio', { videoPath: imageUrl })
+                    .then(() => {
+                      onExtractAudio?.();
+                    })
+                    .catch(error => {
+                      console.error('Error extracting audio:', error);
+                    });
+                }}
+                aria-label="Extract audio from video"
+              >
+                <FaMusic />
               </button>
             )}
             <button

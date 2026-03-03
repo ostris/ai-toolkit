@@ -612,8 +612,10 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   currentDataset={datasetName}
                   onDelete={() => removeImageFromList(img.img_path)}
                   onSplit={() => refreshImageList(datasetName)}
+                  onTrim={() => refreshImageList(datasetName)}
                   onMerge={() => handleMergeStart(img.img_path)}
                   onEnlarge={() => setSelectedImage(img.img_path)}
+                  onExtractAudio={() => refreshImageList(datasetName)}
                   isSelectMode={isSelectMode}
                   selected={selectedImages.has(img.img_path)}
                   onLongPress={() => handleLongPress(img.img_path)}
