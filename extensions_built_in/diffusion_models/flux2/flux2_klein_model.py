@@ -71,7 +71,7 @@ class Flux2KleinModel(Flux2Model):
 class Flux2Klein4BModel(Flux2KleinModel):
     arch = "flux2_klein_4b"
     flux2_klein_te_path: str = "Qwen/Qwen3-4B"
-    flux2_te_filename: str = "flux-2-klein-base-4b.safetensors"
+    flux2_te_filename: str = "flux-2-klein-4b.safetensors"
 
     def get_flux2_params(self):
         return Klein4BParams()
@@ -83,7 +83,7 @@ class Flux2Klein4BModel(Flux2KleinModel):
 class Flux2Klein9BModel(Flux2KleinModel):
     arch = "flux2_klein_9b"
     flux2_klein_te_path: str = "Qwen/Qwen3-8B"
-    flux2_te_filename: str = "flux-2-klein-base-9b.safetensors"
+    flux2_te_filename: str = "flux-2-klein-9b.safetensors"
 
     def get_flux2_params(self):
         return Klein9BParams()
