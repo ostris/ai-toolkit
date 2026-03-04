@@ -3,10 +3,12 @@ import { Eye, Trash2, Pen, Play, Pause, Cog, X } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped } from '@/utils/jobs';
+import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, continueJob } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
+import { useState } from 'react';
+import { ContinueTrainingModal } from './ContinueTrainingModal';
 
 interface JobActionBarProps {
   job: Job;
@@ -25,9 +27,23 @@ export default function JobActionBar({
   hideView,
   autoStartQueue = false,
 }: JobActionBarProps) {
-  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
+  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue, canContinue } = getAvaliableJobActions(job);
+  const [showContinueModal, setShowContinueModal] = useState(false);
 
   if (!afterDelete) afterDelete = onRefresh;
+
+  const handleContinue = async (mode: 'resume' | 'clone', newSteps: number, newName?: string) => {
+    try {
+      const result = await continueJob(job.id, mode, newSteps, newName);
+      if (onRefresh) onRefresh();
+      // If cloned, optionally redirect to the new job
+      if (mode === 'clone' && result) {
+        window.location.href = `/jobs/${result.id}`;
+      }
+    } catch (error) {
+      console.error('Error continuing job:', error);
+    }
+  };
 
   return (
     <div className={`${className}`}>
@@ -128,6 +144,16 @@ export default function JobActionBar({
               Clone Job
             </Link>
           </MenuItem>
+          {canContinue && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
+                onClick={() => setShowContinueModal(true)}
+              >
+                Continue Training
+              </div>
+            </MenuItem>
+          )}
           <MenuItem>
             <div
               className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
@@ -150,6 +176,13 @@ export default function JobActionBar({
           </MenuItem>
         </MenuItems>
       </Menu>
+
+      <ContinueTrainingModal
+        isOpen={showContinueModal}
+        onClose={() => setShowContinueModal(false)}
+        job={job}
+        onContinue={handleContinue}
+      />
     </div>
   );
 }
