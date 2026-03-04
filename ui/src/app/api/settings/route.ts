@@ -29,9 +29,9 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER } = body;
+    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, LORA_INSTALL_PATH } = body;
 
-    // Upsert both settings
+    // Upsert all settings
     await Promise.all([
       prisma.settings.upsert({
         where: { key: 'HF_TOKEN' },
@@ -47,6 +47,11 @@ export async function POST(request: Request) {
         where: { key: 'DATASETS_FOLDER' },
         update: { value: DATASETS_FOLDER },
         create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'LORA_INSTALL_PATH' },
+        update: { value: LORA_INSTALL_PATH || '' },
+        create: { key: 'LORA_INSTALL_PATH', value: LORA_INSTALL_PATH || '' },
       }),
     ]);
 
