@@ -1,0 +1,84 @@
+---
+# Z-Image Turbo - Character/Person LoRA training (32GB VRAM, e.g. RTX 5090)
+# Requires training adapter (assistant_lora_path) to avoid distilled quality loss. Use v2 adapter.
+# Best practices: Prodigy or Prodigy Schedule Free, batch_size 2, DOP for identity, 1024 resolution, rank 128.
+job: extension
+config:
+  name: "my_zimage_turbo_character_lora_v1"
+  process:
+    - type: 'diffusion_trainer'
+      training_folder: "output"
+      device: cuda:0
+      network:
+        type: "lora"
+        linear: 128
+        linear_alpha: 128
+      save:
+        dtype: bf16
+        save_every: 500
+        max_step_saves_to_keep: 6
+        save_format: safetensors
+      datasets:
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          resolution: [ 1024, 1024 ]
+      train:
+        batch_size: 2  # Prodigy works well with batch 2-4 on 32GB
+        gradient_accumulation: 1
+        steps: 3000
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        timestep_type: "weighted"
+        content_or_style: "balanced"
+        loss_type: "mse"
+        dtype: bf16
+        optimizer: "prodigy"  # or prodigy_schedulefree
+        lr: 1.0
+        optimizer_params:
+          weight_decay: 0.01
+        lr_scheduler: "constant"
+        diff_output_preservation: true  # DOP for character identity
+        diff_output_preservation_multiplier: 1.0
+        diff_output_preservation_class: "person"
+        switch_boundary_every: 1
+        unload_text_encoder: false
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+        skip_first_sample: false
+        disable_sampling: false
+      logging:
+        log_every: 1
+        use_ui_logger: true
+      model:
+        name_or_path: "Tongyi-MAI/Z-Image-Turbo"
+        arch: "zimage"
+        # Required for Turbo: training adapter prevents quality degradation from distilled model
+        assistant_lora_path: "ostris/zimage_turbo_training_adapter/zimage_turbo_training_adapter_v2.safetensors"
+        quantize: true
+        qtype: "qfloat8"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: false
+        model_kwargs: {}
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        samples:
+          - prompt: "[trigger], studio portrait, soft lighting"
+          - prompt: "[trigger] on a beach, golden hour"
+          - prompt: "[trigger], casual outfit, urban background"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 1   # Turbo distilled: use 1
+        sample_steps: 8     # Turbo: fewer steps
+meta:
+  name: "[name]"
+  version: '1.0'
