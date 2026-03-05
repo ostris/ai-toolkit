@@ -244,7 +244,7 @@ class EncodedPromptPair:
         return self
 
 
-def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
+def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"], padding_side: str = "right") -> PromptEmbeds:
     # --- pad text_embeds ---
     if isinstance(prompt_embeds[0].text_embeds, (list, tuple)):
         embed_list = []
@@ -259,7 +259,10 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
                         dtype=t.dtype,
                         device=t.device,
                     )
-                    t = torch.cat([t, pad], dim=1)
+                    if padding_side == "right":
+                        t = torch.cat([t, pad], dim=1)
+                    else:
+                        t = torch.cat([pad, t], dim=1)
                 padded.append(t)
             embed_list.append(torch.cat(padded, dim=0))
         text_embeds = embed_list
@@ -274,7 +277,10 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
                     dtype=t.dtype,
                     device=t.device,
                 )
-                t = torch.cat([t, pad], dim=1)
+                if padding_side == "right":
+                    t = torch.cat([t, pad], dim=1)
+                else:
+                    t = torch.cat([pad, t], dim=1)
             padded.append(t)
         text_embeds = torch.cat(padded, dim=0)
 
@@ -296,7 +302,10 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"]):
                     dtype=m.dtype,
                     device=m.device,
                 )
-                m = torch.cat([m, pad], dim=1)
+                if padding_side == "right":
+                    m = torch.cat([m, pad], dim=1)
+                else:
+                    m = torch.cat([pad, m], dim=1)
             padded.append(m)
         attention_mask = torch.cat(padded, dim=0)
 
