@@ -5,6 +5,7 @@ from typing import Optional
 import torch
 from diffusers import FluxTransformer2DModel
 from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings, CombinedTimestepGuidanceTextProjEmbeddings
+from toolkit import device_utils
 
 
 def guidance_embed_bypass_forward(self, timestep, guidance, pooled_projection):
@@ -125,6 +126,9 @@ def add_model_gpu_splitter_to_flux(
     # since they are not trainable, multiply by smaller number
     other_module_param_count_scale: Optional[float] = 0.3
 ):
+    if not device_utils.is_cuda_available() or torch.cuda.device_count() <= 1:
+        return
+
     gpu_id_list = [i for i in range(torch.cuda.device_count())]
     
     # if len(gpu_id_list) > 2:
@@ -175,4 +179,3 @@ def add_model_gpu_splitter_to_flux(
     
     transformer._pre_gpu_split_to = transformer.to
     transformer.to = partial(new_device_to, transformer)
-

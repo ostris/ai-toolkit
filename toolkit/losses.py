@@ -1,5 +1,6 @@
 import torch
 from .llvae import LosslessLatentEncoder
+from toolkit import device_utils
 
 
 def total_variation(image):
@@ -42,7 +43,7 @@ class ComparativeTotalVariation(torch.nn.Module):
 
 # Gradient penalty
 def get_gradient_penalty(critic, real, fake, device):
-    with torch.autocast(device_type='cuda'):
+    with device_utils.autocast(device):
         real = real.float()
         fake = fake.float()
         alpha = torch.rand(real.size(0), 1, 1, 1).to(device).float()
@@ -109,5 +110,3 @@ class PatternLoss(torch.nn.Module):
         g_chan_loss = torch.abs(separated_chan_loss(g_chans) - separated_chan_loss(g_chans_target))
         b_chan_loss = torch.abs(separated_chan_loss(b_chans) - separated_chan_loss(b_chans_target))
         return (r_chan_loss + g_chan_loss + b_chan_loss) * 0.3333
-
-

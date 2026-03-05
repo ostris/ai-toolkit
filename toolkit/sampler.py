@@ -194,20 +194,21 @@ if __name__ == "__main__":
     from diffusers import StableDiffusionKDiffusionPipeline
     import torch
     import os
+    from toolkit import device_utils
 
     inference_steps = 25
 
     pipe = StableDiffusionKDiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-base")
-    pipe = pipe.to("cuda")
+    pipe = pipe.to(device_utils.get_device())
 
-    k_diffusion_model = CompVisDenoiser(model)
+    # k_diffusion_model = CompVisDenoiser(model) # model is undefined here in original code
 
     pipe = DiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", custom_pipeline="sd_text2img_k_diffusion")
-    pipe = pipe.to("cuda")
+    pipe = pipe.to(device_utils.get_device())
 
     prompt = "an astronaut riding a horse on mars"
     pipe.set_scheduler("sample_heun")
-    generator = torch.Generator(device="cuda").manual_seed(seed)
+    generator = torch.Generator(device=device_utils.get_device()).manual_seed(42) # seed was undefined
     image = pipe(prompt, generator=generator, num_inference_steps=20).images[0]
 
     image.save("./astronaut_heun_k_diffusion.png")

@@ -478,14 +478,17 @@ class StableDiffusion:
             te_kwargs = {}
             # handle quantization of TE
             te_is_quantized = False
-            if self.model_config.text_encoder_bits == 8:
-                te_kwargs['load_in_8bit'] = True
-                te_kwargs['device_map'] = "auto"
-                te_is_quantized = True
-            elif self.model_config.text_encoder_bits == 4:
-                te_kwargs['load_in_4bit'] = True
-                te_kwargs['device_map'] = "auto"
-                te_is_quantized = True
+            if self.device_torch.type == "mps" and self.model_config.text_encoder_bits in [4, 8]:
+                print_acc("Warning: 4/8-bit quantization is not supported on MPS. Ignoring quantization.")
+            else:
+                if self.model_config.text_encoder_bits == 8:
+                    te_kwargs['load_in_8bit'] = True
+                    te_kwargs['device_map'] = "auto"
+                    te_is_quantized = True
+                elif self.model_config.text_encoder_bits == 4:
+                    te_kwargs['load_in_4bit'] = True
+                    te_kwargs['device_map'] = "auto"
+                    te_is_quantized = True
 
             main_model_path = "PixArt-alpha/PixArt-XL-2-1024-MS"
             if self.model_config.is_pixart_sigma:
@@ -564,14 +567,17 @@ class StableDiffusion:
             te_kwargs = {}
             # handle quantization of TE
             te_is_quantized = False
-            if self.model_config.text_encoder_bits == 8:
-                te_kwargs['load_in_8bit'] = True
-                te_kwargs['device_map'] = "auto"
-                te_is_quantized = True
-            elif self.model_config.text_encoder_bits == 4:
-                te_kwargs['load_in_4bit'] = True
-                te_kwargs['device_map'] = "auto"
-                te_is_quantized = True
+            if self.device_torch.type == "mps" and self.model_config.text_encoder_bits in [4, 8]:
+                print_acc("Warning: 4/8-bit quantization is not supported on MPS. Ignoring quantization.")
+            else:
+                if self.model_config.text_encoder_bits == 8:
+                    te_kwargs['load_in_8bit'] = True
+                    te_kwargs['device_map'] = "auto"
+                    te_is_quantized = True
+                elif self.model_config.text_encoder_bits == 4:
+                    te_kwargs['load_in_4bit'] = True
+                    te_kwargs['device_map'] = "auto"
+                    te_is_quantized = True
 
             main_model_path = model_path
 
@@ -944,14 +950,17 @@ class StableDiffusion:
                 te_kwargs = {}
                 # handle quantization of TE
                 te_is_quantized = False
-                if self.model_config.text_encoder_bits == 8:
-                    te_kwargs['load_in_8bit'] = True
-                    te_kwargs['device_map'] = "auto"
-                    te_is_quantized = True
-                elif self.model_config.text_encoder_bits == 4:
-                    te_kwargs['load_in_4bit'] = True
-                    te_kwargs['device_map'] = "auto"
-                    te_is_quantized = True
+                if self.device_torch.type == "mps" and self.model_config.text_encoder_bits in [4, 8]:
+                    print_acc("Warning: 4/8-bit quantization is not supported on MPS. Ignoring quantization.")
+                else:
+                    if self.model_config.text_encoder_bits == 8:
+                        te_kwargs['load_in_8bit'] = True
+                        te_kwargs['device_map'] = "auto"
+                        te_is_quantized = True
+                    elif self.model_config.text_encoder_bits == 4:
+                        te_kwargs['load_in_4bit'] = True
+                        te_kwargs['device_map'] = "auto"
+                        te_is_quantized = True
 
                 text_encoder = T5EncoderModel.from_pretrained(
                     model_path,
