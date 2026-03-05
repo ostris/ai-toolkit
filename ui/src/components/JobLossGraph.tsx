@@ -79,7 +79,7 @@ export default function JobLossGraph({ job }: Props) {
   const [plotStride, setPlotStride] = useState(1);
 
   // show only last N points in the chart (0 = all)
-  const [windowSize, setWindowSize] = useState<number>(4000);
+  const [windowSize, setWindowSize] = useState<number>(0);
 
   // quick y clipping for readability
   const [clipOutliers, setClipOutliers] = useState(false);
@@ -186,25 +186,6 @@ export default function JobLossGraph({ job }: Props) {
     if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) return ['auto', 'auto'];
     return [lo, hi];
   }, [clipOutliers, chartData, activeKeys, showSmoothed]);
-
-  const latestSummary = useMemo(() => {
-    // Provide a simple “latest” readout for the first active series
-    const firstKey = activeKeys[0];
-    if (!firstKey) return null;
-
-    const s = perSeries[firstKey];
-    if (!s) return null;
-
-    const lastRaw = s.raw.length ? s.raw[s.raw.length - 1] : null;
-    const lastSmooth = s.smooth.length ? s.smooth[s.smooth.length - 1] : null;
-
-    return {
-      key: firstKey,
-      step: lastRaw?.step ?? lastSmooth?.step ?? null,
-      raw: lastRaw?.value ?? null,
-      smooth: lastSmooth?.value ?? null,
-    };
-  }, [activeKeys, perSeries]);
 
   return (
     <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">

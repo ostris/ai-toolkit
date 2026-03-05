@@ -654,7 +654,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version in [3, 4, 5]:
+            elif self.dfe.version in [3, 4, 5, 6]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
@@ -863,6 +863,7 @@ class SDTrainer(BaseSDTrainProcess):
         # check for audio loss
         if batch.audio_pred is not None and batch.audio_target is not None:
             audio_loss = torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean")
+            audio_loss = audio_loss * self.train_config.audio_loss_multiplier
             loss = loss + audio_loss
 
         # check for additional losses
