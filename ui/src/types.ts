@@ -98,9 +98,14 @@ export interface DatasetConfig {
   control_path?: string | null;
   num_frames: number;
   shrink_video_to_frames: boolean;
-  do_i2v: boolean;
+  do_i2v?: boolean;
+  do_audio?: boolean;
+  audio_normalize?: boolean;
+  audio_preserve_pitch?: boolean;
+  fps?: number;
   flip_x: boolean;
   flip_y: boolean;
+  num_repeats?: number;
   control_path_1?: string | null;
   control_path_2?: string | null;
   control_path_3?: string | null;
@@ -143,6 +148,7 @@ export interface TrainConfig {
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
   do_differential_guidance?: boolean;
   differential_guidance_scale?: number;
+  audio_loss_multiplier?: number;
 }
 
 export interface QuantizeKwargsConfig {

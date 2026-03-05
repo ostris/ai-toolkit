@@ -207,6 +207,9 @@ class NetworkConfig:
         # -1 automatically finds the largest factor
         self.lokr_factor = kwargs.get('lokr_factor', -1)
         
+        # Use the old lokr format
+        self.old_lokr_format = kwargs.get('old_lokr_format', False)
+        
         # for multi stage models
         self.split_multistage_loras = kwargs.get('split_multistage_loras', True)
         
@@ -394,6 +397,8 @@ class TrainConfig:
         self.noise_multiplier = kwargs.get('noise_multiplier', 1.0)
         self.target_noise_multiplier = kwargs.get('target_noise_multiplier', 1.0)
         self.random_noise_multiplier = kwargs.get('random_noise_multiplier', 0.0)
+        self.do_signal_correction_noise = kwargs.get('do_signal_correction_noise', False)
+        self.signal_correction_noise_scale = kwargs.get('signal_correction_noise_scale', 1.0)
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
         self.noisy_latent_multiplier = kwargs.get('noisy_latent_multiplier', 1.0)
@@ -556,6 +561,9 @@ class TrainConfig:
         # for multi stage models, how often to switch the boundary
         self.switch_boundary_every: int = kwargs.get('switch_boundary_every', 1)
 
+        # stabilizes empty prompts to be zeroed predictions
+        self.do_blank_stabilization = kwargs.get('do_blank_stabilization', False)
+
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
 
@@ -671,6 +679,11 @@ class ModelConfig:
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
+        
+        # model paths for models that support it
+        self.model_paths = kwargs.get("model_paths", {})
+        
+        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
         
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
@@ -956,7 +969,7 @@ class DatasetConfig:
         # it will select a random start frame and pull the frames at the given fps
         # this could have various issues with shorter videos and videos with variable fps
         # I recommend trimming your videos to the desired length and using shrink_video_to_frames(default)
-        self.fps: int = kwargs.get('fps', 16)
+        self.fps: int = kwargs.get('fps', 24)
         
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
@@ -972,6 +985,9 @@ class DatasetConfig:
         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
         
         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
+        self.do_audio: bool = kwargs.get('do_audio', False) # load audio from video files for models that support it
+        self.audio_preserve_pitch: bool = kwargs.get('audio_preserve_pitch', False) # preserve pitch when stretching audio to fit num_frames
+        self.audio_normalize: bool = kwargs.get('audio_normalize', False) # normalize audio volume levels when loading
 
 
 def preprocess_dataset_raw_config(raw_config: List[dict]) -> List[dict]:

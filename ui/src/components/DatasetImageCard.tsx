@@ -3,7 +3,8 @@ import { FaTrashAlt, FaEye, FaEyeSlash } from 'react-icons/fa';
 import { openConfirm } from './ConfirmModal';
 import classNames from 'classnames';
 import { apiClient } from '@/utils/api';
-import { isVideo } from '@/utils/basic';
+import AudioPlayer from './AudioPlayer';
+import { isVideo, isAudio } from '@/utils/basic';
 
 interface DatasetImageCardProps {
   imageUrl: string;
@@ -37,10 +38,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       .then(res => res.data)
       .then(data => {
         console.log('Caption fetched:', data);
-        // fix issue where caption could be non string
-        const captionText = data != null ? String(data) : '';
-        setCaption(captionText);
-        setSavedCaption(captionText);
+        if (data) {
+          // fix issue where caption could be non string
+          data = `${data}`;
+        }
+        setCaption(data || '');
+        setSavedCaption(data || '');
         setIsCaptionLoaded(true);
       })
       .catch(error => {
@@ -121,6 +124,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const isCaptionCurrent = caption.trim() === savedCaption;
 
   const isItAVideo = isVideo(imageUrl);
+  const isItAudio = isAudio(imageUrl);
+  const isItImage = !isItAVideo && !isItAudio;
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -133,7 +138,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
         <div className="absolute inset-0 rounded-t-lg shadow-md">
           {inViewport && isVisible && (
             <>
-              {isItAVideo ? (
+              {isItAVideo && (
                 <video
                   src={`/api/img/${encodeURIComponent(imageUrl)}`}
                   className={`w-full h-full object-contain`}
@@ -142,7 +147,14 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   muted
                   controls
                 />
-              ) : (
+              )}
+              {isItAudio && (
+                <AudioPlayer
+                  src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                  title={imageUrl.replace(/^.*[\\/]/, '')}
+                />
+              )}
+              {isItImage && (
                 <img
                   src={`/api/img/${encodeURIComponent(imageUrl)}`}
                   alt={alt}
@@ -160,7 +172,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </div>
           )}
           {children && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
-          <div className="absolute top-1 right-1 flex space-x-2">
+          <div className="absolute top-1 right-1 flex space-x-2 z-10">
             <button
               className="bg-gray-800 rounded-full p-2"
               onClick={() => {
@@ -187,7 +199,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </button>
           </div>
         </div>
-        {inViewport && isVisible && (
+        {inViewport && isVisible && !isItAudio && (
           <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300 w-full">
             {imageUrl}
           </div>
