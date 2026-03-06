@@ -413,8 +413,8 @@ with gr.Blocks(theme=theme, css=css) as demo:
 
             do_captioning.click(fn=run_captioning, inputs=[images, concept_sentence] + caption_list, outputs=caption_list)
             
-        with gr.TabItem("🧬 ZipLoRA Character Merge", id="merge_tab"):
-            gr.Markdown("### Flawlessly merge two LTX-2 Character LoRAs without visual or audio bleeding using Orthogonal Optimization.")
+        with gr.TabItem("🧪 Experimental LoRA Merge", id="merge_tab"):
+            gr.Markdown("### Experimental utility for combining two LTX character LoRAs. Useful for testing, but not a clean substitute for separate character LoRAs when voice isolation matters.")
             
             # Import run_merge function here or define it at the top
             def run_merge_wrapper(lora1, lora2, output_name, dare_rate, zip_steps):
@@ -437,7 +437,7 @@ with gr.Blocks(theme=theme, css=css) as demo:
                 
                 config = {
                     "config": {
-                        "name": "LTX2 Character Merge ZipLoRA UI",
+                        "name": "LTX2 Experimental Merge UI",
                         "process": [
                             {
                                 "type": "merge_ziplora",
@@ -464,7 +464,7 @@ with gr.Blocks(theme=theme, css=css) as demo:
                     job = get_job(config_path)
                     job.run()
                     job.cleanup()
-                    return f"✅ Successfully merged! Saved flawless character LoRA to:\n{out_path}"
+                    return f"✅ Merge completed. Review the output carefully before relying on it for character isolation:\n{out_path}"
                 except Exception as e:
                     raise gr.Error(f"Merge failed: {str(e)}")
 

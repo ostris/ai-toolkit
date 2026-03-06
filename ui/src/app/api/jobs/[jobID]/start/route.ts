@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { isLtxJobConfig, isLtxOnlyMode } from '@/server/ltxOnly';
 
 const prisma = new PrismaClient();
 
@@ -12,6 +13,23 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
 
   if (!job) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
+  }
+
+  if (isLtxOnlyMode()) {
+    try {
+      const parsedConfig = JSON.parse(job.job_config);
+      if (!isLtxJobConfig(parsedConfig)) {
+        return NextResponse.json(
+          {
+            error:
+              'LTX-only mode is enabled. Non-LTX training jobs are blocked. Set AITK_ALLOW_NON_LTX=1 to override.',
+          },
+          { status: 400 },
+        );
+      }
+    } catch {
+      return NextResponse.json({ error: 'Invalid job config JSON' }, { status: 400 });
+    }
   }
 
   // get highest queue position

@@ -102,10 +102,8 @@ def decoupled_magnitude_direction_merge(W_up1: torch.Tensor, W_up2: torch.Tensor
 
 class MergeOrthogonalProcess(BaseMergeProcess):
     """
-    The DO-Merge Omni-Method (Decouple and Orthogonalize)
-    
-    This is the absolute bleeding edge of 2026 research, addressing the core mathematical flaws in LoRA merging.
-    
+    Experimental orthogonal LoRA merge process.
+
     1. Cross-Attention (Prompt Routing): Uses Bilateral Subspace Orthogonalization (BSO). 
        Instead of just projecting A out of B, it projects A out of B AND B out of A. 
        This perfectly isolates their triggers symmetrically, eliminating all cross-talk.
@@ -188,7 +186,7 @@ class MergeOrthogonalProcess(BaseMergeProcess):
                 module_keys_2[base_name][sub_key] = lora_2[key]
                 
         shared_modules = set(module_keys_1.keys()).intersection(set(module_keys_2.keys()))
-        print(f"Found {len(shared_modules)} shared modules to Ultimate-Merge.")
+        print(f"Found {len(shared_modules)} shared modules to merge.")
         
         merged_state_dict = {}
         

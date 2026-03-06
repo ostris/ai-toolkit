@@ -77,6 +77,15 @@ def get_optimizer(
         optimizer = torch.optim.Adam(params, lr=float(learning_rate), eps=1e-6, **optimizer_params)
     elif lower_type == 'adamw':
         optimizer = torch.optim.AdamW(params, lr=float(learning_rate), eps=1e-6, **optimizer_params)
+    elif lower_type == 'adamw_fused':
+        fused_params = dict(optimizer_params)
+        fused_params.setdefault("fused", True)
+        try:
+            optimizer = torch.optim.AdamW(params, lr=float(learning_rate), eps=1e-6, **fused_params)
+        except TypeError:
+            # Older torch builds do not support fused AdamW; fallback safely.
+            fused_params.pop("fused", None)
+            optimizer = torch.optim.AdamW(params, lr=float(learning_rate), eps=1e-6, **fused_params)
     elif lower_type == 'lion':
         try:
             from lion_pytorch import Lion

@@ -223,10 +223,56 @@ export default function SimpleJob({
               <FormGroup label="Options">
                 <Checkbox
                   label="Low VRAM"
+                  docKey="model.low_vram"
                   checked={jobConfig.config.process[0].model.low_vram}
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
               </FormGroup>
+            )}
+            {modelArch?.additionalSections?.includes('model.compile') && (
+              <>
+                <Checkbox
+                  label="Compile Model"
+                  docKey="model.compile"
+                  checked={jobConfig.config.process[0].model.compile ?? false}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.compile')}
+                />
+                {jobConfig.config.process[0].model.compile && (
+                  <div className="pt-2">
+                    {modelArch?.additionalSections?.includes('model.compile_mode') && (
+                      <SelectInput
+                        label="Compile Mode"
+                        docKey="model.compile_mode"
+                        value={jobConfig.config.process[0].model.compile_mode ?? 'max-autotune'}
+                        onChange={value => setJobConfig(value, 'config.process[0].model.compile_mode')}
+                        options={[
+                          { value: 'max-autotune', label: 'max-autotune' },
+                          { value: 'reduce-overhead', label: 'reduce-overhead' },
+                          { value: 'default', label: 'default' },
+                        ]}
+                      />
+                    )}
+                    {modelArch?.additionalSections?.includes('model.compile_dynamic') && (
+                      <Checkbox
+                        label="Compile Dynamic Shapes"
+                        docKey="model.compile_dynamic"
+                        className="pt-2"
+                        checked={jobConfig.config.process[0].model.compile_dynamic ?? true}
+                        onChange={value => setJobConfig(value, 'config.process[0].model.compile_dynamic')}
+                      />
+                    )}
+                    {modelArch?.additionalSections?.includes('model.compile_fullgraph') && (
+                      <Checkbox
+                        label="Compile Full Graph"
+                        docKey="model.compile_fullgraph"
+                        className="pt-2"
+                        checked={jobConfig.config.process[0].model.compile_fullgraph ?? true}
+                        onChange={value => setJobConfig(value, 'config.process[0].model.compile_fullgraph')}
+                      />
+                    )}
+                  </div>
+                )}
+              </>
             )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
               <Checkbox
@@ -488,9 +534,11 @@ export default function SimpleJob({
                 <SelectInput
                   label="Optimizer"
                   value={jobConfig.config.process[0].train.optimizer}
+                  docKey="train.optimizer"
                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
                   options={[
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
+                    { value: 'adamw_fused', label: 'AdamW Fused' },
                     { value: 'adafactor', label: 'Adafactor' },
                   ]}
                 />
@@ -560,6 +608,134 @@ export default function SimpleJob({
                     placeholder="eg. 1.0"
                     docKey={'train.audio_loss_multiplier'}
                     min={0}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.auto_balance_audio_loss') && (
+                  <Checkbox
+                    label="Auto Balance Audio Loss"
+                    className="pt-2"
+                    checked={jobConfig.config.process[0].train.auto_balance_audio_loss || false}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.auto_balance_audio_loss')}
+                    docKey="train.auto_balance_audio_loss"
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.strict_audio_mode') && (
+                  <Checkbox
+                    label="Strict Audio Mode"
+                    className="pt-2"
+                    checked={jobConfig.config.process[0].train.strict_audio_mode || false}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.strict_audio_mode')}
+                    docKey="train.strict_audio_mode"
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.strict_audio_min_supervised_ratio') &&
+                  jobConfig.config.process[0].train.strict_audio_mode && (
+                    <NumberInput
+                      label="Strict Audio Min Supervised Ratio"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.strict_audio_min_supervised_ratio ?? 0.9}
+                      onChange={value =>
+                        setJobConfig(value, 'config.process[0].train.strict_audio_min_supervised_ratio')
+                      }
+                      placeholder="eg. 0.9"
+                      docKey="train.strict_audio_min_supervised_ratio"
+                      min={0}
+                      max={1}
+                    />
+                  )}
+                {modelArch?.additionalSections?.includes('train.strict_audio_warmup_steps') &&
+                  jobConfig.config.process[0].train.strict_audio_mode && (
+                    <NumberInput
+                      label="Strict Audio Warmup Steps"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.strict_audio_warmup_steps ?? 50}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.strict_audio_warmup_steps')}
+                      placeholder="eg. 50"
+                      docKey="train.strict_audio_warmup_steps"
+                      min={0}
+                    />
+                  )}
+                {modelArch?.additionalSections?.includes('train.independent_audio_timestep') && (
+                  <Checkbox
+                    label="Independent Audio Timestep"
+                    className="pt-2"
+                    checked={jobConfig.config.process[0].train.independent_audio_timestep ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.independent_audio_timestep')}
+                    docKey="train.independent_audio_timestep"
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.noise_offset') && (
+                  <NumberInput
+                    label="Noise Offset"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.noise_offset ?? 0.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.noise_offset')}
+                    placeholder="eg. 0.05"
+                    docKey="train.noise_offset"
+                    min={0}
+                    max={1}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.min_snr_gamma') && (
+                  <NumberInput
+                    label="Min-SNR Gamma"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.min_snr_gamma ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.min_snr_gamma')}
+                    placeholder="eg. 5.0 (0 = disabled)"
+                    docKey="train.min_snr_gamma"
+                    min={0}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.lr_scheduler') && (
+                  <SelectInput
+                    label="LR Scheduler"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.lr_scheduler ?? 'constant_with_warmup'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.lr_scheduler')}
+                    docKey="train.lr_scheduler"
+                    options={[
+                      { value: 'constant_with_warmup', label: 'Constant with Warmup' },
+                      { value: 'cosine', label: 'Cosine Annealing' },
+                      { value: 'cosine_with_restarts', label: 'Cosine with Restarts' },
+                      { value: 'linear', label: 'Linear Decay' },
+                    ]}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.caption_dropout_rate') && (
+                  <NumberInput
+                    label="Caption Dropout Rate"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].datasets?.[0]?.caption_dropout_rate ?? 0.0}
+                    onChange={value => setJobConfig(value, 'config.process[0].datasets[0].caption_dropout_rate')}
+                    placeholder="eg. 0.05"
+                    docKey="train.caption_dropout_rate"
+                    min={0}
+                    max={1}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('network.rank_dropout') && (
+                  <NumberInput
+                    label="Rank Dropout"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].network?.rank_dropout ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].network.rank_dropout')}
+                    placeholder="eg. 0.1"
+                    docKey="network.rank_dropout"
+                    min={0}
+                    max={1}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('network.module_dropout') && (
+                  <NumberInput
+                    label="Module Dropout"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].network?.module_dropout ?? 0}
+                    onChange={value => setJobConfig(value, 'config.process[0].network.module_dropout')}
+                    placeholder="eg. 0.0"
+                    docKey="network.module_dropout"
+                    min={0}
+                    max={1}
                   />
                 )}
               </div>
@@ -728,6 +904,77 @@ export default function SimpleJob({
                       min={0}
                     />
                   </>
+                )}
+                {modelArch?.additionalSections?.includes('train.throughput_profile') && (
+                  <SelectInput
+                    label="Throughput Profile"
+                    className="pt-2"
+                    docKey="train.throughput_profile"
+                    value={jobConfig.config.process[0].train.throughput_profile ?? 'auto'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.throughput_profile')}
+                    options={[
+                      { value: 'auto', label: 'Auto (Capability-Based)' },
+                      { value: 'ltx23_safe', label: 'LTX23 Safe' },
+                      { value: 'ltx23_max', label: 'LTX23 Max' },
+                      { value: 'ltx23_ultra_vram', label: 'LTX23 Ultra VRAM' },
+                    ]}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.prefetch_queue_depth') && (
+                  <NumberInput
+                    label="Prefetch Queue Depth"
+                    className="pt-2"
+                    docKey="train.prefetch_queue_depth"
+                    value={jobConfig.config.process[0].train.prefetch_queue_depth ?? 1}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.prefetch_queue_depth')}
+                    min={1}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.logger_commit_interval') && (
+                  <NumberInput
+                    label="Logger Commit Interval"
+                    className="pt-2"
+                    docKey="train.logger_commit_interval"
+                    value={jobConfig.config.process[0].train.logger_commit_interval ?? 5}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.logger_commit_interval')}
+                    min={1}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.dataloader_autotune') && (
+                  <Checkbox
+                    label="Dataloader Autotune"
+                    className="pt-2"
+                    docKey="train.dataloader_autotune"
+                    checked={jobConfig.config.process[0].train.dataloader_autotune ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.dataloader_autotune')}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.prefetch_to_device') && (
+                  <Checkbox
+                    label="Prefetch To Device"
+                    className="pt-2"
+                    docKey="train.prefetch_to_device"
+                    checked={jobConfig.config.process[0].train.prefetch_to_device ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.prefetch_to_device')}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.allow_tf32') && (
+                  <Checkbox
+                    label="Allow TF32"
+                    className="pt-2"
+                    docKey="train.allow_tf32"
+                    checked={jobConfig.config.process[0].train.allow_tf32 ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.allow_tf32')}
+                  />
+                )}
+                {modelArch?.additionalSections?.includes('train.cudnn_benchmark') && (
+                  <Checkbox
+                    label="cuDNN Benchmark"
+                    className="pt-2"
+                    docKey="train.cudnn_benchmark"
+                    checked={jobConfig.config.process[0].train.cudnn_benchmark ?? true}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.cudnn_benchmark')}
+                  />
                 )}
               </div>
             </div>

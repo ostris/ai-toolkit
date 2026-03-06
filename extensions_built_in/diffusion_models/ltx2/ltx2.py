@@ -1,9 +1,11 @@
 from functools import partial
 import os
+import types
 from typing import List, Optional
 
 import torch
 import torchaudio
+import huggingface_hub
 from transformers import Gemma3Config
 import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
@@ -213,6 +215,12 @@ class LTX2Model(BaseModel):
         # use the new format on this new model by default
         self.use_old_lokr_format = False
         self.audio_processor = None
+        self._warned_missing_audio = False
+        self._text_pad_cache = {}
+        self._mask_pad_cache = {}
+        self._video_coords_cache = {}
+        self._audio_coords_cache = {}
+        self._cache_limit = 32
         
         # gemma needs left side padding
         self.te_padding_side = "left"
@@ -225,6 +233,46 @@ class LTX2Model(BaseModel):
     def get_bucket_divisibility(self):
         return 32
 
+    def _resolve_combined_checkpoint_path(self, model_path: str) -> Optional[str]:
+        if os.path.exists(model_path) and model_path.endswith(".safetensors"):
+            return model_path
+        if os.path.exists(model_path):
+            return None
+        if "/" not in model_path:
+            return None
+
+        try:
+            repo_files = huggingface_hub.list_repo_files(model_path)
+        except Exception:
+            return None
+
+        candidates = [file_name for file_name in repo_files if file_name.endswith(".safetensors")]
+        if not candidates:
+            return None
+
+        preferred = []
+        lower_repo = model_path.lower()
+        if "ltx-2.3-fp8" in lower_repo:
+            preferred.append("ltx-2.3-22b-dev-fp8.safetensors")
+        if "ltx-2.3" in lower_repo:
+            preferred.append("ltx-2.3-22b-dev.safetensors")
+
+        filtered = [
+            file_name for file_name in candidates
+            if "distilled-lora" not in file_name and "upscaler" not in file_name
+        ]
+        dev_candidates = [file_name for file_name in filtered if "-dev" in file_name]
+        preferred.extend(dev_candidates)
+        preferred.extend(filtered)
+        preferred.extend(candidates)
+
+        for file_name in preferred:
+            if file_name in candidates:
+                self.print_and_status_update(f"Downloading {file_name}")
+                return huggingface_hub.hf_hub_download(model_path, file_name)
+
+        return None
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading LTX2 model")
@@ -234,10 +282,12 @@ class LTX2Model(BaseModel):
         combined_state_dict = None
 
         self.print_and_status_update("Loading transformer")
-        # if we have a safetensors file it is a mono checkpoint
-        if os.path.exists(model_path) and model_path.endswith(".safetensors"):
-            combined_state_dict = load_file(model_path)
+        combined_model_path = self._resolve_combined_checkpoint_path(model_path)
+        if combined_model_path is not None:
+            combined_state_dict = load_file(combined_model_path)
             combined_state_dict = dequantize_state_dict(combined_state_dict)
+            if base_model_path in [None, "", model_path] and "Lightricks/LTX-2.3" in model_path:
+                base_model_path = "Lightricks/LTX-2"
 
         if combined_state_dict is not None:
             original_dit_ckpt = get_model_state_dict_from_combined_ckpt(
@@ -466,6 +516,36 @@ class LTX2Model(BaseModel):
         pipe.text_encoder = text_encoder
         pipe.transformer = transformer
 
+        _orig_connectors_forward = pipe.connectors.forward
+        def _connectors_forward_cast_mask(this, *args, **kwargs):
+            out = _orig_connectors_forward(*args, **kwargs)
+            if isinstance(out, tuple) and len(out) == 3:
+                prompt, audio_prompt, mask = out
+                if torch.is_tensor(mask) and mask.dtype != torch.float32:
+                    mask = mask.to(dtype=torch.float32)
+                return prompt, audio_prompt, mask
+            return out
+        pipe.connectors.forward = types.MethodType(_connectors_forward_cast_mask, pipe.connectors)
+
+        _orig_transformer_forward = pipe.transformer.forward
+        def _transformer_forward_cast_masks(this, *args, **kwargs):
+            for mask_key in ("encoder_attention_mask", "audio_encoder_attention_mask"):
+                mask = kwargs.get(mask_key, None)
+                if torch.is_tensor(mask) and mask.dtype != torch.bool and mask.dtype != torch.float32:
+                    kwargs[mask_key] = mask.to(dtype=torch.float32)
+            return _orig_transformer_forward(*args, **kwargs)
+        pipe.transformer.forward = types.MethodType(_transformer_forward_cast_masks, pipe.transformer)
+
+        import torch.nn.functional as _F
+        if not getattr(_F, "_aitk_sdpa_guarded", False):
+            _orig_sdpa = _F.scaled_dot_product_attention
+            def _sdpa_mask_dtype_safe(query, key, value, attn_mask=None, **kwargs):
+                if attn_mask is not None and attn_mask.dtype != torch.bool and attn_mask.dtype != query.dtype:
+                    attn_mask = attn_mask.to(dtype=query.dtype)
+                return _orig_sdpa(query, key, value, attn_mask=attn_mask, **kwargs)
+            _F.scaled_dot_product_attention = _sdpa_mask_dtype_safe
+            _F._aitk_sdpa_guarded = True
+
         self.print_and_status_update("Preparing Model")
 
         text_encoder = [pipe.text_encoder]
@@ -480,6 +560,34 @@ class LTX2Model(BaseModel):
         text_encoder[0].to(self.device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
+        pipe.audio_vae.requires_grad_(False)
+        pipe.audio_vae.eval()
+        pipe.vocoder.requires_grad_(False)
+        pipe.vocoder.eval()
+
+        _tc = getattr(self, "train_config", None)
+        if _tc is not None and getattr(_tc, "train_text_encoder", False):
+            pipe.connectors.requires_grad_(True)
+            pipe.connectors.train()
+            if "LTX2TextConnectors" not in self.target_lora_modules:
+                self.target_lora_modules.append("LTX2TextConnectors")
+        else:
+            pipe.connectors.requires_grad_(False)
+            pipe.connectors.eval()
+
+        if _tc is None or getattr(_tc, "gradient_checkpointing", True):
+            if hasattr(pipe.transformer, "enable_gradient_checkpointing"):
+                pipe.transformer.enable_gradient_checkpointing()
+            elif hasattr(pipe.transformer, "set_gradient_checkpointing"):
+                pipe.transformer.set_gradient_checkpointing(True)
+            elif hasattr(pipe.transformer, "_enable_gradient_checkpointing"):
+                pipe.transformer._enable_gradient_checkpointing = True
+
+        try:
+            torch.backends.cuda.enable_flash_sdp(True)
+            torch.backends.cuda.enable_mem_efficient_sdp(True)
+        except Exception:
+            pass
         flush()
 
         # save it to the model class
@@ -676,9 +784,9 @@ class LTX2Model(BaseModel):
             try:
                 _ = pipeline(
                     prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
-                    prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch),
+                    prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch, dtype=torch.bool),
                     negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
-                    negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch),
+                    negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch, dtype=torch.bool),
                     height=gen_config.height,
                     width=gen_config.width,
                     num_inference_steps=gen_config.num_inference_steps,
@@ -703,9 +811,9 @@ class LTX2Model(BaseModel):
             
             video, audio = pipeline(
                 prompt_embeds=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
-                prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch),
+                prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch, dtype=torch.bool),
                 negative_prompt_embeds=unconditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
-                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch),
+                negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch, dtype=torch.bool),
                 height=gen_config.height,
                 width=gen_config.width,
                 num_inference_steps=gen_config.num_inference_steps,
@@ -728,13 +836,13 @@ class LTX2Model(BaseModel):
                     self.device_torch, dtype=self.torch_dtype
                 ),
                 prompt_attention_mask=conditional_embeds.attention_mask.to(
-                    self.device_torch
+                    self.device_torch, dtype=torch.bool
                 ),
                 negative_prompt_embeds=unconditional_embeds.text_embeds.to(
                     self.device_torch, dtype=self.torch_dtype
                 ),
                 negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(
-                    self.device_torch
+                    self.device_torch, dtype=torch.bool
                 ),
                 height=gen_config.height,
                 width=gen_config.width,
@@ -833,18 +941,41 @@ class LTX2Model(BaseModel):
         current_length = embeds.text_embeds.shape[1]
         if current_length < target_length:
             pad_length = target_length - current_length
-            pad_tensor = torch.zeros(
-                (embeds.text_embeds.shape[0], pad_length, embeds.text_embeds.shape[2]),
-                device=embeds.text_embeds.device,
-                dtype=embeds.text_embeds.dtype,
+            text_pad_key = (
+                embeds.text_embeds.shape[0],
+                pad_length,
+                embeds.text_embeds.shape[2],
+                embeds.text_embeds.device,
+                embeds.text_embeds.dtype,
             )
+            pad_tensor = self._text_pad_cache.get(text_pad_key)
+            if pad_tensor is None:
+                pad_tensor = torch.zeros(
+                    (embeds.text_embeds.shape[0], pad_length, embeds.text_embeds.shape[2]),
+                    device=embeds.text_embeds.device,
+                    dtype=embeds.text_embeds.dtype,
+                )
+                if len(self._text_pad_cache) >= self._cache_limit:
+                    self._text_pad_cache.pop(next(iter(self._text_pad_cache)))
+                self._text_pad_cache[text_pad_key] = pad_tensor
             embeds.text_embeds = torch.cat([pad_tensor, embeds.text_embeds], dim=1)
             if embeds.attention_mask is not None:
-                pad_mask = torch.zeros(
-                    (embeds.attention_mask.shape[0], pad_length),
-                    device=embeds.attention_mask.device,
-                    dtype=embeds.attention_mask.dtype,
+                mask_pad_key = (
+                    embeds.attention_mask.shape[0],
+                    pad_length,
+                    embeds.attention_mask.device,
+                    embeds.attention_mask.dtype,
                 )
+                pad_mask = self._mask_pad_cache.get(mask_pad_key)
+                if pad_mask is None:
+                    pad_mask = torch.zeros(
+                        (embeds.attention_mask.shape[0], pad_length),
+                        device=embeds.attention_mask.device,
+                        dtype=embeds.attention_mask.dtype,
+                    )
+                    if len(self._mask_pad_cache) >= self._cache_limit:
+                        self._mask_pad_cache.pop(next(iter(self._mask_pad_cache)))
+                    self._mask_pad_cache[mask_pad_key] = pad_mask
                 embeds.attention_mask = torch.cat(
                     [pad_mask, embeds.attention_mask], dim=1
                 )
@@ -858,6 +989,11 @@ class LTX2Model(BaseModel):
         batch: "DataLoaderBatchDTO" = None,
         **kwargs,
     ):
+        _tc = getattr(self, "train_config", None)
+        use_independent_audio_ts = getattr(_tc, "independent_audio_timestep", True) if _tc is not None else True
+        train_connectors = _tc is not None and getattr(_tc, "train_text_encoder", False)
+        audio_timestep = timestep
+
         with torch.no_grad():
             if self.model.device == torch.device("cpu"):
                 self.model.to(self.device_torch)
@@ -943,10 +1079,12 @@ class LTX2Model(BaseModel):
                 # add the audio targets to the batch for loss calculation later
                 audio_noise = torch.randn_like(raw_audio_latents)
                 batch.audio_target = (audio_noise - raw_audio_latents).detach()
+                if use_independent_audio_ts:
+                    audio_timestep = torch.rand_like(timestep.float()) * 1000.0
                 audio_latents = self.add_noise(
                     raw_audio_latents,
                     audio_noise,
-                    timestep,
+                    audio_timestep,
                 ).to(self.device_torch, dtype=self.torch_dtype)
             else:
                 # no audio
@@ -976,6 +1114,9 @@ class LTX2Model(BaseModel):
             additive_attention_mask = (
                 1 - text_embeddings.attention_mask.to(self.transformer.dtype)
             ) * -1000000.0
+
+        connector_context = torch.enable_grad() if train_connectors else torch.no_grad()
+        with connector_context:
             (
                 connector_prompt_embeds,
                 connector_audio_prompt_embeds,
@@ -984,18 +1125,44 @@ class LTX2Model(BaseModel):
                 text_embeddings.text_embeds, additive_attention_mask, additive_mask=True
             )
 
+        with torch.no_grad():
+
             # compute video and audio positional ids
-            video_coords = self.transformer.rope.prepare_video_coords(
+            video_coords_key = (
                 packed_latents.shape[0],
                 latent_num_frames,
                 latent_height,
                 latent_width,
                 packed_latents.device,
-                fps=frame_rate,
+                frame_rate,
             )
-            audio_coords = self.transformer.audio_rope.prepare_audio_coords(
-                audio_latents.shape[0], audio_num_frames, audio_latents.device
+            video_coords = self._video_coords_cache.get(video_coords_key)
+            if video_coords is None:
+                video_coords = self.transformer.rope.prepare_video_coords(
+                    packed_latents.shape[0],
+                    latent_num_frames,
+                    latent_height,
+                    latent_width,
+                    packed_latents.device,
+                    fps=frame_rate,
+                )
+                if len(self._video_coords_cache) >= self._cache_limit:
+                    self._video_coords_cache.pop(next(iter(self._video_coords_cache)))
+                self._video_coords_cache[video_coords_key] = video_coords
+
+            audio_coords_key = (
+                audio_latents.shape[0],
+                audio_num_frames,
+                audio_latents.device,
             )
+            audio_coords = self._audio_coords_cache.get(audio_coords_key)
+            if audio_coords is None:
+                audio_coords = self.transformer.audio_rope.prepare_audio_coords(
+                    audio_latents.shape[0], audio_num_frames, audio_latents.device
+                )
+                if len(self._audio_coords_cache) >= self._cache_limit:
+                    self._audio_coords_cache.pop(next(iter(self._audio_coords_cache)))
+                self._audio_coords_cache[audio_coords_key] = audio_coords
 
         noise_pred_video, noise_pred_audio = self.transformer(
             hidden_states=packed_latents,
@@ -1003,7 +1170,7 @@ class LTX2Model(BaseModel):
             encoder_hidden_states=connector_prompt_embeds,
             audio_encoder_hidden_states=connector_audio_prompt_embeds,
             timestep=video_timestep,
-            audio_timestep=timestep,
+            audio_timestep=audio_timestep,
             encoder_attention_mask=connector_attention_mask,
             audio_encoder_attention_mask=connector_attention_mask,
             num_frames=latent_num_frames,

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { isLtxJobConfig, isLtxOnlyMode } from '@/server/ltxOnly';
 
 const prisma = new PrismaClient();
 
@@ -36,6 +37,15 @@ export async function POST(request: Request) {
     }
     if (!job_config) {
       return NextResponse.json({ error: 'Job config is required' }, { status: 400 });
+    }
+    if (isLtxOnlyMode() && !isLtxJobConfig(job_config)) {
+      return NextResponse.json(
+        {
+          error:
+            'LTX-only mode is enabled. Non-LTX training jobs are blocked. Set AITK_ALLOW_NON_LTX=1 to override.',
+        },
+        { status: 400 },
+      );
     }
 
     if (id) {

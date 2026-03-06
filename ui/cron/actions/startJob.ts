@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { TOOLKIT_ROOT, getTrainingFolder, getHFToken } from '../paths';
+import { isLtxJobConfig, isLtxOnlyMode } from '../../src/server/ltxOnly';
 const isWindows = process.platform === 'win32';
 
 const startAndWatchJob = (job: Job) => {
@@ -47,6 +48,17 @@ const startAndWatchJob = (job: Job) => {
 
     // update the config dataset path
     const jobConfig = JSON.parse(job.job_config);
+    if (isLtxOnlyMode() && !isLtxJobConfig(jobConfig)) {
+      await prisma.job.update({
+        where: { id: jobID },
+        data: {
+          status: 'error',
+          info: 'Blocked by LTX-only mode. Set AITK_ALLOW_NON_LTX=1 to override.',
+        },
+      });
+      resolve();
+      return;
+    }
     jobConfig.config.process[0].sqlite_db_path = path.join(TOOLKIT_ROOT, 'aitk_db.db');
 
     // write the config file

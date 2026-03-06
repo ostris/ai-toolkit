@@ -5,6 +5,7 @@ import json
 import random
 import shutil
 from collections import OrderedDict
+from collections import deque
 import os
 import re
 import traceback
@@ -72,6 +73,7 @@ import hashlib
 
 from toolkit.util.blended_blur_noise import get_blended_blur_noise
 from toolkit.util.get_model import get_model_class
+from toolkit.throughput_profiles import apply_ltx23_throughput_profile
 
 def flush():
     torch.cuda.empty_cache()
@@ -110,6 +112,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             self.network_config = None
         self.train_config = TrainConfig(**self.get_conf('train', {}))
+        self.non_blocking_device_transfer = bool(getattr(self.train_config, "non_blocking_device_transfer", True))
         model_config = self.get_conf('model', {})
         self.modules_being_trained: List[torch.nn.Module] = []
 
@@ -172,10 +175,44 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.datasets = []
                     self.datasets.append(dataset)
                 self.dataset_configs.append(dataset)
-        
+
+        self.resolved_throughput_profile = 'ltx23_safe'
+        if self.model_config.arch == 'ltx2':
+            resolved_profile, capability = apply_ltx23_throughput_profile(
+                self.train_config,
+                self.model_config,
+                self.dataset_configs,
+                device=self.device_torch,
+            )
+            self.resolved_throughput_profile = resolved_profile
+            if self.accelerator.is_main_process:
+                print_acc(
+                    f"Throughput profile resolved to {resolved_profile} "
+                    f"for GPU '{capability.name}' ({capability.total_vram_gb:.1f} GB)"
+                )
+
         self.is_caching_text_embeddings = any(
             dataset.cache_text_embeddings for dataset in self.dataset_configs
         )
+
+        self.prefetch_to_device = bool(getattr(self.train_config, "prefetch_to_device", True))
+        self.prefetch_queue_depth = max(1, int(getattr(self.train_config, "prefetch_queue_depth", 1)))
+        self.logger_commit_interval = max(1, int(getattr(self.train_config, "logger_commit_interval", 5)))
+        if (
+            self.prefetch_to_device
+            and torch.cuda.is_available()
+            and self.device_torch.type == "cuda"
+        ):
+            self._prefetch_stream = torch.cuda.Stream(device=self.device_torch)
+        else:
+            self._prefetch_stream = None
+
+        if torch.cuda.is_available():
+            if getattr(self.train_config, "allow_tf32", True):
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+            if hasattr(torch.backends, "cudnn"):
+                torch.backends.cudnn.benchmark = bool(getattr(self.train_config, "cudnn_benchmark", True))
 
         self.embed_config = None
         embedding_raw = self.get_conf('embedding', None)
@@ -909,10 +946,90 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return params
 
+    def _to_device_tensor(self, tensor: Optional[torch.Tensor], dtype: Optional[torch.dtype] = None):
+        if tensor is None:
+            return None
+        target_dtype = dtype if dtype is not None else tensor.dtype
+        if tensor.device == self.device_torch and tensor.dtype == target_dtype:
+            return tensor
+        return tensor.to(
+            self.device_torch,
+            dtype=target_dtype,
+            non_blocking=self.non_blocking_device_transfer,
+        )
+
+    def _prefetch_batch_to_device(self, batch):
+        if (
+            batch is None
+            or not isinstance(batch, DataLoaderBatchDTO)
+            or self._prefetch_stream is None
+            or not self.prefetch_to_device
+        ):
+            return batch
+        with torch.cuda.stream(self._prefetch_stream):
+            batch.to_device(
+                self.device_torch,
+                non_blocking=self.non_blocking_device_transfer,
+            )
+        return batch
+
+    def _wait_for_prefetch(self):
+        if self._prefetch_stream is not None:
+            torch.cuda.current_stream().wait_stream(self._prefetch_stream)
+
+    def _fetch_next_from_iterator(self, iterator_ref: List, dataloader, is_reg: bool = False):
+        if dataloader is None:
+            return None
+        get_timer_name = "get_batch:reg" if is_reg else "get_batch"
+        reset_timer_name = "reset_batch:reg" if is_reg else "reset_batch"
+        try:
+            with self.timer(get_timer_name):
+                batch = next(iterator_ref[0])
+        except StopIteration:
+            with self.timer(reset_timer_name):
+                if self.progress_bar is not None:
+                    self.progress_bar.pause()
+                iterator_ref[0] = iter(dataloader)
+                trigger_dataloader_setup_epoch(dataloader)
+                if not is_reg:
+                    self.epoch_num += 1
+                    if self.train_config.gradient_accumulation_steps == -1:
+                        # if we are accumulating for an entire epoch, trigger a step
+                        self.is_grad_accumulation_step = False
+                        self.grad_accumulation_step = 0
+            with self.timer(get_timer_name):
+                batch = next(iterator_ref[0])
+            if self.progress_bar is not None:
+                self.progress_bar.unpause()
+        return self._prefetch_batch_to_device(batch)
+
+    def _fill_batch_queue(self, batch_queue: deque, iterator_ref: List, dataloader, is_reg: bool = False):
+        if dataloader is None:
+            return
+        target_depth = self.prefetch_queue_depth
+        if self.train_config.gradient_accumulation_steps == -1:
+            # Preserve legacy epoch-boundary semantics for epoch-wide accumulation mode.
+            target_depth = 1
+        while len(batch_queue) < target_depth:
+            batch_queue.append(self._fetch_next_from_iterator(iterator_ref, dataloader, is_reg=is_reg))
+
+    def _pop_batch_queue(self, batch_queue: deque, iterator_ref: List, dataloader, is_reg: bool = False):
+        if dataloader is None:
+            return None
+        self._fill_batch_queue(batch_queue, iterator_ref, dataloader, is_reg=is_reg)
+        if len(batch_queue) == 0:
+            return self._fetch_next_from_iterator(iterator_ref, dataloader, is_reg=is_reg)
+        batch = batch_queue.popleft()
+        self._fill_batch_queue(batch_queue, iterator_ref, dataloader, is_reg=is_reg)
+        return batch
+
     def get_sigmas(self, timesteps, n_dim=4, dtype=torch.float32):
         sigmas = self.sd.noise_scheduler.sigmas.to(device=self.device, dtype=dtype)
-        schedule_timesteps = self.sd.noise_scheduler.timesteps.to(self.device)
-        timesteps = timesteps.to(self.device)
+        schedule_timesteps = self.sd.noise_scheduler.timesteps.to(
+            self.device,
+            non_blocking=self.non_blocking_device_transfer,
+        )
+        timesteps = timesteps.to(self.device, non_blocking=self.non_blocking_device_transfer)
 
         step_indices = [(schedule_timesteps == t).nonzero().item() for t in timesteps]
 
@@ -1061,13 +1178,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_reg = any(batch.get_is_reg_list())
                 if batch.tensor is not None:
                     imgs = batch.tensor
-                    imgs = imgs.to(self.device_torch, dtype=dtype)
+                    imgs = self._to_device_tensor(imgs, dtype=dtype)
                     # dont adjust for regs.
                     if self.train_config.img_multiplier is not None and not is_reg:
                         # do it ad contrast
                         imgs = reduce_contrast(imgs, self.train_config.img_multiplier)
                 if batch.latents is not None:
-                    latents = batch.latents.to(self.device_torch, dtype=dtype)
+                    latents = self._to_device_tensor(batch.latents, dtype=dtype)
                     batch.latents = latents
                 else:
                     # normalize to
@@ -1122,7 +1239,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 if batch.unconditional_tensor is not None and batch.unconditional_latents is None:
                     unconditional_imgs = batch.unconditional_tensor
-                    unconditional_imgs = unconditional_imgs.to(self.device_torch, dtype=dtype)
+                    unconditional_imgs = self._to_device_tensor(unconditional_imgs, dtype=dtype)
                     unconditional_latents = self.sd.encode_images(unconditional_imgs)
                     batch.unconditional_latents = unconditional_latents * self.train_config.latent_multiplier
 
@@ -1285,7 +1402,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # add dynamic noise offset. Dynamic noise is offsetting the noise to the same channelwise mean as the latents
                 # this will negate any noise offsets
                 if self.train_config.dynamic_noise_offset and not is_reg:
-                    latents_channel_mean = latents.mean(dim=(2, 3), keepdim=True) / 2
+                    reduce_dims = (2, 3) if len(latents.shape) == 4 else (2, 3, 4)
+                    latents_channel_mean = latents.mean(dim=reduce_dims, keepdim=True) / 2
                     # subtract channel mean to that we compensate for the mean of the latents on the noise offset per channel
                     noise = noise + latents_channel_mean
 
@@ -1589,10 +1707,28 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # run base sd process run
         self.sd.load_model()
         
-        # compile the model if needed
         if self.model_config.compile:
             try:
-                torch.compile(self.sd.unet, dynamic=True, fullgraph=True, mode='max-autotune')
+                model_to_compile = self.sd.unet
+                is_transformer_model = hasattr(self.sd, 'is_transformer') and self.sd.is_transformer and hasattr(self.sd, 'model')
+                if is_transformer_model:
+                    model_to_compile = self.sd.model
+                compiled_model = torch.compile(
+                    model_to_compile,
+                    dynamic=bool(getattr(self.model_config, "compile_dynamic", True)),
+                    fullgraph=bool(getattr(self.model_config, "compile_fullgraph", True)),
+                    mode=getattr(self.model_config, "compile_mode", "max-autotune"),
+                )
+                if is_transformer_model:
+                    self.sd.model = compiled_model
+                else:
+                    self.sd.unet = compiled_model
+                print_acc(
+                    f"Compiled {type(model_to_compile).__name__} "
+                    f"(mode={getattr(self.model_config, 'compile_mode', 'max-autotune')}, "
+                    f"dynamic={bool(getattr(self.model_config, 'compile_dynamic', True))}, "
+                    f"fullgraph={bool(getattr(self.model_config, 'compile_fullgraph', True))})"
+                )
             except Exception as e:
                 print_acc(f"Failed to compile model: {e}")
                 print_acc("Continuing without compilation")
@@ -1758,6 +1894,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
                     dropout=self.network_config.dropout,
+                    rank_dropout=self.network_config.rank_dropout,
+                    module_dropout=self.network_config.module_dropout,
                     use_text_encoder_1=self.model_config.use_text_encoder_1,
                     use_text_encoder_2=self.model_config.use_text_encoder_2,
                     use_bias=is_lorm,
@@ -2017,10 +2155,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.before_dataset_load()
         # load datasets if passed in the root process
         if self.datasets is not None:
-            self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd)
+            self.data_loader = get_dataloader_from_datasets(
+                self.datasets,
+                self.train_config.batch_size,
+                self.sd,
+                train_config=self.train_config,
+            )
         if self.datasets_reg is not None:
-            self.data_loader_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size,
-                                                                self.sd)
+            self.data_loader_reg = get_dataloader_from_datasets(
+                self.datasets_reg,
+                self.train_config.batch_size,
+                self.sd,
+                train_config=self.train_config,
+            )
 
         flush()
         self.last_save_step = self.step_num
@@ -2052,20 +2199,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if self.data_loader is not None:
             dataloader = self.data_loader
-            dataloader_iterator = iter(dataloader)
+            dataloader_iterator_ref = [iter(dataloader)]
+            main_batch_queue: deque = deque()
+            self._fill_batch_queue(main_batch_queue, dataloader_iterator_ref, dataloader, is_reg=False)
         else:
             dataloader = None
-            dataloader_iterator = None
+            dataloader_iterator_ref = [None]
+            main_batch_queue = deque()
 
         if self.data_loader_reg is not None:
             dataloader_reg = self.data_loader_reg
-            dataloader_iterator_reg = iter(dataloader_reg)
+            dataloader_iterator_reg_ref = [iter(dataloader_reg)]
+            reg_batch_queue: deque = deque()
+            self._fill_batch_queue(reg_batch_queue, dataloader_iterator_reg_ref, dataloader_reg, is_reg=True)
         else:
             dataloader_reg = None
-            dataloader_iterator_reg = None
+            dataloader_iterator_reg_ref = [None]
+            reg_batch_queue = deque()
 
         # zero any gradients
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
         self.lr_scheduler.step(self.step_num)
 
@@ -2118,49 +2271,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 for b in range(self.train_config.gradient_accumulation):
                     # keep track to alternate on an accumulation step for reg   
-                    batch_step = step
+                    batch_step = step + b
                     # don't do a reg step on sample or save steps as we dont want to normalize on those
                     if batch_step % 2 == 0 and dataloader_reg is not None and not is_save_step and not is_sample_step:
-                        try:
-                            with self.timer('get_batch:reg'):
-                                batch = next(dataloader_iterator_reg)
-                        except StopIteration:
-                            with self.timer('reset_batch:reg'):
-                                # hit the end of an epoch, reset
-                                if self.progress_bar is not None:
-                                    self.progress_bar.pause()
-                                dataloader_iterator_reg = iter(dataloader_reg)
-                                trigger_dataloader_setup_epoch(dataloader_reg)
-
-                            with self.timer('get_batch:reg'):
-                                batch = next(dataloader_iterator_reg)
-                            if self.progress_bar is not None:
-                                self.progress_bar.unpause()
+                        batch = self._pop_batch_queue(
+                            reg_batch_queue,
+                            dataloader_iterator_reg_ref,
+                            dataloader_reg,
+                            is_reg=True,
+                        )
                         is_reg_step = True
                     elif dataloader is not None:
-                        try:
-                            with self.timer('get_batch'):
-                                batch = next(dataloader_iterator)
-                        except StopIteration:
-                            with self.timer('reset_batch'):
-                                # hit the end of an epoch, reset
-                                if self.progress_bar is not None:
-                                    self.progress_bar.pause()
-                                dataloader_iterator = iter(dataloader)
-                                trigger_dataloader_setup_epoch(dataloader)
-                                self.epoch_num += 1
-                                if self.train_config.gradient_accumulation_steps == -1:
-                                    # if we are accumulating for an entire epoch, trigger a step
-                                    self.is_grad_accumulation_step = False
-                                    self.grad_accumulation_step = 0
-                            with self.timer('get_batch'):
-                                batch = next(dataloader_iterator)
-                            if self.progress_bar is not None:
-                                self.progress_bar.unpause()
+                        batch = self._pop_batch_queue(
+                            main_batch_queue,
+                            dataloader_iterator_ref,
+                            dataloader,
+                            is_reg=False,
+                        )
                     else:
                         batch = None
                     batch_list.append(batch)
-                    batch_step += 1
 
                 # setup accumulation
                 if self.train_config.gradient_accumulation_steps == -1:
@@ -2183,6 +2313,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             did_oom = False
             loss_dict = None
             try:
+                self._wait_for_prefetch()
                 with self.accelerator.accumulate(self.modules_being_trained):
                     loss_dict = self.hook_train_loop(batch_list)
             except torch.cuda.OutOfMemoryError:
@@ -2247,10 +2378,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     if self.progress_bar is not None:
                         self.progress_bar.set_postfix_str(prog_bar_string)
 
-                # if the batch is a DataLoaderBatchDTO, then we need to clean it up
-                if isinstance(batch, DataLoaderBatchDTO):
-                    with self.timer('batch_cleanup'):
-                        batch.cleanup()
+                # cleanup all micro-batches (important when gradient accumulation > 1)
+                with self.timer('batch_cleanup'):
+                    for cleanup_batch in batch_list:
+                        if isinstance(cleanup_batch, DataLoaderBatchDTO):
+                            cleanup_batch.cleanup()
 
                 # don't do on first step
                 if self.step_num != self.start_step:
@@ -2266,7 +2398,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.save(self.step_num)
                         self.ensure_params_requires_grad()
                         # clear any grads
-                        optimizer.zero_grad()
+                        optimizer.zero_grad(set_to_none=True)
                         flush()
                         flush_next = True
                         if self.progress_bar is not None:
@@ -2334,10 +2466,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
                 
+                should_commit_logs = (
+                    is_save_step
+                    or is_sample_step
+                    or ((self.step_num % self.logger_commit_interval) == 0)
+                    or (self.step_num + 1 >= self.train_config.steps)
+                )
                 # commit log
                 if self.accelerator.is_main_process:
-                    with self.timer('commit_logger'):
-                        self.logger.commit(step=self.step_num)
+                    if should_commit_logs:
+                        with self.timer('commit_logger'):
+                            self.logger.commit(step=self.step_num)
 
                 # sets progress bar to match out step
                 if self.progress_bar is not None:

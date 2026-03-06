@@ -20,13 +20,37 @@ type AdditionalSections =
   | 'datasets.do_audio'
   | 'datasets.audio_normalize'
   | 'datasets.audio_preserve_pitch'
+  | 'train.audio_loss_multiplier'
+  | 'train.auto_balance_audio_loss'
+  | 'train.strict_audio_mode'
+  | 'train.strict_audio_min_supervised_ratio'
+  | 'train.strict_audio_warmup_steps'
+  | 'train.independent_audio_timestep'
+  | 'train.noise_offset'
+  | 'train.min_snr_gamma'
+  | 'train.lr_scheduler'
+  | 'train.caption_dropout_rate'
+  | 'train.throughput_profile'
+  | 'train.dataloader_autotune'
+  | 'train.prefetch_to_device'
+  | 'train.prefetch_queue_depth'
+  | 'train.logger_commit_interval'
+  | 'train.allow_tf32'
+  | 'train.cudnn_benchmark'
+  | 'train.diff_output_preservation'
+  | 'network.type'
+  | 'network.rank_dropout'
+  | 'network.module_dropout'
   | 'sample.ctrl_img'
   | 'sample.multi_ctrl_imgs'
-  | 'train.audio_loss_multiplier'
   | 'datasets.num_frames'
   | 'model.multistage'
   | 'model.layer_offloading'
   | 'model.low_vram'
+  | 'model.compile'
+  | 'model.compile_mode'
+  | 'model.compile_dynamic'
+  | 'model.compile_fullgraph'
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path';
 type ModelGroup = 'image' | 'instruction' | 'video';
@@ -44,8 +68,9 @@ export interface ModelArch {
 }
 
 const defaultNameOrPath = '';
+const isLtxOnlyMode = (process.env.NEXT_PUBLIC_AITK_LTX_ONLY_MODE ?? '1') !== '0';
 
-export const modelArchs: ModelArch[] = [
+const allModelArchs: ModelArch[] = [
   {
     name: 'flux',
     label: 'FLUX.1',
@@ -628,15 +653,16 @@ export const modelArchs: ModelArch[] = [
   },
   {
     name: 'ltx2',
-    label: 'LTX-2',
+    label: 'LTX-2.3',
     group: 'video',
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['Lightricks/LTX-2', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['Lightricks/LTX-2.3', defaultNameOrPath],
+      'config.process[0].model.extras_name_or_path': ['Lightricks/LTX-2', undefined],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
-      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].model.low_vram': [false, false],
       'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [121, 1],
@@ -644,13 +670,57 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.width': [768, 1024],
       'config.process[0].sample.height': [768, 1024],
       'config.process[0].train.audio_loss_multiplier': [1.0, undefined],
+      'config.process[0].train.auto_balance_audio_loss': [true, undefined],
+      'config.process[0].train.independent_audio_timestep': [true, undefined],
+      'config.process[0].train.strict_audio_mode': [false, undefined],
+      'config.process[0].train.strict_audio_min_supervised_ratio': [0.9, undefined],
+      'config.process[0].train.strict_audio_warmup_steps': [50, undefined],
+      'config.process[0].train.noise_offset': [0.05, undefined],
+      'config.process[0].train.min_snr_gamma': [0, undefined],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].network.linear': [32, undefined],
+      'config.process[0].network.linear_alpha': [32, undefined],
+      'config.process[0].network.rank_dropout': [0.1, undefined],
       'config.process[0].datasets[x].do_i2v': [false, undefined],
       'config.process[0].datasets[x].do_audio': [true, undefined],
       'config.process[0].datasets[x].fps': [24, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier'],
+    additionalSections: [
+      'sample.ctrl_img',
+      'datasets.num_frames',
+      'model.layer_offloading',
+      'model.low_vram',
+      'model.compile',
+      'model.compile_mode',
+      'model.compile_dynamic',
+      'model.compile_fullgraph',
+      'datasets.do_audio',
+      'datasets.audio_normalize',
+      'datasets.audio_preserve_pitch',
+      'datasets.do_i2v',
+      'network.type',
+      'network.rank_dropout',
+      'network.module_dropout',
+      'train.audio_loss_multiplier',
+      'train.auto_balance_audio_loss',
+      'train.independent_audio_timestep',
+      'train.strict_audio_mode',
+      'train.strict_audio_min_supervised_ratio',
+      'train.strict_audio_warmup_steps',
+      'train.noise_offset',
+      'train.min_snr_gamma',
+      'train.lr_scheduler',
+      'train.caption_dropout_rate',
+      'train.throughput_profile',
+      'train.dataloader_autotune',
+      'train.prefetch_to_device',
+      'train.prefetch_queue_depth',
+      'train.logger_commit_interval',
+      'train.allow_tf32',
+      'train.cudnn_benchmark',
+      'train.diff_output_preservation',
+    ],
   },
   {
     name: 'flux2_klein_4b',
@@ -719,6 +789,10 @@ export const modelArchs: ModelArch[] = [
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
 }) as any;
 
+export const modelArchs: ModelArch[] = isLtxOnlyMode
+  ? allModelArchs.filter(arch => arch.name.startsWith('ltx2'))
+  : allModelArchs;
+
 export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc, arch) => {
   const group = acc.find(g => g.label === arch.group);
   if (group) {
@@ -752,7 +826,7 @@ interface JobTypeOption extends SelectOption {
   onDeactivate?: (config: JobConfig) => JobConfig;
 }
 
-export const jobTypeOptions: JobTypeOption[] = [
+const allJobTypeOptions: JobTypeOption[] = [
   {
     value: 'diffusion_trainer',
     label: 'LoRA Trainer',
@@ -774,3 +848,7 @@ export const jobTypeOptions: JobTypeOption[] = [
     },
   },
 ];
+
+export const jobTypeOptions: JobTypeOption[] = allJobTypeOptions.filter(option =>
+  isLtxOnlyMode ? option.value === 'diffusion_trainer' : true,
+);

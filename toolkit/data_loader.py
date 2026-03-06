@@ -621,6 +621,7 @@ def get_dataloader_from_datasets(
         dataset_options,
         batch_size=1,
         sd: 'StableDiffusion' = None,
+        train_config=None,
 ) -> DataLoader:
     if dataset_options is None or len(dataset_options) == 0:
         return None
@@ -672,7 +673,20 @@ def get_dataloader_from_datasets(
         dataloader_kwargs['num_workers'] = 0
     else:
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
-        dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        if dataloader_kwargs['num_workers'] > 0:
+            dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+
+    pin_memory_enabled = torch.cuda.is_available()
+    persistent_workers_enabled = dataset_config_list[0].persistent_workers
+    if train_config is not None:
+        pin_memory_enabled = pin_memory_enabled and bool(getattr(train_config, 'dataloader_pin_memory', True))
+        persistent_workers_enabled = bool(getattr(train_config, 'dataloader_persistent_workers', True))
+    else:
+        pin_memory_enabled = pin_memory_enabled and bool(dataset_config_list[0].pin_memory)
+
+    dataloader_kwargs['pin_memory'] = pin_memory_enabled
+    if dataloader_kwargs['num_workers'] > 0:
+        dataloader_kwargs['persistent_workers'] = persistent_workers_enabled
 
     if has_buckets:
         # make sure they all have buckets

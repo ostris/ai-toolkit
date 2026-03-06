@@ -113,6 +113,71 @@ class SDTrainer(BaseSDTrainProcess):
         else:
             raise ValueError(f"Unknown guidance loss target type {type(self.train_config.guidance_loss_target)}")
 
+        self._audio_expected_batches = 0
+        self._audio_supervised_batches = 0
+
+    def _validate_audio_supervision(self, batch: DataLoaderBatchDTO):
+        if not getattr(self.train_config, "strict_audio_mode", False):
+            return
+        if batch is None or batch.dataset_config is None:
+            return
+
+        expects_audio = bool(
+            getattr(batch.dataset_config, "do_audio", False)
+            and getattr(batch.dataset_config, "num_frames", 1) > 1
+        )
+        if not expects_audio:
+            return
+
+        self._audio_expected_batches += 1
+
+        has_real_audio_data = bool(
+            batch.audio_data is not None and any([item is not None for item in batch.audio_data])
+        )
+        has_cached_audio_latents = batch.audio_latents is not None
+        has_audio_supervision = (
+            batch.audio_loss is not None
+            or (batch.audio_pred is not None and batch.audio_target is not None)
+        )
+
+        if has_audio_supervision and (has_real_audio_data or has_cached_audio_latents):
+            self._audio_supervised_batches += 1
+
+        warmup_steps = int(getattr(self.train_config, "strict_audio_warmup_steps", 50))
+        if self.step_num < warmup_steps or self._audio_expected_batches <= 0:
+            return
+
+        min_ratio = float(getattr(self.train_config, "strict_audio_min_supervised_ratio", 0.9))
+        current_ratio = self._audio_supervised_batches / float(self._audio_expected_batches)
+        if current_ratio < min_ratio:
+            raise ValueError(
+                "Strict audio mode triggered: insufficient audio supervision for audio-enabled video batches. "
+                f"ratio={current_ratio:.3f}, required>={min_ratio:.3f}, "
+                f"expected_batches={self._audio_expected_batches}, supervised_batches={self._audio_supervised_batches}. "
+                "Check dataset audio extraction, ensure clips have valid audio, and verify do_audio is enabled."
+            )
+
+    def _to_train_device(self, value, dtype: Optional[torch.dtype] = None, detach: bool = False):
+        if value is None:
+            return value
+        if isinstance(value, PromptEmbeds):
+            value.text_embeds = self._to_train_device(value.text_embeds, dtype=dtype, detach=detach)
+            value.pooled_embeds = self._to_train_device(value.pooled_embeds, dtype=dtype, detach=detach)
+            value.attention_mask = self._to_train_device(value.attention_mask, dtype=None, detach=detach)
+            return value
+        if not torch.is_tensor(value):
+            return value
+        target_dtype = dtype if dtype is not None else value.dtype
+        if value.device != self.device_torch or value.dtype != target_dtype:
+            value = value.to(
+                self.device_torch,
+                dtype=target_dtype,
+                non_blocking=self.non_blocking_device_transfer,
+            )
+        if detach:
+            value = value.detach()
+        return value
+
 
     def before_model_load(self):
         pass
@@ -847,24 +912,70 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss + prior_loss
 
         if not self.train_config.train_turbo:
+            _scheduler_has_snr = hasattr(self.sd.noise_scheduler, 'alphas_cumprod')
             if self.train_config.learnable_snr_gos:
                 # add snr_gamma
                 loss = apply_learnable_snr_gos(loss, timesteps, self.snr_gos)
             elif self.train_config.snr_gamma is not None and self.train_config.snr_gamma > 0.000001 and not ignore_snr:
-                # add snr_gamma
-                loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.snr_gamma,
-                                        fixed=True)
+                if _scheduler_has_snr:
+                    loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.snr_gamma,
+                                            fixed=True)
             elif self.train_config.min_snr_gamma is not None and self.train_config.min_snr_gamma > 0.000001 and not ignore_snr:
-                # add min_snr_gamma
-                loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
+                if _scheduler_has_snr:
+                    loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
 
         loss = loss.mean()
-        
-        # check for audio loss
-        if batch.audio_pred is not None and batch.audio_target is not None:
-            audio_loss = torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean")
+
+        if getattr(self.train_config, "auto_balance_audio_loss", False) and (
+            batch.audio_loss is not None or (batch.audio_pred is not None and batch.audio_target is not None)
+        ):
+            current_audio_loss = (
+                batch.audio_loss.item()
+                if batch.audio_loss is not None
+                else torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean").item()
+            )
+            if not hasattr(self, "_ema_video_loss"):
+                self._ema_video_loss = loss.item()
+                self._ema_audio_loss = current_audio_loss
+            else:
+                alpha = 0.99
+                self._ema_video_loss = alpha * self._ema_video_loss + (1 - alpha) * loss.item()
+                self._ema_audio_loss = alpha * self._ema_audio_loss + (1 - alpha) * current_audio_loss
+
+            target_audio_loss_mag = 0.33 * max(self._ema_video_loss, 1e-6)
+            if self._ema_audio_loss > 1e-6:
+                dynamic_multiplier = target_audio_loss_mag / self._ema_audio_loss
+            else:
+                dynamic_multiplier = 1.0
+            self.train_config.audio_loss_multiplier = max(0.05, min(20.0, dynamic_multiplier))
+
+        raw_audio_loss_val = None
+        scaled_audio_loss_val = None
+        if batch.audio_loss is not None:
+            audio_loss = batch.audio_loss
+            raw_audio_loss_val = audio_loss.item()
             audio_loss = audio_loss * self.train_config.audio_loss_multiplier
+            scaled_audio_loss_val = audio_loss.item()
             loss = loss + audio_loss
+        elif batch.audio_pred is not None and batch.audio_target is not None:
+            audio_loss = torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean")
+            raw_audio_loss_val = audio_loss.item()
+            audio_loss = audio_loss * self.train_config.audio_loss_multiplier
+            scaled_audio_loss_val = audio_loss.item()
+            loss = loss + audio_loss
+
+        if raw_audio_loss_val is not None:
+            if not hasattr(self, '_audio_log_interval'):
+                self._audio_log_interval = 0
+            self._audio_log_interval += 1
+            if self._audio_log_interval % 10 == 1:
+                multiplier_str = ""
+                if getattr(self.train_config, "auto_balance_audio_loss", False):
+                    multiplier_str = f", dyn_mult={self.train_config.audio_loss_multiplier:.2f}"
+                print(
+                    f"[audio] raw={raw_audio_loss_val:.5f}, scaled={scaled_audio_loss_val:.5f}, "
+                    f"video={loss.item() - scaled_audio_loss_val:.5f}{multiplier_str}"
+                )
 
         # check for additional losses
         if self.adapter is not None and hasattr(self.adapter, "additional_loss") and self.adapter.additional_loss is not None:
@@ -1294,7 +1405,7 @@ class SDTrainer(BaseSDTrainProcess):
                 with self.timer('get_adapter_images'):
                     # todo move this to data loader
                     if batch.control_tensor is not None:
-                        adapter_images = batch.control_tensor.to(self.device_torch, dtype=dtype).detach()
+                        adapter_images = self._to_train_device(batch.control_tensor, dtype=dtype, detach=True)
                         # match in channels
                         if self.assistant_adapter is not None:
                             in_channels = self.assistant_adapter.config.in_channels
@@ -1309,13 +1420,13 @@ class SDTrainer(BaseSDTrainProcess):
                 with self.timer('get_clip_images'):
                     # todo move this to data loader
                     if batch.clip_image_tensor is not None:
-                        clip_images = batch.clip_image_tensor.to(self.device_torch, dtype=dtype).detach()
+                        clip_images = self._to_train_device(batch.clip_image_tensor, dtype=dtype, detach=True)
 
             mask_multiplier = torch.ones((noisy_latents.shape[0], 1, 1, 1), device=self.device_torch, dtype=dtype)
             if batch.mask_tensor is not None:
                 with self.timer('get_mask_multiplier'):
                     # upsampling no supported for bfloat16
-                    mask_multiplier = batch.mask_tensor.to(self.device_torch, dtype=torch.float16).detach()
+                    mask_multiplier = self._to_train_device(batch.mask_tensor, dtype=torch.float16, detach=True)
                     # scale down to the size of the latents, mask multiplier shape(bs, 1, width, height), noisy_latents shape(bs, channels, width, height)
                     if len(noisy_latents.shape) == 5:
                         # video B,C,T,H,W
@@ -1329,7 +1440,7 @@ class SDTrainer(BaseSDTrainProcess):
                     )
                     # expand to match latents
                     mask_multiplier = mask_multiplier.expand(-1, noisy_latents.shape[1], -1, -1)
-                    mask_multiplier = mask_multiplier.to(self.device_torch, dtype=dtype).detach()
+                    mask_multiplier = self._to_train_device(mask_multiplier, dtype=dtype, detach=True)
                     # make avg 1.0
                     mask_multiplier = mask_multiplier / mask_multiplier.mean()
 
@@ -1462,7 +1573,7 @@ class SDTrainer(BaseSDTrainProcess):
                     with self.timer('encode_clip_vision_embeds'):
                         if has_clip_image:
                             conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
-                                clip_images.detach().to(self.device_torch, dtype=dtype),
+                                self._to_train_device(clip_images, dtype=dtype, detach=True),
                                 is_training=True,
                                 has_been_preprocessed=True
                             )
@@ -1497,7 +1608,11 @@ class SDTrainer(BaseSDTrainProcess):
                     unconditional_embeds = None
                     prompt_kwargs = {}
                     if self.sd.encode_control_in_text_embeddings and batch.control_tensor is not None:
-                        prompt_kwargs['control_images'] = batch.control_tensor.to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        prompt_kwargs['control_images'] = self._to_train_device(
+                            batch.control_tensor,
+                            dtype=self.sd.torch_dtype,
+                            detach=False,
+                        )
                     if self.train_config.unload_text_encoder or self.is_caching_text_embeddings:
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
@@ -1705,7 +1820,7 @@ class SDTrainer(BaseSDTrainProcess):
                                 )
                         elif has_clip_image:
                             conditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
-                                clip_images.detach().to(self.device_torch, dtype=dtype),
+                                self._to_train_device(clip_images, dtype=dtype, detach=True),
                                 is_training=True,
                                 has_been_preprocessed=True,
                                 quad_count=quad_count,
@@ -1715,7 +1830,7 @@ class SDTrainer(BaseSDTrainProcess):
                             )
                             if self.train_config.do_cfg:
                                 unconditional_clip_embeds = self.adapter.get_clip_image_embeds_from_tensors(
-                                    clip_images.detach().to(self.device_torch, dtype=dtype),
+                                    self._to_train_device(clip_images, dtype=dtype, detach=True),
                                     is_training=True,
                                     drop=True,
                                     has_been_preprocessed=True,
@@ -1755,7 +1870,7 @@ class SDTrainer(BaseSDTrainProcess):
                     if has_clip_image or has_adapter_img:
                         img_to_use = clip_images if has_clip_image else adapter_images
                         # currently 0-1 needs to be -1 to 1
-                        reference_images = ((img_to_use - 0.5) * 2).detach().to(self.device_torch, dtype=dtype)
+                        reference_images = self._to_train_device(((img_to_use - 0.5) * 2), dtype=dtype, detach=True)
                         self.adapter.set_reference_images(reference_images)
                         self.adapter.noise_scheduler = self.sd.noise_scheduler
                     elif is_reg:
@@ -1878,7 +1993,7 @@ class SDTrainer(BaseSDTrainProcess):
                 self.before_unet_predict()
                 
                 if unconditional_embeds is not None:
-                    unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=dtype).detach()
+                    unconditional_embeds = self._to_train_device(unconditional_embeds, dtype=dtype, detach=True)
                 with self.timer('condition_noisy_latents'):
                     # do it for the model
                     noisy_latents = self.sd.condition_noisy_latents(noisy_latents, batch)
@@ -1895,9 +2010,9 @@ class SDTrainer(BaseSDTrainProcess):
                             
                             # do a sample at the current timestep and step it, then determine new noise
                             next_sample_pred = self.predict_noise(
-                                noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                                noisy_latents=self._to_train_device(noisy_latents, dtype=dtype),
                                 timesteps=timesteps,
-                                conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
+                                conditional_embeds=self._to_train_device(conditional_embeds, dtype=dtype),
                                 unconditional_embeds=unconditional_embeds,
                                 batch=batch,
                                 **pred_kwargs
@@ -1910,7 +2025,7 @@ class SDTrainer(BaseSDTrainProcess):
                             )
                             # stepped latents is our new noisy latents. Now we need to determine noise in the current sample
                             noisy_latents = stepped_latents
-                            original_samples = batch.latents.to(self.device_torch, dtype=dtype)
+                            original_samples = self._to_train_device(batch.latents, dtype=dtype)
                             # todo calc next timestep, for now this may work as it
                             t_01 = (stepped_timesteps / 1000).to(original_samples.device)
                             if len(stepped_latents.shape) == 4:
@@ -1955,9 +2070,9 @@ class SDTrainer(BaseSDTrainProcess):
                 else:
                     with self.timer('predict_unet'):
                         noise_pred = self.predict_noise(
-                            noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                            noisy_latents=self._to_train_device(noisy_latents, dtype=dtype),
                             timesteps=timesteps,
-                            conditional_embeds=conditional_embeds.to(self.device_torch, dtype=dtype),
+                            conditional_embeds=self._to_train_device(conditional_embeds, dtype=dtype),
                             unconditional_embeds=unconditional_embeds,
                             batch=batch,
                             is_primary_pred=True,
@@ -1966,7 +2081,7 @@ class SDTrainer(BaseSDTrainProcess):
                     self.after_unet_predict()
 
                     with self.timer('calculate_loss'):
-                        noise = noise.to(self.device_torch, dtype=dtype).detach()
+                        noise = self._to_train_device(noise, dtype=dtype, detach=True)
                         prior_to_calculate_loss = prior_pred
                         # if we are doing diff_output_preservation and not noing inverted masked prior
                         # then we need to send none here so it will not target the prior
@@ -1993,16 +2108,18 @@ class SDTrainer(BaseSDTrainProcess):
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
                             elif self.train_config.blank_prompt_preservation:
-                                blank_embeds = self.cached_blank_embeds.clone().detach().to(
-                                    self.device_torch, dtype=dtype
+                                blank_embeds = self._to_train_device(
+                                    self.cached_blank_embeds.clone(),
+                                    dtype=dtype,
+                                    detach=True,
                                 )
                                 preservation_embeds = concat_prompt_embeds(
                                     [blank_embeds] * noisy_latents.shape[0]
                                 )
                         preservation_pred = self.predict_noise(
-                            noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
+                            noisy_latents=self._to_train_device(noisy_latents, dtype=dtype),
                             timesteps=timesteps,
-                            conditional_embeds=preservation_embeds.to(self.device_torch, dtype=dtype),
+                            conditional_embeds=self._to_train_device(preservation_embeds, dtype=dtype),
                             unconditional_embeds=unconditional_embeds,
                             batch=batch,
                             **pred_kwargs
@@ -2035,6 +2152,7 @@ class SDTrainer(BaseSDTrainProcess):
                     # else:
                     self.accelerator.backward(loss)
 
+        self._validate_audio_supervision(batch)
         return loss.detach()
         # flush()
 
