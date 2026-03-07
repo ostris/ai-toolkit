@@ -18,6 +18,7 @@ from torchvision.transforms import transforms
 
 from jobs.process import BaseTrainProcess
 from toolkit.data_loader import AugmentedImageDataset
+from toolkit.device_utils import get_dataloader_kwargs
 from toolkit.esrgan_utils import convert_state_dict_to_basicsr, convert_basicsr_state_dict_to_save_format
 from toolkit.losses import ComparativeTotalVariation, get_gradient_penalty, PatternLoss
 from toolkit.metadata import get_meta_for_safetensors
@@ -157,11 +158,13 @@ class TrainESRGANProcess(BaseTrainProcess):
                 datasets.append(image_dataset)
 
             concatenated_dataset = ConcatDataset(datasets)
+            # Get device-specific dataloader kwargs to avoid MPS tensor sharing issues
+            dataloader_kwargs = get_dataloader_kwargs()
             self.data_loader = DataLoader(
                 concatenated_dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
-                num_workers=6
+                **dataloader_kwargs
             )
 
     def setup_vgg19(self):
