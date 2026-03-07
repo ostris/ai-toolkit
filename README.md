@@ -520,12 +520,20 @@ You will instantiate a UI that will let you upload your images, caption them, tr
 
 
 ## Training in RunPod
-If you would like to use Runpod, but have not signed up yet, please consider using [my Runpod affiliate link](https://runpod.io?ref=h0y9jyr2) to help support this project.
+This fork now includes a dedicated RunPod template bundle in [`templates/runpod`](templates/runpod).
 
+Build and push the container image:
+```bash
+docker build -f templates/runpod/Dockerfile -t <your-docker-user>/aitk-big-daddy-runpod:latest templates/runpod --build-arg AITK_REF=main
+docker push <your-docker-user>/aitk-big-daddy-runpod:latest
+```
 
-I maintain an official Runpod Pod template here which can be accessed [here](https://console.runpod.io/deploy?template=0fqzfjy6f3&ref=h0y9jyr2).
+Then create a RunPod Pod template using that image, expose port `8675`, and use a persistent `/workspace` volume.
+Set `AI_TOOLKIT_AUTH` as an environment variable (and optionally `PUBLIC_KEY` for SSH).
 
-I have also created a short video showing how to get started using AI Toolkit with Runpod [here](https://youtu.be/HBNeS-F6Zz8).
+Template details, optional env vars, and startup behavior are documented in [`templates/runpod/README.md`](templates/runpod/README.md).
+
+For LTX throughput behavior on RunPod GPUs, keep `throughput_profile: auto` in train config. It automatically maps 5090-class devices to `ltx23_max` and RTX Pro 6000-class devices to `ltx23_ultra_vram`.
 
 ## Training in Modal
 
