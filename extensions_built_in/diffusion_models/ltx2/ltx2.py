@@ -444,7 +444,7 @@ class LTX2Model(BaseModel):
             if not HAS_LTX_CORE:
                 raise ImportError(
                     "LTX-2.3 checkpoints require the official ltx-core backend. "
-                    "Update this environment with `pip install -r requirements.txt` and retry."
+                    "Use Python 3.10+, rerun `pip install -r requirements.txt`, and retry."
                 )
             self._use_official_ltx23_backend = True
             self._ltx23_checkpoint_path = combined_model_path
