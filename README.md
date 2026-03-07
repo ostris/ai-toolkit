@@ -22,7 +22,7 @@ Character merging is still an experimental convenience feature. It can be useful
 LTX is an audio-video model, and training quality depends on handling the audio path correctly.
 *   **Full `ComboVae` Integration:** We directly encode raw `.wav` files into log-mel spectrograms during the DiT training pass.
 *   **`audio_a2v_cross_attn` Unleashed:** You can now train the model to associate your specific text prompts with highly specific voices, sound effects, and acoustic profiles.
-*   **LTX-2.3 target support:** The toolkit now defaults to `Lightricks/LTX-2.3` for training while resolving the new single-file checkpoint layout instead of assuming the older diffusers folder structure.
+*   **LTX-2.3 target support:** The toolkit now defaults to `Lightricks/LTX-2.3` for training while resolving the new single-file checkpoint layout. For the 22B checkpoint path, training-time prompt conditioning, transformer loading, and validation sampling now use the official `ltx-core` backend instead of forcing the checkpoint through the older diffusers-only converter.
 
 ### 3. We Fixed The UI
 The standard Prisma queue system for merges was causing white-page crashes and hanging jobs. We bypassed it. The Next.js UI now executes merges directly against the Python backend with live, real-time polling. *It just works.*
@@ -277,6 +277,8 @@ pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 -
 pip3 install -r requirements.txt
 ```
 
+If you pulled changes for LTX-2.3 support after an earlier install, rerun `pip install -r requirements.txt` once so the `ltx-core` dependency is available. For official `LTX-2.3` jobs, keep `train_text_encoder: false`; this fork supports transformer training, but not embeddings-processor training.
+
 For devices running **DGX OS** (including DGX Spark), follow [these](dgx_instructions.md) instructions.
 
 
@@ -297,6 +299,8 @@ python -m venv venv
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
+
+If you updated an existing install for LTX-2.3 support, rerun `pip install -r requirements.txt` once to pull `ltx-core`. For official `LTX-2.3` jobs, keep `train_text_encoder: false`.
 
 
 # AI Toolkit UI

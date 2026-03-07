@@ -1,4 +1,5 @@
 torchao==0.10.0
+git+https://github.com/Lightricks/LTX-2.git#subdirectory=packages/ltx-core
 safetensors
 git+https://github.com/huggingface/diffusers@8600b4c10d67b0ce200f664204358747bd53c775
 transformers==4.57.3
