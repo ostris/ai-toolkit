@@ -227,11 +227,12 @@ class DataLoaderBatchDTO:
                 if len(self.file_items[0].extra_values) > 0
                 else None
             )
-            self.audio_data: Union[List, None] = (
-                [x.audio_data for x in self.file_items]
-                if self.file_items[0].audio_data is not None
-                else None
-            )
+            if any([x.audio_data is not None for x in self.file_items]):
+                # Keep per-item audio alignment across mixed batches. Missing audio stays
+                # as None so model code can decide whether to synthesize a fallback.
+                self.audio_data: Union[List, None] = [x.audio_data for x in self.file_items]
+            else:
+                self.audio_data = None
             self.audio_tensor: Union[torch.Tensor, None] = None
             self.first_frame_latents: Union[torch.Tensor, None] = None
             self.audio_latents: Union[torch.Tensor, None] = None
@@ -239,6 +240,7 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
+            self.audio_loss: Union[torch.Tensor, None] = None
 
             if not is_latents_cached:
                 # only return a tensor if latents are not cached
@@ -491,6 +493,7 @@ class DataLoaderBatchDTO:
         del self.audio_data
         del self.audio_target
         del self.audio_pred
+        del self.audio_loss
         del self.first_frame_latents
         del self.audio_latents
         for file_item in self.file_items:
@@ -513,6 +516,7 @@ class DataLoaderBatchDTO:
         self.audio_latents = _pin_nested(self.audio_latents)
         self.audio_target = _pin_nested(self.audio_target)
         self.audio_pred = _pin_nested(self.audio_pred)
+        self.audio_loss = _pin_nested(self.audio_loss)
         self.prompt_embeds = _pin_nested(self.prompt_embeds)
         self.clip_image_embeds = _pin_nested(self.clip_image_embeds)
         self.clip_image_embeds_unconditional = _pin_nested(self.clip_image_embeds_unconditional)
@@ -535,6 +539,7 @@ class DataLoaderBatchDTO:
         self.audio_latents = _to_device_nested(self.audio_latents, device, non_blocking=non_blocking)
         self.audio_target = _to_device_nested(self.audio_target, device, non_blocking=non_blocking)
         self.audio_pred = _to_device_nested(self.audio_pred, device, non_blocking=non_blocking)
+        self.audio_loss = _to_device_nested(self.audio_loss, device, non_blocking=non_blocking)
         self.prompt_embeds = _to_device_nested(self.prompt_embeds, device, non_blocking=non_blocking)
         self.clip_image_embeds = _to_device_nested(self.clip_image_embeds, device, non_blocking=non_blocking)
         self.clip_image_embeds_unconditional = _to_device_nested(
