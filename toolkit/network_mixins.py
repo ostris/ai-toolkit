@@ -304,6 +304,34 @@ class ToolkitModuleMixin:
         scaled_lora_output = broadcast_and_multiply(lora_output, multiplier)
         scaled_lora_output = scaled_lora_output.to(org_forwarded.dtype)
 
+        # --- FREEFUSE MASKING ---
+        import toolkit.models.freefuse as freefuse
+        state = freefuse.FreeFuseState.get_instance()
+        if state is not None and getattr(state, 'phase', 1) == 2:
+            lora_name = getattr(self, 'lora_name', '')
+            # find if this LoRA is targeted by any concept
+            concept_idx = -1
+            for i, c in enumerate(state.concepts):
+                lora_id = c.get('lora_identifier', c.get('trigger', ''))
+                if lora_id and lora_id.lower() in lora_name.lower():
+                    concept_idx = i
+                    break
+            
+            if concept_idx != -1:
+                seq_len = x.shape[1] if len(x.shape) > 1 else 0
+                mask = None
+                if state.video_routing_mask is not None and state.video_routing_mask.shape[1] == seq_len:
+                    mask = state.video_routing_mask[:, :, concept_idx:concept_idx+1]
+                elif state.audio_routing_mask is not None and state.audio_routing_mask.shape[1] == seq_len:
+                    mask = state.audio_routing_mask[:, :, concept_idx:concept_idx+1]
+                
+                if mask is not None:
+                    # expand mask to match scaled_lora_output shape
+                    # usually [B, L, C]
+                    if len(scaled_lora_output.shape) == 3:
+                        scaled_lora_output = scaled_lora_output * mask.to(scaled_lora_output.device, dtype=scaled_lora_output.dtype)
+        # ------------------------
+
         if self.__class__.__name__ == "DoRAModule":
             # ref https://github.com/huggingface/peft/blob/1e6d1d73a0850223b0916052fd8d2382a90eae5a/src/peft/tuners/lora/layer.py#L417
             # x = dropout(x)

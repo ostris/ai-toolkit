@@ -19,7 +19,7 @@ export default function useQueueList() {
           console.log('Error fetching queues:', data.error);
           setStatus('error');
         } else {
-          setQueues(data.queues);
+          setQueues(Array.isArray(data.queues) ? data.queues : []);
           setStatus('success');
         }
       })

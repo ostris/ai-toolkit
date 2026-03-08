@@ -13,7 +13,8 @@ export default function useGPUInfo(gpuIds: null | number[] = null, reloadInterva
     setStatus('loading');
     try {
       const data: GPUApiResponse = await apiClient.get('/api/gpu').then(res => res.data);
-      let gpus = data.gpus.sort((a, b) => a.index - b.index);
+      const raw = Array.isArray(data?.gpus) ? data.gpus : [];
+      let gpus = [...raw].sort((a, b) => a.index - b.index);
       if (gpuIds) {
         gpus = gpus.filter(gpu => gpuIds.includes(gpu.index));
       }

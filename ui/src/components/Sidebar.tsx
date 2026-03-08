@@ -8,6 +8,7 @@ const Sidebar = () => {
     { name: 'New Job', href: '/jobs/new', icon: Plus },
     { name: 'Training Queue', href: '/jobs', icon: BrainCircuit },
     { name: 'Datasets', href: '/datasets', icon: Images },
+    { name: 'Merge LoRAs', href: '/merge', icon: BrainCircuit },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 

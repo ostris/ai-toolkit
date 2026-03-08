@@ -65,6 +65,9 @@ export interface NetworkConfig {
   linear_alpha: number;
   conv: number;
   conv_alpha: number;
+  dropout?: number;
+  rank_dropout?: number;
+  module_dropout?: number;
   lokr_full_rank: boolean;
   lokr_factor: number;
   network_kwargs: {
@@ -101,6 +104,10 @@ export interface DatasetConfig {
   audio_normalize?: boolean;
   audio_preserve_pitch?: boolean;
   fps?: number;
+  num_workers?: number;
+  prefetch_factor?: number;
+  pin_memory?: boolean;
+  persistent_workers?: boolean;
   flip_x: boolean;
   flip_y: boolean;
   num_repeats?: number;
@@ -144,9 +151,24 @@ export interface TrainConfig {
   blank_prompt_preservation_multiplier?: number;
   switch_boundary_every: number;
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
+  audio_loss_multiplier?: number;
+  auto_balance_audio_loss?: boolean;
+  independent_audio_timestep?: boolean;
+  strict_audio_mode?: boolean;
+  strict_audio_min_supervised_ratio?: number;
+  strict_audio_warmup_steps?: number;
+  noise_offset?: number;
+  min_snr_gamma?: number;
+  lr_scheduler?: string;
   do_differential_guidance?: boolean;
   differential_guidance_scale?: number;
-  audio_loss_multiplier?: number;
+  throughput_profile?: 'auto' | 'ltx23_safe' | 'ltx23_max' | 'ltx23_ultra_vram';
+  dataloader_autotune?: boolean;
+  prefetch_to_device?: boolean;
+  prefetch_queue_depth?: number;
+  logger_commit_interval?: number;
+  allow_tf32?: boolean;
+  cudnn_benchmark?: boolean;
 }
 
 export interface QuantizeKwargsConfig {
@@ -155,6 +177,7 @@ export interface QuantizeKwargsConfig {
 
 export interface ModelConfig {
   name_or_path: string;
+  extras_name_or_path?: string;
   quantize: boolean;
   quantize_te: boolean;
   qtype: string;
@@ -163,6 +186,10 @@ export interface ModelConfig {
   arch: string;
   low_vram: boolean;
   model_kwargs: { [key: string]: any };
+  compile?: boolean;
+  compile_mode?: string;
+  compile_dynamic?: boolean;
+  compile_fullgraph?: boolean;
   layer_offloading?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;

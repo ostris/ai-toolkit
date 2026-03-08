@@ -288,127 +288,207 @@ with gr.Blocks(theme=theme, css=css) as demo:
         """# LoRA Ease for FLUX 🧞‍♂️
 ### Train a high quality FLUX LoRA in a breeze ༄ using [Ostris' AI Toolkit](https://github.com/ostris/ai-toolkit)"""
     )
-    with gr.Column() as main_ui:
-        with gr.Row():
-            lora_name = gr.Textbox(
-                label="The name of your LoRA",
-                info="This has to be a unique name",
-                placeholder="e.g.: Persian Miniature Painting style, Cat Toy",
-            )
-            concept_sentence = gr.Textbox(
-                label="Trigger word/sentence",
-                info="Trigger word or sentence to be used",
-                placeholder="uncommon word like p3rs0n or trtcrd, or sentence like 'in the style of CNSTLL'",
-                interactive=True,
-            )
-        with gr.Group(visible=True) as image_upload:
-            with gr.Row():
-                images = gr.File(
-                    file_types=["image", ".txt"],
-                    label="Upload your images",
-                    file_count="multiple",
-                    interactive=True,
-                    visible=True,
-                    scale=1,
-                )
-                with gr.Column(scale=3, visible=False) as captioning_area:
-                    with gr.Column():
-                        gr.Markdown(
-                            """# Custom captioning
+    
+    with gr.Tabs() as tabs:
+        with gr.TabItem("🏋️ Training", id="train_tab"):
+            with gr.Column() as main_ui:
+                with gr.Row():
+                    lora_name = gr.Textbox(
+                        label="The name of your LoRA",
+                        info="This has to be a unique name",
+                        placeholder="e.g.: Persian Miniature Painting style, Cat Toy",
+                    )
+                    concept_sentence = gr.Textbox(
+                        label="Trigger word/sentence",
+                        info="Trigger word or sentence to be used",
+                        placeholder="uncommon word like p3rs0n or trtcrd, or sentence like 'in the style of CNSTLL'",
+                        interactive=True,
+                    )
+                with gr.Group(visible=True) as image_upload:
+                    with gr.Row():
+                        images = gr.File(
+                            file_types=["image", ".txt"],
+                            label="Upload your images",
+                            file_count="multiple",
+                            interactive=True,
+                            visible=True,
+                            scale=1,
+                        )
+                        with gr.Column(scale=3, visible=False) as captioning_area:
+                            with gr.Column():
+                                gr.Markdown(
+                                    """# Custom captioning
 <p style="margin-top:0">You can optionally add a custom caption for each image (or use an AI model for this). [trigger] will represent your concept sentence/trigger word.</p>
 """, elem_classes="group_padding")
-                        do_captioning = gr.Button("Add AI captions with Florence-2")
-                        output_components = [captioning_area]
-                        caption_list = []
-                        for i in range(1, MAX_IMAGES + 1):
-                            locals()[f"captioning_row_{i}"] = gr.Row(visible=False)
-                            with locals()[f"captioning_row_{i}"]:
-                                locals()[f"image_{i}"] = gr.Image(
-                                    type="filepath",
-                                    width=111,
-                                    height=111,
-                                    min_width=111,
-                                    interactive=False,
-                                    scale=2,
-                                    show_label=False,
-                                    show_share_button=False,
-                                    show_download_button=False,
-                                )
-                                locals()[f"caption_{i}"] = gr.Textbox(
-                                    label=f"Caption {i}", scale=15, interactive=True
-                                )
+                                do_captioning = gr.Button("Add AI captions with Florence-2")
+                                output_components = [captioning_area]
+                                caption_list = []
+                                for i in range(1, MAX_IMAGES + 1):
+                                    locals()[f"captioning_row_{i}"] = gr.Row(visible=False)
+                                    with locals()[f"captioning_row_{i}"]:
+                                        locals()[f"image_{i}"] = gr.Image(
+                                            type="filepath",
+                                            width=111,
+                                            height=111,
+                                            min_width=111,
+                                            interactive=False,
+                                            scale=2,
+                                            show_label=False,
+                                            show_share_button=False,
+                                            show_download_button=False,
+                                        )
+                                        locals()[f"caption_{i}"] = gr.Textbox(
+                                            label=f"Caption {i}", scale=15, interactive=True
+                                        )
 
-                            output_components.append(locals()[f"captioning_row_{i}"])
-                            output_components.append(locals()[f"image_{i}"])
-                            output_components.append(locals()[f"caption_{i}"])
-                            caption_list.append(locals()[f"caption_{i}"])
+                                    output_components.append(locals()[f"captioning_row_{i}"])
+                                    output_components.append(locals()[f"image_{i}"])
+                                    output_components.append(locals()[f"caption_{i}"])
+                                    caption_list.append(locals()[f"caption_{i}"])
 
-        with gr.Accordion("Advanced options", open=False):
-            steps = gr.Number(label="Steps", value=1000, minimum=1, maximum=10000, step=1)
-            lr = gr.Number(label="Learning Rate", value=4e-4, minimum=1e-6, maximum=1e-3, step=1e-6)
-            rank = gr.Number(label="LoRA Rank", value=16, minimum=4, maximum=128, step=4)
-            model_to_train = gr.Radio(["dev", "schnell"], value="dev", label="Model to train")
-            low_vram = gr.Checkbox(label="Low VRAM", value=True)
-            with gr.Accordion("Even more advanced options", open=False):
-                use_more_advanced_options = gr.Checkbox(label="Use more advanced options", value=False)
-                more_advanced_options = gr.Code(config_yaml, language="yaml")
+                with gr.Accordion("Advanced options", open=False):
+                    steps = gr.Number(label="Steps", value=1000, minimum=1, maximum=10000, step=1)
+                    lr = gr.Number(label="Learning Rate", value=4e-4, minimum=1e-6, maximum=1e-3, step=1e-6)
+                    rank = gr.Number(label="LoRA Rank", value=16, minimum=4, maximum=128, step=4)
+                    model_to_train = gr.Radio(["dev", "schnell"], value="dev", label="Model to train")
+                    low_vram = gr.Checkbox(label="Low VRAM", value=True)
+                    with gr.Accordion("Even more advanced options", open=False):
+                        use_more_advanced_options = gr.Checkbox(label="Use more advanced options", value=False)
+                        more_advanced_options = gr.Code(config_yaml, language="yaml")
 
-        with gr.Accordion("Sample prompts (optional)", visible=False) as sample:
-            gr.Markdown(
-                "Include sample prompts to test out your trained model. Don't forget to include your trigger word/sentence (optional)"
+                with gr.Accordion("Sample prompts (optional)", visible=False) as sample:
+                    gr.Markdown(
+                        "Include sample prompts to test out your trained model. Don't forget to include your trigger word/sentence (optional)"
+                    )
+                    sample_1 = gr.Textbox(label="Test prompt 1")
+                    sample_2 = gr.Textbox(label="Test prompt 2")
+                    sample_3 = gr.Textbox(label="Test prompt 3")
+                
+                output_components.append(sample)
+                output_components.append(sample_1)
+                output_components.append(sample_2)
+                output_components.append(sample_3)
+                start = gr.Button("Start training", visible=False)
+                output_components.append(start)
+                progress_area = gr.Markdown("")
+
+            dataset_folder = gr.State()
+
+            images.upload(
+                load_captioning,
+                inputs=[images, concept_sentence],
+                outputs=output_components
             )
-            sample_1 = gr.Textbox(label="Test prompt 1")
-            sample_2 = gr.Textbox(label="Test prompt 2")
-            sample_3 = gr.Textbox(label="Test prompt 3")
-        
-        output_components.append(sample)
-        output_components.append(sample_1)
-        output_components.append(sample_2)
-        output_components.append(sample_3)
-        start = gr.Button("Start training", visible=False)
-        output_components.append(start)
-        progress_area = gr.Markdown("")
+            
+            images.delete(
+                load_captioning,
+                inputs=[images, concept_sentence],
+                outputs=output_components
+            )
 
-    dataset_folder = gr.State()
+            images.clear(
+                hide_captioning,
+                outputs=[captioning_area, sample, start]
+            )
+            
+            start.click(fn=create_dataset, inputs=[images] + caption_list, outputs=dataset_folder).then(
+                fn=start_training,
+                inputs=[
+                    lora_name,
+                    concept_sentence,
+                    steps,
+                    lr,
+                    rank,
+                    model_to_train,
+                    low_vram,
+                    dataset_folder,
+                    sample_1,
+                    sample_2,
+                    sample_3,
+                    use_more_advanced_options,
+                    more_advanced_options
+                ],
+                outputs=progress_area,
+            )
 
-    images.upload(
-        load_captioning,
-        inputs=[images, concept_sentence],
-        outputs=output_components
-    )
-    
-    images.delete(
-        load_captioning,
-        inputs=[images, concept_sentence],
-        outputs=output_components
-    )
+            do_captioning.click(fn=run_captioning, inputs=[images, concept_sentence] + caption_list, outputs=caption_list)
+            
+        with gr.TabItem("🧪 Experimental LoRA Merge", id="merge_tab"):
+            gr.Markdown("### Experimental utility for combining two LTX character LoRAs. Useful for testing, but not a clean substitute for separate character LoRAs when voice isolation matters.")
+            
+            # Import run_merge function here or define it at the top
+            def run_merge_wrapper(lora1, lora2, output_name, dare_rate, zip_steps):
+                if not lora1 or not lora2:
+                    raise gr.Error("Please upload or provide paths for both LoRAs.")
+                if not output_name:
+                    raise gr.Error("Please provide an output name.")
+                    
+                os.makedirs("tmp", exist_ok=True)
+                os.makedirs("output", exist_ok=True)
+                
+                if not output_name.endswith('.safetensors'):
+                    output_name += ".safetensors"
+                    
+                out_path = os.path.join(os.getcwd(), "output", output_name)
+                
+                # Handle file uploads
+                path1 = lora1.name if hasattr(lora1, 'name') else lora1
+                path2 = lora2.name if hasattr(lora2, 'name') else lora2
+                
+                config = {
+                    "config": {
+                        "name": "LTX2 Experimental Merge UI",
+                        "process": [
+                            {
+                                "type": "merge_ziplora",
+                                "lora_1_path": path1,
+                                "lora_2_path": path2,
+                                "output_path": out_path,
+                                "dare_drop_rate": float(dare_rate),
+                                "zip_steps": int(zip_steps),
+                                "device": "cuda" if torch.cuda.is_available() else "cpu"
+                            }
+                        ]
+                    },
+                    "meta": {
+                        "name": output_name,
+                        "version": "1.0"
+                    }
+                }
+                
+                config_path = f"tmp/merge_config.yaml"
+                with open(config_path, "w") as f:
+                    yaml.dump(config, f)
+                    
+                try:
+                    job = get_job(config_path)
+                    job.run()
+                    job.cleanup()
+                    return f"✅ Merge completed. Review the output carefully before relying on it for character isolation:\n{out_path}"
+                except Exception as e:
+                    raise gr.Error(f"Merge failed: {str(e)}")
 
-    images.clear(
-        hide_captioning,
-        outputs=[captioning_area, sample, start]
-    )
-    
-    start.click(fn=create_dataset, inputs=[images] + caption_list, outputs=dataset_folder).then(
-        fn=start_training,
-        inputs=[
-            lora_name,
-            concept_sentence,
-            steps,
-            lr,
-            rank,
-            model_to_train,
-            low_vram,
-            dataset_folder,
-            sample_1,
-            sample_2,
-            sample_3,
-            use_more_advanced_options,
-            more_advanced_options
-        ],
-        outputs=progress_area,
-    )
-
-    do_captioning.click(fn=run_captioning, inputs=[images, concept_sentence] + caption_list, outputs=caption_list)
+            with gr.Row():
+                with gr.Column():
+                    lora_1_upload = gr.File(label="Character A LoRA (.safetensors)", file_types=[".safetensors"])
+                with gr.Column():
+                    lora_2_upload = gr.File(label="Character B LoRA (.safetensors)", file_types=[".safetensors"])
+                
+            with gr.Row():
+                merge_output_name = gr.Textbox(label="Output LoRA Name", placeholder="merged_characters.safetensors")
+                
+            with gr.Accordion("Advanced Merging Options", open=False):
+                merge_dare_rate = gr.Slider(0.0, 0.9, value=0.5, step=0.1, label="DARE Drop Rate (Removes background/diffuse style bleeding)")
+                merge_zip_steps = gr.Slider(10, 500, value=100, step=10, label="ZipLoRA Optimization Steps (Higher = more disjoint/isolated weights)")
+                
+            merge_btn = gr.Button("Merge LoRAs", variant="primary")
+            merge_output_msg = gr.Textbox(label="Status", interactive=False)
+            
+            merge_btn.click(
+                fn=run_merge_wrapper,
+                inputs=[lora_1_upload, lora_2_upload, merge_output_name, merge_dare_rate, merge_zip_steps],
+                outputs=[merge_output_msg]
+            )
 
 if __name__ == "__main__":
     demo.launch(share=True, show_error=True)

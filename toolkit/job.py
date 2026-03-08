@@ -1,6 +1,7 @@
 from typing import Union, OrderedDict
 
 from toolkit.config import get_config
+from toolkit.ltx_only import validate_ltx_only_config
 
 
 def get_job(
@@ -8,6 +9,7 @@ def get_job(
         name=None
 ):
     config = get_config(config_path, name)
+    validate_ltx_only_config(config)
     if not config['job']:
         raise ValueError('config file is invalid. Missing "job" key')
 
@@ -27,6 +29,9 @@ def get_job(
     if job == 'extension':
         from jobs import ExtensionJob
         return ExtensionJob(config)
+    if job == 'MergeJob':
+        from jobs import MergeJob
+        return MergeJob(config)
 
     # elif job == 'train':
     #     from jobs import TrainJob

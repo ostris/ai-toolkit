@@ -73,6 +73,10 @@ class SampleItem:
         
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
+        
+        self.use_freefuse: bool = kwargs.get('use_freefuse', getattr(sample_config, 'use_freefuse', False))
+        self.freefuse_concepts: List[dict] = kwargs.get('freefuse_concepts', getattr(sample_config, 'freefuse_concepts', []))
+        self.freefuse_extract_step: int = kwargs.get('freefuse_extract_step', getattr(sample_config, 'freefuse_extract_step', 4))
 
 class SampleConfig:
     def __init__(self, **kwargs):
@@ -109,6 +113,10 @@ class SampleConfig:
         self.samples = [SampleItem(self, **item) for item in raw_samples]
         # only for models that support it, (qwen image edit 2509 for now)
         self.do_cfg_norm: bool = kwargs.get('do_cfg_norm', False)
+        
+        self.use_freefuse: bool = kwargs.get('use_freefuse', False)
+        self.freefuse_concepts: List[dict] = kwargs.get('freefuse_concepts', [])
+        self.freefuse_extract_step: int = kwargs.get('freefuse_extract_step', 4)
         
     @property
     def prompts(self):
@@ -182,6 +190,8 @@ class NetworkConfig:
         self.linear_alpha: float = kwargs.get('linear_alpha', self.alpha)
         self.conv_alpha: float = kwargs.get('conv_alpha', self.conv)
         self.dropout: Union[float, None] = kwargs.get('dropout', None)
+        self.rank_dropout: Union[float, None] = kwargs.get('rank_dropout', None)
+        self.module_dropout: Union[float, None] = kwargs.get('module_dropout', None)
         self.network_kwargs: dict = kwargs.get('network_kwargs', {})
 
         self.lorm_config: Union[LoRMConfig, None] = None
@@ -373,6 +383,25 @@ class TrainConfig:
         self.sdp = kwargs.get('sdp', False)
         # see https://huggingface.co/docs/diffusers/main/optimization/attention_backends#available-backends for options
         self.attention_backend: str = kwargs.get('attention_backend', 'native')  # native, flash, _flash_3_hub, _flash_3, 
+        # transfer tensors to device asynchronously when possible (requires pinned host memory).
+        # this is a throughput optimization and does not change training math.
+        self.non_blocking_device_transfer = kwargs.get('non_blocking_device_transfer', True)
+        # throughput profile controls for LTX-2.3
+        self.throughput_profile: str = kwargs.get('throughput_profile', 'auto')
+        self.dataloader_autotune: bool = kwargs.get('dataloader_autotune', True)
+        self.prefetch_to_device: bool = kwargs.get('prefetch_to_device', True)
+        self.prefetch_queue_depth: int = max(1, int(kwargs.get('prefetch_queue_depth', 1)))
+        self.logger_commit_interval: int = max(1, int(kwargs.get('logger_commit_interval', 5)))
+        self.allow_tf32: bool = kwargs.get('allow_tf32', True)
+        self.cudnn_benchmark: bool = kwargs.get('cudnn_benchmark', True)
+        self._prefetch_to_device_requested: bool = 'prefetch_to_device' in kwargs
+        self._prefetch_queue_depth_requested: bool = 'prefetch_queue_depth' in kwargs
+        self._logger_commit_interval_requested: bool = 'logger_commit_interval' in kwargs
+        self._allow_tf32_requested: bool = 'allow_tf32' in kwargs
+        self._cudnn_benchmark_requested: bool = 'cudnn_benchmark' in kwargs
+        # dataloader transport optimizations
+        self.dataloader_pin_memory = kwargs.get('dataloader_pin_memory', True)
+        self.dataloader_persistent_workers = kwargs.get('dataloader_persistent_workers', True)
         self.train_unet = kwargs.get('train_unet', True)
         self.train_text_encoder = kwargs.get('train_text_encoder', False)
         self.train_refiner = kwargs.get('train_refiner', True)
@@ -491,6 +520,14 @@ class TrainConfig:
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
         self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow
+        self.audio_loss_multiplier = kwargs.get('audio_loss_multiplier', 1.0)
+        self.auto_balance_audio_loss = kwargs.get('auto_balance_audio_loss', False)
+        self.strict_audio_mode = kwargs.get('strict_audio_mode', False)
+        self.strict_audio_min_supervised_ratio = kwargs.get('strict_audio_min_supervised_ratio', 0.9)
+        self.strict_audio_warmup_steps = kwargs.get('strict_audio_warmup_steps', 50)
+        self.strict_audio_min_supervised_ratio = max(0.0, min(1.0, float(self.strict_audio_min_supervised_ratio)))
+        self.strict_audio_warmup_steps = max(0, int(self.strict_audio_warmup_steps))
+        self.independent_audio_timestep = kwargs.get('independent_audio_timestep', True)
 
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
@@ -565,7 +602,7 @@ class TrainConfig:
         self.do_blank_stabilization = kwargs.get('do_blank_stabilization', False)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21', 'ltx2']
 
 
 class ModelConfig:
@@ -628,6 +665,7 @@ class ModelConfig:
         self.quantize_te = kwargs.get("quantize_te", self.quantize)
         self.qtype = kwargs.get("qtype", "qfloat8")
         self.qtype_te = kwargs.get("qtype_te", "qfloat8")
+        self.low_vram_requested = "low_vram" in kwargs
         self.low_vram = kwargs.get("low_vram", False)
         self.attn_masking = kwargs.get("attn_masking", False)
         if self.attn_masking and not self.is_flux:
@@ -675,7 +713,14 @@ class ModelConfig:
             self.qtype, self.accuracy_recovery_adapter = self.qtype.split('|')
 
         # compile the model with torch compile
+        self.compile_requested = "compile" in kwargs
         self.compile = kwargs.get("compile", False)
+        self.compile_mode_requested = "compile_mode" in kwargs
+        self.compile_mode = kwargs.get("compile_mode", "max-autotune")
+        self.compile_dynamic_requested = "compile_dynamic" in kwargs
+        self.compile_dynamic = kwargs.get("compile_dynamic", True)
+        self.compile_fullgraph_requested = "compile_fullgraph" in kwargs
+        self.compile_fullgraph = kwargs.get("compile_fullgraph", True)
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
@@ -953,6 +998,8 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        self.pin_memory: bool = kwargs.get('pin_memory', True)
+        self.persistent_workers: bool = kwargs.get('persistent_workers', True)
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
@@ -985,7 +1032,8 @@ class DatasetConfig:
         self.fast_image_size: bool = kwargs.get('fast_image_size', False)
         
         self.do_i2v: bool = kwargs.get('do_i2v', True)  # do image to video on models that are both t2i and i2v capable
-        self.do_audio: bool = kwargs.get('do_audio', False) # load audio from video files for models that support it
+        default_do_audio = kwargs.get("num_frames", 1) > 1
+        self.do_audio: bool = kwargs.get('do_audio', default_do_audio) # load audio from video files for models that support it
         self.audio_preserve_pitch: bool = kwargs.get('audio_preserve_pitch', False) # preserve pitch when stretching audio to fit num_frames
         self.audio_normalize: bool = kwargs.get('audio_normalize', False) # normalize audio volume levels when loading
 
@@ -1046,6 +1094,9 @@ class GenerateImageConfig:
             fps: int = 15,
             ctrl_idx: int = 0,
             do_cfg_norm: bool = False,
+            use_freefuse: bool = False,
+            freefuse_concepts: Optional[List[dict]] = None,
+            freefuse_extract_step: int = 4,
     ):
         self.width: int = width
         self.height: int = height
@@ -1117,6 +1168,10 @@ class GenerateImageConfig:
         self.logger = logger
         
         self.do_cfg_norm: bool = do_cfg_norm
+        
+        self.use_freefuse: bool = use_freefuse
+        self.freefuse_concepts: List[dict] = freefuse_concepts if freefuse_concepts is not None else []
+        self.freefuse_extract_step: int = freefuse_extract_step
 
     def set_gen_time(self, gen_time: int = None):
         if gen_time is not None:
@@ -1318,6 +1373,13 @@ def validate_configs(
     save_config: SaveConfig,
     dataset_configs: List[DatasetConfig]
 ):
+    allowed_throughput_profiles = {'auto', 'ltx23_safe', 'ltx23_max', 'ltx23_ultra_vram'}
+    if getattr(train_config, 'throughput_profile', 'auto') not in allowed_throughput_profiles:
+        raise ValueError(
+            f"Invalid throughput_profile '{train_config.throughput_profile}'. "
+            f"Must be one of {sorted(allowed_throughput_profiles)}"
+        )
+
     if model_config.is_flux:
         if save_config.save_format != 'diffusers':
             # make it diffusers
