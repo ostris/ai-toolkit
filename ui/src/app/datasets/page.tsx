@@ -45,6 +45,15 @@ function setCachedDatasetStats(datasetName: string, stats: ImageStats): void {
   }
 }
 
+function removeCachedDatasetStats(datasetName: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(DATASET_STATS_CACHE_PREFIX + datasetName);
+  } catch {
+    // ignore errors
+  }
+}
+
 export default function Datasets() {
   const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
@@ -54,10 +63,51 @@ export default function Datasets() {
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
   const requestedDatasets = useRef<Set<string>>(new Set());
 
-  // Fetch image stats for each dataset; show cached values immediately while refreshing in background
+  // Fetch image stats for each dataset; show cached values immediately while refreshing in background.
+  // Use a local queue with a concurrency limit to avoid overwhelming the server.
   useEffect(() => {
     const abortController = new AbortController();
-    
+    const queue: string[] = [];
+    let active = 0;
+    const CONCURRENCY = 3;
+
+    function drain() {
+      if (abortController.signal.aborted) return;
+      while (active < CONCURRENCY && queue.length > 0) {
+        const datasetName = queue.shift();
+        if (!datasetName) break;
+        active++;
+
+        apiClient
+          .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
+          .then(res => res.data)
+          .then((data: ImageStats) => {
+            if (!abortController.signal.aborted) {
+              setCachedDatasetStats(datasetName, data);
+              setImageStats(prev => ({ ...prev, [datasetName]: data }));
+              setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
+            }
+          })
+          .catch(error => {
+            if (!abortController.signal.aborted) {
+              console.error(`Error fetching image stats for ${datasetName}:`, error);
+              // Only overwrite with error state if there is no cached value to fall back to
+              if (!getCachedDatasetStats(datasetName)) {
+                setImageStats(prev => ({
+                  ...prev,
+                  [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
+                }));
+              }
+              setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
+            }
+          })
+          .finally(() => {
+            active--;
+            drain();
+          });
+      }
+    }
+
     if (datasets.length > 0) {
       datasets.forEach(datasetName => {
         // Only fetch if we haven't already requested this dataset
@@ -71,33 +121,11 @@ export default function Datasets() {
           } else {
             setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
           }
-          
-          // Always fetch fresh stats in the background
-          apiClient
-            .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
-            .then(res => res.data)
-            .then((data: ImageStats) => {
-              if (!abortController.signal.aborted) {
-                setCachedDatasetStats(datasetName, data);
-                setImageStats(prev => ({ ...prev, [datasetName]: data }));
-                setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
-              }
-            })
-            .catch(error => {
-              if (!abortController.signal.aborted) {
-                console.error(`Error fetching image stats for ${datasetName}:`, error);
-                // Only overwrite with error state if there is no cached value to fall back to
-                if (!getCachedDatasetStats(datasetName)) {
-                  setImageStats(prev => ({ 
-                    ...prev, 
-                    [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true } 
-                  }));
-                }
-                setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
-              }
-            });
+
+          queue.push(datasetName);
         }
       });
+      drain();
     }
 
     return () => {
@@ -232,7 +260,8 @@ export default function Datasets() {
           .post('/api/datasets/delete', { name: datasetName })
           .then(() => {
             console.log('Dataset deleted:', datasetName);
-            // Clear stats for the deleted dataset
+            // Clear stats for the deleted dataset (state and cache)
+            removeCachedDatasetStats(datasetName);
             setImageStats(prev => {
               const newStats = { ...prev };
               delete newStats[datasetName];
