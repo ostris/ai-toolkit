@@ -60,3 +60,9 @@ model VideoDownload {
 
   @@index([status])
 }
+
+model GalleryFolder {
+  id         Int      @id @default(autoincrement())
+  path       String   @unique
+  created_at DateTime @default(now())
+}

@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 // if route starts with these, approve
-const publicRoutes = ['/api/img/', '/api/files/'];
+const publicRoutes = ['/api/img/', '/api/files/', '/api/gallery/img/'];
 
 export function middleware(request: NextRequest) {
   // check env var for AI_TOOLKIT_AUTH, if not set, approve all requests
