@@ -27,6 +27,36 @@ interface ImageStats {
   error?: boolean;
 }
 
+const GALLERY_STATS_CACHE_PREFIX = 'ai-toolkit-gallery-stats:';
+
+function getCachedGalleryStats(folderPath: string): ImageStats | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(GALLERY_STATS_CACHE_PREFIX + folderPath);
+    return cached ? (JSON.parse(cached) as ImageStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedGalleryStats(folderPath: string, stats: ImageStats): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(GALLERY_STATS_CACHE_PREFIX + folderPath, JSON.stringify(stats));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function removeCachedGalleryStats(folderPath: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(GALLERY_STATS_CACHE_PREFIX + folderPath);
+  } catch {
+    // ignore errors
+  }
+}
+
 export default function GalleryPage() {
   const [folders, setFolders] = useState<GalleryFolder[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -59,32 +89,64 @@ export default function GalleryPage() {
 
   useEffect(() => {
     const abortController = new AbortController();
+    const queue: string[] = [];
+    let active = 0;
+    const CONCURRENCY = 3;
+
+    function drain() {
+      if (abortController.signal.aborted) return;
+      while (active < CONCURRENCY && queue.length > 0) {
+        const folderPath = queue.shift();
+        if (!folderPath) break;
+        active++;
+
+        apiClient
+          .get(`/api/gallery/imageStats?folderPath=${encodeURIComponent(folderPath)}`, { signal: abortController.signal })
+          .then(res => res.data)
+          .then((data: ImageStats) => {
+            if (!abortController.signal.aborted) {
+              setCachedGalleryStats(folderPath, data);
+              setImageStats(prev => ({ ...prev, [folderPath]: data }));
+              setStatsLoading(prev => ({ ...prev, [folderPath]: false }));
+            }
+          })
+          .catch(error => {
+            if (!abortController.signal.aborted) {
+              console.error(`Error fetching stats for ${folderPath}:`, error);
+              // Only overwrite with error state if there is no cached value to fall back to
+              if (!getCachedGalleryStats(folderPath)) {
+                setImageStats(prev => ({
+                  ...prev,
+                  [folderPath]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
+                }));
+              }
+              setStatsLoading(prev => ({ ...prev, [folderPath]: false }));
+            }
+          })
+          .finally(() => {
+            active--;
+            drain();
+          });
+      }
+    }
+
     if (folders.length > 0) {
       folders.forEach(folder => {
         if (!requestedFolders.current.has(folder.path)) {
           requestedFolders.current.add(folder.path);
-          setStatsLoading(prev => ({ ...prev, [folder.path]: true }));
-          apiClient
-            .get(`/api/gallery/imageStats?folderPath=${encodeURIComponent(folder.path)}`, { signal: abortController.signal })
-            .then(res => res.data)
-            .then((data: ImageStats) => {
-              if (!abortController.signal.aborted) {
-                setImageStats(prev => ({ ...prev, [folder.path]: data }));
-                setStatsLoading(prev => ({ ...prev, [folder.path]: false }));
-              }
-            })
-            .catch(error => {
-              if (!abortController.signal.aborted) {
-                console.error(`Error fetching stats for ${folder.path}:`, error);
-                setImageStats(prev => ({
-                  ...prev,
-                  [folder.path]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
-                }));
-                setStatsLoading(prev => ({ ...prev, [folder.path]: false }));
-              }
-            });
+
+          // Show cached stats immediately so the page is usable right away
+          const cached = getCachedGalleryStats(folder.path);
+          if (cached) {
+            setImageStats(prev => ({ ...prev, [folder.path]: cached }));
+          } else {
+            setStatsLoading(prev => ({ ...prev, [folder.path]: true }));
+          }
+
+          queue.push(folder.path);
         }
       });
+      drain();
     }
     return () => {
       abortController.abort();
@@ -101,6 +163,8 @@ export default function GalleryPage() {
         apiClient
           .post('/api/gallery/remove', { id: folder.id })
           .then(() => {
+            // Clear stats from state and cache
+            removeCachedGalleryStats(folder.path);
             setImageStats(prev => {
               const next = { ...prev };
               delete next[folder.path];

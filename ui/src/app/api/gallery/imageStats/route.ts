@@ -37,7 +37,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Invalid folder path' }, { status: 400 });
   }
 
-  if (!fs.existsSync(normalizedPath) || !fs.statSync(normalizedPath).isDirectory()) {
+  try {
+    const stat = await fs.promises.stat(normalizedPath);
+    if (!stat.isDirectory()) {
+      return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
+    }
+  } catch {
     return NextResponse.json({ error: 'Folder not found' }, { status: 404 });
   }
 
@@ -48,7 +53,7 @@ export async function GET(request: Request) {
   const resolutionBreakdown: { [resolution: string]: number } = {};
 
   try {
-    const imageFiles = findImagesInFolder(normalizedPath);
+    const imageFiles = await findImagesInFolder(normalizedPath);
     totalCount = imageFiles.length;
 
     const videoFiles: string[] = [];
@@ -94,20 +99,30 @@ export async function GET(request: Request) {
   return NextResponse.json({ totalCount, imageCount, videoCount, totalVideoDuration, resolutionBreakdown });
 }
 
-function findImagesInFolder(dir: string): string[] {
+async function findImagesInFolder(dir: string): Promise<string[]> {
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav'];
-  let results: string[] = [];
+  const results: string[] = [];
+  const queue: string[] = [dir];
 
-  const items = fs.readdirSync(dir, { withFileTypes: true });
-  for (const item of items) {
-    if (item.isDirectory() && !item.name.startsWith('.')) {
-      const subPath = path.join(dir, item.name);
-      results = results.concat(findImagesInFolder(subPath));
-    } else if (item.isFile()) {
-      const itemPath = path.join(dir, item.name);
-      const ext = path.extname(item.name).toLowerCase();
-      if (imageExtensions.includes(ext) && !item.name.startsWith('trash_')) {
-        results.push(itemPath);
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    let dirents: fs.Dirent[];
+    try {
+      dirents = await fs.promises.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const dirent of dirents) {
+      // Skip symlinks to avoid loops and unintended traversal
+      if (dirent.isSymbolicLink()) continue;
+      const itemPath = path.join(current, dirent.name);
+      if (dirent.isDirectory() && !dirent.name.startsWith('.')) {
+        queue.push(itemPath);
+      } else if (dirent.isFile()) {
+        const ext = path.extname(dirent.name).toLowerCase();
+        if (imageExtensions.includes(ext) && !dirent.name.startsWith('trash_')) {
+          results.push(itemPath);
+        }
       }
     }
   }

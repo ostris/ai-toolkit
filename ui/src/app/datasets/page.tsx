@@ -24,6 +24,36 @@ interface ImageStats {
   error?: boolean; // Flag to indicate if there was an error
 }
 
+const DATASET_STATS_CACHE_PREFIX = 'ai-toolkit-dataset-stats:';
+
+function getCachedDatasetStats(datasetName: string): ImageStats | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(DATASET_STATS_CACHE_PREFIX + datasetName);
+    return cached ? (JSON.parse(cached) as ImageStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedDatasetStats(datasetName: string, stats: ImageStats): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(DATASET_STATS_CACHE_PREFIX + datasetName, JSON.stringify(stats));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function removeCachedDatasetStats(datasetName: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(DATASET_STATS_CACHE_PREFIX + datasetName);
+  } catch {
+    // ignore errors
+  }
+}
+
 export default function Datasets() {
   const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
@@ -33,39 +63,69 @@ export default function Datasets() {
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
   const requestedDatasets = useRef<Set<string>>(new Set());
 
-  // Fetch image stats for each dataset
+  // Fetch image stats for each dataset; show cached values immediately while refreshing in background.
+  // Use a local queue with a concurrency limit to avoid overwhelming the server.
   useEffect(() => {
     const abortController = new AbortController();
-    
+    const queue: string[] = [];
+    let active = 0;
+    const CONCURRENCY = 3;
+
+    function drain() {
+      if (abortController.signal.aborted) return;
+      while (active < CONCURRENCY && queue.length > 0) {
+        const datasetName = queue.shift();
+        if (!datasetName) break;
+        active++;
+
+        apiClient
+          .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
+          .then(res => res.data)
+          .then((data: ImageStats) => {
+            if (!abortController.signal.aborted) {
+              setCachedDatasetStats(datasetName, data);
+              setImageStats(prev => ({ ...prev, [datasetName]: data }));
+              setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
+            }
+          })
+          .catch(error => {
+            if (!abortController.signal.aborted) {
+              console.error(`Error fetching image stats for ${datasetName}:`, error);
+              // Only overwrite with error state if there is no cached value to fall back to
+              if (!getCachedDatasetStats(datasetName)) {
+                setImageStats(prev => ({
+                  ...prev,
+                  [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
+                }));
+              }
+              setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
+            }
+          })
+          .finally(() => {
+            active--;
+            drain();
+          });
+      }
+    }
+
     if (datasets.length > 0) {
       datasets.forEach(datasetName => {
         // Only fetch if we haven't already requested this dataset
         if (!requestedDatasets.current.has(datasetName)) {
           requestedDatasets.current.add(datasetName);
-          setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
-          
-          apiClient
-            .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
-            .then(res => res.data)
-            .then((data: ImageStats) => {
-              if (!abortController.signal.aborted) {
-                setImageStats(prev => ({ ...prev, [datasetName]: data }));
-                setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
-              }
-            })
-            .catch(error => {
-              if (!abortController.signal.aborted) {
-                console.error(`Error fetching image stats for ${datasetName}:`, error);
-                // Set error state so we can show "error fetching stats"
-                setImageStats(prev => ({ 
-                  ...prev, 
-                  [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true } 
-                }));
-                setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
-              }
-            });
+
+          // Show cached stats immediately so the page is usable right away
+          const cached = getCachedDatasetStats(datasetName);
+          if (cached) {
+            setImageStats(prev => ({ ...prev, [datasetName]: cached }));
+          } else {
+            setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
+          }
+
+          queue.push(datasetName);
         }
       });
+      drain();
     }
 
     return () => {
@@ -200,7 +260,8 @@ export default function Datasets() {
           .post('/api/datasets/delete', { name: datasetName })
           .then(() => {
             console.log('Dataset deleted:', datasetName);
-            // Clear stats for the deleted dataset
+            // Clear stats for the deleted dataset (state and cache)
+            removeCachedDatasetStats(datasetName);
             setImageStats(prev => {
               const newStats = { ...prev };
               delete newStats[datasetName];
