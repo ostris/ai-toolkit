@@ -134,30 +134,38 @@ export async function GET(request: Request) {
 
 /**
  * Recursively finds all image files in a directory and its subdirectories.
- * Uses async I/O to avoid blocking the event loop.
+ * Uses an iterative BFS with async I/O to avoid blocking the event loop,
+ * unbounded concurrency, and symlink loops.
  * @param dir Directory to search
  * @returns Array of absolute paths to image files
  */
 async function findImagesRecursively(dir: string): Promise<string[]> {
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
+  const results: string[] = [];
+  const queue: string[] = [dir];
 
-  const items = await fs.promises.readdir(dir);
-  const nestedResults = await Promise.all(
-    items.map(async item => {
-      const itemPath = path.join(dir, item);
-      const stat = await fs.promises.stat(itemPath);
-
-      if (stat.isDirectory() && item !== '_controls' && !item.startsWith('.')) {
-        return findImagesRecursively(itemPath);
-      } else {
-        const ext = path.extname(itemPath).toLowerCase();
-        if (imageExtensions.includes(ext) && !item.startsWith('trash_')) {
-          return [itemPath];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    let dirents: fs.Dirent[];
+    try {
+      dirents = await fs.promises.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const dirent of dirents) {
+      // Skip symlinks to avoid loops and unintended traversal
+      if (dirent.isSymbolicLink()) continue;
+      const itemPath = path.join(current, dirent.name);
+      if (dirent.isDirectory() && dirent.name !== '_controls' && !dirent.name.startsWith('.')) {
+        queue.push(itemPath);
+      } else if (dirent.isFile()) {
+        const ext = path.extname(dirent.name).toLowerCase();
+        if (imageExtensions.includes(ext) && !dirent.name.startsWith('trash_')) {
+          results.push(itemPath);
         }
-        return [];
       }
-    })
-  );
+    }
+  }
 
-  return nestedResults.flat();
+  return results;
 }

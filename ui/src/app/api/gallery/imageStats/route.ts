@@ -101,21 +101,31 @@ export async function GET(request: Request) {
 
 async function findImagesInFolder(dir: string): Promise<string[]> {
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav'];
+  const results: string[] = [];
+  const queue: string[] = [dir];
 
-  const items = await fs.promises.readdir(dir, { withFileTypes: true });
-  const nestedResults = await Promise.all(
-    items.map(async item => {
-      if (item.isDirectory() && !item.name.startsWith('.')) {
-        return findImagesInFolder(path.join(dir, item.name));
-      } else if (item.isFile()) {
-        const ext = path.extname(item.name).toLowerCase();
-        if (imageExtensions.includes(ext) && !item.name.startsWith('trash_')) {
-          return [path.join(dir, item.name)];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    let dirents: fs.Dirent[];
+    try {
+      dirents = await fs.promises.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const dirent of dirents) {
+      // Skip symlinks to avoid loops and unintended traversal
+      if (dirent.isSymbolicLink()) continue;
+      const itemPath = path.join(current, dirent.name);
+      if (dirent.isDirectory() && !dirent.name.startsWith('.')) {
+        queue.push(itemPath);
+      } else if (dirent.isFile()) {
+        const ext = path.extname(dirent.name).toLowerCase();
+        if (imageExtensions.includes(ext) && !dirent.name.startsWith('trash_')) {
+          results.push(itemPath);
         }
       }
-      return [];
-    })
-  );
+    }
+  }
 
-  return nestedResults.flat();
+  return results;
 }

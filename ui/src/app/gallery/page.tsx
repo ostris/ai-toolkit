@@ -48,6 +48,15 @@ function setCachedGalleryStats(folderPath: string, stats: ImageStats): void {
   }
 }
 
+function removeCachedGalleryStats(folderPath: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(GALLERY_STATS_CACHE_PREFIX + folderPath);
+  } catch {
+    // ignore errors
+  }
+}
+
 export default function GalleryPage() {
   const [folders, setFolders] = useState<GalleryFolder[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -80,6 +89,47 @@ export default function GalleryPage() {
 
   useEffect(() => {
     const abortController = new AbortController();
+    const queue: string[] = [];
+    let active = 0;
+    const CONCURRENCY = 3;
+
+    function drain() {
+      if (abortController.signal.aborted) return;
+      while (active < CONCURRENCY && queue.length > 0) {
+        const folderPath = queue.shift();
+        if (!folderPath) break;
+        active++;
+
+        apiClient
+          .get(`/api/gallery/imageStats?folderPath=${encodeURIComponent(folderPath)}`, { signal: abortController.signal })
+          .then(res => res.data)
+          .then((data: ImageStats) => {
+            if (!abortController.signal.aborted) {
+              setCachedGalleryStats(folderPath, data);
+              setImageStats(prev => ({ ...prev, [folderPath]: data }));
+              setStatsLoading(prev => ({ ...prev, [folderPath]: false }));
+            }
+          })
+          .catch(error => {
+            if (!abortController.signal.aborted) {
+              console.error(`Error fetching stats for ${folderPath}:`, error);
+              // Only overwrite with error state if there is no cached value to fall back to
+              if (!getCachedGalleryStats(folderPath)) {
+                setImageStats(prev => ({
+                  ...prev,
+                  [folderPath]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
+                }));
+              }
+              setStatsLoading(prev => ({ ...prev, [folderPath]: false }));
+            }
+          })
+          .finally(() => {
+            active--;
+            drain();
+          });
+      }
+    }
+
     if (folders.length > 0) {
       folders.forEach(folder => {
         if (!requestedFolders.current.has(folder.path)) {
@@ -93,32 +143,10 @@ export default function GalleryPage() {
             setStatsLoading(prev => ({ ...prev, [folder.path]: true }));
           }
 
-          // Always fetch fresh stats in the background
-          apiClient
-            .get(`/api/gallery/imageStats?folderPath=${encodeURIComponent(folder.path)}`, { signal: abortController.signal })
-            .then(res => res.data)
-            .then((data: ImageStats) => {
-              if (!abortController.signal.aborted) {
-                setCachedGalleryStats(folder.path, data);
-                setImageStats(prev => ({ ...prev, [folder.path]: data }));
-                setStatsLoading(prev => ({ ...prev, [folder.path]: false }));
-              }
-            })
-            .catch(error => {
-              if (!abortController.signal.aborted) {
-                console.error(`Error fetching stats for ${folder.path}:`, error);
-                // Only overwrite with error state if there is no cached value to fall back to
-                if (!getCachedGalleryStats(folder.path)) {
-                  setImageStats(prev => ({
-                    ...prev,
-                    [folder.path]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
-                  }));
-                }
-                setStatsLoading(prev => ({ ...prev, [folder.path]: false }));
-              }
-            });
+          queue.push(folder.path);
         }
       });
+      drain();
     }
     return () => {
       abortController.abort();
@@ -135,6 +163,8 @@ export default function GalleryPage() {
         apiClient
           .post('/api/gallery/remove', { id: folder.id })
           .then(() => {
+            // Clear stats from state and cache
+            removeCachedGalleryStats(folder.path);
             setImageStats(prev => {
               const next = { ...prev };
               delete next[folder.path];
