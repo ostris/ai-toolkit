@@ -27,6 +27,27 @@ interface ImageStats {
   error?: boolean;
 }
 
+const GALLERY_STATS_CACHE_PREFIX = 'ai-toolkit-gallery-stats:';
+
+function getCachedGalleryStats(folderPath: string): ImageStats | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(GALLERY_STATS_CACHE_PREFIX + folderPath);
+    return cached ? (JSON.parse(cached) as ImageStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedGalleryStats(folderPath: string, stats: ImageStats): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(GALLERY_STATS_CACHE_PREFIX + folderPath, JSON.stringify(stats));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 export default function GalleryPage() {
   const [folders, setFolders] = useState<GalleryFolder[]>([]);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -63,12 +84,22 @@ export default function GalleryPage() {
       folders.forEach(folder => {
         if (!requestedFolders.current.has(folder.path)) {
           requestedFolders.current.add(folder.path);
-          setStatsLoading(prev => ({ ...prev, [folder.path]: true }));
+
+          // Show cached stats immediately so the page is usable right away
+          const cached = getCachedGalleryStats(folder.path);
+          if (cached) {
+            setImageStats(prev => ({ ...prev, [folder.path]: cached }));
+          } else {
+            setStatsLoading(prev => ({ ...prev, [folder.path]: true }));
+          }
+
+          // Always fetch fresh stats in the background
           apiClient
             .get(`/api/gallery/imageStats?folderPath=${encodeURIComponent(folder.path)}`, { signal: abortController.signal })
             .then(res => res.data)
             .then((data: ImageStats) => {
               if (!abortController.signal.aborted) {
+                setCachedGalleryStats(folder.path, data);
                 setImageStats(prev => ({ ...prev, [folder.path]: data }));
                 setStatsLoading(prev => ({ ...prev, [folder.path]: false }));
               }
@@ -76,10 +107,13 @@ export default function GalleryPage() {
             .catch(error => {
               if (!abortController.signal.aborted) {
                 console.error(`Error fetching stats for ${folder.path}:`, error);
-                setImageStats(prev => ({
-                  ...prev,
-                  [folder.path]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
-                }));
+                // Only overwrite with error state if there is no cached value to fall back to
+                if (!getCachedGalleryStats(folder.path)) {
+                  setImageStats(prev => ({
+                    ...prev,
+                    [folder.path]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true },
+                  }));
+                }
                 setStatsLoading(prev => ({ ...prev, [folder.path]: false }));
               }
             });

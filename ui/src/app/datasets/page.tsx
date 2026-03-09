@@ -24,6 +24,27 @@ interface ImageStats {
   error?: boolean; // Flag to indicate if there was an error
 }
 
+const DATASET_STATS_CACHE_PREFIX = 'ai-toolkit-dataset-stats:';
+
+function getCachedDatasetStats(datasetName: string): ImageStats | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(DATASET_STATS_CACHE_PREFIX + datasetName);
+    return cached ? (JSON.parse(cached) as ImageStats) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedDatasetStats(datasetName: string, stats: ImageStats): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(DATASET_STATS_CACHE_PREFIX + datasetName, JSON.stringify(stats));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 export default function Datasets() {
   const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
@@ -33,7 +54,7 @@ export default function Datasets() {
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
   const requestedDatasets = useRef<Set<string>>(new Set());
 
-  // Fetch image stats for each dataset
+  // Fetch image stats for each dataset; show cached values immediately while refreshing in background
   useEffect(() => {
     const abortController = new AbortController();
     
@@ -42,13 +63,22 @@ export default function Datasets() {
         // Only fetch if we haven't already requested this dataset
         if (!requestedDatasets.current.has(datasetName)) {
           requestedDatasets.current.add(datasetName);
-          setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
+
+          // Show cached stats immediately so the page is usable right away
+          const cached = getCachedDatasetStats(datasetName);
+          if (cached) {
+            setImageStats(prev => ({ ...prev, [datasetName]: cached }));
+          } else {
+            setStatsLoading(prev => ({ ...prev, [datasetName]: true }));
+          }
           
+          // Always fetch fresh stats in the background
           apiClient
             .get(`/api/datasets/imageStats?datasetName=${encodeURIComponent(datasetName)}`, { signal: abortController.signal })
             .then(res => res.data)
             .then((data: ImageStats) => {
               if (!abortController.signal.aborted) {
+                setCachedDatasetStats(datasetName, data);
                 setImageStats(prev => ({ ...prev, [datasetName]: data }));
                 setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
               }
@@ -56,11 +86,13 @@ export default function Datasets() {
             .catch(error => {
               if (!abortController.signal.aborted) {
                 console.error(`Error fetching image stats for ${datasetName}:`, error);
-                // Set error state so we can show "error fetching stats"
-                setImageStats(prev => ({ 
-                  ...prev, 
-                  [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true } 
-                }));
+                // Only overwrite with error state if there is no cached value to fall back to
+                if (!getCachedDatasetStats(datasetName)) {
+                  setImageStats(prev => ({ 
+                    ...prev, 
+                    [datasetName]: { totalCount: 0, imageCount: 0, videoCount: 0, totalVideoDuration: 0, resolutionBreakdown: {}, error: true } 
+                  }));
+                }
                 setStatsLoading(prev => ({ ...prev, [datasetName]: false }));
               }
             });

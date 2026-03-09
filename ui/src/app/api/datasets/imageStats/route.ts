@@ -55,7 +55,9 @@ export async function GET(request: Request) {
   }
 
   // Check if folder exists
-  if (!fs.existsSync(datasetFolder)) {
+  try {
+    await fs.promises.access(datasetFolder);
+  } catch {
     return NextResponse.json({ error: `Folder '${datasetName}' not found` }, { status: 404 });
   }
 
@@ -68,8 +70,8 @@ export async function GET(request: Request) {
   let hasError = false;
 
   try {
-    // Find all images recursively
-    const imageFiles = findImagesRecursively(datasetFolder);
+    // Find all images recursively (async to avoid blocking the event loop)
+    const imageFiles = await findImagesRecursively(datasetFolder);
     totalCount = imageFiles.length;
 
     // Separate video files from image files in a single pass
@@ -131,31 +133,31 @@ export async function GET(request: Request) {
 }
 
 /**
- * Recursively finds all image files in a directory and its subdirectories
+ * Recursively finds all image files in a directory and its subdirectories.
+ * Uses async I/O to avoid blocking the event loop.
  * @param dir Directory to search
  * @returns Array of absolute paths to image files
  */
-function findImagesRecursively(dir: string): string[] {
+async function findImagesRecursively(dir: string): Promise<string[]> {
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'];
-  let results: string[] = [];
 
-  const items = fs.readdirSync(dir);
+  const items = await fs.promises.readdir(dir);
+  const nestedResults = await Promise.all(
+    items.map(async item => {
+      const itemPath = path.join(dir, item);
+      const stat = await fs.promises.stat(itemPath);
 
-  for (const item of items) {
-    const itemPath = path.join(dir, item);
-    const stat = fs.statSync(itemPath);
-
-    if (stat.isDirectory() && item !== '_controls' && !item.startsWith('.')) {
-      // If it's a directory, recursively search it
-      results = results.concat(findImagesRecursively(itemPath));
-    } else {
-      // If it's a file, check if it's an image and not trashed
-      const ext = path.extname(itemPath).toLowerCase();
-      if (imageExtensions.includes(ext) && !item.startsWith('trash_')) {
-        results.push(itemPath);
+      if (stat.isDirectory() && item !== '_controls' && !item.startsWith('.')) {
+        return findImagesRecursively(itemPath);
+      } else {
+        const ext = path.extname(itemPath).toLowerCase();
+        if (imageExtensions.includes(ext) && !item.startsWith('trash_')) {
+          return [itemPath];
+        }
+        return [];
       }
-    }
-  }
+    })
+  );
 
-  return results;
+  return nestedResults.flat();
 }
