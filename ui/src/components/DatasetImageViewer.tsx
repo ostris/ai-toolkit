@@ -8,9 +8,10 @@ interface Props {
   imgPath: string | null;
   images: string[];
   onChange: (nextPath: string | null) => void;
+  apiBase?: string;
 }
 
-export default function DatasetImageViewer({ imgPath, images, onChange }: Props) {
+export default function DatasetImageViewer({ imgPath, images, onChange, apiBase = '/api/img' }: Props) {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
 
@@ -80,7 +81,7 @@ export default function DatasetImageViewer({ imgPath, images, onChange }: Props)
               {imgPath &&
                 (isVideo(imgPath) ? (
                   <video
-                    src={`/api/img/${encodeURIComponent(imgPath)}`}
+                    src={`${apiBase}/${encodeURIComponent(imgPath)}`}
                     className="w-auto h-auto max-w-[95vw] max-h-[90vh] object-contain"
                     preload="none"
                     playsInline
@@ -90,7 +91,7 @@ export default function DatasetImageViewer({ imgPath, images, onChange }: Props)
                   />
                 ) : (
                   <img
-                    src={`/api/img/${encodeURIComponent(imgPath)}`}
+                    src={`${apiBase}/${encodeURIComponent(imgPath)}`}
                     alt="Dataset Image"
                     className="w-auto h-auto max-w-[95vw] max-h-[90vh] object-contain"
                   />

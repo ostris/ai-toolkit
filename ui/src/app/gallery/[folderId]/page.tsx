@@ -376,6 +376,7 @@ export default function GalleryFolderPage({ params }: { params: { folderId: stri
         imgPath={selectedImage}
         images={imagePaths}
         onChange={handleImageChange}
+        apiBase="/api/gallery/img"
       />
 
       {/* Slideshow settings modal */}
