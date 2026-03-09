@@ -182,6 +182,7 @@ cython_debug/
 .DS_Store
 ._.DS_Store
 aitk_db.db
+aitk_db.db-journal
 /notes.md
 /data
 
