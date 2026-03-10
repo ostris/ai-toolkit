@@ -567,6 +567,8 @@ class TrainConfig:
 
         # stabilizes empty prompts to be zeroed predictions
         self.do_blank_stabilization = kwargs.get('do_blank_stabilization', False)
+        
+        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
@@ -686,8 +688,6 @@ class ModelConfig:
         
         # model paths for models that support it
         self.model_paths = kwargs.get("model_paths", {})
-        
-        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
         
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
