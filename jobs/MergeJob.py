@@ -2,8 +2,10 @@ from toolkit.kohya_model_util import load_models_from_stable_diffusion_checkpoin
 from collections import OrderedDict
 from jobs import BaseJob
 from toolkit.train_tools import get_torch_dtype
+from jobs.process.MergeOrthogonalProcess import MergeOrthogonalProcess
 
 process_dict = {
+    'merge_orthogonal': MergeOrthogonalProcess
 }
 
 

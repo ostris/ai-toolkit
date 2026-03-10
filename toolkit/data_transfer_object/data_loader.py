@@ -37,6 +37,48 @@ def print_once(msg):
         printed_messages.append(msg)
 
 
+def _pin_nested(value):
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        if value.device.type == "cpu":
+            return value.pin_memory()
+        return value
+    if isinstance(value, PromptEmbeds):
+        value.text_embeds = _pin_nested(value.text_embeds)
+        value.pooled_embeds = _pin_nested(value.pooled_embeds)
+        value.attention_mask = _pin_nested(value.attention_mask)
+        return value
+    if isinstance(value, list):
+        return [_pin_nested(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_pin_nested(item) for item in value)
+    if isinstance(value, dict):
+        return {k: _pin_nested(v) for k, v in value.items()}
+    return value
+
+
+def _to_device_nested(value, device, non_blocking=False):
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        if value.device == device:
+            return value
+        return value.to(device=device, non_blocking=non_blocking)
+    if isinstance(value, PromptEmbeds):
+        value.text_embeds = _to_device_nested(value.text_embeds, device, non_blocking=non_blocking)
+        value.pooled_embeds = _to_device_nested(value.pooled_embeds, device, non_blocking=non_blocking)
+        value.attention_mask = _to_device_nested(value.attention_mask, device, non_blocking=non_blocking)
+        return value
+    if isinstance(value, list):
+        return [_to_device_nested(item, device, non_blocking=non_blocking) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_to_device_nested(item, device, non_blocking=non_blocking) for item in value)
+    if isinstance(value, dict):
+        return {k: _to_device_nested(v, device, non_blocking=non_blocking) for k, v in value.items()}
+    return value
+
+
 class FileItemDTO(
     LatentCachingFileItemDTOMixin,
     TextEmbeddingFileItemDTOMixin,
@@ -185,11 +227,12 @@ class DataLoaderBatchDTO:
                 if len(self.file_items[0].extra_values) > 0
                 else None
             )
-            self.audio_data: Union[List, None] = (
-                [x.audio_data for x in self.file_items]
-                if self.file_items[0].audio_data is not None
-                else None
-            )
+            if any([x.audio_data is not None for x in self.file_items]):
+                # Keep per-item audio alignment across mixed batches. Missing audio stays
+                # as None so model code can decide whether to synthesize a fallback.
+                self.audio_data: Union[List, None] = [x.audio_data for x in self.file_items]
+            else:
+                self.audio_data = None
             self.audio_tensor: Union[torch.Tensor, None] = None
             self.first_frame_latents: Union[torch.Tensor, None] = None
             self.audio_latents: Union[torch.Tensor, None] = None
@@ -197,6 +240,7 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
+            self.audio_loss: Union[torch.Tensor, None] = None
 
             if not is_latents_cached:
                 # only return a tensor if latents are not cached
@@ -449,10 +493,60 @@ class DataLoaderBatchDTO:
         del self.audio_data
         del self.audio_target
         del self.audio_pred
+        del self.audio_loss
         del self.first_frame_latents
         del self.audio_latents
         for file_item in self.file_items:
             file_item.cleanup()
+
+    def pin_memory(self):
+        # Support DataLoader(pin_memory=True) for this custom batch object.
+        self.tensor = _pin_nested(self.tensor)
+        self.latents = _pin_nested(self.latents)
+        self.control_tensor = _pin_nested(self.control_tensor)
+        self.control_tensor_list = _pin_nested(self.control_tensor_list)
+        self.clip_image_tensor = _pin_nested(self.clip_image_tensor)
+        self.mask_tensor = _pin_nested(self.mask_tensor)
+        self.unaugmented_tensor = _pin_nested(self.unaugmented_tensor)
+        self.unconditional_tensor = _pin_nested(self.unconditional_tensor)
+        self.unconditional_latents = _pin_nested(self.unconditional_latents)
+        self.extra_values = _pin_nested(self.extra_values)
+        self.audio_tensor = _pin_nested(self.audio_tensor)
+        self.first_frame_latents = _pin_nested(self.first_frame_latents)
+        self.audio_latents = _pin_nested(self.audio_latents)
+        self.audio_target = _pin_nested(self.audio_target)
+        self.audio_pred = _pin_nested(self.audio_pred)
+        self.audio_loss = _pin_nested(self.audio_loss)
+        self.prompt_embeds = _pin_nested(self.prompt_embeds)
+        self.clip_image_embeds = _pin_nested(self.clip_image_embeds)
+        self.clip_image_embeds_unconditional = _pin_nested(self.clip_image_embeds_unconditional)
+        self.sigmas = _pin_nested(self.sigmas)
+        return self
+
+    def to_device(self, device: torch.device, non_blocking: bool = False):
+        self.tensor = _to_device_nested(self.tensor, device, non_blocking=non_blocking)
+        self.latents = _to_device_nested(self.latents, device, non_blocking=non_blocking)
+        self.control_tensor = _to_device_nested(self.control_tensor, device, non_blocking=non_blocking)
+        self.control_tensor_list = _to_device_nested(self.control_tensor_list, device, non_blocking=non_blocking)
+        self.clip_image_tensor = _to_device_nested(self.clip_image_tensor, device, non_blocking=non_blocking)
+        self.mask_tensor = _to_device_nested(self.mask_tensor, device, non_blocking=non_blocking)
+        self.unaugmented_tensor = _to_device_nested(self.unaugmented_tensor, device, non_blocking=non_blocking)
+        self.unconditional_tensor = _to_device_nested(self.unconditional_tensor, device, non_blocking=non_blocking)
+        self.unconditional_latents = _to_device_nested(self.unconditional_latents, device, non_blocking=non_blocking)
+        self.extra_values = _to_device_nested(self.extra_values, device, non_blocking=non_blocking)
+        self.audio_tensor = _to_device_nested(self.audio_tensor, device, non_blocking=non_blocking)
+        self.first_frame_latents = _to_device_nested(self.first_frame_latents, device, non_blocking=non_blocking)
+        self.audio_latents = _to_device_nested(self.audio_latents, device, non_blocking=non_blocking)
+        self.audio_target = _to_device_nested(self.audio_target, device, non_blocking=non_blocking)
+        self.audio_pred = _to_device_nested(self.audio_pred, device, non_blocking=non_blocking)
+        self.audio_loss = _to_device_nested(self.audio_loss, device, non_blocking=non_blocking)
+        self.prompt_embeds = _to_device_nested(self.prompt_embeds, device, non_blocking=non_blocking)
+        self.clip_image_embeds = _to_device_nested(self.clip_image_embeds, device, non_blocking=non_blocking)
+        self.clip_image_embeds_unconditional = _to_device_nested(
+            self.clip_image_embeds_unconditional, device, non_blocking=non_blocking
+        )
+        self.sigmas = _to_device_nested(self.sigmas, device, non_blocking=non_blocking)
+        return self
 
     @property
     def dataset_config(self) -> "DatasetConfig":

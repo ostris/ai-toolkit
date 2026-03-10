@@ -1,10 +1,50 @@
-# AI Toolkit by Ostris
+# ⚡ AI Toolkit: The BIG DADDY VERSION
+**By Ostris & Contributors**
 
-AI Toolkit is an all in one training suite for diffusion models. I try to support all the latest models on consumer grade hardware. Image and video models. It can be run as a GUI or CLI. It is designed to be easy to use but still have every feature imaginable.
+*Welcome to the bleeding edge.*
 
-## Support My Work
+AI Toolkit is an all-in-one training suite for diffusion models. We support the latest models on consumer-grade hardware. But this fork? **This fork is about action.**
 
-If you enjoy my projects or use them commercially, please consider sponsoring me. Every bit helps! 💖
+We believe in the true spirit of Open Source: When something is broken, we don't wait for a corporate patch or a slow PR review. We build the fix, we push the math to the absolute limit, and we release it to the community *now*.
+
+## 🔥 WHAT MAKES THIS FORK DIFFERENT?
+
+This fork focuses on practical training fixes, especially around LTX audio-video jobs. The most important work here is making LTX character training more reliable, not treating LoRA merging as a magic solution.
+
+### 1. Experimental LoRA Merge Utility
+Character merging is still an experimental convenience feature. It can be useful for quick tests, but it is not a reliable replacement for keeping character LoRAs separate when identity or voice isolation matters.
+
+*   **Orthogonal merge heuristics:** The repo includes an orthogonal merge path for people who want to experiment with combined LoRAs.
+*   **Use with caution:** In practice, merged character LoRAs can still blend voice, motion, or identity. Treat merge output as a starting point to evaluate, not as guaranteed isolation.
+*   **Recommended workflow:** Train and sample characters separately when clean identity separation is the requirement.
+
+### 2. LTX Audio Training
+LTX is an audio-video model, and training quality depends on handling the audio path correctly.
+*   **Full `ComboVae` Integration:** We directly encode raw `.wav` files into log-mel spectrograms during the DiT training pass.
+*   **`audio_a2v_cross_attn` Unleashed:** You can now train the model to associate your specific text prompts with highly specific voices, sound effects, and acoustic profiles.
+*   **LTX-2.3 target support:** The toolkit now defaults to `Lightricks/LTX-2.3` for training while resolving the new single-file checkpoint layout. For the 22B checkpoint path, training-time prompt conditioning, transformer loading, and validation sampling now use the official `ltx-core` backend instead of forcing the checkpoint through the older diffusers-only converter.
+*   **Fresh-install note:** Official `LTX-2.3` support depends on upstream `ltx-core`, which currently requires Python `3.10+`. The repo now installs that dependency conditionally and pins a known-good upstream commit for fresh installs.
+
+### 3. We Fixed The UI
+The standard Prisma queue system for merges was causing white-page crashes and hanging jobs. We bypassed it. The Next.js UI now executes merges directly against the Python backend with live, real-time polling. *It just works.*
+
+---
+
+## 🔮 THE FUTURE OF THIS FORK
+We are not stopping here. The goal of the **BIG DADDY VERSION** is to be the ultimate, zero-compromise testbed for generative AI engineering. 
+
+**Upcoming Priorities:**
+1.  **Dynamic Entropy Pruning (LEP):** Pushing LoRA compression further without losing fidelity.
+2.  **Omni-Merge for SDXL & FLUX:** Bringing the DO-Merge mathematical framework to pure image models.
+3.  **Real-Time Audio-Video Sliders:** Letting you dynamically adjust the weight of the *visual* vs the *acoustic* training in the UI post-merge.
+
+If you have a crazy idea, build it and push it. This is where the magic happens.
+
+---
+
+## Support The Original Creator
+
+This fork is built on the phenomenal foundation laid by Ostris. If you use this toolkit commercially, please support the original author! 💖
 
 [Sponsor on GitHub](https://github.com/orgs/ostris) | [Support on Patreon](https://www.patreon.com/ostris) | [Donate on PayPal](https://www.paypal.com/donate/?hosted_button_id=9GEFUKC8T9R9W)
 
@@ -235,6 +275,8 @@ _Last updated: 2026-03-03 15:01 UTC_
 
 ## Installation
 
+Use `git clone`. Do not download a GitHub ZIP and manually extract it. This repo is intended to be installed directly from the working tree, and the bootstrap scripts below remove any need to unzip anything by hand.
+
 Requirements:
 - python >3.10
 - Nvidia GPU with enough ram to do what you need
@@ -244,14 +286,20 @@ Requirements:
 
 Linux:
 ```bash
-git clone https://github.com/ostris/ai-toolkit.git
-cd ai-toolkit
+git clone https://github.com/ArtDesignAwesome/ai-toolkit_BIG-DADDY-VERSION.git
+cd ai-toolkit_BIG-DADDY-VERSION
+./bootstrap.sh
+```
+
+Manual Linux install:
+```bash
 python3 -m venv venv
 source venv/bin/activate
-# install torch first
 pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
+
+If you pulled changes for LTX-2.3 support after an earlier install, rerun `pip install -r requirements.txt` once so the `ltx-core` dependency is available. Official `LTX-2.3` jobs require Python `3.10+`, and this fork currently supports transformer training only, so keep `train_text_encoder: false`.
 
 For devices running **DGX OS** (including DGX Spark), follow [these](dgx_instructions.md) instructions.
 
@@ -261,13 +309,20 @@ Windows:
 If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
 
 ```bash
-git clone https://github.com/ostris/ai-toolkit.git
-cd ai-toolkit
+git clone https://github.com/ArtDesignAwesome/ai-toolkit_BIG-DADDY-VERSION.git
+cd ai-toolkit_BIG-DADDY-VERSION
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+```
+
+Manual Windows install:
+```bash
 python -m venv venv
 .\venv\Scripts\activate
 pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
+
+If you updated an existing install for LTX-2.3 support, rerun `pip install -r requirements.txt` once to pull `ltx-core`. Official `LTX-2.3` jobs require Python `3.10+`, and this fork currently supports transformer training only, so keep `train_text_encoder: false`.
 
 
 # AI Toolkit UI
@@ -289,7 +344,108 @@ cd ui
 npm run build_and_start
 ```
 
+This uses the checked-out repo directly. There is no separate UI archive to extract.
+
 You can now access the UI at `http://localhost:8675` or `http://<your-ip>:8675` if you are running it on a server.
+
+## High-Throughput Training Defaults (Quality-Safe)
+
+This fork now applies capability-based LTX-2.3 throughput profiles:
+- `ltx23_safe` for conservative math-invariant defaults
+- `ltx23_max` for high-end cards (includes 5090-class)
+- `ltx23_ultra_vram` for very high VRAM cards (includes RTX Pro 6000-class)
+- `auto` chooses profile from detected GPU capability (VRAM + SM count + compute capability)
+
+Core optimizations include:
+- pinned-memory batch DTO transport + non-blocking transfers
+- dataloader worker/prefetch autotuning by hardware profile
+- prefetch-to-device queueing in the train loop
+- throttled logger commits (`logger_commit_interval`)
+- cached LTX rope/pad buffers to reduce repeated allocations
+
+You can tune these explicitly in your train config:
+
+```yaml
+config:
+  process:
+    - train:
+        throughput_profile: auto
+        dataloader_autotune: true
+        non_blocking_device_transfer: true
+        prefetch_to_device: true
+        prefetch_queue_depth: 2
+        logger_commit_interval: 10
+        allow_tf32: true
+        cudnn_benchmark: true
+        dataloader_pin_memory: true
+        dataloader_persistent_workers: true
+      datasets:
+        - num_workers: 12
+          prefetch_factor: 3
+          pin_memory: true
+          persistent_workers: true
+      model:
+        compile: true
+        compile_mode: max-autotune
+        compile_dynamic: true
+        compile_fullgraph: true
+```
+
+### LTX-Only Soft Lock
+
+By default, training is soft-locked to LTX-2.3 in UI/API/runtime.
+
+- `AITK_LTX_ONLY_MODE=1` (default): block non-LTX training jobs
+- `AITK_ALLOW_NON_LTX=1`: explicit override to allow legacy non-LTX jobs
+- `NEXT_PUBLIC_AITK_LTX_ONLY_MODE=1` (default): UI hides non-LTX model choices
+
+### Throughput Benchmark + Quality Gate
+
+Run the deterministic A/B harness on the target machine:
+
+```bash
+python3 testing/bench_ltx23_speed.py \
+  --baseline-config /path/to/baseline.yaml \
+  --candidate-config /path/to/candidate.yaml \
+  --steps 400 \
+  --repeats 3 \
+  --warmup-runs 1 \
+  --disable-save-sample \
+  --output-dir output/benchmarks
+```
+
+The benchmark runner validates that both configs are LTX-2.3 training jobs and fails fast on non-LTX process configs.
+
+Then gate promotion with quality checks:
+
+```bash
+python3 testing/quality_gate_ltx23.py \
+  --profile ltx23_max \
+  --benchmark-json output/benchmarks/benchmark_result.json \
+  --expected-gpu-substring "RTX 5090" \
+  --baseline-db /path/to/baseline/loss_log.db \
+  --candidate-db /path/to/candidate/loss_log.db \
+  --sample-drift-json /path/to/sample_drift.json
+```
+
+Default promotion targets:
+- `ltx23_max`: >= `+50%` median iter/sec vs baseline
+- `ltx23_ultra_vram`: >= `+60%` median iter/sec vs baseline (stretch `+100%`)
+
+One-command benchmark + gate:
+
+```bash
+python3 testing/run_ltx23_promotion.py \
+  --baseline-config /path/to/baseline.yaml \
+  --candidate-config /path/to/candidate.yaml \
+  --profile ltx23_ultra_vram \
+  --expected-gpu-substring "RTX Pro 6000" \
+  --baseline-db /path/to/baseline/loss_log.db \
+  --candidate-db /path/to/candidate/loss_log.db \
+  --sample-drift-json /path/to/sample_drift.json \
+  --steps 400 \
+  --disable-save-sample
+```
 
 ## Securing the UI
 
@@ -390,12 +546,20 @@ You will instantiate a UI that will let you upload your images, caption them, tr
 
 
 ## Training in RunPod
-If you would like to use Runpod, but have not signed up yet, please consider using [my Runpod affiliate link](https://runpod.io?ref=h0y9jyr2) to help support this project.
+This fork now includes a dedicated RunPod template bundle in [`templates/runpod`](templates/runpod).
 
+Build and push the container image:
+```bash
+docker build -f templates/runpod/Dockerfile -t <your-docker-user>/aitk-big-daddy-runpod:latest templates/runpod --build-arg AITK_REF=main
+docker push <your-docker-user>/aitk-big-daddy-runpod:latest
+```
 
-I maintain an official Runpod Pod template here which can be accessed [here](https://console.runpod.io/deploy?template=0fqzfjy6f3&ref=h0y9jyr2).
+Then create a RunPod Pod template using that image, expose port `8675`, and use a persistent `/workspace` volume.
+Set `AI_TOOLKIT_AUTH` as an environment variable (and optionally `PUBLIC_KEY` for SSH).
 
-I have also created a short video showing how to get started using AI Toolkit with Runpod [here](https://youtu.be/HBNeS-F6Zz8).
+Template details, optional env vars, and startup behavior are documented in [`templates/runpod/README.md`](templates/runpod/README.md).
+
+For LTX throughput behavior on RunPod GPUs, keep `throughput_profile: auto` in train config. It automatically maps 5090-class devices to `ltx23_max` and RTX Pro 6000-class devices to `ltx23_ultra_vram`.
 
 ## Training in Modal
 

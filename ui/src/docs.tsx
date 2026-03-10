@@ -245,6 +245,51 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'model.low_vram': {
+    title: 'Low VRAM',
+    description: (
+      <>
+        Enables low-memory behavior for constrained GPUs by trading speed for memory headroom. Keep this disabled on
+        high-VRAM systems (such as RTX 5090 / RTX Pro 6000 class) to avoid unnecessary throughput loss.
+      </>
+    ),
+  },
+  'model.compile': {
+    title: 'Compile Model',
+    description: (
+      <>
+        Enables <code>torch.compile</code> for the core denoiser/transformer path. This usually improves steady-state
+        iteration speed after initial compile warmup.
+      </>
+    ),
+  },
+  'model.compile_mode': {
+    title: 'Compile Mode',
+    description: (
+      <>
+        Controls how aggressively <code>torch.compile</code> optimizes execution. <code>max-autotune</code> is highest
+        throughput when stable, while <code>reduce-overhead</code> is a safer fallback.
+      </>
+    ),
+  },
+  'model.compile_dynamic': {
+    title: 'Compile Dynamic Shapes',
+    description: (
+      <>
+        Allows dynamic-shape graph compilation. Keep enabled unless you have a stable, fixed-shape workload and want to
+        experiment with static graph behavior.
+      </>
+    ),
+  },
+  'model.compile_fullgraph': {
+    title: 'Compile Full Graph',
+    description: (
+      <>
+        Requests full-graph capture during compile. This can improve kernel fusion and throughput, but disable it if your
+        environment shows compile instability.
+      </>
+    ),
+  },
   'model.qie.match_target_res': {
     title: 'Match Target Res',
     description: (
@@ -322,10 +367,189 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Audio Loss Multiplier',
     description: (
       <>
-        When training audio and video, sometimes the video loss is so great that it outweights the audio loss, causing
-        the audio to become distorted. If you are noticing this happen, you can increase the audio loss multiplier to
-        give more weight to the audio loss. You could try something like 2.0, 10.0 etc. Warning, setting this too high
-        could overfit and damage the model.
+        When training joint audio-video models, video loss can dominate and weaken voice learning. Increase this value to
+        strengthen audio supervision. Start with 2.0 to 10.0 and tune carefully. Too high can overfit audio and hurt
+        overall quality.
+      </>
+    ),
+  },
+  'train.throughput_profile': {
+    title: 'Throughput Profile',
+    description: (
+      <>
+        Selects hardware-tuned LTX-2.3 performance settings. <code>auto</code> maps by detected capability so high-VRAM
+        pro cards (including RTX Pro 6000 class) receive top-tier defaults without low-VRAM penalties.
+      </>
+    ),
+  },
+  'train.dataloader_autotune': {
+    title: 'Dataloader Autotune',
+    description: (
+      <>
+        Automatically tunes dataloader worker and prefetch settings from the active throughput profile. Recommended unless
+        you have hand-tuned dataset loader settings.
+      </>
+    ),
+  },
+  'train.prefetch_to_device': {
+    title: 'Prefetch To Device',
+    description: (
+      <>
+        Moves upcoming batches to GPU on a prefetch stream so transfer latency overlaps compute. Keep enabled for best
+        throughput on CUDA training.
+      </>
+    ),
+  },
+  'train.prefetch_queue_depth': {
+    title: 'Prefetch Queue Depth',
+    description: (
+      <>
+        Number of queued prefetched batches. Higher values can improve throughput on high-VRAM systems but will consume
+        more memory.
+      </>
+    ),
+  },
+  'train.logger_commit_interval': {
+    title: 'Logger Commit Interval',
+    description: (
+      <>
+        Batches logger commits across steps to reduce synchronization and I/O overhead. Higher values generally improve
+        speed, but live dashboard updates become less frequent.
+      </>
+    ),
+  },
+  'train.allow_tf32': {
+    title: 'Allow TF32',
+    description: (
+      <>
+        Enables TensorFloat-32 fast matrix paths on supported NVIDIA GPUs. This is a high-impact throughput setting and is
+        usually safe for training quality.
+      </>
+    ),
+  },
+  'train.cudnn_benchmark': {
+    title: 'cuDNN Benchmark',
+    description: (
+      <>
+        Lets cuDNN benchmark and select faster kernels for recurring workloads. Keep enabled for stable-shape workloads
+        unless you need fully deterministic convolution behavior.
+      </>
+    ),
+  },
+  'train.optimizer': {
+    title: 'Optimizer',
+    description: (
+      <>
+        Selects optimizer implementation. <code>adamw_fused</code> uses fused kernels when available for extra speed;
+        if unsupported in your torch build, it safely falls back to standard AdamW behavior.
+      </>
+    ),
+  },
+  'train.auto_balance_audio_loss': {
+    title: 'Auto Balance Audio Loss',
+    description: (
+      <>
+        Automatically adjusts audio loss strength during training using running loss statistics, so audio supervision
+        stays strong without manually tuning a multiplier. Recommended for most LTX-2 audio jobs.
+      </>
+    ),
+  },
+  'train.strict_audio_mode': {
+    title: 'Strict Audio Mode',
+    description: (
+      <>
+        Fails training early if audio-enabled video batches are frequently missing effective audio supervision. Use this
+        to catch dataset or extraction problems early instead of discovering broken audio after long runs.
+      </>
+    ),
+  },
+  'train.strict_audio_min_supervised_ratio': {
+    title: 'Strict Audio Min Supervised Ratio',
+    description: (
+      <>
+        Minimum required ratio of supervised audio batches when strict audio mode is enabled. Example: 0.9 means at least
+        90% of expected audio batches must have valid supervision.
+      </>
+    ),
+  },
+  'train.strict_audio_warmup_steps': {
+    title: 'Strict Audio Warmup Steps',
+    description: (
+      <>
+        Number of initial training steps to ignore before strict audio checks begin. This avoids false positives during
+        startup and data-loader warmup.
+      </>
+    ),
+  },
+  'train.independent_audio_timestep': {
+    title: 'Independent Audio Timestep',
+    description: (
+      <>
+        Samples a separate random denoising timestep for audio instead of forcing audio and video to share one. This
+        matches how LTX-2 was designed and materially improves voice learning.
+      </>
+    ),
+  },
+  'train.noise_offset': {
+    title: 'Noise Offset',
+    description: (
+      <>
+        Adds a small offset to training noise, which can improve dynamic range and detail retention. Typical values are
+        0.03 to 0.1. Set to 0 to disable.
+      </>
+    ),
+  },
+  'train.min_snr_gamma': {
+    title: 'Min-SNR Gamma',
+    description: (
+      <>
+        Applies minimum Signal-to-Noise Ratio weighting across timesteps. For flow-matching LTX jobs, leave this at 0
+        unless you know your scheduler supports Min-SNR.
+      </>
+    ),
+  },
+  'train.lr_scheduler': {
+    title: 'LR Scheduler',
+    description: (
+      <>
+        Learning rate schedule strategy. Constant with warmup is safe for short runs. Cosine variants are often better
+        for longer training.
+      </>
+    ),
+  },
+  'train.caption_dropout_rate': {
+    title: 'Caption Dropout Rate',
+    description: (
+      <>
+        Probability of dropping captions during training so the model learns identity, motion, and voice cues without
+        over-relying on text. A small value like 0.05 is a reasonable starting point.
+      </>
+    ),
+  },
+  'network.type': {
+    title: 'Network Type',
+    description: (
+      <>
+        Selects the LoRA variant used for training. Standard LoRA is the safest default. DoRA and LoKr can help on some
+        jobs, but they change the update geometry and should be tested deliberately.
+      </>
+    ),
+  },
+  'network.rank_dropout': {
+    title: 'Rank Dropout',
+    description: (
+      <>
+        Randomly zeroes whole rank dimensions during training. This regularizes higher-rank LoRAs and helps reduce
+        overfitting on smaller datasets.
+      </>
+    ),
+  },
+  'network.module_dropout': {
+    title: 'Module Dropout',
+    description: (
+      <>
+        Randomly skips entire LoRA modules per step. This is a stronger regularizer than rank dropout and should usually
+        start at 0.0.
       </>
     ),
   },

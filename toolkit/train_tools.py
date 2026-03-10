@@ -132,9 +132,13 @@ def match_noise_to_target_mean_offset(noise, target, mix=0.5, dim=None):
 def apply_noise_offset(noise, noise_offset):
     if noise_offset is None or (noise_offset < 0.000001 and noise_offset > -0.000001):
         return noise
-    if len(noise.shape) > 4:
-        raise ValueError("Applying noise offset not supported for video models at this time.")
-    noise = noise + noise_offset * torch.randn((noise.shape[0], noise.shape[1], 1, 1), device=noise.device)
+    if len(noise.shape) == 4:
+        offset_shape = (noise.shape[0], noise.shape[1], 1, 1)
+    elif len(noise.shape) == 5:
+        offset_shape = (noise.shape[0], noise.shape[1], 1, 1, 1)
+    else:
+        raise ValueError(f"Applying noise offset is unsupported for {len(noise.shape)}D tensors.")
+    noise = noise + noise_offset * torch.randn(offset_shape, device=noise.device, dtype=noise.dtype)
     return noise
 
 

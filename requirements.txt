@@ -1,4 +1,5 @@
 torchao==0.10.0
+ltx-core @ git+https://github.com/Lightricks/LTX-2.git@9e8a28e17ac4dd9e49695223d50753a1ebda36fe#subdirectory=packages/ltx-core ; python_version >= "3.10"
 safetensors
 git+https://github.com/huggingface/diffusers@8600b4c10d67b0ce200f664204358747bd53c775
 transformers==4.57.3
@@ -36,6 +37,7 @@ opencv-python
 pytorch-wavelets==1.3.0
 matplotlib==3.10.1
 setuptools==69.5.1
-scipy==1.12.0
+scipy==1.12.0 ; python_version < "3.10"
+scipy>=1.14,<1.17 ; python_version >= "3.10"
 av==16.0.1
 torchcodec

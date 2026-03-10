@@ -18,10 +18,10 @@ export async function GET(request: NextRequest, { params }: { params: { queueID:
     return NextResponse.json(newQueue);
   }
 
-  await prisma.queue.update({
+  const updated = await prisma.queue.update({
     where: { id: queue.id },
     data: { is_running: true },
   });
 
-  return NextResponse.json(queue);
+  return NextResponse.json(updated);
 }
