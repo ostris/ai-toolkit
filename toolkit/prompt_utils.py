@@ -47,6 +47,8 @@ class PromptEmbeds:
                 self.attention_mask = [t.to(*args, **kwargs) for t in self.attention_mask]
             else:
                 self.attention_mask = self.attention_mask.to(*args, **kwargs)
+        if hasattr(self, 'text_encoder_layers') and self.text_encoder_layers is not None:
+            self.text_encoder_layers = [t.to(*args, **kwargs) for t in self.text_encoder_layers]
         return self
 
     def detach(self):
@@ -62,6 +64,8 @@ class PromptEmbeds:
                 new_embeds.attention_mask = [t.detach() for t in new_embeds.attention_mask]
             else:
                 new_embeds.attention_mask = new_embeds.attention_mask.detach()
+        if hasattr(new_embeds, 'text_encoder_layers') and new_embeds.text_encoder_layers is not None:
+            new_embeds.text_encoder_layers = [t.detach() for t in new_embeds.text_encoder_layers]
         return new_embeds
 
     def clone(self):
@@ -82,6 +86,8 @@ class PromptEmbeds:
                 prompt_embeds.attention_mask = [t.clone() for t in self.attention_mask]
             else:
                 prompt_embeds.attention_mask = self.attention_mask.clone()
+        if hasattr(self, 'text_encoder_layers') and self.text_encoder_layers is not None:
+            prompt_embeds.text_encoder_layers = [t.clone() for t in self.text_encoder_layers]
         return prompt_embeds
 
     def expand_to_batch(self, batch_size):
@@ -135,6 +141,9 @@ class PromptEmbeds:
                     state_dict[f"attention_mask_{i}"] = attn.cpu()
             else:
                 state_dict["attention_mask"] = pe.attention_mask.cpu()
+        if hasattr(pe, 'text_encoder_layers') and pe.text_encoder_layers is not None:
+            for i, layer in enumerate(pe.text_encoder_layers):
+                state_dict[f"text_encoder_layer_{i}"] = layer.cpu()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         save_file(state_dict, path)
     
@@ -149,8 +158,11 @@ class PromptEmbeds:
         text_embeds = []
         pooled_embeds = None
         attention_mask = []
+        text_encoder_layers = []
         is_list = False
         for key in sorted(state_dict.keys()):
+            if key.startswith("text_encoder_layer_"):
+                continue
             if key.startswith("text_embed_"):
                 is_list = True
                 text_embeds.append(state_dict[key])
@@ -162,6 +174,16 @@ class PromptEmbeds:
                 attention_mask.append(state_dict[key])
             elif key == "attention_mask":
                 attention_mask.append(state_dict[key])
+
+        layer_keys = sorted(
+            (k for k in state_dict.keys() if k.startswith("text_encoder_layer_")),
+            key=lambda k: (
+                0,
+                int(k[len("text_encoder_layer_"):]),
+            ) if k[len("text_encoder_layer_"):].isdigit() else (1, k),
+        )
+        for key in layer_keys:
+            text_encoder_layers.append(state_dict[key])
         pe = cls(None)
         pe.text_embeds = text_embeds
         if len(text_embeds) == 1 and not is_list:
@@ -173,6 +195,8 @@ class PromptEmbeds:
                 pe.attention_mask = attention_mask[0]
             else:
                 pe.attention_mask = attention_mask
+        if text_encoder_layers:
+            pe.text_encoder_layers = text_encoder_layers
         return pe
 
 
@@ -293,9 +317,50 @@ def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"], padding_side: str 
             padded.append(m)
         attention_mask = torch.cat(padded, dim=0)
 
+    # --- text_encoder_layers (for DimFusion models like FIBO) ---
+    text_encoder_layers = None
+    has_text_encoder_layers = [
+        hasattr(p, 'text_encoder_layers') and p.text_encoder_layers is not None
+        for p in prompt_embeds
+    ]
+    if any(has_text_encoder_layers) and not all(has_text_encoder_layers):
+        raise ValueError(
+            "Inconsistent PromptEmbeds: some items have text_encoder_layers and others do not. "
+            "This usually indicates mixed cached text embeddings. Delete and regenerate the cache."
+        )
+    if all(has_text_encoder_layers):
+        layer_counts = [len(p.text_encoder_layers) for p in prompt_embeds]
+        if len(set(layer_counts)) != 1:
+            raise ValueError(
+                "Inconsistent text_encoder_layers count across PromptEmbeds. "
+                "This usually indicates mixed cached text embeddings. Delete and regenerate the cache."
+            )
+
+        num_layers = layer_counts[0]
+        text_encoder_layers = []
+        for layer_idx in range(num_layers):
+            max_len_layer = max(p.text_encoder_layers[layer_idx].shape[1] for p in prompt_embeds)
+            padded_layers = []
+            for p in prompt_embeds:
+                t = p.text_encoder_layers[layer_idx]
+                if t.shape[1] < max_len_layer:
+                    pad = torch.zeros(
+                        (t.shape[0], max_len_layer - t.shape[1], *t.shape[2:]),
+                        dtype=t.dtype,
+                        device=t.device,
+                    )
+                    if padding_side == "right":
+                        t = torch.cat([t, pad], dim=1)
+                    else:
+                        t = torch.cat([pad, t], dim=1)
+                padded_layers.append(t)
+            text_encoder_layers.append(torch.cat(padded_layers, dim=0))
+
     # wrap back into PromptEmbeds
     pe = PromptEmbeds([text_embeds, pooled_embeds])
     pe.attention_mask = attention_mask
+    if text_encoder_layers is not None:
+        pe.text_encoder_layers = text_encoder_layers
     return pe
 
 
@@ -358,6 +423,15 @@ def split_prompt_embeds(concatenated: PromptEmbeds, num_parts=None) -> List[Prom
         PromptEmbeds([text, pooled])
         for text, pooled in zip(text_embeds_splits, pooled_embeds_splits)
     ]
+
+    # Preserve text_encoder_layers (for DimFusion models like FIBO)
+    if hasattr(concatenated, 'text_encoder_layers') and concatenated.text_encoder_layers is not None:
+        layer_splits = [
+            torch.chunk(layer, num_parts, dim=0)
+            for layer in concatenated.text_encoder_layers
+        ]
+        for part_idx, pe in enumerate(prompt_embeds_list):
+            pe.text_encoder_layers = [layer_splits[layer_idx][part_idx] for layer_idx in range(len(layer_splits))]
 
     return prompt_embeds_list
 
