@@ -1,6 +1,7 @@
 import torch
 from .manager_modules import LinearLayerMemoryManager, ConvLayerMemoryManager
 import random
+from ..device_utils import get_optimal_device
 
 LINEAR_MODULES = [
     "Linear",
@@ -38,10 +39,10 @@ class MemoryManager:
     def __init__(
         self,
         module: torch.nn.Module,
-        process_device: torch.device = torch.device("cpu"),
+        process_device: torch.device = None,
     ):
         self.module: torch.nn.Module = module
-        self.process_device: torch.device = process_device
+        self.process_device: torch.device = get_optimal_device(process_device)
         self.unmanaged_modules: list[torch.nn.Module] = []
 
     def memory_managed_to(self, *args, **kwargs):

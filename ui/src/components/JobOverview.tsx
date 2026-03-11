@@ -14,7 +14,18 @@ interface JobOverviewProps {
 }
 
 export default function JobOverview({ job }: JobOverviewProps) {
-  const gpuIds = useMemo(() => job.gpu_ids.split(',').map(id => parseInt(id)), [job.gpu_ids]);
+  const gpuIds = useMemo(() => {
+    try {
+      if (!job.gpu_ids) return [];
+      return job.gpu_ids.split(',').map(id => {
+        const parsed = parseInt(id.trim());
+        return isNaN(parsed) ? 0 : parsed;
+      }).filter(id => id >= 0);
+    } catch (error) {
+      console.error('Error parsing GPU IDs:', error);
+      return [];
+    }
+  }, [job.gpu_ids]);
   const { log, setLog, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
   const logRef = useRef<HTMLDivElement>(null);
   // Track whether we should auto-scroll to bottom
@@ -22,8 +33,24 @@ export default function JobOverview({ job }: JobOverviewProps) {
 
   const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
   const { cpuInfo, isCPUInfoLoaded } = useCPUInfo(5000);
-  const totalSteps = getTotalSteps(job);
-  const progress = (job.step / totalSteps) * 100;
+
+  // Safe total steps calculation
+  const totalSteps = useMemo(() => {
+    try {
+      const steps = getTotalSteps(job);
+      return typeof steps === 'number' && !isNaN(steps) && steps > 0 ? steps : 1;
+    } catch (error) {
+      console.error('Error getting total steps:', error);
+      return 1;
+    }
+  }, [job]);
+
+  // Safe progress calculation
+  const progress = useMemo(() => {
+    const step = typeof job.step === 'number' && !isNaN(job.step) ? job.step : 0;
+    return totalSteps > 0 ? (step / totalSteps) * 100 : 0;
+  }, [job.step, totalSteps]);
+
   const isStopping = job.stop && job.status === 'running';
 
   const logLines: string[] = useMemo(() => {
