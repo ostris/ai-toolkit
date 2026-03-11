@@ -399,6 +399,10 @@ class TrainConfig:
         self.target_noise_multiplier = kwargs.get('target_noise_multiplier', 1.0)
         self.random_noise_multiplier = kwargs.get('random_noise_multiplier', 0.0)
         self.do_signal_correction_noise = kwargs.get('do_signal_correction_noise', False)
+        # batch noise correction adds other images in the batch as noise to correct away from other images
+        self.do_batch_noise_correction = kwargs.get('do_batch_noise_correction', False)
+        self.batch_noise_correction_scale = kwargs.get('batch_noise_correction_scale', 0.1)
+        
         self.signal_correction_noise_scale = kwargs.get('signal_correction_noise_scale', 1.0)
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
@@ -564,6 +568,8 @@ class TrainConfig:
 
         # stabilizes empty prompts to be zeroed predictions
         self.do_blank_stabilization = kwargs.get('do_blank_stabilization', False)
+        
+        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
@@ -683,8 +689,6 @@ class ModelConfig:
         
         # model paths for models that support it
         self.model_paths = kwargs.get("model_paths", {})
-        
-        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
         
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
