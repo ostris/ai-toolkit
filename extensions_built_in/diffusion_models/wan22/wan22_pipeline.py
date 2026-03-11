@@ -262,6 +262,10 @@ class Wan22Pipeline(WanPipeline):
                     noise_pred = noise_uncond + current_guidance_scale * \
                         (noise_pred - noise_uncond)
 
+                if conditioning is not None:
+                    # keep only the part corresponding to the 16 latent channels
+                    noise_pred = noise_pred[:, :latents.shape[1], ...]
+
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
                     noise_pred, t, latents, return_dict=False)[0]
