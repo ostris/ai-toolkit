@@ -60,6 +60,9 @@ def get_optimizer(
         from toolkit.optimizers.adam8bit import Adam8bit
 
         optimizer = Adam8bit(params, lr=learning_rate, eps=1e-6, decouple=True, **optimizer_params)
+    elif lower_type == "adamwfp8" or lower_type == "adamw_fp8":
+        from toolkit.optimizers.adamwfp8 import AdamWFP8
+        optimizer = AdamWFP8(params, lr=learning_rate, eps=1e-6, **optimizer_params)
     elif lower_type.endswith("8bit"):
         import bitsandbytes
 
