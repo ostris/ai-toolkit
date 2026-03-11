@@ -39,6 +39,20 @@ def get_optimizer(
         # let net be the neural network you want to train
         # you can choose weight decay value based on your problem, 0 by default
         optimizer = Prodigy8bit(params, lr=use_lr, eps=1e-6, **optimizer_params)
+    elif (lower_type.startswith("prodigy_schedulefree") or
+          lower_type.replace("-", "_") == "prodigy_schedule_free"):
+        try:
+            from prodigyplus.prodigy_plus_schedulefree import ProdigyPlusScheduleFree
+        except ImportError:
+            raise ImportError(
+                "Prodigy Schedule Free requires: pip install prodigy-plus-schedule-free"
+            )
+        print("Using Prodigy + Schedule-Free optimizer")
+        use_lr = learning_rate
+        if use_lr < 0.1:
+            use_lr = 1.0
+        print(f"Using lr {use_lr}")
+        optimizer = ProdigyPlusScheduleFree(params, lr=use_lr, **optimizer_params)
     elif lower_type.startswith("prodigy"):
         from prodigyopt import Prodigy
 

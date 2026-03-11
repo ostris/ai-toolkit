@@ -1,0 +1,87 @@
+---
+# Z-Image Base - Character/Person LoRA training (32GB VRAM, e.g. RTX 5090)
+# Best practices: Prodigy or Prodigy Schedule Free optimizer, batch_size 2 (or 4 with gradient_accumulation),
+# DOP for identity preservation, 1024 resolution, linear rank 128. Replace folder_path and trigger/sample prompts.
+job: extension
+config:
+  name: "my_zimage_base_character_lora_v1"
+  process:
+    - type: 'diffusion_trainer'
+      training_folder: "output"
+      device: cuda:0
+      # LoRA: rank 128 good for character identity; use 64 if VRAM tight. Z-Image typically no conv training.
+      network:
+        type: "lora"
+        linear: 128
+        linear_alpha: 128
+      save:
+        dtype: bf16
+        save_every: 500
+        max_step_saves_to_keep: 6
+        save_format: safetensors
+      datasets:
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          cache_latents_to_disk: true
+          # 1024 matches Z-Image native; use [512, 768, 1024] for multi-res if preferred
+          resolution: [ 1024, 1024 ]
+      train:
+        batch_size: 2  # 32GB allows 2; Prodigy works well with larger batch. Try 4 or gradient_accumulation: 2 if headroom
+        gradient_accumulation: 1
+        steps: 3000  # 2500-3000 typical for character identity
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        timestep_type: "weighted"
+        content_or_style: "balanced"
+        loss_type: "mse"
+        dtype: bf16
+        # Prodigy: nominal lr 1.0 (adaptive); use prodigy_schedulefree for schedule-free variant
+        optimizer: "prodigy"
+        lr: 1.0
+        optimizer_params:
+          weight_decay: 0.01
+        lr_scheduler: "constant"
+        # DOP: preserves model output without trigger, reduces overfitting for character LoRA
+        diff_output_preservation: true
+        diff_output_preservation_multiplier: 1.0
+        diff_output_preservation_class: "person"
+        switch_boundary_every: 1
+        unload_text_encoder: false
+        # cache_text_embeddings: true  # optional, saves VRAM if using captions
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+        skip_first_sample: false
+        disable_sampling: false
+      logging:
+        log_every: 1
+        use_ui_logger: true
+      model:
+        name_or_path: "Tongyi-MAI/Z-Image"
+        arch: "zimage"
+        quantize: true
+        qtype: "qfloat8"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: false  # set true if OOM on 32GB
+        model_kwargs: {}
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        samples:
+          - prompt: "[trigger], studio portrait, soft lighting"
+          - prompt: "[trigger] on a beach, golden hour"
+          - prompt: "[trigger], casual outfit, urban background"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4   # Base uses CFG
+        sample_steps: 30
+meta:
+  name: "[name]"
+  version: '1.0'
