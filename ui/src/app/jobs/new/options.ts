@@ -27,6 +27,7 @@ type AdditionalSections =
   | 'model.multistage'
   | 'model.layer_offloading'
   | 'model.low_vram'
+  | 'model.sequential_load'
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path';
 
@@ -60,6 +61,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
     },
     disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram', 'model.sequential_load'],
   },
   {
     name: 'flux_kontext',
