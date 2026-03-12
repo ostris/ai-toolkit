@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ai-toolkit.macos-gpu-telemetry</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_PATH__</string>
+    <string>__UI_DIR__/scripts/collect-macos-gpu-telemetry.js</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__UI_DIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AI_TOOLKIT_MAC_GPU_TELEMETRY_PATH</key>
+    <string>/tmp/ai-toolkit-mac-gpu-telemetry.json</string>
+    <key>AI_TOOLKIT_MAC_GPU_SAMPLE_MS</key>
+    <string>2000</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/ai-toolkit-macos-gpu-telemetry.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/ai-toolkit-macos-gpu-telemetry.err.log</string>
+</dict>
+</plist>

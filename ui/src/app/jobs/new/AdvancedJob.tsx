@@ -111,7 +111,9 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
           // parsed.config.process[0].type = 'ui_trainer';
           parsed.config.process[0].sqlite_db_path = './aitk_db.db';
           parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
-          parsed.config.process[0].device = 'cuda';
+          if (!parsed.config.process[0].device) {
+            parsed.config.process[0].device = 'cuda';
+          }
           parsed.config.process[0].performance_log_every = 10;
         } catch (e) {
           console.warn(e);

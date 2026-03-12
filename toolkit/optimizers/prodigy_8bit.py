@@ -230,7 +230,8 @@ class Prodigy8bit(Optimizer):
 
         if lr > 0.0:
             if fsdp_in_use:
-                dist_tensor = torch.zeros(2).cuda()
+                # Assuming current device is correct
+                dist_tensor = torch.zeros(2).to(self.param_groups[0]['params'][0].device)
                 dist_tensor[0] = d_numerator
                 dist_tensor[1] = d_denom
                 dist.all_reduce(dist_tensor, op=dist.ReduceOp.SUM)
