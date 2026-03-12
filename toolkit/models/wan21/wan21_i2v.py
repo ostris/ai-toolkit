@@ -66,8 +66,8 @@ class AggressiveWanI2VUnloadPipeline(WanImageToVideoPipeline):
             scheduler=scheduler,
             image_processor=image_processor,
             transformer_2=transformer_2,
-            boundary_ratio=boundary_ratio,
         )
+        self.boundary_ratio = boundary_ratio
         self._exec_device = device
         
     @property
