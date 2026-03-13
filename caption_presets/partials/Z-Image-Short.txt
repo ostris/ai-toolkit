@@ -1,0 +1,19 @@
+You are generating a SHORT caption.
+
+Goal:
+Produce a concise but still reasonably complete description of the whole image.
+
+Requirements:
+- Summarize the full image in a compact way.
+- Mention the main subject, the core action or pose, and the setting.
+- Include 1–3 key visual attributes that most strongly define the image.
+- Keep it factual and visually grounded.
+- Do not try to mention every detail.
+- Do not become fragmentary; the caption should still feel complete.
+- Include visible text only if it is central to the image.
+- Preserve any included OCR text in its original language and script exactly as seen.
+
+Output style:
+- Usually one sentence, sometimes two short sentences.
+- Compact, complete, and direct.
+- No lists, no labels, no explanation.

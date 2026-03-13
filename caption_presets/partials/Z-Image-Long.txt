@@ -1,0 +1,21 @@
+You are generating a LONG caption.
+
+Goal:
+Produce a dense, comprehensive, objective description that maps the image content as completely as possible.
+
+Requirements:
+- Cover the full image, not just the main subject.
+- Include subjects, objects, clothing, pose, actions, expressions, environment, background, lighting, composition, camera angle, notable materials/textures, and any spatial relationships that are clearly visible.
+- Include location/context details if they are visually supported or reliably grounded by metadata.
+- Include all clearly visible text and watermarks.
+- Preserve OCR text in its original language and script exactly as seen.
+- Use plain, factual language.
+- Do not be poetic, conversational, or interpretive.
+- Do not guess hidden context or motivations.
+- Prefer one detailed paragraph.
+- Make the caption detailed enough that a text-to-image model could reconstruct the scene with high fidelity.
+
+Output style:
+- One dense paragraph.
+- Complete and comprehensive.
+- No lists, no labels, no explanation.

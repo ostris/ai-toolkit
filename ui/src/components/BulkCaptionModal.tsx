@@ -4,11 +4,7 @@ import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaComment } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
-
-interface CaptionPreset {
-  name: string;
-  content: string;
-}
+import { type CaptionPreset, applySelections } from '@/utils/captionPresets';
 
 interface BulkCaptionModalProps {
   isOpen: boolean;
@@ -32,6 +28,8 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [modelId, setModelId] = useState(MODEL_LITE);
   const [presets, setPresets] = useState<CaptionPreset[]>([]);
+  const [activePreset, setActivePreset] = useState<CaptionPreset | null>(null);
+  const [variableSelections, setVariableSelections] = useState<Record<string, number>>({});
 
   useEffect(() => setMounted(true), []);
 
@@ -46,6 +44,8 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
       setTriggerWord('');
       setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       setModelId(MODEL_LITE);
+      setActivePreset(null);
+      setVariableSelections({});
     }
   }, [isOpen]);
 
@@ -65,7 +65,7 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
         <div className="flex min-h-full items-center justify-center p-4 text-center">
           <DialogPanel
             transition
-            className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 w-full max-w-lg data-closed:sm:translate-y-0 data-closed:sm:scale-95"
+            className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 w-full max-w-2xl data-closed:sm:translate-y-0 data-closed:sm:scale-95"
           >
             <div className="bg-gray-800 px-6 pt-5 pb-4">
               <DialogTitle as="h3" className="text-base font-semibold text-gray-100 mb-4 flex items-center gap-2">
@@ -111,21 +111,53 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
                   {presets.length > 0 && (
                     <select
                       defaultValue=""
-                      onChange={e => { if (e.target.value) setSystemPrompt(e.target.value); }}
+                      onChange={e => {
+                        const preset = presets.find(p => p.name === e.target.value);
+                        if (preset) {
+                          const defaultSelections: Record<string, number> = {};
+                          for (const variable of preset.variables) {
+                            defaultSelections[variable.name] = 0;
+                          }
+                          setActivePreset(preset);
+                          setVariableSelections(defaultSelections);
+                          setSystemPrompt(preset.renderedContent);
+                        }
+                      }}
                       className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 mb-2"
                       aria-label="Caption preset"
                     >
                       <option value="">— select a preset —</option>
                       {presets.map(p => (
-                        <option key={p.name} value={p.content}>{p.name}</option>
+                        <option key={p.name} value={p.name}>{p.name}</option>
                       ))}
                     </select>
                   )}
+                  {activePreset && activePreset.variables.map(variable => (
+                    <div key={variable.name} className="mb-2">
+                      <label className="block text-xs text-gray-400 mb-1">{variable.name}</label>
+                      <select
+                        value={(variableSelections[variable.name] ?? 0).toString()}
+                        onChange={e => {
+                          const newSelections = { ...variableSelections, [variable.name]: parseInt(e.target.value, 10) };
+                          setVariableSelections(newSelections);
+                          setSystemPrompt(applySelections(activePreset, newSelections));
+                        }}
+                        className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2"
+                        aria-label={variable.name}
+                      >
+                        {variable.options.map((opt, idx) => (
+                          <option key={opt.filename} value={idx.toString()}>
+                            {opt.filename.replace(/\.txt$/, '')}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
                   <textarea
                     value={systemPrompt}
                     onChange={e => setSystemPrompt(e.target.value)}
-                    rows={3}
-                    className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 resize-none"
+                    rows={12}
+                    className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 resize-y"
                     aria-label="Caption focus"
                   />
                   <p className="mt-1 text-xs text-gray-500">
