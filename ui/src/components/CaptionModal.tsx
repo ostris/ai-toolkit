@@ -4,11 +4,7 @@ import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaComment } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
-
-interface CaptionPreset {
-  name: string;
-  content: string;
-}
+import { type CaptionPreset, applySelections } from '@/utils/captionPresets';
 
 interface CaptionModalProps {
   imageUrl: string;
@@ -37,6 +33,8 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
   const [error, setError] = useState<string | null>(null);
   const [generatedCaption, setGeneratedCaption] = useState<string | null>(null);
   const [presets, setPresets] = useState<CaptionPreset[]>([]);
+  const [activePreset, setActivePreset] = useState<CaptionPreset | null>(null);
+  const [variableSelections, setVariableSelections] = useState<Record<string, number>>({});
 
   useEffect(() => setMounted(true), []);
 
@@ -150,16 +148,49 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
                     <select
                       defaultValue=""
                       disabled={isGenerating}
-                      onChange={e => { if (e.target.value) setSystemPrompt(e.target.value); }}
+                      onChange={e => {
+                        const preset = presets.find(p => p.name === e.target.value);
+                        if (preset) {
+                          const defaultSelections: Record<string, number> = {};
+                          for (const variable of preset.variables) {
+                            defaultSelections[variable.name] = 0;
+                          }
+                          setActivePreset(preset);
+                          setVariableSelections(defaultSelections);
+                          setSystemPrompt(preset.renderedContent);
+                        }
+                      }}
                       className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 mb-2 disabled:opacity-50"
                       aria-label="Caption preset"
                     >
                       <option value="">— select a preset —</option>
                       {presets.map(p => (
-                        <option key={p.name} value={p.content}>{p.name}</option>
+                        <option key={p.name} value={p.name}>{p.name}</option>
                       ))}
                     </select>
                   )}
+                  {activePreset && activePreset.variables.map(variable => (
+                    <div key={variable.name} className="mb-2">
+                      <label className="block text-xs text-gray-400 mb-1">{variable.name}</label>
+                      <select
+                        disabled={isGenerating}
+                        value={(variableSelections[variable.name] ?? 0).toString()}
+                        onChange={e => {
+                          const newSelections = { ...variableSelections, [variable.name]: parseInt(e.target.value, 10) };
+                          setVariableSelections(newSelections);
+                          setSystemPrompt(applySelections(activePreset, newSelections));
+                        }}
+                        className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 disabled:opacity-50"
+                        aria-label={variable.name}
+                      >
+                        {variable.options.map((opt, idx) => (
+                          <option key={opt.filename} value={idx.toString()}>
+                            {opt.filename.replace(/\.txt$/, '')}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
                   <textarea
                     value={systemPrompt}
                     onChange={e => setSystemPrompt(e.target.value)}
