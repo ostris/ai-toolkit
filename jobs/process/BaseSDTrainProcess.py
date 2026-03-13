@@ -2548,7 +2548,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.oxen_logger and self.oxen_config.enabled:
                 try:
                     print_acc("Finalizing Oxen experiment...")
-                    self.oxen_logger.finalize_experiment(self.save_root)
+                    self.oxen_logger.finalize_experiment(self.save_root, self.step_num)
                     print_acc("Oxen experiment finalized successfully")
                 except Exception as e:
                     print_acc(f"Warning: Failed to finalize Oxen experiment: {e}")
