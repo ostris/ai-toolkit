@@ -65,7 +65,7 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
         <div className="flex min-h-full items-center justify-center p-4 text-center">
           <DialogPanel
             transition
-            className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 w-full max-w-lg data-closed:sm:translate-y-0 data-closed:sm:scale-95"
+            className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 w-full max-w-2xl data-closed:sm:translate-y-0 data-closed:sm:scale-95"
           >
             <div className="bg-gray-800 px-6 pt-5 pb-4">
               <DialogTitle as="h3" className="text-base font-semibold text-gray-100 mb-4 flex items-center gap-2">
@@ -156,8 +156,8 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
                   <textarea
                     value={systemPrompt}
                     onChange={e => setSystemPrompt(e.target.value)}
-                    rows={3}
-                    className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 resize-none"
+                    rows={12}
+                    className="w-full bg-gray-700 text-white text-sm rounded px-3 py-2 resize-y"
                     aria-label="Caption focus"
                   />
                   <p className="mt-1 text-xs text-gray-500">
