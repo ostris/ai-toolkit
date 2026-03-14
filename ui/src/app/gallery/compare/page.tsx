@@ -18,6 +18,7 @@ interface GalleryFolder {
 interface ImagePair {
   left: string;
   right: string;
+  center?: string;
   filename: string;
 }
 
@@ -30,10 +31,12 @@ function GalleryCompareContent() {
   const searchParams = useSearchParams();
   const leftId = searchParams.get('left') || '';
   const rightId = searchParams.get('right') || '';
+  const centerId = searchParams.get('center') || '';
 
   const [pairs, setPairs] = useState<ImagePair[]>([]);
   const [leftLabel, setLeftLabel] = useState('');
   const [rightLabel, setRightLabel] = useState('');
+  const [centerLabel, setCenterLabel] = useState('');
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
 
@@ -53,24 +56,34 @@ function GalleryCompareContent() {
       .then(folders => {
         const leftFolder = folders.find(f => f.id === parseInt(leftId, 10));
         const rightFolder = folders.find(f => f.id === parseInt(rightId, 10));
+        const centerFolder = centerId ? folders.find(f => f.id === parseInt(centerId, 10)) : null;
 
         if (!leftFolder || !rightFolder) {
-          setError('One or both gallery folders not found.');
+          setError('One or more gallery folders not found.');
+          setStatus('error');
+          return;
+        }
+        if (centerId && !centerFolder) {
+          setError('Center gallery folder not found.');
           setStatus('error');
           return;
         }
 
         setLeftLabel(leftFolder.path);
         setRightLabel(rightFolder.path);
+        if (centerFolder) setCenterLabel(centerFolder.path);
 
-        return Promise.all([
+        const fetches = [
           apiClient.get(`/api/gallery/images?folderPath=${encodeURIComponent(leftFolder.path)}`).then(res => res.data.images as { img_path: string }[]),
           apiClient.get(`/api/gallery/images?folderPath=${encodeURIComponent(rightFolder.path)}`).then(res => res.data.images as { img_path: string }[]),
-        ]);
+          ...(centerFolder ? [apiClient.get(`/api/gallery/images?folderPath=${encodeURIComponent(centerFolder.path)}`).then(res => res.data.images as { img_path: string }[])] : []),
+        ];
+
+        return Promise.all(fetches);
       })
       .then(result => {
         if (!result) return;
-        const [leftImages, rightImages] = result;
+        const [leftImages, rightImages, centerImages] = result;
 
         const leftMap = new Map<string, string>();
         leftImages.forEach(img => leftMap.set(getBasename(img.img_path), img.img_path));
@@ -78,12 +91,18 @@ function GalleryCompareContent() {
         const rightMap = new Map<string, string>();
         rightImages.forEach(img => rightMap.set(getBasename(img.img_path), img.img_path));
 
+        const centerMap = new Map<string, string>();
+        if (centerImages) {
+          centerImages.forEach(img => centerMap.set(getBasename(img.img_path), img.img_path));
+        }
+
         const allNames = Array.from(leftMap.keys()).sort();
         const imagePairs: ImagePair[] = allNames
-          .filter(name => rightMap.has(name))
+          .filter(name => rightMap.has(name) && (!centerId || centerMap.has(name)))
           .map(name => ({
             left: leftMap.get(name)!,
             right: rightMap.get(name)!,
+            ...(centerId ? { center: centerMap.get(name)! } : {}),
             filename: name,
           }));
 
@@ -94,7 +113,7 @@ function GalleryCompareContent() {
         setError(err?.response?.data?.error || 'Failed to load images.');
         setStatus('error');
       });
-  }, [leftId, rightId]);
+  }, [leftId, rightId, centerId]);
 
   if (status === 'loading') {
     return (
@@ -120,6 +139,7 @@ function GalleryCompareContent() {
       pairs={pairs}
       leftLabel={leftLabel}
       rightLabel={rightLabel}
+      centerLabel={centerLabel || undefined}
       mode="gallery"
     />
   );

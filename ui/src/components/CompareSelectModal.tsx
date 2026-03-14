@@ -9,7 +9,7 @@ interface CompareSelectModalProps {
   onClose: () => void;
   mode: 'dataset' | 'gallery';
   items: { label: string; value: string }[];
-  onCompare: (leftValue: string, rightValue: string) => void;
+  onCompare: (leftValue: string, rightValue: string, centerValue?: string) => void;
 }
 
 function getBasename(filePath: string): string {
@@ -26,6 +26,7 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
 }) => {
   const [left, setLeft] = useState('');
   const [right, setRight] = useState('');
+  const [center, setCenter] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +34,7 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
     if (isOpen) {
       setError(null);
       setIsValidating(false);
+      setCenter('');
       if (items.length >= 2) {
         setLeft(items[0].value);
         setRight(items[1].value);
@@ -61,8 +63,10 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
       setError('Please select both a left and right item.');
       return;
     }
-    if (left === right) {
-      setError('Please select two different items to compare.');
+    const selected = [left, right, ...(center ? [center] : [])];
+    const uniqueSelected = new Set(selected);
+    if (uniqueSelected.size !== selected.length) {
+      setError('Please select different items to compare.');
       return;
     }
 
@@ -70,49 +74,38 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
     setError(null);
 
     try {
-      const [leftImages, rightImages] = await Promise.all([
-        fetchImages(left),
-        fetchImages(right),
-      ]);
+      const fetchPromises = selected.map(v => fetchImages(v));
+      const allImages = await Promise.all(fetchPromises);
 
-      if (leftImages.length === 0 && rightImages.length === 0) {
-        setError('Both selections are empty. Nothing to compare.');
+      if (allImages.every(imgs => imgs.length === 0)) {
+        setError('All selections are empty. Nothing to compare.');
         setIsValidating(false);
         return;
       }
 
-      const leftNameSet = new Set(leftImages.map(p => getBasename(p)));
-      const rightNameSet = new Set(rightImages.map(p => getBasename(p)));
+      const nameSets = allImages.map(imgs => new Set(imgs.map(p => getBasename(p))));
 
-      // Find the overlap — files present in both datasets
-      const commonNames = [...leftNameSet].filter(n => rightNameSet.has(n));
+      // Find the overlap — files present in all selected datasets
+      const commonNames = [...nameSets[0]].filter(n => nameSets.every(s => s.has(n)));
 
       if (commonNames.length === 0) {
-        setError('No matching filenames found between the two selections.');
+        setError('No matching filenames found across all selections.');
         setIsValidating(false);
         return;
       }
 
-      // Allow if one is a subset of the other (or they're identical)
-      const leftIsSubset = [...leftNameSet].every(n => rightNameSet.has(n));
-      const rightIsSubset = [...rightNameSet].every(n => leftNameSet.has(n));
+      // Allow if one set is a superset of all others (or they're identical)
+      const hasSuperset = nameSets.some(superSet =>
+        nameSets.every(otherSet => [...otherSet].every(n => superSet.has(n)))
+      );
 
-      if (!leftIsSubset && !rightIsSubset) {
-        const onlyInLeft = [...leftNameSet].filter(n => !rightNameSet.has(n));
-        const onlyInRight = [...rightNameSet].filter(n => !leftNameSet.has(n));
-        let detail = 'Neither selection is a subset of the other. One must contain all files of the other.';
-        if (onlyInLeft.length > 0) {
-          detail += `\nOnly in left: ${onlyInLeft.slice(0, 3).join(', ')}${onlyInLeft.length > 3 ? '...' : ''}`;
-        }
-        if (onlyInRight.length > 0) {
-          detail += `\nOnly in right: ${onlyInRight.slice(0, 3).join(', ')}${onlyInRight.length > 3 ? '...' : ''}`;
-        }
-        setError(detail);
+      if (!hasSuperset) {
+        setError('One selection must contain all files of the others. No single selection is a superset of the rest.');
         setIsValidating(false);
         return;
       }
 
-      onCompare(left, right);
+      onCompare(left, right, center || undefined);
       onClose();
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to validate selections.');
@@ -161,6 +154,26 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
               </select>
             </div>
 
+            {items.length >= 3 && (
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Center {itemLabel} <span className="text-gray-500 font-normal">(optional)</span>
+                </label>
+                <select
+                  className="w-full rounded-md bg-gray-700 border border-gray-600 text-gray-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={center}
+                  onChange={e => { setCenter(e.target.value); setError(null); }}
+                >
+                  <option value="">— None —</option>
+                  {items.map(item => (
+                    <option key={item.value} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">
                 Right {itemLabel}
@@ -196,7 +209,7 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
               <button
                 type="button"
                 className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none disabled:opacity-50"
-                disabled={isValidating || !left || !right || left === right}
+                disabled={isValidating || !left || !right || left === right || (!!center && (center === left || center === right))}
                 onClick={handleCompare}
               >
                 {isValidating ? 'Validating...' : 'Compare'}

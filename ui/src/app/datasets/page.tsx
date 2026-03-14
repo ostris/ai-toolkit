@@ -479,8 +479,10 @@ export default function Datasets() {
         onClose={() => setIsCompareModalOpen(false)}
         mode="dataset"
         items={datasets.map(d => ({ label: d, value: d }))}
-        onCompare={(left, right) => {
-          router.push(`/datasets/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`);
+        onCompare={(left, right, center) => {
+          let url = `/datasets/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`;
+          if (center) url += `&center=${encodeURIComponent(center)}`;
+          router.push(url);
         }}
       />
     </>
