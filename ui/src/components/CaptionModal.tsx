@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaComment } from 'react-icons/fa';
 import { apiClient } from '@/utils/api';
-import { type CaptionPreset, applySelections } from '@/utils/captionPresets';
+import { type CaptionPreset, applySelections, getActiveVariables } from '@/utils/captionPresets';
 
 interface CaptionModalProps {
   imageUrl: string;
@@ -169,7 +169,7 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
                       ))}
                     </select>
                   )}
-                  {activePreset && activePreset.variables.map(variable => (
+                  {activePreset && getActiveVariables(activePreset.variables, variableSelections).map(variable => (
                     <div key={variable.name} className="mb-2">
                       <label className="block text-xs text-gray-400 mb-1">{variable.name}</label>
                       <select
