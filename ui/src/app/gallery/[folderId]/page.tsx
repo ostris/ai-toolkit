@@ -160,37 +160,39 @@ function GalleryImageCard({ imageUrl, captionRefreshKey, onEnlarge }: GalleryCar
           )}
         </div>
       </div>
-      <div
-        className={`w-full p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px] border-2 ${
-          isCaptionCurrent ? 'border-transparent' : 'border-blue-500'
-        }`}
-      >
-        {inViewport && isCaptionLoaded ? (
-          <form
-            onSubmit={e => {
-              e.preventDefault();
-              saveCaption();
-            }}
-            onBlur={saveCaption}
-          >
-            <textarea
-              className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
-              value={caption}
-              rows={3}
-              onChange={e => setCaption(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  saveCaption();
-                }
+      <div className="relative w-full" style={{ height: '75px' }}>
+        <div
+          className={`absolute inset-x-0 top-0 p-2 bg-gray-800 text-white text-sm rounded-b-lg h-[75px] hover:h-[150px] transition-[height] duration-300 ease-in-out z-20 overflow-hidden border-2 ${
+            isCaptionCurrent ? 'border-transparent' : 'border-blue-500'
+          }`}
+        >
+          {inViewport && isCaptionLoaded ? (
+            <form
+              className="h-full"
+              onSubmit={e => {
+                e.preventDefault();
+                saveCaption();
               }}
-            />
-          </form>
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-400">
-            {isCaptionLoaded ? 'Scroll into view to edit' : 'Loading caption...'}
-          </div>
-        )}
+              onBlur={saveCaption}
+            >
+              <textarea
+                className="w-full h-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
+                value={caption}
+                onChange={e => setCaption(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    saveCaption();
+                  }
+                }}
+              />
+            </form>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-gray-400">
+              {isCaptionLoaded ? 'Scroll into view to edit' : 'Loading caption...'}
+            </div>
+          )}
+        </div>
       </div>
       <GalleryCopyModal
         isOpen={isCopyModalOpen}
