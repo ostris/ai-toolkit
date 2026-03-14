@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
-import { FaRegTrashAlt, FaInfoCircle, FaColumns } from 'react-icons/fa';
+import { FaRegTrashAlt, FaInfoCircle, FaColumns, FaClone } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -239,14 +239,24 @@ export default function Datasets() {
     {
       title: 'Actions',
       key: 'actions',
-      className: 'w-20 text-right',
+      className: 'w-28 text-right',
       render: row => (
-        <button
-          className="text-gray-200 hover:bg-red-600 p-2 rounded-full transition-colors"
-          onClick={() => handleDeleteDataset(row.name)}
-        >
-          <FaRegTrashAlt />
-        </button>
+        <div className="flex justify-end gap-1">
+          <button
+            className="text-gray-200 hover:bg-slate-600 p-2 rounded-full transition-colors"
+            onClick={() => handleCloneDataset(row.name)}
+            title="Clone dataset"
+          >
+            <FaClone />
+          </button>
+          <button
+            className="text-gray-200 hover:bg-red-600 p-2 rounded-full transition-colors"
+            onClick={() => handleDeleteDataset(row.name)}
+            title="Delete dataset"
+          >
+            <FaRegTrashAlt />
+          </button>
+        </div>
       ),
     },
   ];
@@ -281,6 +291,32 @@ export default function Datasets() {
           .catch(error => {
             console.error('Error deleting dataset:', error);
           });
+      },
+    });
+  };
+
+  const handleCloneDataset = (datasetName: string) => {
+    openConfirm({
+      title: 'Clone Dataset',
+      message: `Enter a name for the cloned copy of "${datasetName}":`,
+      type: 'info',
+      confirmText: 'Clone',
+      inputTitle: 'New dataset name',
+      onConfirm: async (name?: string) => {
+        if (!name) return;
+        try {
+          await apiClient.post('/api/datasets/clone', { source: datasetName, name });
+          refreshDatasets();
+        } catch (error: any) {
+          console.error('Error cloning dataset:', error);
+          openConfirm({
+            title: 'Clone Failed',
+            message: error?.response?.data?.error || 'Failed to clone dataset.',
+            type: 'danger',
+            confirmText: 'OK',
+            onConfirm: () => {},
+          });
+        }
       },
     });
   };
