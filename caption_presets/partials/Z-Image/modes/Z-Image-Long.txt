@@ -6,6 +6,7 @@ Produce a dense, comprehensive, objective description that maps the image conten
 Requirements:
 - Cover the full image, not just the main subject.
 - Include subjects, objects, clothing, pose, actions, expressions, environment, background, lighting, composition, camera angle, notable materials/textures, and any spatial relationships that are clearly visible.
+${Enhancement=enhancements/}
 - Include location/context details if they are visually supported or reliably grounded by metadata.
 - Include all clearly visible text and watermarks.
 - Preserve OCR text in its original language and script exactly as seen.
