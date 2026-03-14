@@ -2,7 +2,8 @@
 
 import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
 import { LuImageOff, LuLoader, LuBan, LuFolderOpen } from 'react-icons/lu';
-import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt, FaCodeBranch } from 'react-icons/fa';
+import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt, FaCodeBranch, FaEraser } from 'react-icons/fa';
+import { openConfirm } from '@/components/ConfirmModal';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
@@ -535,6 +536,29 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   Caption Images
                 </Button>
               )}
+              <Button
+                className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md flex items-center gap-2"
+                onClick={() => {
+                  openConfirm({
+                    title: 'Clear Captions',
+                    message: `Are you sure you want to delete all caption files in "${datasetName}"? This action cannot be undone.`,
+                    type: 'warning',
+                    confirmText: 'Clear All',
+                    onConfirm: () => {
+                      apiClient
+                        .post('/api/datasets/clearCaptions', { datasetName })
+                        .then(() => {
+                          setCaptionRefreshKey(k => k + 1);
+                          refreshImageList(datasetName);
+                        })
+                        .catch(error => console.error('Error clearing captions:', error));
+                    },
+                  });
+                }}
+              >
+                <FaEraser />
+                Clear Captions
+              </Button>
               <Button
                 className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
                 onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
