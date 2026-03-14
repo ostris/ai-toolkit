@@ -29,9 +29,9 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER } = body;
+    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, COMFYUI_URL, COMFYUI_INPUT_DIR, COMFYUI_OUTPUT_DIR } = body;
 
-    // Upsert both settings
+    // Upsert all settings
     await Promise.all([
       prisma.settings.upsert({
         where: { key: 'HF_TOKEN' },
@@ -47,6 +47,21 @@ export async function POST(request: Request) {
         where: { key: 'DATASETS_FOLDER' },
         update: { value: DATASETS_FOLDER },
         create: { key: 'DATASETS_FOLDER', value: DATASETS_FOLDER },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'COMFYUI_URL' },
+        update: { value: COMFYUI_URL || '' },
+        create: { key: 'COMFYUI_URL', value: COMFYUI_URL || '' },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'COMFYUI_INPUT_DIR' },
+        update: { value: COMFYUI_INPUT_DIR || '' },
+        create: { key: 'COMFYUI_INPUT_DIR', value: COMFYUI_INPUT_DIR || '' },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'COMFYUI_OUTPUT_DIR' },
+        update: { value: COMFYUI_OUTPUT_DIR || '' },
+        create: { key: 'COMFYUI_OUTPUT_DIR', value: COMFYUI_OUTPUT_DIR || '' },
       }),
     ]);
 

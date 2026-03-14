@@ -67,6 +67,57 @@ export const getHFToken = async () => {
   return token;
 };
 
+export const getComfyUIUrl = async () => {
+  const key = 'COMFYUI_URL';
+  let val = myCache.get(key) as string;
+  if (val !== undefined) {
+    return val;
+  }
+  let row = await prisma.settings.findFirst({
+    where: { key },
+  });
+  val = '';
+  if (row?.value && row.value !== '') {
+    val = row.value;
+  }
+  myCache.set(key, val);
+  return val;
+};
+
+export const getComfyUIInputDir = async () => {
+  const key = 'COMFYUI_INPUT_DIR';
+  let val = myCache.get(key) as string;
+  if (val !== undefined) {
+    return val;
+  }
+  let row = await prisma.settings.findFirst({
+    where: { key },
+  });
+  val = '';
+  if (row?.value && row.value !== '') {
+    val = row.value;
+  }
+  myCache.set(key, val);
+  return val;
+};
+
+export const getComfyUIOutputDir = async () => {
+  const key = 'COMFYUI_OUTPUT_DIR';
+  let val = myCache.get(key) as string;
+  if (val !== undefined) {
+    return val;
+  }
+  let row = await prisma.settings.findFirst({
+    where: { key },
+  });
+  val = '';
+  if (row?.value && row.value !== '') {
+    val = row.value;
+  }
+  myCache.set(key, val);
+  return val;
+};
+
 export const getDataRoot = async () => {
   const key = 'DATA_ROOT';
   let dataRoot = myCache.get(key) as string;

@@ -7,6 +7,9 @@ export interface Settings {
   HF_TOKEN: string;
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
+  COMFYUI_URL: string;
+  COMFYUI_INPUT_DIR: string;
+  COMFYUI_OUTPUT_DIR: string;
 }
 
 export default function useSettings() {
@@ -14,6 +17,9 @@ export default function useSettings() {
     HF_TOKEN: '',
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
+    COMFYUI_URL: '',
+    COMFYUI_INPUT_DIR: '',
+    COMFYUI_OUTPUT_DIR: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
@@ -26,6 +32,9 @@ export default function useSettings() {
           HF_TOKEN: data.HF_TOKEN || '',
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
+          COMFYUI_URL: data.COMFYUI_URL || '',
+          COMFYUI_INPUT_DIR: data.COMFYUI_INPUT_DIR || '',
+          COMFYUI_OUTPUT_DIR: data.COMFYUI_OUTPUT_DIR || '',
         });
         setIsLoaded(true);
       })

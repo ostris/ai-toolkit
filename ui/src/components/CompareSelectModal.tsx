@@ -81,29 +81,26 @@ const CompareSelectModal: React.FC<CompareSelectModalProps> = ({
         return;
       }
 
-      if (leftImages.length !== rightImages.length) {
-        setError(
-          `File count mismatch: left has ${leftImages.length} file(s), right has ${rightImages.length} file(s). Both must contain the same number of files.`
-        );
+      const leftNameSet = new Set(leftImages.map(p => getBasename(p)));
+      const rightNameSet = new Set(rightImages.map(p => getBasename(p)));
+
+      // Find the overlap — files present in both datasets
+      const commonNames = [...leftNameSet].filter(n => rightNameSet.has(n));
+
+      if (commonNames.length === 0) {
+        setError('No matching filenames found between the two selections.');
         setIsValidating(false);
         return;
       }
 
-      const leftNames = leftImages.map(p => getBasename(p)).sort();
-      const rightNames = rightImages.map(p => getBasename(p)).sort();
+      // Allow if one is a subset of the other (or they're identical)
+      const leftIsSubset = [...leftNameSet].every(n => rightNameSet.has(n));
+      const rightIsSubset = [...rightNameSet].every(n => leftNameSet.has(n));
 
-      const mismatches: string[] = [];
-      for (let i = 0; i < leftNames.length; i++) {
-        if (leftNames[i] !== rightNames[i]) {
-          mismatches.push(leftNames[i]);
-          if (mismatches.length >= 5) break;
-        }
-      }
-
-      if (mismatches.length > 0) {
-        const onlyInLeft = leftNames.filter(n => !rightNames.includes(n));
-        const onlyInRight = rightNames.filter(n => !leftNames.includes(n));
-        let detail = 'Filenames do not match between the two selections.';
+      if (!leftIsSubset && !rightIsSubset) {
+        const onlyInLeft = [...leftNameSet].filter(n => !rightNameSet.has(n));
+        const onlyInRight = [...rightNameSet].filter(n => !leftNameSet.has(n));
+        let detail = 'Neither selection is a subset of the other. One must contain all files of the other.';
         if (onlyInLeft.length > 0) {
           detail += `\nOnly in left: ${onlyInLeft.slice(0, 3).join(', ')}${onlyInLeft.length > 3 ? '...' : ''}`;
         }

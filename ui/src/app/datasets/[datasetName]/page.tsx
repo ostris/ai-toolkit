@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
-import { LuImageOff, LuLoader, LuBan, LuFolderOpen } from 'react-icons/lu';
+import { LuImageOff, LuLoader, LuBan, LuFolderOpen, LuUpload } from 'react-icons/lu';
 import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt, FaCodeBranch, FaEraser } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import DatasetImageCard from '@/components/DatasetImageCard';
@@ -564,6 +564,34 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
               >
                 Add Images
+              </Button>
+              <Button
+                className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md flex items-center gap-2"
+                onClick={() => {
+                  openConfirm({
+                    title: 'Export to ComfyUI',
+                    message: `Export dataset "${datasetName}" to the ComfyUI input directory?`,
+                    type: 'info',
+                    confirmText: 'Export',
+                    onConfirm: () => {
+                      apiClient
+                        .post('/api/comfyui/export', { datasetName })
+                        .catch(error => {
+                          console.error('Error exporting to ComfyUI:', error);
+                          openConfirm({
+                            title: 'Export Failed',
+                            message: error?.response?.data?.error || 'Failed to export dataset to ComfyUI.',
+                            type: 'danger',
+                            confirmText: 'OK',
+                            onConfirm: () => {},
+                          });
+                        });
+                    },
+                  });
+                }}
+              >
+                <LuUpload />
+                Export to ComfyUI
               </Button>
               <Button
                 className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md flex items-center gap-2"

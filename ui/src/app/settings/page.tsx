@@ -110,6 +110,65 @@ export default function Settings() {
                 </div>
               </div>
             </div>
+
+            <div>
+              <h2 className="text-md font-semibold mb-4 mt-2 text-gray-300">ComfyUI</h2>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="COMFYUI_URL" className="block text-sm font-medium mb-2">
+                    ComfyUI URL
+                    <div className="text-gray-500 text-sm ml-1">
+                      The URL of your running ComfyUI instance.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="COMFYUI_URL"
+                    name="COMFYUI_URL"
+                    value={settings.COMFYUI_URL}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="http://127.0.0.1:8188"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="COMFYUI_INPUT_DIR" className="block text-sm font-medium mb-2">
+                    ComfyUI Input Directory
+                    <div className="text-gray-500 text-sm ml-1">
+                      Absolute path to ComfyUI&apos;s input directory. Used when exporting datasets to ComfyUI.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="COMFYUI_INPUT_DIR"
+                    name="COMFYUI_INPUT_DIR"
+                    value={settings.COMFYUI_INPUT_DIR}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="/path/to/ComfyUI/input"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="COMFYUI_OUTPUT_DIR" className="block text-sm font-medium mb-2">
+                    ComfyUI Output Directory
+                    <div className="text-gray-500 text-sm ml-1">
+                      Absolute path to ComfyUI&apos;s output directory. Used when importing datasets from ComfyUI.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="COMFYUI_OUTPUT_DIR"
+                    name="COMFYUI_OUTPUT_DIR"
+                    value={settings.COMFYUI_OUTPUT_DIR}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="/path/to/ComfyUI/output"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <button

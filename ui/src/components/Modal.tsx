@@ -60,7 +60,7 @@ export const Modal: React.FC<ModalProps> = ({
     <Fragment>
       {/* Modal backdrop */}
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900 bg-opacity-75 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900 bg-opacity-50 transition-opacity"
         onClick={handleOverlayClick}
         aria-modal="true"
         role="dialog"
