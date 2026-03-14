@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
-import { FaRegTrashAlt, FaInfoCircle } from 'react-icons/fa';
+import { FaRegTrashAlt, FaInfoCircle, FaColumns } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -14,6 +14,7 @@ import { apiClient } from '@/utils/api';
 import { useRouter } from 'next/navigation';
 import { Tooltip } from '@/components/Tooltip';
 import { formatDuration } from '@/utils/basic';
+import CompareSelectModal from '@/components/CompareSelectModal';
 
 interface ImageStats {
   totalCount: number;
@@ -59,6 +60,7 @@ export default function Datasets() {
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [imageStats, setImageStats] = useState<{ [datasetName: string]: ImageStats }>({});
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
   const requestedDatasets = useRef<Set<string>>(new Set());
@@ -330,7 +332,16 @@ export default function Datasets() {
           <h1 className="text-2xl font-semibold text-gray-100">Datasets</h1>
         </div>
         <div className="flex-1"></div>
-        <div>
+        <div className="flex gap-2">
+          {datasets.length >= 2 && (
+            <Button
+              className="text-gray-200 bg-slate-600 px-4 py-2 rounded-md hover:bg-slate-500 transition-colors flex items-center gap-2"
+              onClick={() => setIsCompareModalOpen(true)}
+            >
+              <FaColumns />
+              Compare Datasets
+            </Button>
+          )}
           <Button
             className="text-gray-200 bg-slate-600 px-4 py-2 rounded-md hover:bg-slate-500 transition-colors"
             onClick={() => openNewDatasetModal()}
@@ -382,6 +393,16 @@ export default function Datasets() {
           </form>
         </div>
       </Modal>
+
+      <CompareSelectModal
+        isOpen={isCompareModalOpen}
+        onClose={() => setIsCompareModalOpen(false)}
+        mode="dataset"
+        items={datasets.map(d => ({ label: d, value: d }))}
+        onCompare={(left, right) => {
+          router.push(`/datasets/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`);
+        }}
+      />
     </>
   );
 }
