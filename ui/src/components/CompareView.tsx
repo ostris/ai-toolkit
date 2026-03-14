@@ -10,6 +10,7 @@ import MoveImageModal from './MoveImageModal';
 interface ImagePair {
   left: string;
   right: string;
+  center?: string;
   filename: string;
 }
 
@@ -17,11 +18,14 @@ interface CompareViewProps {
   pairs: ImagePair[];
   leftLabel: string;
   rightLabel: string;
+  centerLabel?: string;
   mode: 'dataset' | 'gallery';
   /** For dataset mode, the left dataset name (used by MoveImageModal) */
   leftDataset?: string;
   /** For dataset mode, the right dataset name (used by MoveImageModal) */
   rightDataset?: string;
+  /** For dataset mode, the center dataset name (used by MoveImageModal) */
+  centerDataset?: string;
 }
 
 function CompareImagePanel({
@@ -172,10 +176,13 @@ export default function CompareView({
   pairs,
   leftLabel,
   rightLabel,
+  centerLabel,
   mode,
   leftDataset,
   rightDataset,
+  centerDataset,
 }: CompareViewProps) {
+  const hasCenter = !!centerLabel;
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const goToPrev = useCallback(() => {
@@ -224,6 +231,13 @@ export default function CompareView({
             {leftLabel}
           </span>
         </div>
+        {hasCenter && (
+          <div className="flex-1 text-center">
+            <span className="text-sm font-medium text-gray-300 bg-gray-800 px-3 py-1 rounded-full">
+              {centerLabel}
+            </span>
+          </div>
+        )}
         <div className="flex-1 text-center">
           <span className="text-sm font-medium text-gray-300 bg-gray-800 px-3 py-1 rounded-full">
             {rightLabel}
@@ -238,6 +252,13 @@ export default function CompareView({
           mode={mode}
           dataset={leftDataset}
         />
+        {hasCenter && pair.center && (
+          <CompareImagePanel
+            imgPath={pair.center}
+            mode={mode}
+            dataset={centerDataset}
+          />
+        )}
         <CompareImagePanel
           imgPath={pair.right}
           mode={mode}

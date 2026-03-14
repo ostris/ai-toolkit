@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
-import { FaRegTrashAlt, FaInfoCircle, FaColumns, FaClone } from 'react-icons/fa';
+import { FaRegTrashAlt, FaInfoCircle, FaColumns, FaClone, FaFileExport } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import { Tooltip } from '@/components/Tooltip';
 import { formatDuration } from '@/utils/basic';
 import CompareSelectModal from '@/components/CompareSelectModal';
+import ComfyUIImportModal from '@/components/ComfyUIImportModal';
 
 interface ImageStats {
   totalCount: number;
@@ -61,6 +62,7 @@ export default function Datasets() {
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+  const [isComfyUIImportOpen, setIsComfyUIImportOpen] = useState(false);
   const [imageStats, setImageStats] = useState<{ [datasetName: string]: ImageStats }>({});
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
   const requestedDatasets = useRef<Set<string>>(new Set());
@@ -239,9 +241,16 @@ export default function Datasets() {
     {
       title: 'Actions',
       key: 'actions',
-      className: 'w-28 text-right',
+      className: 'w-40 text-right',
       render: row => (
         <div className="flex justify-end gap-1">
+          <button
+            className="text-gray-200 hover:bg-slate-600 p-2 rounded-full transition-colors"
+            onClick={() => handleExportToComfyUI(row.name)}
+            title="Export to ComfyUI"
+          >
+            <FaFileExport />
+          </button>
           <button
             className="text-gray-200 hover:bg-slate-600 p-2 rounded-full transition-colors"
             onClick={() => handleCloneDataset(row.name)}
@@ -321,6 +330,29 @@ export default function Datasets() {
     });
   };
 
+  const handleExportToComfyUI = (datasetName: string) => {
+    openConfirm({
+      title: 'Export to ComfyUI',
+      message: `Export dataset "${datasetName}" to the ComfyUI input directory?`,
+      type: 'info',
+      confirmText: 'Export',
+      onConfirm: async () => {
+        try {
+          await apiClient.post('/api/comfyui/export', { datasetName });
+        } catch (error: any) {
+          console.error('Error exporting to ComfyUI:', error);
+          openConfirm({
+            title: 'Export Failed',
+            message: error?.response?.data?.error || 'Failed to export dataset to ComfyUI.',
+            type: 'danger',
+            confirmText: 'OK',
+            onConfirm: () => {},
+          });
+        }
+      },
+    });
+  };
+
   const handleCreateDataset = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -380,6 +412,12 @@ export default function Datasets() {
           )}
           <Button
             className="text-gray-200 bg-slate-600 px-4 py-2 rounded-md hover:bg-slate-500 transition-colors"
+            onClick={() => setIsComfyUIImportOpen(true)}
+          >
+            Import from ComfyUI
+          </Button>
+          <Button
+            className="text-gray-200 bg-slate-600 px-4 py-2 rounded-md hover:bg-slate-500 transition-colors"
             onClick={() => openNewDatasetModal()}
           >
             New Dataset
@@ -430,13 +468,21 @@ export default function Datasets() {
         </div>
       </Modal>
 
+      <ComfyUIImportModal
+        isOpen={isComfyUIImportOpen}
+        onClose={() => setIsComfyUIImportOpen(false)}
+        onImportComplete={() => refreshDatasets()}
+      />
+
       <CompareSelectModal
         isOpen={isCompareModalOpen}
         onClose={() => setIsCompareModalOpen(false)}
         mode="dataset"
         items={datasets.map(d => ({ label: d, value: d }))}
-        onCompare={(left, right) => {
-          router.push(`/datasets/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`);
+        onCompare={(left, right, center) => {
+          let url = `/datasets/compare?left=${encodeURIComponent(left)}&right=${encodeURIComponent(right)}`;
+          if (center) url += `&center=${encodeURIComponent(center)}`;
+          router.push(url);
         }}
       />
     </>

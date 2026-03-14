@@ -381,11 +381,14 @@ export default function GalleryPage() {
         onClose={() => setIsCompareModalOpen(false)}
         mode="gallery"
         items={folders.map(f => ({ label: f.path, value: f.path }))}
-        onCompare={(left, right) => {
+        onCompare={(left, right, center) => {
           const leftFolder = folders.find(f => f.path === left);
           const rightFolder = folders.find(f => f.path === right);
+          const centerFolder = center ? folders.find(f => f.path === center) : null;
           if (leftFolder && rightFolder) {
-            router.push(`/gallery/compare?left=${leftFolder.id}&right=${rightFolder.id}`);
+            let url = `/gallery/compare?left=${leftFolder.id}&right=${rightFolder.id}`;
+            if (centerFolder) url += `&center=${centerFolder.id}`;
+            router.push(url);
           }
         }}
       />

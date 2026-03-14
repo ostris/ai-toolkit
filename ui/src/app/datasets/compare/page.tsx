@@ -12,6 +12,7 @@ import { apiClient } from '@/utils/api';
 interface ImagePair {
   left: string;
   right: string;
+  center?: string;
   filename: string;
 }
 
@@ -24,6 +25,7 @@ function DatasetCompareContent() {
   const searchParams = useSearchParams();
   const left = searchParams.get('left') || '';
   const right = searchParams.get('right') || '';
+  const center = searchParams.get('center') || '';
 
   const [pairs, setPairs] = useState<ImagePair[]>([]);
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
@@ -38,11 +40,16 @@ function DatasetCompareContent() {
 
     setStatus('loading');
 
-    Promise.all([
+    const fetches = [
       apiClient.post('/api/datasets/listImages', { datasetName: left }).then(res => res.data.images as { img_path: string }[]),
       apiClient.post('/api/datasets/listImages', { datasetName: right }).then(res => res.data.images as { img_path: string }[]),
-    ])
-      .then(([leftImages, rightImages]) => {
+      ...(center ? [apiClient.post('/api/datasets/listImages', { datasetName: center }).then(res => res.data.images as { img_path: string }[])] : []),
+    ];
+
+    Promise.all(fetches)
+      .then(results => {
+        const [leftImages, rightImages, centerImages] = results;
+
         // Build a map of basename -> full path for each side
         const leftMap = new Map<string, string>();
         leftImages.forEach(img => leftMap.set(getBasename(img.img_path), img.img_path));
@@ -50,13 +57,19 @@ function DatasetCompareContent() {
         const rightMap = new Map<string, string>();
         rightImages.forEach(img => rightMap.set(getBasename(img.img_path), img.img_path));
 
-        // Pair by matching basenames, sorted
+        const centerMap = new Map<string, string>();
+        if (centerImages) {
+          centerImages.forEach(img => centerMap.set(getBasename(img.img_path), img.img_path));
+        }
+
+        // Pair by matching basenames across all datasets, sorted
         const allNames = Array.from(leftMap.keys()).sort();
         const imagePairs: ImagePair[] = allNames
-          .filter(name => rightMap.has(name))
+          .filter(name => rightMap.has(name) && (!center || centerMap.has(name)))
           .map(name => ({
             left: leftMap.get(name)!,
             right: rightMap.get(name)!,
+            ...(center ? { center: centerMap.get(name)! } : {}),
             filename: name,
           }));
 
@@ -67,7 +80,7 @@ function DatasetCompareContent() {
         setError(err?.response?.data?.error || 'Failed to load images.');
         setStatus('error');
       });
-  }, [left, right]);
+  }, [left, right, center]);
 
   if (status === 'loading') {
     return (
@@ -93,9 +106,11 @@ function DatasetCompareContent() {
       pairs={pairs}
       leftLabel={left}
       rightLabel={right}
+      centerLabel={center || undefined}
       mode="dataset"
       leftDataset={left}
       rightDataset={right}
+      centerDataset={center || undefined}
     />
   );
 }
