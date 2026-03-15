@@ -2,7 +2,7 @@
 
 import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
 import { LuImageOff, LuLoader, LuBan, LuFolderOpen, LuUpload } from 'react-icons/lu';
-import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt, FaCodeBranch, FaEraser } from 'react-icons/fa';
+import { FaChevronLeft, FaTrashAlt, FaTimes, FaObjectGroup, FaArrowsAlt, FaCodeBranch, FaEraser, FaStickyNote } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
@@ -15,6 +15,7 @@ import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { isAudio, isVideo, formatDuration } from '@/utils/basic';
 import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
+import DatasetNotesModal from '@/components/DatasetNotesModal';
 
 interface ImageMetadataEntry {
   img_path: string;
@@ -55,6 +56,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [isBulkCaptionModalOpen, setIsBulkCaptionModalOpen] = useState(false);
   const [isBulkMoveModalOpen, setIsBulkMoveModalOpen] = useState(false);
   const [isBulkSplitModalOpen, setIsBulkSplitModalOpen] = useState(false);
+  const [isNotesModalOpen, setIsNotesModalOpen] = useState(false);
   const captioningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevCaptionedCountRef = useRef<number>(0);
   const [captionRefreshKey, setCaptionRefreshKey] = useState<number>(0);
@@ -601,6 +603,13 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 <LuFolderOpen />
                 Open Folder
               </Button>
+              <Button
+                className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md flex items-center gap-2"
+                onClick={() => setIsNotesModalOpen(true)}
+              >
+                <FaStickyNote />
+                Notes
+              </Button>
             </div>
           </>
         )}
@@ -728,6 +737,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       <FullscreenDropOverlay
         datasetName={datasetName}
         onComplete={() => refreshImageList(datasetName)}
+      />
+      <DatasetNotesModal
+        isOpen={isNotesModalOpen}
+        onClose={() => setIsNotesModalOpen(false)}
+        datasetName={datasetName}
       />
     </>
   );
