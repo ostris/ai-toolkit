@@ -75,7 +75,7 @@ export const Modal: React.FC<ModalProps> = ({
           {(title || showCloseButton) && (
             <div className="flex items-center justify-between rounded-t-lg border-b border-gray-700 bg-gray-850 px-6 py-4">
               {title && (
-                <h3 id="modal-title" className="text-xl font-semibold text-gray-100">
+                <h3 id="modal-title" className="text-xl font-semibold text-gray-100 min-w-0 truncate">
                   {title}
                 </h3>
               )}

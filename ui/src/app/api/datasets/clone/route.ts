@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { getDatasetsRoot } from '@/server/settings';
+import { getDatasetsRoot, getDataRoot } from '@/server/settings';
 
 function copyDirRecursive(src: string, dest: string) {
   fs.mkdirSync(dest, { recursive: true });
@@ -47,6 +47,21 @@ export async function POST(request: Request) {
     }
 
     copyDirRecursive(sourcePath, destPath);
+
+    // Also copy associated notes file if it exists
+    try {
+      const dataRoot = await getDataRoot();
+      const sourceNotesPath = path.join(dataRoot, 'notes', `${source}.txt`);
+      if (fs.existsSync(sourceNotesPath)) {
+        const notesDir = path.join(dataRoot, 'notes');
+        if (!fs.existsSync(notesDir)) {
+          fs.mkdirSync(notesDir, { recursive: true });
+        }
+        fs.copyFileSync(sourceNotesPath, path.join(notesDir, `${cleanName}.txt`));
+      }
+    } catch (notesError) {
+      console.error('Error copying notes file:', notesError);
+    }
 
     return NextResponse.json({ success: true, name: cleanName });
   } catch (error) {

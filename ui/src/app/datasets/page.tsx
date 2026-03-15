@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
-import { FaRegTrashAlt, FaInfoCircle, FaColumns, FaClone, FaFileExport } from 'react-icons/fa';
+import { FaRegTrashAlt, FaInfoCircle, FaColumns, FaClone, FaFileExport, FaStickyNote } from 'react-icons/fa';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -16,6 +16,7 @@ import { Tooltip } from '@/components/Tooltip';
 import { formatDuration } from '@/utils/basic';
 import CompareSelectModal from '@/components/CompareSelectModal';
 import ComfyUIImportModal from '@/components/ComfyUIImportModal';
+import DatasetNotesModal from '@/components/DatasetNotesModal';
 
 interface ImageStats {
   totalCount: number;
@@ -63,6 +64,8 @@ export default function Datasets() {
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
   const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
   const [isComfyUIImportOpen, setIsComfyUIImportOpen] = useState(false);
+  const [notesDataset, setNotesDataset] = useState<string | null>(null);
+  const [datasetsWithNotes, setDatasetsWithNotes] = useState<Set<string>>(new Set());
   const [imageStats, setImageStats] = useState<{ [datasetName: string]: ImageStats }>({});
   const [statsLoading, setStatsLoading] = useState<{ [datasetName: string]: boolean }>({});
   const requestedDatasets = useRef<Set<string>>(new Set());
@@ -135,6 +138,17 @@ export default function Datasets() {
     return () => {
       abortController.abort();
     };
+  }, [datasets]);
+
+  const refreshDatasetsWithNotes = () => {
+    apiClient
+      .get('/api/datasets/notes')
+      .then(res => setDatasetsWithNotes(new Set(res.data.datasetsWithNotes)))
+      .catch(error => console.error('Error fetching datasets with notes:', error));
+  };
+
+  useEffect(() => {
+    refreshDatasetsWithNotes();
   }, [datasets]);
 
   // Transform datasets array into rows with objects
@@ -244,6 +258,13 @@ export default function Datasets() {
       className: 'w-40 text-right',
       render: row => (
         <div className="flex justify-end gap-1">
+          <button
+            className={`${datasetsWithNotes.has(row.name) ? 'text-yellow-400' : 'text-gray-200'} hover:bg-slate-600 p-2 rounded-full transition-colors`}
+            onClick={() => setNotesDataset(row.name)}
+            title="Notes"
+          >
+            <FaStickyNote />
+          </button>
           <button
             className="text-gray-200 hover:bg-slate-600 p-2 rounded-full transition-colors"
             onClick={() => handleExportToComfyUI(row.name)}
@@ -473,6 +494,17 @@ export default function Datasets() {
         onClose={() => setIsComfyUIImportOpen(false)}
         onImportComplete={() => refreshDatasets()}
       />
+
+      {notesDataset && (
+        <DatasetNotesModal
+          isOpen={true}
+          onClose={() => {
+            setNotesDataset(null);
+            refreshDatasetsWithNotes();
+          }}
+          datasetName={notesDataset}
+        />
+      )}
 
       <CompareSelectModal
         isOpen={isCompareModalOpen}
