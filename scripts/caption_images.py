@@ -14,8 +14,16 @@ import json
 import os
 import gc
 
-MODEL_LITE = "prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1"
-MODEL_FULL = "prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it"
+MODEL_LITE = "Qwen/Qwen3-VL-4B-Instruct"
+MODEL_FULL = "Qwen/Qwen3-VL-8B-Instruct"
+
+ALLOWED_MODELS = {
+    MODEL_LITE,
+    MODEL_FULL,
+    "prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1",
+    "prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it",
+}
+
 
 CORE_CAPTION_INSTRUCTION = (
     "You are a captioning tool. "
@@ -137,7 +145,7 @@ def main():
     system_prompt = data.get('system_prompt', '').strip()
     model_id = data.get('model_id', MODEL_LITE)
 
-    if model_id not in (MODEL_LITE, MODEL_FULL):
+    if model_id not in ALLOWED_MODELS:
         model_id = MODEL_LITE
 
     total = len(image_paths)
@@ -156,6 +164,13 @@ def main():
         sys.exit(1)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # Check if model is already cached
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(model_id, local_files_only=True)
+    except Exception:
+        print('STATUS:downloading', flush=True)
 
     # Load model once for all images
     if device == 'cuda':

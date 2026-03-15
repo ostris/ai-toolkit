@@ -36,6 +36,7 @@ interface CaptioningStatus {
   captioned: number;
   total: number;
   error?: string;
+  downloading?: boolean;
 }
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
@@ -621,16 +622,24 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         )}
         {captioningStatus?.status === 'running' && (
           <div className="mb-4">
-            <div className="flex justify-between text-sm text-gray-400 mb-1">
-              <span>Captioning images...</span>
-              <span>{captioningStatus.captioned} / {captioningStatus.total}</span>
-            </div>
-            <div className="w-full bg-gray-700 rounded-full h-2">
-              <div
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: captioningStatus.total > 0 ? `${(captioningStatus.captioned / captioningStatus.total) * 100}%` : '0%' }}
-              />
-            </div>
+            {captioningStatus.downloading ? (
+              <p className="text-sm text-gray-400">
+                Downloading model (this may take &gt; 15 minutes). Captioning will start once download finishes.
+              </p>
+            ) : (
+              <>
+                <div className="flex justify-between text-sm text-gray-400 mb-1">
+                  <span>Captioning images...</span>
+                  <span>{captioningStatus.captioned} / {captioningStatus.total}</span>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2">
+                  <div
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: captioningStatus.total > 0 ? `${(captioningStatus.captioned / captioningStatus.total) * 100}%` : '0%' }}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
         {isSelectMode && (

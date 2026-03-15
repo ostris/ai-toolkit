@@ -17,6 +17,7 @@ import sys
 import os
 import json
 import gc
+import time
 
 # Core captioning behaviour — controls HOW the model processes frames.
 # The user's system_prompt (lora_focus) controls WHAT to describe.
@@ -26,8 +27,109 @@ CORE_CAPTION_INSTRUCTION = (
     "Be objective, descriptive and precise."
 )
 
-MODEL_LITE = "prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1"
-MODEL_FULL = "prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it"
+MODEL_LITE = "Qwen/Qwen3-VL-4B-Instruct"
+MODEL_FULL = "Qwen/Qwen3-VL-8B-Instruct"
+
+ALLOWED_MODELS = [
+    MODEL_LITE,
+    MODEL_FULL,
+    "prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1",
+    "prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it",
+]
+
+
+def _get_dir_size(dir_path):
+    """Get total size of all files in a directory tree."""
+    total = 0
+    if not os.path.exists(dir_path):
+        return 0
+    for dirpath, _, filenames in os.walk(dir_path):
+        for f in filenames:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, f))
+            except OSError:
+                pass
+    return total
+
+
+def _format_bytes(b):
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if b < 1024:
+            return f'{b:.1f} {unit}'
+        b /= 1024
+    return f'{b:.1f} TB'
+
+
+def download_model_with_progress(model_id):
+    """Pre-download model files with progress output to stderr."""
+    import threading
+    from huggingface_hub import snapshot_download, model_info as hf_model_info
+
+    # Check if already cached
+    try:
+        snapshot_download(model_id, local_files_only=True)
+        return
+    except Exception:
+        pass
+
+    # Get total download size
+    try:
+        info = hf_model_info(model_id)
+        total_bytes = sum(s.size for s in info.siblings if s.size is not None)
+    except Exception:
+        snapshot_download(model_id)
+        return
+
+    if total_bytes == 0:
+        snapshot_download(model_id)
+        return
+
+    print(f'Downloading model {model_id} ({_format_bytes(total_bytes)})...', file=sys.stderr, flush=True)
+
+    # Determine HF cache directory for this model
+    try:
+        from huggingface_hub.constants import HF_HUB_CACHE
+    except ImportError:
+        HF_HUB_CACHE = os.path.join(os.path.expanduser('~'), '.cache', 'huggingface', 'hub')
+
+    cache_dir = os.path.join(HF_HUB_CACHE, f"models--{model_id.replace('/', '--')}")
+    baseline = _get_dir_size(cache_dir)
+
+    # Download in a background thread
+    _result = {'error': None, 'done': False}
+
+    def _download():
+        try:
+            snapshot_download(model_id)
+        except Exception as e:
+            _result['error'] = e
+        finally:
+            _result['done'] = True
+
+    thread = threading.Thread(target=_download, daemon=True)
+    start_time = time.time()
+    thread.start()
+
+    # Monitor cache directory size for progress
+    while not _result['done']:
+        time.sleep(1)
+        current = _get_dir_size(cache_dir) - baseline
+        elapsed = time.time() - start_time
+        speed = current / elapsed if elapsed > 0 else 0
+        current = min(current, total_bytes)
+        pct = current / total_bytes * 100 if total_bytes > 0 else 0
+        print(
+            f'\rDownloading: {_format_bytes(current)} / {_format_bytes(total_bytes)} '
+            f'({pct:.1f}%) at {_format_bytes(speed)}/s',
+            end='', file=sys.stderr, flush=True,
+        )
+
+    thread.join()
+
+    if _result['error']:
+        raise _result['error']
+
+    print(f'\nDownload complete.', file=sys.stderr, flush=True)
 
 
 def get_video_middle_frame(video_path: str):
@@ -91,6 +193,9 @@ def caption_image(img_path: str, trigger_word: str, system_prompt: str, model_id
         )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Pre-download model with progress reporting
+    download_model_with_progress(model_id)
 
     # Use 4-bit quantization on CUDA (matches OmniTag approach)
     if device == "cuda":
@@ -192,7 +297,7 @@ def main():
     parser.add_argument(
         "--model_id",
         default=MODEL_LITE,
-        choices=[MODEL_LITE, MODEL_FULL],
+        choices=ALLOWED_MODELS,
         help="Qwen3-VL model to use for captioning",
     )
     args = parser.parse_args()
