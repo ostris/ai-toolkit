@@ -12,12 +12,11 @@ interface BulkCaptionModalProps {
   onStart: (options: { modelId: string; triggerWord: string; systemPrompt: string }) => void;
 }
 
-const MODEL_LITE = 'prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1';
-const MODEL_FULL = 'prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it';
-
 const MODEL_OPTIONS = [
-  { value: MODEL_LITE, label: 'Qwen3-VL-4B-Instruct-abliterated-v1 (~5–8 GB VRAM)' },
-  { value: MODEL_FULL, label: 'Qwen3-VL-4B-Instruct-abliterated-v1 (~10–14 GB VRAM)' },
+  { value: 'Qwen/Qwen3-VL-4B-Instruct', label: 'Qwen3-VL-4B-Instruct (~5–8 GB VRAM)' },
+  { value: 'Qwen/Qwen3-VL-8B-Instruct', label: 'Qwen3-VL-8B-Instruct (~10–14 GB VRAM)' },
+  { value: 'prithivMLmods/Qwen3-VL-4B-Instruct-abliterated-v1', label: 'Qwen3-VL-4B-Instruct-abliterated (~5–8 GB VRAM)' },
+  { value: 'prithivMLmods/Qwen3-VL-8B-Abliterated-Caption-it', label: 'Qwen3-VL-8B-Abliterated-Caption-it (~10–14 GB VRAM)' },
 ];
 
 const DEFAULT_SYSTEM_PROMPT = 'Describe the subject and overall scene in detail.';
@@ -26,7 +25,7 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
   const [mounted, setMounted] = useState(false);
   const [triggerWord, setTriggerWord] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
-  const [modelId, setModelId] = useState(MODEL_LITE);
+  const [modelId, setModelId] = useState(MODEL_OPTIONS[0].value);
   const [presets, setPresets] = useState<CaptionPreset[]>([]);
   const [activePreset, setActivePreset] = useState<CaptionPreset | null>(null);
   const [variableSelections, setVariableSelections] = useState<Record<string, number>>({});
@@ -43,7 +42,7 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
     if (!isOpen) {
       setTriggerWord('');
       setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
-      setModelId(MODEL_LITE);
+      setModelId(MODEL_OPTIONS[0].value);
       setActivePreset(null);
       setVariableSelections({});
     }
