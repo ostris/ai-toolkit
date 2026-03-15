@@ -155,7 +155,17 @@ def get_video_middle_frame(video_path: str):
     return Image.fromarray(frame_rgb)
 
 
-def caption_image(img_path: str, trigger_word: str, system_prompt: str, model_id: str) -> str:
+QUORUM_SYNTHESIS_PROMPT = (
+    "Below are 5 candidate captions for this image. Generate a final caption "
+    "using ONLY details that appear in at least 3 of the 5 candidates. "
+    "Discard any detail that appears in fewer than 3. Write a single cohesive "
+    "caption — do not number items or mention the candidates."
+)
+
+QUORUM_TEMPERATURES = [0.6, 0.7, 0.8, 0.9, 1.0]
+
+
+def caption_image(img_path: str, trigger_word: str, system_prompt: str, model_id: str, quorum: bool = False) -> str:
     """Generate a caption for an image or video using Qwen3-VL."""
     from PIL import Image
     import torch
@@ -221,55 +231,63 @@ def caption_image(img_path: str, trigger_word: str, system_prompt: str, model_id
 
     processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
 
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": instruction},
-            ],
-        }
-    ]
+    def _generate_single(image_obj, text_instruction, temperature=0.7, greedy=False):
+        """Run a single generation pass and return the decoded caption."""
+        msgs = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image_obj},
+                    {"type": "text", "text": text_instruction},
+                ],
+            }
+        ]
+        t_in = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        i_in, _ = process_vision_info(msgs)
+        inp = processor(text=[t_in], images=i_in, padding=True, return_tensors="pt").to(device)
 
-    text_in = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    img_in, _ = process_vision_info(messages)
-    inputs = processor(
-        text=[text_in],
-        images=img_in,
-        padding=True,
-        return_tensors="pt",
-    ).to(device)
-
-    with torch.no_grad():
-        gen_ids = model.generate(
-            **inputs,
+        gen_kwargs = dict(
             max_new_tokens=1024,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
             repetition_penalty=1.12,
             eos_token_id=processor.tokenizer.eos_token_id,
         )
+        if greedy:
+            gen_kwargs.update(do_sample=False)
+        else:
+            gen_kwargs.update(do_sample=True, temperature=temperature, top_p=0.9)
 
-    caption = processor.batch_decode(
-        [g[len(i):] for i, g in zip(inputs.input_ids, gen_ids)],
-        skip_special_tokens=True,
-    )[0].strip()
-
-    # Retry with greedy decoding if caption is too short or lazy
-    if not caption or len(caption) < 30:
         with torch.no_grad():
-            gen_ids = model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=False,
-                repetition_penalty=1.25,
-                eos_token_id=processor.tokenizer.eos_token_id,
-            )
-        caption = processor.batch_decode(
-            [g[len(i):] for i, g in zip(inputs.input_ids, gen_ids)],
+            gen_ids = model.generate(**inp, **gen_kwargs)
+
+        return processor.batch_decode(
+            [g[len(i):] for i, g in zip(inp.input_ids, gen_ids)],
             skip_special_tokens=True,
         )[0].strip()
+
+    if quorum:
+        # Generate 5 candidate captions at varying temperatures
+        candidates = []
+        for temp in QUORUM_TEMPERATURES:
+            c = _generate_single(image, instruction, temperature=temp)
+            if c:
+                candidates.append(c)
+
+        if len(candidates) >= 2:
+            # Build synthesis prompt with all candidates + the image
+            numbered = "\n".join(f"Candidate {i+1}: {c}" for i, c in enumerate(candidates))
+            synthesis_instruction = f"{QUORUM_SYNTHESIS_PROMPT}\n\n{numbered}"
+            if trigger:
+                synthesis_instruction += f"\n\nStart the response with: {trigger}"
+            caption = _generate_single(image, synthesis_instruction, greedy=True)
+        else:
+            # Not enough candidates, use whatever we got
+            caption = candidates[0] if candidates else ""
+    else:
+        caption = _generate_single(image, instruction)
+
+        # Retry with greedy decoding if caption is too short or lazy
+        if not caption or len(caption) < 30:
+            caption = _generate_single(image, instruction, greedy=True)
 
     # Fallback if still empty
     if not caption:
@@ -300,6 +318,11 @@ def main():
         choices=ALLOWED_MODELS,
         help="Qwen3-VL model to use for captioning",
     )
+    parser.add_argument(
+        "--quorum",
+        action="store_true",
+        help="Generate 5 candidate captions and synthesize a final caption from common elements",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.img_path):
@@ -307,7 +330,7 @@ def main():
         sys.exit(1)
 
     try:
-        caption = caption_image(args.img_path, args.trigger_word, args.system_prompt, args.model_id)
+        caption = caption_image(args.img_path, args.trigger_word, args.system_prompt, args.model_id, quorum=args.quorum)
         print(json.dumps({"caption": caption}))
     except Exception as e:
         print(json.dumps({"error": str(e)}), file=sys.stderr)

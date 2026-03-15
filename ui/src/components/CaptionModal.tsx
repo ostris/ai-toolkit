@@ -29,6 +29,7 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
   const [triggerWord, setTriggerWord] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [modelId, setModelId] = useState(MODEL_LITE);
+  const [useQuorum, setUseQuorum] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedCaption, setGeneratedCaption] = useState<string | null>(null);
@@ -68,6 +69,7 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
         triggerWord: triggerWord.trim(),
         systemPrompt: systemPrompt.trim(),
         modelId,
+        useQuorum,
       });
       const caption = res.data?.caption ?? '';
       setGeneratedCaption(caption);
@@ -123,6 +125,22 @@ export default function CaptionModal({ imageUrl, isOpen, onClose, onCaptionGener
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
                     Model auto-downloads on first use. 4B is faster; 8B produces higher-quality captions.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useQuorum}
+                      onChange={e => setUseQuorum(e.target.checked)}
+                      disabled={isGenerating}
+                      className="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    />
+                    <span className="text-sm text-gray-300">Quorum Captioning</span>
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Generates 5 candidate captions and synthesizes a final caption from elements common to at least 3 of 5. Slower but more accurate.
                   </p>
                 </div>
 
