@@ -9,7 +9,7 @@ import { type CaptionPreset, applySelections, getActiveVariables } from '@/utils
 interface BulkCaptionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onStart: (options: { modelId: string; triggerWord: string; systemPrompt: string }) => void;
+  onStart: (options: { modelId: string; triggerWord: string; systemPrompt: string; useQuorum: boolean }) => void;
 }
 
 const MODEL_OPTIONS = [
@@ -26,6 +26,7 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
   const [triggerWord, setTriggerWord] = useState('');
   const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [modelId, setModelId] = useState(MODEL_OPTIONS[0].value);
+  const [useQuorum, setUseQuorum] = useState(false);
   const [presets, setPresets] = useState<CaptionPreset[]>([]);
   const [activePreset, setActivePreset] = useState<CaptionPreset | null>(null);
   const [variableSelections, setVariableSelections] = useState<Record<string, number>>({});
@@ -43,14 +44,15 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
       setTriggerWord('');
       setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
       setModelId(MODEL_OPTIONS[0].value);
+      setUseQuorum(false);
       setActivePreset(null);
       setVariableSelections({});
     }
   }, [isOpen]);
 
   const handleStart = useCallback(() => {
-    onStart({ modelId, triggerWord: triggerWord.trim(), systemPrompt: systemPrompt.trim() });
-  }, [modelId, triggerWord, systemPrompt, onStart]);
+    onStart({ modelId, triggerWord: triggerWord.trim(), systemPrompt: systemPrompt.trim(), useQuorum });
+  }, [modelId, triggerWord, systemPrompt, useQuorum, onStart]);
 
   if (!mounted) return null;
 
@@ -87,6 +89,21 @@ export default function BulkCaptionModal({ isOpen, onClose, onStart }: BulkCapti
                   </select>
                   <p className="mt-1 text-xs text-gray-500">
                     Model auto-downloads on first use. 4B is faster; 8B produces higher-quality captions.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={useQuorum}
+                      onChange={e => setUseQuorum(e.target.checked)}
+                      className="rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-300">Quorum Captioning</span>
+                  </label>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Generates 5 candidate captions and synthesizes a final caption from elements common to at least 3 of 5. Slower but more accurate.
                   </p>
                 </div>
 

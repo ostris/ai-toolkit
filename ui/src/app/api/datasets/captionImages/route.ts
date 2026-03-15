@@ -82,7 +82,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { datasetName, triggerWord, systemPrompt, modelId } = body;
+  const { datasetName, triggerWord, systemPrompt, modelId, useQuorum } = body;
 
   if (!datasetName || typeof datasetName !== 'string' || datasetName.trim() === '') {
     return NextResponse.json({ error: 'Invalid dataset name' }, { status: 400 });
@@ -135,6 +135,7 @@ export async function POST(request: Request) {
     trigger_word: (triggerWord || '').toString(),
     system_prompt: (systemPrompt || '').toString(),
     model_id: resolvedModelId,
+    ...(useQuorum ? { quorum: true } : {}),
   });
   proc.stdin.write(input);
   proc.stdin.end();

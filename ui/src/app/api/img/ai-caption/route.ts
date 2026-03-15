@@ -19,7 +19,7 @@ const ALLOWED_MODELS = new Set([
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { imgPath, triggerWord, systemPrompt, modelId } = body;
+    const { imgPath, triggerWord, systemPrompt, modelId, useQuorum } = body;
 
     if (!imgPath || typeof imgPath !== 'string') {
       return NextResponse.json({ error: 'imgPath is required' }, { status: 400 });
@@ -56,6 +56,7 @@ export async function POST(request: Request) {
       '--trigger_word', (triggerWord || '').toString(),
       '--system_prompt', (systemPrompt || '').toString(),
       '--model_id', resolvedModelId,
+      ...(useQuorum ? ['--quorum'] : []),
     ];
 
     const { stdout } = await execFileAsync(PYTHON_EXECUTABLE, args, {
