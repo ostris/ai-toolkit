@@ -234,6 +234,7 @@ class AIToolkitOxenLogger:
 
                 if os.path.isfile(checkpoint_path):
                     self.workspace.add(checkpoint_path, dst=checkpoint_dst)
+                    os.remove(checkpoint_path)
                 elif os.path.isdir(checkpoint_path):
                     # For directories, walk through and add all files
                     dir_name = os.path.basename(checkpoint_path)
@@ -244,6 +245,7 @@ class AIToolkitOxenLogger:
                             dst = os.path.join(checkpoint_dst, dir_name, rel_dir) if rel_dir != "." else os.path.join(checkpoint_dst, dir_name)
                             print(f"Main process: Adding file: {file_path} to {dst}")
                             self.workspace.add(file_path, dst=dst)
+                            os.remove(file_path)
 
             print(f"Main process: Checkpoint saved successfully")
 
