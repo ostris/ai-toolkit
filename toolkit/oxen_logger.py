@@ -303,7 +303,6 @@ class AIToolkitOxenLogger:
 
             # Save final model as a checkpoint at the current step
             if final_model_path and os.path.exists(final_model_path):
-                self.save_checkpoint(final_model_path, step)
 
                 # Also save final model to the experiment root with model.safetensors naming
                 self._save_final_model(final_model_path)
