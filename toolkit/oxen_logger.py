@@ -230,6 +230,7 @@ class AIToolkitOxenLogger:
             checkpoint_dst = self.get_checkpoint_path(step)
 
             for checkpoint_path in checkpoint_files:
+                print(f"Main process: Adding checkpoint file: {checkpoint_path} to {checkpoint_dst}")
 
                 if os.path.isfile(checkpoint_path):
                     self.workspace.add(checkpoint_path, dst=checkpoint_dst)
@@ -241,6 +242,7 @@ class AIToolkitOxenLogger:
                             file_path = os.path.join(root, file)
                             rel_dir = os.path.relpath(root, checkpoint_path)
                             dst = os.path.join(checkpoint_dst, dir_name, rel_dir) if rel_dir != "." else os.path.join(checkpoint_dst, dir_name)
+                            print(f"Main process: Adding file: {file_path} to {dst}")
                             self.workspace.add(file_path, dst=dst)
 
             print(f"Main process: Checkpoint saved successfully")
