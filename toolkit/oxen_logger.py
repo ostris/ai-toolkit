@@ -256,7 +256,7 @@ class AIToolkitOxenLogger:
     def _add_checkpoint_file_with_rename(self, file_path: str, dst_path: str, experiment_name: str, step: int):
         """Add checkpoint file to workspace, renaming {experiment_name}_{step:09d}.safetensors to model.safetensors."""
         expected_name = f"{experiment_name}_{step:09d}.safetensors"
-        if os.path.basename(file_path) == expected_name:
+        if os.path.basename(file_path) == expected_name or os.path.basename(file_path) == f"{experiment_name}.safetensors":
             import shutil
             temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
             os.makedirs(temp_dir, exist_ok=True)
