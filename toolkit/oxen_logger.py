@@ -205,7 +205,7 @@ class AIToolkitOxenLogger:
         # This is required because the first one is the branch name and the second one is the directory the file is supposed to be saved in
         return f"{self.experiment.name}/checkpoints/step_{step}"
 
-    def save_checkpoint(self, checkpoint_files, step: int, remove_files: bool=false):
+    def save_checkpoint(self, checkpoint_files, step: int, remove_files: bool=False):
         """
         Save checkpoint files to Oxen workspace.
 
