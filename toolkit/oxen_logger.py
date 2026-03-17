@@ -205,7 +205,7 @@ class AIToolkitOxenLogger:
         # This is required because the first one is the branch name and the second one is the directory the file is supposed to be saved in
         return f"{self.experiment.name}/checkpoints/step_{step}"
 
-    def save_checkpoint(self, checkpoint_files, step: int):
+    def save_checkpoint(self, checkpoint_files, step: int, remove_files: bool=False):
         """
         Save checkpoint files to Oxen workspace.
 
@@ -228,26 +228,47 @@ class AIToolkitOxenLogger:
 
             # Create a step-specific directory in checkpoints/{finetune_name}/step_{N}
             checkpoint_dst = self.get_checkpoint_path(step)
+            experiment_name = self.experiment.name.split("/")[-1]
 
             for checkpoint_path in checkpoint_files:
+                print(f"Main process: Adding checkpoint file: {checkpoint_path} to {checkpoint_dst}")
 
                 if os.path.isfile(checkpoint_path):
-                    # Get just the filename for the destination
-                    filename = os.path.basename(checkpoint_path)
-                    self.workspace.add(checkpoint_path, dst=f"{checkpoint_dst}/{filename}")
+                    self._add_checkpoint_file_with_rename(checkpoint_path, checkpoint_dst, experiment_name, step)
+                    if remove_files: os.remove(checkpoint_path)
                 elif os.path.isdir(checkpoint_path):
                     # For directories, walk through and add all files
                     dir_name = os.path.basename(checkpoint_path)
                     for root, dirs, files in os.walk(checkpoint_path):
                         for file in files:
                             file_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(file_path, checkpoint_path)
-                            self.workspace.add(file_path, dst=f"{checkpoint_dst}/{dir_name}/{rel_path}")
+                            rel_dir = os.path.relpath(root, checkpoint_path)
+                            dst = os.path.join(checkpoint_dst, dir_name, rel_dir) if rel_dir != "." else os.path.join(checkpoint_dst, dir_name)
+                            print(f"Main process: Adding file: {file_path} to {dst}")
+                            self._add_checkpoint_file_with_rename(file_path, dst, experiment_name, step)
+                            if remove_files: os.remove(file_path)
 
             print(f"Main process: Checkpoint saved successfully")
 
         except Exception as e:
             print(f"Main process: Error saving checkpoint to Oxen: {e}")
+    
+    def _add_checkpoint_file_with_rename(self, file_path: str, dst_path: str, experiment_name: str, step: int):
+        """Add checkpoint file to workspace, renaming {experiment_name}_{step:09d}.safetensors to model.safetensors."""
+        expected_name = f"{experiment_name}_{step:09d}.safetensors"
+        if os.path.basename(file_path) == expected_name or os.path.basename(file_path) == f"{experiment_name}.safetensors":
+            import shutil
+            temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_file_path = os.path.join(temp_dir, "model.safetensors")
+            shutil.copy2(file_path, temp_file_path)
+            self.workspace.add(temp_file_path, dst=dst_path)
+            shutil.rmtree(temp_dir)
+            print(f"Main process: Saved {file_path} -> {dst_path}/model.safetensors (renamed)")
+        else:
+            self.workspace.add(file_path, dst=dst_path)
+            print(f"Main process: Saved {file_path} -> {dst_path}")
+
 
     def add_samples(self, sample_dir: str):
         """
@@ -283,12 +304,13 @@ class AIToolkitOxenLogger:
         except Exception as e:
             print(f"Main process: Error adding sample images to Oxen: {e}")
 
-    def finalize_experiment(self, final_model_path: str):
+    def finalize_experiment(self, final_model_path: str, step: int):
         """
-        Finalize the experiment by committing all changes and saving final model.
-        
+        Finalize the experiment by saving the final model checkpoint and committing all changes.
+
         Args:
             final_model_path: Path to the final trained model
+            step: The final training step number
         """
         if not self.enabled or not self.is_main_process or self.workspace is None:
             print(f"Main process: Skipping finalizing experiment")
@@ -296,40 +318,12 @@ class AIToolkitOxenLogger:
 
         try:
             print(f"Main process: Finalizing experiment {self.experiment.name} -> {final_model_path}")
-            
-            # Save final model if provided
+
+            # Save final model as a checkpoint at the current step
             if final_model_path and os.path.exists(final_model_path):
-                print(f"Main process: Saving final model: {final_model_path}")
-                
-                def add_file_with_rename(file_path, dst_path):
-                    """Helper function to add file with potential renaming"""
-                    name = self.experiment.name.split("/")[-1]
-                    print(f"Main process: Adding file in experiment {name} -> {os.path.basename(file_path)}")
-                    if os.path.basename(file_path) == f"{name}.safetensors":
-                        # Rename to model.safetensors
-                        import shutil
-                        temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
-                        os.makedirs(temp_dir, exist_ok=True)
-                        temp_file_path = os.path.join(temp_dir, "model.safetensors")
-                        shutil.copy2(file_path, temp_file_path)
-                        
-                        # Add renamed file and cleanup
-                        self.workspace.add(temp_file_path, dst=dst_path)
-                        shutil.rmtree(temp_dir)
-                        print(f"Main process: Saved {temp_file_path} -> {dst_path} (renamed)")
-                    else:
-                        self.workspace.add(file_path, dst=dst_path)
-                        print(f"Main process: Saved {file_path} -> {dst_path}")
-                
-                if os.path.isfile(final_model_path):
-                    add_file_with_rename(final_model_path, self.experiment.name)
-                elif os.path.isdir(final_model_path):
-                    for root, dirs, files in os.walk(final_model_path):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(file_path, final_model_path)
-                            dst_path = os.path.join(self.experiment.name, os.path.dirname(rel_path))
-                            add_file_with_rename(file_path, dst_path)
+
+                # Also save final model to the experiment root with model.safetensors naming
+                self._save_final_model(final_model_path)
 
             # Final commit
             self.workspace.commit("Final experiment state with all artifacts")
@@ -346,6 +340,36 @@ class AIToolkitOxenLogger:
         except Exception as e:
             print(f"Main process: Error finalizing experiment: {e}")
             raise
+
+    def _save_final_model(self, final_model_path: str):
+        """Save the final model to the experiment root with model.safetensors renaming."""
+        name = self.experiment.name.split("/")[-1]
+        dst_path = self.experiment.name
+
+        if os.path.isfile(final_model_path):
+            self._add_file_with_rename(final_model_path, dst_path, name)
+        elif os.path.isdir(final_model_path):
+            for root, dirs, files in os.walk(final_model_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, final_model_path)
+                    file_dst = os.path.join(dst_path, os.path.dirname(rel_path))
+                    self._add_file_with_rename(file_path, file_dst, name)
+
+    def _add_file_with_rename(self, file_path: str, dst_path: str, experiment_name: str):
+        """Add file to workspace, renaming {experiment_name}.safetensors to model.safetensors."""
+        if os.path.basename(file_path) == f"{experiment_name}.safetensors":
+            import shutil
+            temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_file_path = os.path.join(temp_dir, "model.safetensors")
+            shutil.copy2(file_path, temp_file_path)
+            self.workspace.add(temp_file_path, dst=dst_path)
+            shutil.rmtree(temp_dir)
+            print(f"Main process: Saved {file_path} -> {dst_path}/model.safetensors (renamed)")
+        else:
+            self.workspace.add(file_path, dst=dst_path)
+            print(f"Main process: Saved {file_path} -> {dst_path}")
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Convert file size in bytes to human-readable format."""

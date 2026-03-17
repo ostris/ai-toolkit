@@ -2392,7 +2392,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.oxen_logger and self.oxen_config.enabled:
                             try:
                                 if saved_files:
-                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num)
+                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num, remove_files=True)
                             except Exception as e:
                                 print_acc(f"Warning: Failed to save checkpoint to Oxen: {e}")
 
@@ -2418,7 +2418,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             try:
                                 saved_files = self.save(self.step_num)
                                 if saved_files:
-                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num)
+                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num, remove_files=True)
                             except Exception as e:
                                 print_acc(f"Warning: Failed to save checkpoint to Oxen on sample step: {e}")
 
@@ -2541,14 +2541,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.commit(step=self.step_num)
         print_acc("Training finished")
         if self.accelerator.is_main_process:
-            self.save()
+            files = self.save()
             self.logger.finish()
             
             # Finalize Oxen experiment if enabled
             if self.oxen_logger and self.oxen_config.enabled:
                 try:
                     print_acc("Finalizing Oxen experiment...")
-                    self.oxen_logger.finalize_experiment(self.save_root)
+                    if files:
+                        self.oxen_logger.save_checkpoint(files, self.step_num)
+                    self.oxen_logger.finalize_experiment(self.save_root, self.step_num)
                     print_acc("Oxen experiment finalized successfully")
                 except Exception as e:
                     print_acc(f"Warning: Failed to finalize Oxen experiment: {e}")
