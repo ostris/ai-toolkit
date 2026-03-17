@@ -205,7 +205,7 @@ class AIToolkitOxenLogger:
         # This is required because the first one is the branch name and the second one is the directory the file is supposed to be saved in
         return f"{self.experiment.name}/checkpoints/step_{step}"
 
-    def save_checkpoint(self, checkpoint_files, step: int):
+    def save_checkpoint(self, checkpoint_files, step: int, remove_files: bool=false):
         """
         Save checkpoint files to Oxen workspace.
 
@@ -234,7 +234,7 @@ class AIToolkitOxenLogger:
 
                 if os.path.isfile(checkpoint_path):
                     self.workspace.add(checkpoint_path, dst=checkpoint_dst)
-                    os.remove(checkpoint_path)
+                    if remove_files: os.remove(checkpoint_path)
                 elif os.path.isdir(checkpoint_path):
                     # For directories, walk through and add all files
                     dir_name = os.path.basename(checkpoint_path)
@@ -245,7 +245,7 @@ class AIToolkitOxenLogger:
                             dst = os.path.join(checkpoint_dst, dir_name, rel_dir) if rel_dir != "." else os.path.join(checkpoint_dst, dir_name)
                             print(f"Main process: Adding file: {file_path} to {dst}")
                             self.workspace.add(file_path, dst=dst)
-                            os.remove(file_path)
+                            if remove_files: os.remove(file_path)
 
             print(f"Main process: Checkpoint saved successfully")
 

@@ -2392,7 +2392,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         if self.oxen_logger and self.oxen_config.enabled:
                             try:
                                 if saved_files:
-                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num)
+                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num, remove_files=True)
                             except Exception as e:
                                 print_acc(f"Warning: Failed to save checkpoint to Oxen: {e}")
 
@@ -2418,7 +2418,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             try:
                                 saved_files = self.save(self.step_num)
                                 if saved_files:
-                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num)
+                                    self.oxen_logger.save_checkpoint(saved_files, self.step_num, remove_files=True)
                             except Exception as e:
                                 print_acc(f"Warning: Failed to save checkpoint to Oxen on sample step: {e}")
 
