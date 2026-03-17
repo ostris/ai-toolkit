@@ -228,12 +228,13 @@ class AIToolkitOxenLogger:
 
             # Create a step-specific directory in checkpoints/{finetune_name}/step_{N}
             checkpoint_dst = self.get_checkpoint_path(step)
+            experiment_name = self.experiment.name.split("/")[-1]
 
             for checkpoint_path in checkpoint_files:
                 print(f"Main process: Adding checkpoint file: {checkpoint_path} to {checkpoint_dst}")
 
                 if os.path.isfile(checkpoint_path):
-                    self.workspace.add(checkpoint_path, dst=checkpoint_dst)
+                    self._add_checkpoint_file_with_rename(checkpoint_path, checkpoint_dst, experiment_name, step)
                     if remove_files: os.remove(checkpoint_path)
                 elif os.path.isdir(checkpoint_path):
                     # For directories, walk through and add all files
@@ -244,13 +245,30 @@ class AIToolkitOxenLogger:
                             rel_dir = os.path.relpath(root, checkpoint_path)
                             dst = os.path.join(checkpoint_dst, dir_name, rel_dir) if rel_dir != "." else os.path.join(checkpoint_dst, dir_name)
                             print(f"Main process: Adding file: {file_path} to {dst}")
-                            self.workspace.add(file_path, dst=dst)
+                            self._add_checkpoint_file_with_rename(file_path, dst, experiment_name, step)
                             if remove_files: os.remove(file_path)
 
             print(f"Main process: Checkpoint saved successfully")
 
         except Exception as e:
             print(f"Main process: Error saving checkpoint to Oxen: {e}")
+    
+    def _add_checkpoint_file_with_rename(self, file_path: str, dst_path: str, experiment_name: str, step: int):
+        """Add checkpoint file to workspace, renaming {experiment_name}_{step:09d}.safetensors to model.safetensors."""
+        expected_name = f"{experiment_name}_{step:09d}.safetensors"
+        if os.path.basename(file_path) == expected_name:
+            import shutil
+            temp_dir = os.path.join(os.path.dirname(file_path), "temp_rename")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_file_path = os.path.join(temp_dir, "model.safetensors")
+            shutil.copy2(file_path, temp_file_path)
+            self.workspace.add(temp_file_path, dst=dst_path)
+            shutil.rmtree(temp_dir)
+            print(f"Main process: Saved {file_path} -> {dst_path}/model.safetensors (renamed)")
+        else:
+            self.workspace.add(file_path, dst=dst_path)
+            print(f"Main process: Saved {file_path} -> {dst_path}")
+
 
     def add_samples(self, sample_dir: str):
         """
