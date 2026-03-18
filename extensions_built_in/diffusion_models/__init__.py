@@ -8,6 +8,7 @@ from .qwen_image import QwenImageModel, QwenImageEditModel, QwenImageEditPlusMod
 from .flux2 import Flux2Model, Flux2Klein4BModel, Flux2Klein9BModel
 from .z_image import ZImageModel
 from .ltx2 import LTX2Model
+from .zeta_chroma import ZetaChromaModel
 
 AI_TOOLKIT_MODELS = [
     # put a list of models here
@@ -29,4 +30,5 @@ AI_TOOLKIT_MODELS = [
     LTX2Model,
     Flux2Klein4BModel,
     Flux2Klein9BModel,
+    ZetaChromaModel,
 ]
