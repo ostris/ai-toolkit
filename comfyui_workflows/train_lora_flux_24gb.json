@@ -1,0 +1,661 @@
+{
+  "id": "8f2525c2-0ba7-4982-a255-e72cf2f5294e",
+  "revision": 0,
+  "last_node_id": 82,
+  "last_link_id": 60,
+  "nodes": [
+    {
+      "id": 66,
+      "type": "CLIPTextEncode",
+      "pos": [
+        891.0455541412042,
+        71.55101806136172
+      ],
+      "size": [
+        405.6200649685329,
+        94.62378184000659
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 60
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            48
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 69,
+      "type": "UNETLoader",
+      "pos": [
+        653.0510583307528,
+        -416.3361156117333
+      ],
+      "size": [
+        302.31537356906466,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            57
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "flux1-dev.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 70,
+      "type": "DualCLIPLoader",
+      "pos": [
+        529.7782751885809,
+        -30.646615180478257
+      ],
+      "size": [
+        291.07524363199866,
+        132.81003248426657
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            59,
+            60
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "DualCLIPLoader"
+      },
+      "widgets_values": [
+        "clip_l.safetensors",
+        "t5xxl_fp16.safetensors",
+        "flux",
+        "default"
+      ]
+    },
+    {
+      "id": 64,
+      "type": "VAELoader",
+      "pos": [
+        1395.3996913783474,
+        241.54953577929
+      ],
+      "size": [
+        298.10032484266503,
+        59.40501624213323
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            47
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "flux_1_dev_ae.safetensors"
+      ]
+    },
+    {
+      "id": 65,
+      "type": "VAEDecode",
+      "pos": [
+        1753.9839808102365,
+        49.222573541933045
+      ],
+      "size": [
+        197.60566592746295,
+        48.81003248426646
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 46
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 47
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            50
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 35,
+      "type": "SaveImage",
+      "pos": [
+        2004.752882799869,
+        49.81480028363202
+      ],
+      "size": [
+        270,
+        270
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 50
+        }
+      ],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "ComfyUI"
+      ]
+    },
+    {
+      "id": 73,
+      "type": "KSampler",
+      "pos": [
+        1390.3194609750317,
+        -80.5565833679046
+      ],
+      "size": [
+        296.6953086005319,
+        262
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 58
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 56
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 48
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 49
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            46
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSampler"
+      },
+      "widgets_values": [
+        42,
+        "fixed",
+        20,
+        1,
+        "euler",
+        "simple",
+        1
+      ]
+    },
+    {
+      "id": 78,
+      "type": "Note",
+      "pos": [
+        1027.5702178315128,
+        -553.8265517297815
+      ],
+      "size": [
+        265.8316907008168,
+        88
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Load LoRA:\n\nThe .safetensors you trained"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 75,
+      "type": "Note",
+      "pos": [
+        1393.3217541786235,
+        349.8734062367137
+      ],
+      "size": [
+        300.6464039053876,
+        97.16446657512711
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Load VAE:\n\nThe ae.safetensores from https://huggingface.co/black-forest-labs/FLUX.1-dev/tree/main"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 80,
+      "type": "Note",
+      "pos": [
+        1031.2069047483396,
+        563.9331798031126
+      ],
+      "size": [
+        264.3810776506266,
+        88
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Match the image size to your sample output image size"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 77,
+      "type": "Note",
+      "pos": [
+        529.2947893824462,
+        149.78315397374138
+      ],
+      "size": [
+        290.49211255405453,
+        97.16446657512734
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Load Diffusion Model:\n\nThe flux1-dev.safetensors from https://huggingface.co/black-forest-labs/FLUX.1-dev/tree/main"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 81,
+      "type": "Note",
+      "pos": [
+        891.948051930057,
+        214.33543470721588
+      ],
+      "size": [
+        405.09054351909947,
+        88
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Leave the negative prompt empty, like in your config"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 71,
+      "type": "CLIPTextEncode",
+      "pos": [
+        902.2631032807824,
+        -118.08953134594147
+      ],
+      "size": [
+        395.12858631164465,
+        128.87002886301423
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 59
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CONDITIONING",
+          "type": "CONDITIONING",
+          "links": [
+            56
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "woman with red hair, playing chess at the park, bomb going off in the background"
+      ],
+      "color": "#232",
+      "bgcolor": "#353"
+    },
+    {
+      "id": 68,
+      "type": "EmptySD3LatentImage",
+      "pos": [
+        1027.7320878145322,
+        412.2140139774479
+      ],
+      "size": [
+        270,
+        106
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            49
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "EmptySD3LatentImage"
+      },
+      "widgets_values": [
+        512,
+        512,
+        1
+      ]
+    },
+    {
+      "id": 76,
+      "type": "Note",
+      "pos": [
+        654.7626639325683,
+        -559.6290039305433
+      ],
+      "size": [
+        300.6464039053876,
+        97.16446657512711
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Load Diffusion Model:\n\nThe flux1-dev.safetensors from https://huggingface.co/black-forest-labs/FLUX.1-dev/tree/main"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 82,
+      "type": "Note",
+      "pos": [
+        903.4643114649857,
+        -255.87528918963991
+      ],
+      "size": [
+        397.98253957316626,
+        88
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "Use the exact prompt and matching seed from the config"
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 79,
+      "type": "Note",
+      "pos": [
+        1394.8755964310837,
+        -294.2495006895534
+      ],
+      "size": [
+        295.8593808397593,
+        159.39576642829695
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "KSampler:\n\nsampler_name: euler and scheduler: simple are the closest match to \"flowmatch\" from the training config.\n\nYou need to pick the same seed as the seed using in the samling. The default config will start at seed 42, and increment the seed by 1 for every prompt it runs. "
+      ],
+      "color": "#432",
+      "bgcolor": "#653"
+    },
+    {
+      "id": 74,
+      "type": "LoraLoaderModelOnly",
+      "pos": [
+        1027.1627002266218,
+        -417.98162568344895
+      ],
+      "size": [
+        270,
+        82
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 57
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            58
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoraLoaderModelOnly"
+      },
+      "widgets_values": [
+        "ltx2-squish.safetensors",
+        1
+      ]
+    }
+  ],
+  "links": [
+    [
+      46,
+      73,
+      0,
+      65,
+      0,
+      "LATENT"
+    ],
+    [
+      47,
+      64,
+      0,
+      65,
+      1,
+      "VAE"
+    ],
+    [
+      48,
+      66,
+      0,
+      73,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      49,
+      68,
+      0,
+      73,
+      3,
+      "LATENT"
+    ],
+    [
+      50,
+      65,
+      0,
+      35,
+      0,
+      "IMAGE"
+    ],
+    [
+      56,
+      71,
+      0,
+      73,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      57,
+      69,
+      0,
+      74,
+      0,
+      "MODEL"
+    ],
+    [
+      58,
+      74,
+      0,
+      73,
+      0,
+      "MODEL"
+    ],
+    [
+      59,
+      70,
+      0,
+      71,
+      0,
+      "CLIP"
+    ],
+    [
+      60,
+      70,
+      0,
+      66,
+      0,
+      "CLIP"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.3787274281983275,
+      "offset": [
+        -83.1324772909394,
+        738.4008315075675
+      ]
+    },
+    "frontendVersion": "1.41.21"
+  },
+  "version": 0.4
+}
