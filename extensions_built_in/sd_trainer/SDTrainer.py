@@ -573,7 +573,16 @@ class SDTrainer(BaseSDTrainProcess):
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
-        
+        elif self.train_config.do_signal_amplification:
+            if not self.sd.is_flow_matching:
+                raise ValueError("Signal amplification is only supported for flow matching models")
+            with torch.no_grad():
+                nas = 1.0 - (timesteps / 1000).to(noise.device, dtype=noise.dtype)
+                while len(nas.shape) < len(noise.shape):
+                    nas = nas.unsqueeze(-1)
+                aug = batch.latents * nas
+                target = noise - (batch.latents + aug)
+                target = target.detach()
         elif hasattr(self.sd, 'get_loss_target'):
             target = self.sd.get_loss_target(
                 noise=noise, 

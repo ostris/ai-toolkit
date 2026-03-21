@@ -401,6 +401,7 @@ class TrainConfig:
         # batch noise correction adds other images in the batch as noise to correct away from other images
         self.do_batch_noise_correction = kwargs.get('do_batch_noise_correction', False)
         self.batch_noise_correction_scale = kwargs.get('batch_noise_correction_scale', 0.1)
+        self.do_signal_amplification = kwargs.get('do_signal_amplification', False)
         
         self.signal_correction_noise_scale = kwargs.get('signal_correction_noise_scale', 1.0)
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
