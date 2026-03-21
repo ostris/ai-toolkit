@@ -1,6 +1,6 @@
 # ComfyUI Workflows
 
-These workflows are intended to match the ./config/examples configs one-to-one. So that you can get the most perfect match of what the sampler outputs were. 
+These workflows are intended to match the ./config/examples configs one-to-one, so you can get the closest possible match to the sampler outputs.
 
 The general workflow should be:
 1. Drag the .json workflow into ComfyUI
@@ -8,4 +8,4 @@ The general workflow should be:
 3. Match the seed and prompt to the training config and sample you want to replicate
 4. Run
 
-Note however, even if you get the seed and everything else perfect, the result will still not be exactly the same. There are fundamental differences to how ComfyUI runs the workflows vs how the training is done.
+Note, however, that even if you get the seed and everything else perfect, the result will still not be exactly the same. There are fundamental differences in how ComfyUI runs workflows compared to how the training process is executed.
