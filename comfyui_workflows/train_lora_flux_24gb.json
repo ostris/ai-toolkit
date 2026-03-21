@@ -140,7 +140,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "flux_1_dev_ae.safetensors"
+        "ae.safetensors"
       ]
     },
     {
