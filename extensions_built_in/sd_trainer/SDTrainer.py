@@ -579,7 +579,6 @@ class SDTrainer(BaseSDTrainProcess):
             with torch.no_grad():
                 nas = 1.0 - (timesteps / 1000).to(noise.device, dtype=noise.dtype)
                 nas = nas * self.train_config.signal_amplification_strength
-                nas = nas.clamp(min=0.1)
                 while len(nas.shape) < len(noise.shape):
                     nas = nas.unsqueeze(-1)
                 aug = batch.latents * nas
