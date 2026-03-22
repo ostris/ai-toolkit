@@ -1079,11 +1079,11 @@ class LTX2Model(BaseModel):
         for key, value in state_dict.items():
             new_key = key.replace("transformer.", "diffusion_model.")
             new_sd[new_key] = value
-        new_sd = convert_lora_diffusers_to_original(new_sd)
+        new_sd = convert_lora_diffusers_to_original(new_sd, version=self.ltx_version)
         return new_sd
 
     def convert_lora_weights_before_load(self, state_dict):
-        state_dict = convert_lora_original_to_diffusers(state_dict)
+        state_dict = convert_lora_original_to_diffusers(state_dict, version=self.ltx_version)
         new_sd = {}
         for key, value in state_dict.items():
             new_key = key.replace("diffusion_model.", "transformer.")

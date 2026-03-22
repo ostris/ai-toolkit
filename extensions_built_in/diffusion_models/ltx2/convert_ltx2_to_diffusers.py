@@ -975,9 +975,12 @@ def convert_comfy_gemma3_to_transformers(sd: dict):
 
 def convert_lora_original_to_diffusers(
     lora_state_dict: Dict[str, Any],
+    version: str = "2.0",
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
+    if version == "2.3":
+        rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT
 
     for k, v in lora_state_dict.items():
         # Keep the "diffusion_model." prefix as-is, but apply the transformer remaps to the rest
@@ -1006,10 +1009,14 @@ def convert_lora_original_to_diffusers(
 
 def convert_lora_diffusers_to_original(
     lora_state_dict: Dict[str, Any],
+    version: str = "2.0",
 ) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
+    rename_dict = LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
+    if version == "2.3":
+        rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT
 
-    inv_rename = {v: k for k, v in LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT.items()}
+    inv_rename = {v: k for k, v in rename_dict.items()}
     inv_items = sorted(inv_rename.items(), key=lambda kv: len(kv[0]), reverse=True)
 
     for k, v in lora_state_dict.items():
