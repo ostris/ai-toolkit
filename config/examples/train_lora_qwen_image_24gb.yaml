@@ -35,7 +35,7 @@ config:
           shuffle_tokens: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you have a large dataset
           # if you OOM, 1024 may be too much, but should work
-          resolution: [ 512, 768, 1024 ]  # qwen image enjoys multiple resolutions
+          resolution: [ 512, 768, 1024, 1328 ]  # 1328 is the native 1:1 resolution for Qwen Image
       train:
         batch_size: 1
         # caching text embeddings is required for 24GB
