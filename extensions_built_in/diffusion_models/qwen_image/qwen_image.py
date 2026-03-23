@@ -354,12 +354,13 @@ class QwenImageModel(BaseModel):
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
+        
+        max_sequence_length = 1024
+        
+        prompt_embeds, prompt_embeds_mask = self.pipeline._get_qwen_prompt_embeds(prompt, self.device_torch)
+        prompt_embeds = prompt_embeds[:, :max_sequence_length]
+        prompt_embeds_mask = prompt_embeds_mask[:, :max_sequence_length]
 
-        prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
-            prompt,
-            device=self.device_torch,
-            num_images_per_prompt=1,
-        )
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
