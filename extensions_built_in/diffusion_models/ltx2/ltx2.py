@@ -909,14 +909,17 @@ class LTX2Model(BaseModel):
                 num_channels_latents_audio = (
                     self.pipeline.audio_vae.config.latent_channels
                 )
-                audio_latents, audio_num_frames = self.pipeline.prepare_audio_latents(
+                duration_s = batch.dataset_config.num_frames / frame_rate
+                audio_latents_per_second = (
+                    self.pipeline.audio_sampling_rate / self.pipeline.audio_hop_length / float(self.pipeline.audio_vae_temporal_compression_ratio)
+                )
+                audio_num_frames = round(duration_s * audio_latents_per_second)
+                audio_latents = self.pipeline.prepare_audio_latents(
                     batch_size,
                     num_channels_latents=num_channels_latents_audio,
+                    audio_latent_length=audio_num_frames,
                     num_mel_bins=num_mel_bins,
-                    num_frames=batch.dataset_config.num_frames,
-                    frame_rate=frame_rate,
-                    sampling_rate=self.pipeline.audio_sampling_rate,
-                    hop_length=self.pipeline.audio_hop_length,
+                    noise_scale=0.0,
                     dtype=torch.float32,
                     device=self.transformer.device,
                     generator=None,
