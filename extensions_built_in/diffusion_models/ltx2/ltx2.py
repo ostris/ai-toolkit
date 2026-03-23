@@ -390,21 +390,23 @@ class LTX2Model(BaseModel):
             del te_state_dict
             flush()
         else:
-            te_subfolder = "tokenizer"
+            te_tokenizer_subfolder = "tokenizer"
+            te_model_subfolder = "text_encoder"
             if self.model_config.te_name_or_path is not None:
                 te_path = self.model_config.te_name_or_path
             else:
                 if self.ltx_te_path is not None:
                     # pull from original repo for 2.3
                     te_path = self.ltx_te_path
-                    te_subfolder = None
+                    te_tokenizer_subfolder = ""
+                    te_model_subfolder = ""
                 else:
                     te_path = base_te_path
             tokenizer = GemmaTokenizerFast.from_pretrained(
-                te_path, subfolder=te_subfolder
+                te_path, subfolder=te_tokenizer_subfolder
             )
             text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                te_path, subfolder=te_subfolder, dtype=dtype
+                te_path, subfolder=te_model_subfolder, dtype=dtype
             )
 
         # remove the vision tower
