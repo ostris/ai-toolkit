@@ -77,7 +77,7 @@ dit_prefix = "model.diffusion_model."
 vae_prefix = "vae."
 audio_vae_prefix = "audio_vae."
 vocoder_prefix = "vocoder."
-base_te_path = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+base_te_path = "Lightricks/gemma-3-12b-it-qat-q4_0-unquantized"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
