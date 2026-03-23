@@ -118,11 +118,11 @@ class QwenImageEditModel(QwenImageModel):
         img = pipeline(
             image=control_img,
             prompt_embeds=conditional_embeds.text_embeds,
-            prompt_embeds_mask=conditional_embeds.get_attention_mask(
+            prompt_embeds_mask=conditional_embeds.attention_mask.to(
                 self.device_torch, dtype=torch.int64
             ),
             negative_prompt_embeds=unconditional_embeds.text_embeds,
-            negative_prompt_embeds_mask=unconditional_embeds.get_attention_mask(
+            negative_prompt_embeds_mask=unconditional_embeds.attention_mask.to(
                 self.device_torch, dtype=torch.int64
             ),
             height=gen_config.height,
@@ -197,6 +197,11 @@ class QwenImageEditModel(QwenImageModel):
             device=self.device_torch,
             num_images_per_prompt=1,
         )
+        # diffusers >=0.37 returns None when all tokens are valid (no padding)
+        if prompt_embeds_mask is None:
+            prompt_embeds_mask = torch.ones(
+                prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.int64
+            )
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
@@ -246,10 +251,10 @@ class QwenImageEditModel(QwenImageModel):
         latent_model_input = torch.cat([latent_model_input, control], dim=1)
         batch_size = latent_model_input.shape[0]
 
-        prompt_embeds_mask = text_embeddings.get_attention_mask(
+        prompt_embeds_mask = text_embeddings.attention_mask.to(
             self.device_torch, dtype=torch.int64
         )
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
+        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
         enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
 
         noise_pred = self.transformer(
@@ -257,7 +262,7 @@ class QwenImageEditModel(QwenImageModel):
             timestep=timestep / 1000,
             guidance=None,
             encoder_hidden_states=enc_hs,
-            encoder_hidden_states_mask=prompt_embeds_mask.detach() if prompt_embeds_mask is not None else None,
+            encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
             txt_seq_lens=txt_seq_lens,
             return_dict=False,

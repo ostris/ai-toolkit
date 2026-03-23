@@ -35,13 +35,6 @@ class PromptEmbeds:
 
         self.attention_mask = attention_mask
 
-    def get_attention_mask(self, *args, **kwargs):
-        if self.attention_mask is None:
-            return None
-        if isinstance(self.attention_mask, list) or isinstance(self.attention_mask, tuple):
-            return [t.to(*args, **kwargs) for t in self.attention_mask]
-        return self.attention_mask.to(*args, **kwargs)
-
     def to(self, *args, **kwargs):
         if isinstance(self.text_embeds, list) or isinstance(self.text_embeds, tuple):
             self.text_embeds = [t.to(*args, **kwargs) for t in self.text_embeds]
