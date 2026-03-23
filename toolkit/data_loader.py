@@ -491,6 +491,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         latent_space_version = "sd1"
         if self.sd is not None and self.sd.model_config.latent_space_version is not None:
             latent_space_version = self.sd.model_config.latent_space_version
+        elif self.sd is not None and self.sd.latent_space_version is not None:
+            latent_space_version = self.sd.latent_space_version
         elif self.sd.is_xl:
             latent_space_version = 'sdxl'
         elif self.sd.is_v3:

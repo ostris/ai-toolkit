@@ -222,6 +222,9 @@ class LTX2Model(BaseModel):
 
         # gemma needs left side padding
         self.te_padding_side = "left"
+        
+        # invalidate older caches
+        self.latent_space_version = f"{self.arch}_v2"
 
     # static method to get the noise scheduler
     @staticmethod
@@ -890,8 +893,8 @@ class LTX2Model(BaseModel):
                 # set video timestep
                 video_timestep = timestep.unsqueeze(-1) * (1 - packed_conditioning_mask)
 
-            # todo get this somehow
-            frame_rate = 24
+
+            frame_rate = batch.dataset_config.fps
             # check frame dimension
             # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
             packed_latents = self.pipeline._pack_latents(
