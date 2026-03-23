@@ -118,11 +118,11 @@ class QwenImageEditModel(QwenImageModel):
         img = pipeline(
             image=control_img,
             prompt_embeds=conditional_embeds.text_embeds,
-            prompt_embeds_mask=conditional_embeds.attention_mask.to(
+            prompt_embeds_mask=conditional_embeds.get_attention_mask(
                 self.device_torch, dtype=torch.int64
             ),
             negative_prompt_embeds=unconditional_embeds.text_embeds,
-            negative_prompt_embeds_mask=unconditional_embeds.attention_mask.to(
+            negative_prompt_embeds_mask=unconditional_embeds.get_attention_mask(
                 self.device_torch, dtype=torch.int64
             ),
             height=gen_config.height,
@@ -246,19 +246,18 @@ class QwenImageEditModel(QwenImageModel):
         latent_model_input = torch.cat([latent_model_input, control], dim=1)
         batch_size = latent_model_input.shape[0]
 
-        prompt_embeds_mask = text_embeddings.attention_mask.to(
+        prompt_embeds_mask = text_embeddings.get_attention_mask(
             self.device_torch, dtype=torch.int64
         )
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
+        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist() if prompt_embeds_mask is not None else None
         enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
-        prompt_embeds_mask = text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64)
 
         noise_pred = self.transformer(
             hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
             timestep=timestep / 1000,
             guidance=None,
             encoder_hidden_states=enc_hs,
-            encoder_hidden_states_mask=prompt_embeds_mask,
+            encoder_hidden_states_mask=prompt_embeds_mask.detach() if prompt_embeds_mask is not None else None,
             img_shapes=img_shapes,
             txt_seq_lens=txt_seq_lens,
             return_dict=False,
