@@ -2287,7 +2287,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.accelerator.wait_for_everyone()
                         
                     if is_save_step:
-                        self.accelerator
                         # print above the progress bar
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
@@ -2348,10 +2347,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             self.logger.log({
                                 'learning_rate': learning_rate,
                             })
-                            for key, value in loss_dict.items():
-                                self.logger.log({
-                                    f'loss/{key}': value,
-                                })
+                            if loss_dict is not None:
+                                for key, value in loss_dict.items():
+                                    self.logger.log({
+                                        f'loss/{key}': value,
+                                    })
 
 
                     if self.performance_log_every > 0 and self.step_num % self.performance_log_every == 0:

@@ -489,6 +489,63 @@ class Wan21(BaseModel):
         self.vae = vae
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
+        
+        # Enable flash attention if requested
+        model_kwargs = getattr(self.model_config, 'model_kwargs', {})
+        if isinstance(model_kwargs, dict) and model_kwargs.get('use_flash_attention', False):
+            self.enable_flash_attention()
+
+    def enable_flash_attention(self, num_img_tokens: int = 257):
+        """
+        Enable flash attention for WAN transformer models.
+        This can significantly speed up inference, especially for long sequences.
+        
+        Args:
+            num_img_tokens: Number of image tokens for I2V models (default: 257)
+        """
+        from toolkit.models.wan21.wan_attn_flash import WanAttnProcessor2_0Flash
+        
+        try:
+            processor = WanAttnProcessor2_0Flash(num_img_tokens=num_img_tokens, use_flash=True)
+            if processor.use_flash:
+                self.print_and_status_update("Enabling flash attention for WAN transformer")
+                processors_set = 0
+                
+                # Helper function to set processor on a transformer
+                def set_processor_on_transformer(transformer, name=""):
+                    nonlocal processors_set
+                    if hasattr(transformer, 'blocks'):
+                        for i, block in enumerate(transformer.blocks):
+                            if hasattr(block, 'attn2') and hasattr(block.attn2, 'set_processor'):
+                                block.attn2.set_processor(processor)
+                                processors_set += 1
+                            # Also check for attn1 (self-attention) if it exists
+                            if hasattr(block, 'attn1') and hasattr(block.attn1, 'set_processor'):
+                                block.attn1.set_processor(processor)
+                                processors_set += 1
+                
+                # Handle single transformer models (WAN 2.1)
+                if hasattr(self.model, 'blocks') and not hasattr(self.model, 'transformer_1'):
+                    set_processor_on_transformer(self.model, "main")
+                
+                # Handle dual transformer models (WAN 2.2)
+                if hasattr(self.model, 'transformer_1'):
+                    set_processor_on_transformer(self.model.transformer_1, "transformer_1")
+                if hasattr(self.model, 'transformer_2'):
+                    set_processor_on_transformer(self.model.transformer_2, "transformer_2")
+                
+                if processors_set > 0:
+                    self.print_and_status_update(f"Flash attention enabled successfully on {processors_set} attention layers")
+                else:
+                    self.print_and_status_update("Warning: Flash attention processor created but no attention layers found to set it on")
+            else:
+                self.print_and_status_update("Flash attention not available, using SDP instead")
+        except Exception as e:
+            import warnings
+            import traceback
+            warnings.warn(f"Failed to enable flash attention: {e}. Using SDP instead.")
+            self.print_and_status_update(f"Flash attention not available: {e}")
+            self.print_and_status_update(f"Traceback: {traceback.format_exc()}")
 
     def get_generation_pipeline(self):
         scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
