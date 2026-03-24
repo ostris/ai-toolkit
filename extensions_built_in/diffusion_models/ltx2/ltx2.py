@@ -77,7 +77,7 @@ dit_prefix = "model.diffusion_model."
 vae_prefix = "vae."
 audio_vae_prefix = "audio_vae."
 vocoder_prefix = "vocoder."
-base_te_path = "google/gemma-3-12b-it-qat-q4_0-unquantized"
+base_te_path = "Lightricks/gemma-3-12b-it-qat-q4_0-unquantized"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
@@ -121,6 +121,10 @@ class ComboVae(torch.nn.Module):
     @property
     def dtype(self):
         return self.vae.dtype
+
+    @property
+    def config(self):
+        return self.vae.config
 
     def encode(
         self,
@@ -222,7 +226,7 @@ class LTX2Model(BaseModel):
 
         # gemma needs left side padding
         self.te_padding_side = "left"
-        
+
         # invalidate older caches
         self.latent_space_version = f"{self.arch}_v2"
 
@@ -554,6 +558,13 @@ class LTX2Model(BaseModel):
         self.pipeline.vae.eval()
         self.pipeline.vae.requires_grad_(False)
 
+        if self.model_config.low_vram:
+            self.pipeline.vae.tile_sample_min_num_frames = 64
+            self.pipeline.vae.tile_sample_stride_num_frames = 16
+            # they check the wrong flat on encode currently so set both to future proof
+            self.pipeline.vae.use_framewise_decoding = True
+            self.pipeline.vae.use_framewise_encoding = True
+
         image_list = [image.to(device, dtype=dtype) for image in image_list]
 
         # Normalize shapes
@@ -571,7 +582,7 @@ class LTX2Model(BaseModel):
         # Stack to (B, C, T, H, W)
         images = torch.stack(norm_images)
 
-        latents = self.pipeline.vae.encode(images).latent_dist.mode()
+        latents = self.pipeline.vae.encode(images).latent_dist.sample()
 
         # Normalize latents across the channel dimension [B, C, F, H, W]
         scaling_factor = 1.0
@@ -582,6 +593,10 @@ class LTX2Model(BaseModel):
             latents.device, latents.dtype
         )
         latents = (latents - latents_mean) * scaling_factor / latents_std
+        
+        if self.model_config.low_vram:
+            self.pipeline.vae.use_framewise_decoding = False
+            self.pipeline.vae.use_framewise_encoding = False
 
         return latents.to(device, dtype=dtype)
 
@@ -666,14 +681,17 @@ class LTX2Model(BaseModel):
 
         if self.low_vram:
             # set vae to tile decode
-            pipeline.vae.enable_tiling(
-                tile_sample_min_height=256,
-                tile_sample_min_width=256,
-                tile_sample_min_num_frames=8,
-                tile_sample_stride_height=224,
-                tile_sample_stride_width=224,
-                tile_sample_stride_num_frames=4,
-            )
+            # pipeline.vae.enable_tiling(
+            #     tile_sample_min_height=256,
+            #     tile_sample_min_width=256,
+            #     tile_sample_min_num_frames=8,
+            #     tile_sample_stride_height=224,
+            #     tile_sample_stride_width=224,
+            #     tile_sample_stride_num_frames=4,
+            # )
+            self.pipeline.vae.tile_sample_min_num_frames = 16
+            self.pipeline.vae.tile_sample_stride_num_frames = 8
+            self.pipeline.vae.use_framewise_decoding = True
 
         # We only encode and store the minimum prompt tokens, but need them padded to 1024 for LTX2
         conditional_embeds = self.pad_embeds(conditional_embeds)
@@ -718,7 +736,8 @@ class LTX2Model(BaseModel):
         )
         if self.low_vram:
             # Restore no tiling
-            pipeline.vae.use_tiling = False
+            # pipeline.vae.use_tiling = False
+            self.pipeline.vae.use_framewise_decoding = False
 
         if is_video:
             # redurn as a dict, we will handle it with an override function
@@ -775,7 +794,7 @@ class LTX2Model(BaseModel):
             # Encode mel spectrogram to latents
             latents = self.pipeline.audio_vae.encode(
                 mel_spectrogram.to(self.device_torch, dtype=self.torch_dtype)
-            ).latent_dist.mode()
+            ).latent_dist.sample()
 
             if audio_num_frames is None:
                 audio_num_frames = latents.shape[2]  # (latents is [B, C, T, F])
@@ -841,7 +860,7 @@ class LTX2Model(BaseModel):
             video_timestep = timestep.clone()
 
             # i2v from first frame
-            if batch.dataset_config.do_i2v and batch.dataset_config.num_frames > 1:
+            if batch.dataset_config.do_i2v and batch.num_frames > 1:
                 # check to see if we had it cached
                 if batch.first_frame_latents is not None:
                     init_latents = batch.first_frame_latents.to(
@@ -893,7 +912,6 @@ class LTX2Model(BaseModel):
                 # set video timestep
                 video_timestep = timestep.unsqueeze(-1) * (1 - packed_conditioning_mask)
 
-
             frame_rate = batch.dataset_config.fps
             # check frame dimension
             # Unpacked latents of shape are [B, C, F, H, W] are patched into tokens of shape [B, C, F // p_t, p_t, H // p, p, W // p, p].
@@ -930,7 +948,7 @@ class LTX2Model(BaseModel):
                 num_channels_latents_audio = (
                     self.pipeline.audio_vae.config.latent_channels
                 )
-                duration_s = batch.dataset_config.num_frames / frame_rate
+                duration_s = batch.num_frames / frame_rate
                 audio_latents_per_second = (
                     self.pipeline.audio_sampling_rate
                     / self.pipeline.audio_hop_length

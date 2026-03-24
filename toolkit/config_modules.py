@@ -977,6 +977,11 @@ class DatasetConfig:
         # I recommend trimming your videos to the desired length and using shrink_video_to_frames(default)
         self.fps: int = kwargs.get('fps', 24)
         
+        # auto_frame_count pull as many frames as in the video at given fps
+        # Important, make sure fps for dataset is set correctly.
+        # this wont work with bucketing for now until I can handle this before bucketing.
+        self.auto_frame_count: bool = kwargs.get('auto_frame_count', False)
+        
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
         
@@ -1360,5 +1365,8 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
+    
+    if train_config.batch_size > 1 and any(dataset_config.auto_frame_count for dataset_config in dataset_configs):
+        raise ValueError("Cannot use batch size greater than 1 with auto_frame_count. Please set batch_size to 1 or auto_frame_count to False.")
 
     
