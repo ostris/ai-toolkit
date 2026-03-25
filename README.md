@@ -279,7 +279,7 @@ The AI Toolkit UI is a web interface for the AI Toolkit. It allows you to easily
 ## Running the UI
 
 Requirements:
-- Node.js > 18
+- Node.js > 20
 
 The UI does not need to be kept running for the jobs to run. It is only needed to start/stop/monitor jobs. The commands below
 will install / update the UI and it's dependencies and start the UI. 
