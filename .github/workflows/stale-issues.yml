@@ -17,8 +17,8 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const sixMonthsAgo = new Date();
-            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+            const threeMonthsAgo = new Date();
+            threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
             let closedIssues = 0;
             let closedPRs = 0;
@@ -39,14 +39,14 @@ jobs:
                 // Skip pull requests (issues API returns both)
                 if (issue.pull_request) continue;
 
-                if (new Date(issue.updated_at) < sixMonthsAgo) {
+                if (new Date(issue.updated_at) < threeMonthsAgo) {
                   console.log(`Closing issue #${issue.number}: "${issue.title}" (last activity: ${issue.updated_at})`);
 
                   await github.rest.issues.createComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: issue.number,
-                    body: `This issue has been automatically closed due to inactivity. It has had no activity for 6 months.\n\nIf this issue is still relevant, please feel free to reopen it with updated information or context. We apologize for any inconvenience.`,
+                    body: `This issue has been automatically closed due to inactivity. It has had no activity for 3 months.\n\nIf this issue is still relevant, please feel free to reopen it with updated information or context. We apologize for any inconvenience.`,
                   });
 
                   await github.rest.issues.update({
@@ -75,14 +75,14 @@ jobs:
 
             for await (const { data: prs } of prIterator) {
               for (const pr of prs) {
-                if (new Date(pr.updated_at) < sixMonthsAgo) {
+                if (new Date(pr.updated_at) < threeMonthsAgo) {
                   console.log(`Closing PR #${pr.number}: "${pr.title}" (last activity: ${pr.updated_at})`);
 
                   await github.rest.issues.createComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: pr.number,
-                    body: `This pull request has been automatically closed due to inactivity. It has had no activity for 6 months.\n\nIf this PR is still relevant, please feel free to reopen it with updated information or context. We apologize for any inconvenience.`,
+                    body: `This pull request has been automatically closed due to inactivity. It has had no activity for 3 months.\n\nIf this PR is still relevant, please feel free to reopen it with updated information or context. We apologize for any inconvenience.`,
                   });
 
                   await github.rest.pulls.update({
