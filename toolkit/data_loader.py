@@ -508,9 +508,9 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             
         temporal_compression = 8
         if self.sd is not None:
-            if hasattr(self.sd.vae.config, 'scale_factor_temporal'):
+            if hasattr(self.sd.vae, 'config') and hasattr(self.sd.vae.config, 'scale_factor_temporal'):
                 temporal_compression = self.sd.vae.config.scale_factor_temporal
-            if hasattr(self.sd.unet.config, 'temporal_compression_ratio'):
+            if hasattr(self.sd.unet, 'config') and hasattr(self.sd.unet.config, 'temporal_compression_ratio'):
                 temporal_compression = self.sd.unet.config.temporal_compression_ratio
         
         bad_count = 0
