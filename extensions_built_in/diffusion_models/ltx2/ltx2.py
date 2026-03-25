@@ -398,24 +398,27 @@ class LTX2Model(BaseModel):
             text_encoder.load_state_dict(te_state_dict, assign=True, strict=True)
             del te_state_dict
             flush()
-        else:
-            te_tokenizer_subfolder = "tokenizer"
-            te_model_subfolder = "text_encoder"
-            if self.model_config.te_name_or_path is not None:
-                te_path = self.model_config.te_name_or_path
-            else:
-                if self.ltx_te_path is not None:
-                    # pull from original repo for 2.3
-                    te_path = self.ltx_te_path
-                    te_tokenizer_subfolder = ""
-                    te_model_subfolder = ""
-                else:
-                    te_path = base_te_path
+        elif self.model_config.te_name_or_path is not None:
+            # a repo or folder
             tokenizer = GemmaTokenizerFast.from_pretrained(
-                te_path, subfolder=te_tokenizer_subfolder
+                self.model_config.te_name_or_path
             )
             text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                te_path, subfolder=te_model_subfolder, dtype=dtype
+                self.model_config.te_name_or_path, dtype=dtype
+            )
+        elif self.ltx_te_path is not None:
+            # pull from model specific te
+            tokenizer = GemmaTokenizerFast.from_pretrained(self.ltx_te_path)
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                self.ltx_te_path, dtype=dtype
+            )
+        else:
+            # using combo hf repo
+            tokenizer = GemmaTokenizerFast.from_pretrained(
+                self.model_config.name_or_path, subfolder="tokenizer"
+            )
+            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
+                self.model_config.name_or_path, subfolder="text_encoder", dtype=dtype
             )
 
         # remove the vision tower
@@ -593,7 +596,7 @@ class LTX2Model(BaseModel):
             latents.device, latents.dtype
         )
         latents = (latents - latents_mean) * scaling_factor / latents_std
-        
+
         if self.model_config.low_vram:
             self.pipeline.vae.use_framewise_decoding = False
             self.pipeline.vae.use_framewise_encoding = False
