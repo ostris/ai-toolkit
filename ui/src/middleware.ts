@@ -8,7 +8,7 @@ const publicRoutes = ['/api/img/', '/api/files/'];
 export function middleware(request: NextRequest) {
   // check env var for AI_TOOLKIT_AUTH, if not set, approve all requests
   // if it is set make sure bearer token matches
-  const tokenToUse = process.env.AI_TOOLKIT_AUTH || null;
+  const tokenToUse = process.env.AI_TOOLKIT_AUTH ?? null;
   if (!tokenToUse) {
     return NextResponse.next();
   }
