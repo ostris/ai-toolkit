@@ -69,6 +69,36 @@ transforms_dict = {
 img_ext_list = ['.jpg', '.jpeg', '.png', '.webp']
 
 
+def validate_control_image_paths(file_list: List, control_image_path: str):
+    """
+    Validate that all control image files have exact matches in the target dataset.
+    
+    Args:
+        file_list: List of target image paths
+        control_image_path: Base path for control images
+    
+    Raises:
+        FileNotFoundError: If a control image file has no exact match in target dataset
+    """
+    control_path = os.path.expanduser(control_image_path)
+    if not os.path.exists(control_path):
+        return
+    
+    control_files = []
+    for ext in img_ext_list:
+        control_files.extend(glob.glob(os.path.join(control_path, f'*{ext}')))
+    
+    target_basenames = {os.path.splitext(os.path.basename(f))[0] for f in file_list}
+    
+    for ctrl_file in control_files:
+        ctrl_basename = os.path.splitext(os.path.basename(ctrl_file))[0]
+        if ctrl_basename not in target_basenames:
+            raise FileNotFoundError(
+                f"Control image '{ctrl_file}' has no exact match in target dataset. "
+                f"Control images must have filenames that exactly match target images."
+            )
+
+
 def standardize_images(images):
     """
     Standardize the given batch of images using the specified mean and std.
