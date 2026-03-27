@@ -84,7 +84,7 @@ class RMSNorm(torch.nn.Module):
     def forward(self, x: Tensor):
         return F.rms_norm(x, self.scale.shape, weight=self.scale, eps=1e-6)
         # if self.use_compiled:
-        #     return torch.compile(self._forward)(x)
+        #     return self._forward(x)
         # else:
         #     return self._forward(x)
 
