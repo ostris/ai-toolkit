@@ -39,6 +39,6 @@ class CheckpointGradients(nn.Module):
 
     def forward(self, module, *args, num_chunks=1):
         if self.is_gradient_checkpointing:
-            return checkpoint(module, *args, num_chunks=self.num_chunks)
+            return checkpoint(module, *args, num_chunks=num_chunks)
         else:
             return module(*args)
