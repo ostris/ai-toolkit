@@ -572,7 +572,7 @@ class TrainConfig:
         self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'zimage', 'vega', 'ssd', 'wan21']
 
 
 class ModelConfig:
@@ -588,6 +588,7 @@ class ModelConfig:
         self.is_v3: bool = kwargs.get('is_v3', False)
         self.is_flux: bool = kwargs.get('is_flux', False)
         self.is_lumina2: bool = kwargs.get('is_lumina2', False)
+        self.is_zimage: bool = kwargs.get('is_zimage', False)
         if self.is_pixart_sigma:
             self.is_pixart = True
         self.use_flux_cfg = kwargs.get('use_flux_cfg', False)
@@ -719,6 +720,8 @@ class ModelConfig:
                 self.is_flux = True
             elif self.arch == 'lumina2':
                 self.is_lumina2 = True
+            elif self.arch == 'zimage':
+                self.is_zimage = True
             elif self.arch == 'vega':
                 self.is_vega = True
             elif self.arch == 'ssd':
@@ -742,6 +745,8 @@ class ModelConfig:
                 self.arch = 'flux'
             elif kwargs.get('is_lumina2', False):
                 self.arch = 'lumina2'
+            elif kwargs.get('is_zimage', False):
+                self.arch = 'zimage'
             elif kwargs.get('is_vega', False):
                 self.arch = 'vega'
             elif kwargs.get('is_ssd', False):

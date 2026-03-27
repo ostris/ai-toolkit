@@ -257,6 +257,10 @@ class BaseModel:
     def is_lumina2(self):
         return self.arch == 'lumina2'
 
+    @property
+    def is_zimage(self):
+        return self.arch == 'zimage'
+
     def get_bucket_divisibility(self):
         if self.vae is None:
             return 8

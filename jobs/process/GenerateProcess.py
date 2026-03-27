@@ -101,6 +101,8 @@ class GenerateProcess(BaseProcess):
                 arch = 'flux'
             if self.model_config.is_lumina2:
                 arch = 'lumina2'
+            if self.model_config.is_zimage:
+                arch = 'zimage'
             sampler = get_sampler(
                 self.train_config.noise_scheduler,
                 {

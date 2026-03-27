@@ -1590,6 +1590,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 arch = 'flux'
             if self.model_config.is_lumina2:
                 arch = 'lumina2'
+            if self.model_config.is_zimage:
+                arch = 'zimage'
             sampler = get_sampler(
                 self.train_config.noise_scheduler,
                 {
@@ -1784,6 +1786,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     is_auraflow=self.model_config.is_auraflow,
                     is_flux=self.model_config.is_flux,
                     is_lumina2=self.model_config.is_lumina2,
+                    is_zimage=self.model_config.is_zimage,
                     is_ssd=self.model_config.is_ssd,
                     is_vega=self.model_config.is_vega,
                     dropout=self.network_config.dropout,
@@ -2472,6 +2475,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             tags.append("flux")
         if self.model_config.is_lumina2:
             tags.append("lumina2")
+        if self.model_config.is_zimage:
+            tags.append("zimage")
         if self.model_config.is_v3:
             tags.append("sd3")
         if self.network_config:

@@ -118,6 +118,23 @@ lumina2_config = {
   "use_karras_sigmas": False
 }
 
+zimage_config = {
+  "_class_name": "FlowMatchEulerDiscreteScheduler",
+  "_diffusers_version": "0.37.0.dev0",
+  "base_image_seq_len": 256,
+  "base_shift": 0.5,
+  "invert_sigmas": False,
+  "max_image_seq_len": 4096,
+  "max_shift": 1.15,
+  "num_train_timesteps": 1000,
+  "shift": 6.0,
+  "shift_terminal": None,
+  "use_beta_sigmas": False,
+  "use_dynamic_shifting": False,
+  "use_exponential_sigmas": False,
+  "use_karras_sigmas": False
+}
+
 
 def get_sampler(
         sampler: str,
@@ -171,6 +188,8 @@ def get_sampler(
             config_to_use = copy.deepcopy(flux_config)
         elif arch == "lumina2":
             config_to_use = copy.deepcopy(lumina2_config)
+        elif arch == "zimage":
+            config_to_use = copy.deepcopy(zimage_config)
         else:
             print(f"Unknown architecture {arch}, using default flux config")
             # use flux by default

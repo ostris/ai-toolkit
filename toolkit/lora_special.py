@@ -183,6 +183,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             is_auraflow: bool = False,
             is_flux: bool = False,
             is_lumina2: bool = False,
+            is_zimage: bool = False,
             use_bias: bool = False,
             is_lorm: bool = False,
             ignore_if_contains = None,
@@ -250,6 +251,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         self.is_auraflow = is_auraflow
         self.is_flux = is_flux
         self.is_lumina2 = is_lumina2
+        self.is_zimage = is_zimage
         self.network_type = network_type
         self.is_assistant_adapter = is_assistant_adapter
         self.full_rank = network_type.lower() == "fullrank"
@@ -274,7 +276,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             self.use_old_lokr_format = False
 
         # always do peft for flux only for now
-        if self.is_flux or self.is_v3 or self.is_lumina2 or is_transformer:
+        if self.is_flux or self.is_v3 or self.is_lumina2 or self.is_zimage or is_transformer:
             # don't do peft format for lokr if using old format
             if self.network_type.lower() != "lokr" or not self.use_old_lokr_format:
                 self.peft_format = True
@@ -317,7 +319,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             unet_prefix = self.LORA_PREFIX_UNET
             if self.peft_format:
                 unet_prefix = self.PEFT_PREFIX_UNET
-            if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2 or self.is_transformer:
+            if is_pixart or is_v3 or is_auraflow or is_flux or is_lumina2 or is_zimage or self.is_transformer:
                 unet_prefix = f"lora_transformer"
                 if self.peft_format:
                     unet_prefix = "transformer"
@@ -380,6 +382,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                     if "transformer_blocks" not in lora_name:
                                         skip = True
                                 if self.is_lumina2:
+                                    if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
+                                        skip = True
+                                if self.is_zimage:
                                     if "layers$$" not in lora_name and "noise_refiner$$" not in lora_name and "context_refiner$$" not in lora_name:
                                         skip = True
                                 if  self.is_v3:
@@ -512,6 +517,9 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         
         if is_lumina2:
             target_modules = ["Lumina2Transformer2DModel"]
+
+        if is_zimage:
+            target_modules = ["ZImageTransformer2DModel"]
 
         if train_unet:
             self.unet_loras, skipped_un = create_modules(True, None, unet, target_modules)

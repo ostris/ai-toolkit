@@ -51,6 +51,8 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, T2IAda
     StableDiffusion3Img2ImgPipeline, PixArtSigmaPipeline, AuraFlowPipeline, AuraFlowTransformer2DModel, FluxPipeline, \
     FluxTransformer2DModel, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, Lumina2Pipeline, \
     FluxControlPipeline, Lumina2Transformer2DModel
+from diffusers import ZImagePipeline
+from diffusers.models.transformers import ZImageTransformer2DModel
 import diffusers
 from diffusers import \
     AutoencoderKL, \
@@ -196,7 +198,7 @@ class StableDiffusion:
         self.config_file = None
 
         self.is_flow_matching = False
-        if self.is_flux or self.is_v3 or self.is_auraflow or self.is_lumina2 or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
+        if self.is_flux or self.is_v3 or self.is_auraflow or self.is_lumina2 or self.is_zimage or isinstance(self.noise_scheduler, CustomFlowMatchEulerDiscreteScheduler):
             self.is_flow_matching = True
 
         self.quantize_device = self.device_torch
@@ -269,6 +271,10 @@ class StableDiffusion:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+
+    @property
+    def is_zimage(self):
+        return self.arch == 'zimage'
     
     @property
     def unet_unwrapped(self):
@@ -933,6 +939,98 @@ class StableDiffusion:
             text_encoder.eval()
             pipe.transformer = pipe.transformer.to(self.device_torch)
             flush()
+        elif self.model_config.is_zimage:
+            self.print_and_status_update("Loading Z-Image model")
+            base_model_path = self.model_config.name_or_path_original
+            self.print_and_status_update("Loading transformer")
+            subfolder = 'transformer'
+            transformer_path = model_path
+            if os.path.exists(transformer_path):
+                subfolder = None
+                transformer_path = os.path.join(transformer_path, 'transformer')
+                te_folder_path = os.path.join(model_path, 'text_encoder')
+                if os.path.exists(te_folder_path):
+                    base_model_path = model_path
+
+            transformer = ZImageTransformer2DModel.from_pretrained(
+                transformer_path,
+                subfolder=subfolder,
+                torch_dtype=dtype,
+            )
+
+            if self.model_config.split_model_over_gpus:
+                raise ValueError("Splitting model over gpus is not supported for Z-Image models")
+
+            transformer.to(self.quantize_device, dtype=dtype)
+            flush()
+
+            if self.model_config.assistant_lora_path is not None or self.model_config.inference_lora_path is not None:
+                raise ValueError("Assistant LoRA is not supported for Z-Image models currently")
+
+            if self.model_config.lora_path is not None:
+                raise ValueError("Loading LoRA is not supported for Z-Image models currently")
+
+            flush()
+
+            if self.model_config.quantize:
+                patch_dequantization_on_save(transformer)
+                quantization_type = get_qtype(self.model_config.qtype)
+                self.print_and_status_update("Quantizing transformer")
+                quantize(transformer, weights=quantization_type, **self.model_config.quantize_kwargs)
+                freeze(transformer)
+                transformer.to(self.device_torch)
+            else:
+                transformer.to(self.device_torch, dtype=dtype)
+
+            flush()
+
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(base_model_path, subfolder="scheduler")
+            self.print_and_status_update("Loading vae")
+            vae = AutoencoderKL.from_pretrained(base_model_path, subfolder="vae", torch_dtype=dtype)
+            flush()
+
+            if self.model_config.te_name_or_path is not None:
+                self.print_and_status_update("Loading TE")
+                tokenizer = AutoTokenizer.from_pretrained(self.model_config.te_name_or_path, torch_dtype=dtype)
+                text_encoder = AutoModel.from_pretrained(self.model_config.te_name_or_path, torch_dtype=dtype)
+            else:
+                self.print_and_status_update("Loading Qwen3")
+                tokenizer = AutoTokenizer.from_pretrained(base_model_path, subfolder="tokenizer")
+                text_encoder = AutoModel.from_pretrained(base_model_path, subfolder="text_encoder", torch_dtype=dtype)
+
+            text_encoder.to(self.device_torch, dtype=dtype)
+            flush()
+
+            if self.model_config.quantize_te:
+                self.print_and_status_update("Quantizing Qwen3")
+                quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
+                freeze(text_encoder)
+                flush()
+
+            self.print_and_status_update("Making pipe")
+            pipe = ZImagePipeline(
+                scheduler=scheduler,
+                text_encoder=None,
+                tokenizer=tokenizer,
+                vae=vae,
+                transformer=None,
+            )
+            pipe.text_encoder = text_encoder
+            pipe.transformer = transformer
+
+            self.print_and_status_update("Preparing Model")
+
+            text_encoder = pipe.text_encoder
+            tokenizer = pipe.tokenizer
+
+            pipe.transformer = pipe.transformer.to(self.device_torch)
+
+            flush()
+            text_encoder.to(self.device_torch)
+            text_encoder.requires_grad_(False)
+            text_encoder.eval()
+            pipe.transformer = pipe.transformer.to(self.device_torch)
+            flush()
         else:
             if self.custom_pipeline is not None:
                 pipln = self.custom_pipeline
@@ -1005,7 +1103,7 @@ class StableDiffusion:
         # add hacks to unet to help training
         # pipe.unet = prepare_unet_for_training(pipe.unet)
 
-        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2:
+        if self.is_pixart or self.is_v3 or self.is_auraflow or self.is_flux or self.is_lumina2 or self.is_zimage:
             # pixart and sd3 dont use a unet
             self.unet = pipe.transformer
         else:
@@ -1020,7 +1118,7 @@ class StableDiffusion:
         self.unet.eval()
 
         # load any loras we have
-        if self.model_config.lora_path is not None and not self.is_flux and not self.is_lumina2:
+        if self.model_config.lora_path is not None and not self.is_flux and not self.is_lumina2 and not self.is_zimage:
             pipe.load_lora_weights(self.model_config.lora_path, adapter_name="lora1")
             pipe.fuse_lora()
             # unfortunately, not an easier way with peft
@@ -1190,6 +1288,8 @@ class StableDiffusion:
                         arch = 'flux'
                     if self.is_lumina2:
                         arch = 'lumina2'
+                    if self.is_zimage:
+                        arch = 'zimage'
                     noise_scheduler = get_sampler(
                         sampler,
                         {
@@ -1283,6 +1383,15 @@ class StableDiffusion:
                 pipeline.watermark = None
             elif self.is_lumina2:
                 pipeline = Lumina2Pipeline(
+                    vae=self.vae,
+                    transformer=self.unet,
+                    text_encoder=self.text_encoder,
+                    tokenizer=self.tokenizer,
+                    scheduler=noise_scheduler,
+                    **extra_args
+                )
+            elif self.is_zimage:
+                pipeline = ZImagePipeline(
                     vae=self.vae,
                     transformer=self.unet,
                     text_encoder=self.text_encoder,
@@ -1617,6 +1726,19 @@ class StableDiffusion:
                             prompt_attention_mask=conditional_embeds.attention_mask.to(self.device_torch, dtype=torch.int64),
                             negative_prompt_embeds=unconditional_embeds.text_embeds,
                             negative_prompt_attention_mask=unconditional_embeds.attention_mask.to(self.device_torch, dtype=torch.int64),
+                            height=gen_config.height,
+                            width=gen_config.width,
+                            num_inference_steps=gen_config.num_inference_steps,
+                            guidance_scale=gen_config.guidance_scale,
+                            latents=gen_config.latents,
+                            generator=generator,
+                            **extra
+                        ).images[0]
+                    elif self.is_zimage:
+                        pipeline: ZImagePipeline = pipeline
+                        img = pipeline(
+                            prompt_embeds=conditional_embeds.text_embeds,
+                            negative_prompt_embeds=unconditional_embeds.text_embeds,
                             height=gen_config.height,
                             width=gen_config.width,
                             num_inference_steps=gen_config.num_inference_steps,
@@ -2215,6 +2337,38 @@ class StableDiffusion:
                     
                     # lumina2 does this before stepping. Should we do it here?
                     noise_pred = -noise_pred
+                elif self.is_zimage:
+                    # reverse the timestep since ZImage uses t=0 as the noise and t=1 as the image
+                    t = 1 - timestep / self.noise_scheduler.config.num_train_timesteps
+
+                    # Convert batched latents to list of [C, 1, H, W] tensors
+                    latent_list = list(latent_model_input.unsqueeze(2).unbind(dim=0))
+
+                    # Convert text embeddings to list format
+                    cap_feats = text_embeddings.text_embeds
+                    if not isinstance(cap_feats, list):
+                        # If batched, convert using attention mask
+                        if text_embeddings.attention_mask is not None:
+                            cap_feats = []
+                            for i in range(len(latent_list)):
+                                mask = text_embeddings.attention_mask[i].bool()
+                                cap_feats.append(text_embeddings.text_embeds[i][mask])
+                        else:
+                            cap_feats = list(text_embeddings.text_embeds.unbind(dim=0))
+
+                    with self.accelerator.autocast():
+                        model_out_list = self.unet(
+                            x=latent_list,
+                            t=t,
+                            cap_feats=cap_feats,
+                            **kwargs,
+                        ).sample  # Returns list of tensors
+
+                    # Stack list output back into batched tensor and squeeze the F dimension
+                    noise_pred = torch.stack(model_out_list, dim=0).squeeze(2)
+
+                    # ZImage also negates noise prediction
+                    noise_pred = -noise_pred
                 elif self.is_v3:
                     noise_pred = self.unet(
                         hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
@@ -2480,6 +2634,21 @@ class StableDiffusion:
                 attention_mask=prompt_attention_mask,
             )
 
+        elif self.is_zimage:
+            (
+                prompt_embeds,
+                negative_prompt_embeds,
+            ) = self.pipeline.encode_prompt(
+                prompt,
+                do_classifier_free_guidance=False,
+                num_images_per_prompt=1,
+                device=self.device_torch,
+                max_sequence_length=512,
+            )
+            return PromptEmbeds(
+                prompt_embeds,
+            )
+
         elif isinstance(self.text_encoder, T5EncoderModel):
             embeds, attention_mask = train_tools.encode_prompts_pixart(
                 self.tokenizer,
@@ -2675,7 +2844,7 @@ class StableDiffusion:
                 for name, param in self.text_encoder.named_parameters(recurse=True, prefix=f"{SD_PREFIX_TEXT_ENCODER}"):
                     named_params[name] = param
         if unet:
-            if self.is_flux or self.is_lumina2:
+            if self.is_flux or self.is_lumina2 or self.is_zimage:
                 for name, param in self.unet.named_parameters(recurse=True, prefix="transformer"):
                     named_params[name] = param
             else:
@@ -2794,6 +2963,12 @@ class StableDiffusion:
                     save_directory=os.path.join(output_file, 'transformer'),
                     safe_serialization=True,
                 )
+            elif self.is_zimage:
+                transformer: ZImageTransformer2DModel = unwrap_model(self.unet)
+                transformer.save_pretrained(
+                    save_directory=os.path.join(output_file, 'transformer'),
+                    safe_serialization=True,
+                )
                 
             else:
 
@@ -2851,7 +3026,7 @@ class StableDiffusion:
             named_params = self.named_parameters(vae=False, unet=unet, text_encoder=False, state_dict_keys=True)
             unet_lr = unet_lr if unet_lr is not None else default_lr
             params = []
-            if self.is_pixart or self.is_auraflow or self.is_flux or self.is_v3 or self.is_lumina2:
+            if self.is_pixart or self.is_auraflow or self.is_flux or self.is_v3 or self.is_lumina2 or self.is_zimage:
                 for param in named_params.values():
                     if param.requires_grad:
                         params.append(param)
@@ -3143,6 +3318,8 @@ class StableDiffusion:
             return 'flux.1'
         if self.is_lumina2:
             return 'lumina2'
+        if self.is_zimage:
+            return 'zimage'
         if self.is_ssd:
             return 'ssd'
         if self.is_vega:
