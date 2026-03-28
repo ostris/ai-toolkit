@@ -377,8 +377,8 @@ class Flux2Model(BaseModel):
                             "match_target_res", False
                         ):
                             ratio = control_img.shape[2] / control_img.shape[3]
-                            c_width = math.sqrt(control_image_res * ratio)
-                            c_height = c_width / ratio
+                            c_height = math.sqrt(control_image_res * ratio)
+                            c_width = c_height / ratio
 
                             c_width = round(c_width / 32) * 32
                             c_height = round(c_height / 32) * 32

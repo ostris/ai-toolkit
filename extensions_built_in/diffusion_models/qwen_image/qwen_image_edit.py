@@ -181,8 +181,8 @@ class QwenImageEditModel(QwenImageModel):
             # images are always run through at 1MP, based on diffusers inference code.
             target_area = 1024 * 1024
             ratio = control_images.shape[2] / control_images.shape[3]
-            width = math.sqrt(target_area * ratio)
-            height = width / ratio
+            height = math.sqrt(target_area * ratio)
+            width = height / ratio
 
             width = round(width / 32) * 32
             height = round(height / 32) * 32
