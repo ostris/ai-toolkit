@@ -233,6 +233,9 @@ class StableDiffusion:
         # some llms need left side padding, others need right side
         self.te_padding_side = "right"
         
+        # can be used on models to invalidate cache if things change.
+        self.latent_space_version = None
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):

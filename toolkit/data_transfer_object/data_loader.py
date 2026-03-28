@@ -54,7 +54,9 @@ class FileItemDTO(
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get("path", "")
         self.dataset_config: "DatasetConfig" = kwargs.get("dataset_config", None)
-        self.is_video = self.dataset_config.num_frames > 1
+        self.is_video = self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count
+        self.num_frames = self.dataset_config.num_frames
+        self.temporal_compression = kwargs.get("temporal_compression", 8)
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(
@@ -197,6 +199,8 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
+            
+            self.num_frames: int = self.file_items[0].num_frames
 
             if not is_latents_cached:
                 # only return a tensor if latents are not cached

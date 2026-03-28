@@ -522,7 +522,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # prepare meta
         save_meta = get_meta_for_safetensors(save_meta, self.job.name)
-        if not self.is_fine_tuning:
+        if not self.is_fine_tuning and not self.train_config.merge_network_on_save:
             if self.network is not None:
                 lora_name = self.job.name
                 if self.named_lora:
@@ -628,6 +628,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         direct_save=direct_save
                     )
         else:
+            if self.network is not None and self.train_config.merge_network_on_save:
+                # merge the network weights into a full model and save that
+                if not self.network.can_merge_in:
+                    raise ValueError("Network cannot merge in weights. Cannot save full model.")
+                
+                print_acc("Merging network weights into full model for saving...")
+                
+                self.network.merge_in(merge_weight=1.0)
+                # reset weights to zero
+                self.network.reset_weights()
+                self.network.is_merged_in = False
+                
+                print_acc("Done merging network weights.")
+                
             if self.save_config.save_format == "diffusers":
                 # saving as a folder path
                 file_path = file_path.replace('.safetensors', '')
@@ -1316,6 +1330,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     batch_noise = batch_noise * scn_scale
                     noise = noise + batch_noise 
                 
+                if self.train_config.do_batch_noise_correction:
+                    if latents.shape[0] == 1:
+                        # if we only have a batch size of 1, then we cant do batch noise correction, so we skip it
+                        print_acc("Skipping batch noise correction because batch size is 1, increase batch size and num_repeats to use this feature")
+                    else:
+                        # shuffle tensors ensuring that no tensor is in the same position as before
+                        batch_noise = latents.clone().roll(shifts=torch.randint(1, latents.shape[0], (1,)).item(), dims=0).to(noise.device, dtype=noise.dtype)
+                        batch_noise_scale = torch.randn(
+                            batch_noise.shape[0], batch_noise.shape[1], 1, 1,
+                            device=batch_noise.device,
+                            dtype=batch_noise.dtype
+                        ) * self.train_config.batch_noise_correction_scale
+                        batch_noise = batch_noise * batch_noise_scale
+                        noise = noise + batch_noise
+                
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
@@ -1329,7 +1358,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.train_config.random_noise_multiplier > 0.0:
                     sigma = self.train_config.random_noise_multiplier
                     noise_multiplier = torch.exp(torch.randn(s, device=noise.device, dtype=noise.dtype) * sigma)
-                
+                    noise = noise * noise_multiplier
             with self.timer('make_noisy_latents'):
 
                 latent_multiplier = self.train_config.latent_multiplier
@@ -1538,7 +1567,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.hook_before_model_load()
         model_config_to_load = copy.deepcopy(self.model_config)
 
-        if self.is_fine_tuning:
+        if self.is_fine_tuning or self.train_config.merge_network_on_save:
             # get the latest checkpoint
             # check to see if we have a latest save
             latest_save_path = self.get_latest_save_path()
@@ -1832,7 +1861,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 latest_save_path = self.get_latest_save_path(lora_name)
                 extra_weights = None
-                if latest_save_path is not None:
+                if latest_save_path is not None and not self.train_config.merge_network_on_save:
                     print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)
