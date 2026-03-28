@@ -766,6 +766,21 @@ class SDTrainer(BaseSDTrainProcess):
             loss_per_element = (weighing.float() * (denoised_latents.float() - target.float()) ** 2)
             loss = loss_per_element
         else:
+            if self.train_config.t0_loss_target:
+                # do the loss on a stepped timestep 0 prediction
+                # doto handle doing priors, preservations, masking, etc
+                with torch.no_grad():
+                    tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+                    # expand shape to match noise_pred
+                    while len(tv.shape) < len(noise_pred.shape):
+                        tv = tv.unsqueeze(-1)
+                        # min 0.001
+                        tv = torch.clamp(tv, min=0.001)
+                    
+                # step latent
+                t0 = noisy_latents - tv * noise_pred
+                target = batch.latents.detach()
+                pred = t0
 
             if self.train_config.loss_type == "mae":
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
