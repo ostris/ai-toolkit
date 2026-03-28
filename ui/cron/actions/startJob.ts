@@ -125,16 +125,23 @@ const startAndWatchJob = (job: Job) => {
         });
       }
 
+      // Save the PID to the database and a file for future management (stop/inspect)
+      const pid = subprocess.pid ?? null;
+      if (pid != null) {
+        await prisma.job.update({
+          where: { id: jobID },
+          data: { pid },
+        });
+      }
+      try {
+        fs.writeFileSync(path.join(trainingFolder, 'pid.txt'), String(pid ?? ''), { flag: 'w' });
+      } catch (e) {
+        console.error('Error writing pid file:', e);
+      }
+
       // Important: let the child run independently of this Node process.
       if (subprocess.unref) {
         subprocess.unref();
-      }
-
-      // Optionally write a pid file for future management (stop/inspect) without keeping streams open
-      try {
-        fs.writeFileSync(path.join(trainingFolder, 'pid.txt'), String(subprocess.pid ?? ''), { flag: 'w' });
-      } catch (e) {
-        console.error('Error writing pid file:', e);
       }
 
       // (No stdout/stderr listeners — logging should go to --log handled by your Python)

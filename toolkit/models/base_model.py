@@ -185,6 +185,18 @@ class BaseModel:
         self.has_multiple_control_images = False
         # do not resize control images
         self.use_raw_control_images = False
+        # defines if the model supports model paths. Only some will
+        self.supports_model_paths = False
+        
+        # use new lokr format (default false for old models for backwards compatibility)
+        self.use_old_lokr_format = True
+        
+        # when padding to make batch size work, which side padding to use, right or left
+        # some llms need left side padding, others need right side
+        self.te_padding_side = "right"
+        
+        # can be used on models to invalidate cache if things change.
+        self.latent_space_version = None
 
     # properties for old arch for backwards compatibility
     @property
@@ -1117,6 +1129,10 @@ class BaseModel:
         latents = latents.to(device, dtype=dtype)
 
         return latents
+    
+    def encode_audio(self, audio_data_list):
+        # audio_date_list is a list of {"waveform": waveform[C, L], "sample_rate": int(sample_rate)}
+        raise NotImplementedError("Audio encoding not implemented for this model.")
 
     def decode_latents(
             self,

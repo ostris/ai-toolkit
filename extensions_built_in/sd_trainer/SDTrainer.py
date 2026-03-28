@@ -573,7 +573,17 @@ class SDTrainer(BaseSDTrainProcess):
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
-        
+        elif self.train_config.do_signal_amplification:
+            if not self.sd.is_flow_matching:
+                raise ValueError("Signal amplification is only supported for flow matching models")
+            with torch.no_grad():
+                nas = 1.0 - (timesteps / 1000).to(noise.device, dtype=noise.dtype)
+                nas = nas * self.train_config.signal_amplification_strength
+                while len(nas.shape) < len(noise.shape):
+                    nas = nas.unsqueeze(-1)
+                aug = batch.latents * nas
+                target = noise - (batch.latents + aug)
+                target = target.detach()
         elif hasattr(self.sd, 'get_loss_target'):
             target = self.sd.get_loss_target(
                 noise=noise, 
@@ -654,7 +664,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version in [3, 4, 5]:
+            elif self.dfe.version in [3, 4, 5, 6]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
@@ -859,6 +869,12 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = apply_snr_weight(loss, timesteps, self.sd.noise_scheduler, self.train_config.min_snr_gamma)
 
         loss = loss.mean()
+        
+        # check for audio loss
+        if batch.audio_pred is not None and batch.audio_target is not None:
+            audio_loss = torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean")
+            audio_loss = audio_loss * self.train_config.audio_loss_multiplier
+            loss = loss + audio_loss
 
         # check for additional losses
         if self.adapter is not None and hasattr(self.adapter, "additional_loss") and self.adapter.additional_loss is not None:
