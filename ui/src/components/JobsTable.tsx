@@ -111,12 +111,18 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
     });
     // sort the queued/running jobs by queue position
     Object.keys(jd).forEach(key => {
-      if (key === 'Idle') return;
-      jd[key].jobs.sort((a, b) => {
-        if (a.queue_position === null) return 1;
-        if (b.queue_position === null) return -1;
-        return a.queue_position - b.queue_position;
-      });
+      if (key === 'Idle') {
+        jd[key].jobs.sort((a, b) => {
+          // sort by updated_at, newest first
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        });
+      } else {
+        jd[key].jobs.sort((a, b) => {
+          if (a.queue_position === null) return 1;
+          if (b.queue_position === null) return -1;
+          return a.queue_position - b.queue_position;
+        });
+      }
     });
     return jd;
   }, [jobs, queues, isGPUInfoLoaded]);

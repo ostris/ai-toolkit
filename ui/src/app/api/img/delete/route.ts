@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     }
 
     // make sure it is an image
-    if (!/\.(jpg|jpeg|png|bmp|gif|tiff|webp|mp4)$/i.test(imgPath.toLowerCase())) {
+    if (!/\.(jpg|jpeg|png|bmp|gif|tiff|webp|mp4|mp3|wav)$/i.test(imgPath.toLowerCase())) {
       return NextResponse.json({ error: 'Not an image' }, { status: 400 });
     }
 
