@@ -199,8 +199,9 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             </button>
           </div>
         </div>
+
         {inViewport && isVisible && !isItAudio && (
-          <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300 w-full">
+          <div className="text-xs text-gray-100 bg-gray-950 mt-1 absolute bottom-0 left-0 p-1 opacity-25 hover:opacity-90 transition-opacity duration-300 w-full truncate">
             {imageUrl}
           </div>
         )}

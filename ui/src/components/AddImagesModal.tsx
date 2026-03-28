@@ -47,14 +47,14 @@ export default function AddImagesModal() {
   }, [open, setAddImagesModalInfo]);
 
   return (
-    <Dialog open={open} onClose={onCancel} className="relative z-10">
+    <Dialog open={open} onClose={onCancel} className="relative z-[100]">
       <DialogBackdrop
         transition
         className="fixed inset-0 bg-gray-900/75 transition-opacity data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in"
       />
 
-      <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
-        <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+      <div className="fixed inset-0 z-[100] w-screen overflow-y-auto">
+        <div className="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
           <DialogPanel
             ref={panelRef}
             transition
@@ -70,7 +70,7 @@ export default function AddImagesModal() {
                     className="h-40 w-full flex flex-col items-center justify-center border-2 border-dashed rounded-lg border-gray-600"
                   >
                     <FaUpload className="size-8 mb-3 text-gray-400" />
-                    <p className="text-sm text-gray-200 text-center">
+                    <p className="text-sm text-gray-200 text-center px-2">
                       Drag & drop files anywhere on the page to upload
                     </p>
                   </div>
