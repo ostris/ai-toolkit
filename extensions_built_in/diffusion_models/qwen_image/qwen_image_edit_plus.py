@@ -192,6 +192,11 @@ class QwenImageEditPlusModel(QwenImageModel):
             device=self.device_torch,
             num_images_per_prompt=1,
         )
+        # diffusers >=0.37 returns None when all tokens are valid (no padding)
+        if prompt_embeds_mask is None:
+            prompt_embeds_mask = torch.ones(
+                prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.int64
+            )
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
@@ -323,9 +328,6 @@ class QwenImageEditPlusModel(QwenImageModel):
             )
             txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
             enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
-            prompt_embeds_mask = text_embeddings.attention_mask.to(
-                self.device_torch, dtype=torch.int64
-            )
 
         noise_pred = self.transformer(
             hidden_states=latent_model_input.to(
