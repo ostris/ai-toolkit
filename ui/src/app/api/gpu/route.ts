@@ -10,6 +10,16 @@ export async function GET() {
     // Get platform
     const platform = os.platform();
     const isWindows = platform === 'win32';
+    const isMac = platform === 'darwin';
+
+    if (isMac) {
+      return NextResponse.json({
+        hasNvidiaSmi: false,
+        isMac: true,
+        gpus: [],
+        error: 'nvidia-smi is not supported on macOS',
+      });
+    }
 
     // Check if nvidia-smi is available
     const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
@@ -17,6 +27,7 @@ export async function GET() {
     if (!hasNvidiaSmi) {
       return NextResponse.json({
         hasNvidiaSmi: false,
+        isMac: false,
         gpus: [],
         error: 'nvidia-smi not found or not accessible',
       });
@@ -34,6 +45,7 @@ export async function GET() {
     return NextResponse.json(
       {
         hasNvidiaSmi: false,
+        isMac: false,
         gpus: [],
         error: `Failed to fetch GPU stats: ${error instanceof Error ? error.message : String(error)}`,
       },

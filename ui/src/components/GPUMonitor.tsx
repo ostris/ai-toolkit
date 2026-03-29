@@ -127,6 +127,11 @@ const GpuMonitor: React.FC = () => {
     );
   }, [loading, gpuData, error]);
 
+  // if is mac, we don't have a gpu
+  if (gpuData?.isMac) {
+    return <></>
+  }
+
   return (
     <div className="w-full">
       <div className="flex justify-between items-center mb-2">
