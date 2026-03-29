@@ -4,6 +4,28 @@ import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settings';
 
+const contentTypeMap: { [key: string]: string } = {
+  // Images
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  // Videos
+  '.mp4': 'video/mp4',
+  '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.wmv': 'video/x-ms-wmv',
+  '.m4v': 'video/x-m4v',
+  '.flv': 'video/x-flv',
+  // Audio
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+};
+
 export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
   const { imagePath } = await params;
   try {
@@ -25,53 +47,66 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
       return new NextResponse('Access denied', { status: 403 });
     }
 
-    // Check if file exists
-    if (!fs.existsSync(filepath)) {
-      console.warn(`File not found: ${filepath}`);
+    // Stat file (async)
+    const stat = await fs.promises.stat(filepath).catch(() => null);
+    if (!stat || !stat.isFile()) {
       return new NextResponse('File not found', { status: 404 });
     }
 
-    // Get file info
-    const stat = fs.statSync(filepath);
-    if (!stat.isFile()) {
-      return new NextResponse('Not a file', { status: 400 });
-    }
-
-    // Determine content type
     const ext = path.extname(filepath).toLowerCase();
-    const contentTypeMap: { [key: string]: string } = {
-      // Images
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.png': 'image/png',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.svg': 'image/svg+xml',
-      '.bmp': 'image/bmp',
-      // Videos
-      '.mp4': 'video/mp4',
-      '.avi': 'video/x-msvideo',
-      '.mov': 'video/quicktime',
-      '.mkv': 'video/x-matroska',
-      '.wmv': 'video/x-ms-wmv',
-      '.m4v': 'video/x-m4v',
-      '.flv': 'video/x-flv',
-      // Audio
-      '.mp3': 'audio/mpeg',
-      '.wav': 'audio/wav',
-    };
-
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
-    // Read file as buffer
-    const fileBuffer = fs.readFileSync(filepath);
+    // Support range requests for video/audio seeking
+    const rangeHeader = request.headers.get('range');
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+      const chunkSize = end - start + 1;
 
-    // Return file with appropriate headers
-    return new NextResponse(fileBuffer, {
+      const stream = fs.createReadStream(filepath, { start, end });
+      const readable = new ReadableStream({
+        start(controller) {
+          stream.on('data', chunk => controller.enqueue(chunk));
+          stream.on('end', () => controller.close());
+          stream.on('error', err => controller.error(err));
+        },
+        cancel() {
+          stream.destroy();
+        },
+      });
+
+      return new NextResponse(readable as any, {
+        status: 206,
+        headers: {
+          'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(chunkSize),
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=86400',
+        },
+      });
+    }
+
+    // Stream the file instead of buffering it entirely
+    const stream = fs.createReadStream(filepath);
+    const readable = new ReadableStream({
+      start(controller) {
+        stream.on('data', chunk => controller.enqueue(chunk));
+        stream.on('end', () => controller.close());
+        stream.on('error', err => controller.error(err));
+      },
+      cancel() {
+        stream.destroy();
+      },
+    });
+
+    return new NextResponse(readable as any, {
       headers: {
         'Content-Type': contentType,
         'Content-Length': String(stat.size),
         'Cache-Control': 'public, max-age=86400',
+        'Accept-Ranges': 'bytes',
       },
     });
   } catch (error) {
