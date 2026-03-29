@@ -2,9 +2,7 @@
 import { createGlobalState } from 'react-global-hooks';
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react';
 import { FaUpload } from 'react-icons/fa';
-import { useCallback, useState } from 'react';
-import { useDropzone } from 'react-dropzone';
-import { apiClient } from '@/utils/api';
+import { useEffect, useRef } from 'react';
 
 export interface AddImagesModalState {
   datasetName: string;
@@ -19,69 +17,34 @@ export const openImagesModal = (datasetName: string, onComplete: () => void) => 
 
 export default function AddImagesModal() {
   const [addImagesModalInfo, setAddImagesModalInfo] = addImagesModalState.use();
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [isUploading, setIsUploading] = useState<boolean>(false);
   const open = addImagesModalInfo !== null;
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const onCancel = () => {
-    if (!isUploading) {
-      setAddImagesModalInfo(null);
-    }
+    setAddImagesModalInfo(null);
   };
 
   const onDone = () => {
-    if (addImagesModalInfo?.onComplete && !isUploading) {
+    if (addImagesModalInfo?.onComplete) {
       addImagesModalInfo.onComplete();
-      setAddImagesModalInfo(null);
     }
+    setAddImagesModalInfo(null);
   };
 
-  const onDrop = useCallback(
-    async (acceptedFiles: File[]) => {
-      if (acceptedFiles.length === 0) return;
+  // Close modal as soon as files are dragged in so the FullscreenDropOverlay can handle the drop
+  useEffect(() => {
+    if (!open) return;
 
-      setIsUploading(true);
-      setUploadProgress(0);
-
-      const formData = new FormData();
-      acceptedFiles.forEach(file => {
-        formData.append('files', file);
-      });
-      formData.append('datasetName', addImagesModalInfo?.datasetName || '');
-
-      try {
-        await apiClient.post(`/api/datasets/upload`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          onUploadProgress: progressEvent => {
-            const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 100));
-            setUploadProgress(percentCompleted);
-          },
-          timeout: 0, // Disable timeout
-        });
-
-        onDone();
-      } catch (error) {
-        console.error('Upload failed:', error);
-      } finally {
-        setIsUploading(false);
-        setUploadProgress(0);
+    const handleDragEnter = (e: DragEvent) => {
+      const types = e?.dataTransfer?.types;
+      if (types && Array.from(types).includes('Files')) {
+        setAddImagesModalInfo(null);
       }
-    },
-    [addImagesModalInfo],
-  );
+    };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    accept: {
-      'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
-      'video/*': ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'],
-      'audio/*': ['.mp3', '.wav'],
-      'text/*': ['.txt'],
-    },
-    multiple: true,
-  });
+    window.addEventListener('dragenter', handleDragEnter);
+    return () => window.removeEventListener('dragenter', handleDragEnter);
+  }, [open, setAddImagesModalInfo]);
 
   return (
     <Dialog open={open} onClose={onCancel} className="relative z-10">
@@ -93,6 +56,7 @@ export default function AddImagesModal() {
       <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
         <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
           <DialogPanel
+            ref={panelRef}
             transition
             className="relative transform overflow-hidden rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in sm:my-8 sm:w-full sm:max-w-lg data-closed:sm:translate-y-0 data-closed:sm:scale-95"
           >
@@ -103,24 +67,13 @@ export default function AddImagesModal() {
                 </DialogTitle>
                 <div className="w-full">
                   <div
-                    {...getRootProps()}
-                    className={`h-40 w-full flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200
-                      ${isDragActive ? 'border-blue-500 bg-blue-50/10' : 'border-gray-600'}`}
+                    className="h-40 w-full flex flex-col items-center justify-center border-2 border-dashed rounded-lg border-gray-600"
                   >
-                    <input {...getInputProps()} />
                     <FaUpload className="size-8 mb-3 text-gray-400" />
                     <p className="text-sm text-gray-200 text-center">
-                      {isDragActive ? 'Drop the files here...' : 'Drag & drop files here, or click to select files'}
+                      Drag & drop files anywhere on the page to upload
                     </p>
                   </div>
-                  {isUploading && (
-                    <div className="mt-4">
-                      <div className="w-full bg-gray-700 rounded-full h-2.5">
-                        <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${uploadProgress}%` }}></div>
-                      </div>
-                      <p className="text-sm text-gray-300 mt-2 text-center">Uploading... {uploadProgress}%</p>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -128,9 +81,7 @@ export default function AddImagesModal() {
               <button
                 type="button"
                 onClick={onDone}
-                disabled={isUploading}
-                className={`inline-flex w-full justify-center rounded-md bg-slate-600 px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto
-                  ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className="inline-flex w-full justify-center rounded-md bg-slate-600 px-3 py-2 text-sm font-semibold text-white shadow-xs sm:ml-3 sm:w-auto"
               >
                 Done
               </button>
@@ -138,9 +89,7 @@ export default function AddImagesModal() {
                 type="button"
                 data-autofocus
                 onClick={onCancel}
-                disabled={isUploading}
-                className={`mt-3 inline-flex w-full justify-center rounded-md bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800 sm:mt-0 sm:w-auto ring-0
-                  ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                className="mt-3 inline-flex w-full justify-center rounded-md bg-gray-800 px-3 py-2 text-sm font-semibold text-gray-200 hover:bg-gray-800 sm:mt-0 sm:w-auto ring-0"
               >
                 Cancel
               </button>

@@ -1,6 +1,6 @@
 torchao==0.10.0
 safetensors
-git+https://github.com/huggingface/diffusers@8600b4c10d67b0ce200f664204358747bd53c775
+git+https://github.com/huggingface/diffusers@072d15ee4289ffdc3aa9d65f8b94bc9271319d21
 transformers==4.57.3
 lycoris-lora==1.8.3
 flatten_json
@@ -18,7 +18,7 @@ pydantic
 omegaconf
 k-diffusion
 open_clip_torch
-timm
+timm==1.0.22
 prodigyopt
 controlnet_aux==0.0.10
 python-dotenv
@@ -38,4 +38,4 @@ matplotlib==3.10.1
 setuptools==69.5.1
 scipy==1.12.0
 av==16.0.1
-torchcodec
+torchcodec==0.9.1
