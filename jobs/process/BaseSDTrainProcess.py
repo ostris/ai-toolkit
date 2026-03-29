@@ -482,8 +482,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return latest_item
 
     def post_save_hook(self, save_path):
-        # override in subclass
-        pass
+        if self.save_config.push_to_hub and self.save_config.push_to_hub_every_save:
+            try:
+                self.push_to_hub(
+                    repo_id=self.save_config.hf_repo_id,
+                    private=self.save_config.hf_private
+                )
+            except Exception as e:
+                print_acc(f"Failed to push checkpoint to Hub: {e}")
     
     def done_hook(self):
         pass
