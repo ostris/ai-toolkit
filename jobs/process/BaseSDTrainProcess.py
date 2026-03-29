@@ -2410,10 +2410,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.save_config.push_to_hub:
                 if("HF_TOKEN" not in os.environ):
                     interpreter_login(new_session=False, write_permission=True)
-                self.push_to_hub(
-                    repo_id=self.save_config.hf_repo_id,
-                    private=self.save_config.hf_private
-                )
+                try:
+                    self.push_to_hub(
+                        repo_id=self.save_config.hf_repo_id,
+                        private=self.save_config.hf_private
+                    )
+                except Exception as e:
+                    print_acc(f"Failed to push model to Hub: {e}")
         del (
             self.sd,
             unet,
