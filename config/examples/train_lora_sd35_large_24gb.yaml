@@ -23,7 +23,8 @@ config:
         save_every: 250 # save every this many steps
         max_step_saves_to_keep: 4 # how many intermittent saves to keep
         push_to_hub: false #change this to True to push your trained model to Hugging Face.
-        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in         
+        push_to_hub_every_save: false # push to HuggingFace Hub every time a checkpoint is saved
+        # You can either set up a HF_TOKEN env variable or you'll be prompted to log-in
 #       hf_repo_id: your-username/your-model-slug
 #       hf_private: true #whether the repo is private or public
       datasets:
