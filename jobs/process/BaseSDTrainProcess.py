@@ -2402,22 +2402,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
-            final_path = self.save()
-            # Register model (only for adapter training, not merged saves)
-            if (
-                final_path
-                and self.network_config is not None
-                and not self.train_config.merge_network_on_save
-            ):
-                self.logger.log_model(
-                    lora_path=final_path,
-                    base_model=self.model_config.name_or_path_original,
-                    model_type=self.model_config.arch or "sd1",
-                    network_type=self.network_config.type,
-                    lora_rank=self.network_config.rank,
-                    lora_alpha=self.network_config.linear_alpha,
-                )
-            self.logger.finish()
+            try:
+                final_path = self.save()
+                # Register model (only for adapter training, not merged saves)
+                if (
+                    final_path
+                    and self.network_config is not None
+                    and not self.train_config.merge_network_on_save
+                ):
+                    self.logger.log_model(
+                        lora_path=final_path,
+                        base_model=self.model_config.name_or_path_original,
+                        model_type=self.model_config.arch or "sd1",
+                        network_type=self.network_config.type,
+                        lora_rank=self.network_config.rank,
+                        lora_alpha=self.network_config.linear_alpha,
+                    )
+            finally:
+                self.logger.finish()
         self.accelerator.end_training()
 
         if self.accelerator.is_main_process:

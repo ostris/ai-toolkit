@@ -2,7 +2,7 @@
 # Example: Training a FLUX LoRA with MLflow experiment tracking
 #
 # Prerequisites:
-#   pip install mlflow
+#   pip install "mlflow>=3,<4"
 #
 # To view results, start the MLflow UI:
 #   mlflow ui                             # local (default: http://localhost:5000)

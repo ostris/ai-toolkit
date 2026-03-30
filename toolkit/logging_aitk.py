@@ -1,4 +1,4 @@
-from typing import OrderedDict, Optional
+from typing import Any, Dict, List, OrderedDict, Optional, Tuple
 from PIL import Image
 
 from toolkit.config_modules import LoggingConfig
@@ -9,7 +9,6 @@ import sqlite3
 import string
 import time
 import uuid
-from typing import Any, Dict, List, Tuple
 
 
 # Base logger class
@@ -57,8 +56,8 @@ def _make_lora_pyfunc_stub():
     This is a stopgap until MLflow gets a native diffusers adapter flavor —
     see https://github.com/mlflow/mlflow/issues/22122.
     The stub stores the LoRA weights as an artifact for lineage tracking but
-    does not implement inference.  To use the LoRA, load it with diffusers:
-        pipe.load_lora_weights(artifact_path)
+    does not implement inference.  To use the LoRA, load it with diffusers, e.g.:
+        pipe.load_lora_weights(context.artifacts['lora_weights'])
     """
     import mlflow.pyfunc
 
@@ -174,7 +173,7 @@ class MLflowLogger(EmptyLogger):
             import mlflow
         except ImportError:
             raise ImportError(
-                "Failed to import mlflow. Please install mlflow by running `pip install mlflow`"
+                "Failed to import mlflow. Please install a compatible version by running `pip install \"mlflow>=3,<4\"`"
             )
 
         self._mlflow = mlflow
@@ -232,6 +231,7 @@ class MLflowLogger(EmptyLogger):
                 self._pending.clear()
             except Exception as e:
                 print(f"[MLflowLogger] Warning: failed to log metrics at step {step}: {e}")
+                self._pending.clear()
 
     def log_image(
         self,
@@ -282,23 +282,9 @@ class MLflowLogger(EmptyLogger):
             base = f"images/{safe_key}+step+{step}+timestamp+{ts}+{file_uuid}"
             self._mlflow.log_image(image, artifact_file=f"{base}.png")
 
-            # Compressed WebP for faster UI rendering (only when image is large)
-            max_dim = 256
-            if isinstance(image, Image.Image) and max(image.size) > max_dim:
-                try:
-                    ratio = max_dim / max(image.size)
-                    new_size = (int(image.width * ratio), int(image.height * ratio))
-                    compressed = image.resize(new_size, Image.LANCZOS)
-                    self._mlflow.log_image(compressed, artifact_file=f"{base}+compressed.webp")
-                except Exception as e:
-                    print(f"[MLflowLogger] Warning: failed to create compressed thumbnail: {e}")
-
             if not self._logged_images_tag_set and self._run:
                 self._mlflow.set_tag("mlflow.loggedImages", "true")
                 self._logged_images_tag_set = True
-
-            # Root-level artifact for cross-run comparison in MLflow's compare view
-            self._mlflow.log_image(image, artifact_file=f"sample_{id}.png")
         except Exception as e:
             print(f"[MLflowLogger] Warning: failed to log image sample_{id}: {e}")
 
@@ -308,7 +294,7 @@ class MLflowLogger(EmptyLogger):
 
         if self._pending:
             try:
-                self._mlflow.log_metrics(self._pending)
+                self._mlflow.log_metrics(self._pending, step=self._last_step)
             except Exception as e:
                 print(f"[MLflowLogger] Warning: failed to flush final metrics: {e}")
             self._pending.clear()
@@ -334,6 +320,7 @@ class MLflowLogger(EmptyLogger):
         if self._mlflow is None or not self.log_artifacts:
             return
         if not os.path.exists(file_path):
+            print(f"[MLflowLogger] Warning: checkpoint path does not exist, skipping: {file_path}")
             return
 
         try:
@@ -366,6 +353,7 @@ class MLflowLogger(EmptyLogger):
         if self._mlflow is None or not self._started:
             return
         if not os.path.exists(lora_path):
+            print(f"[MLflowLogger] Warning: LoRA path does not exist, skipping registration: {lora_path}")
             return
 
         try:
@@ -457,37 +445,38 @@ class CompositeLogger(EmptyLogger):
     def __init__(self, loggers: list) -> None:
         self._loggers = [lg for lg in loggers if type(lg) is not EmptyLogger]
 
-    def start(self):
+    def _safe_call(self, method_name, *args, **kwargs):
         for lg in self._loggers:
-            lg.start()
+            try:
+                getattr(lg, method_name)(*args, **kwargs)
+            except ImportError:
+                raise  # missing package = config error, never swallow
+            except Exception as e:
+                print(f"[CompositeLogger] {type(lg).__name__}.{method_name}() failed: {e}")
+
+    def start(self):
+        self._safe_call("start")
 
     def log(self, *args, **kwargs):
-        for lg in self._loggers:
-            lg.log(*args, **kwargs)
+        self._safe_call("log", *args, **kwargs)
 
     def commit(self, step: Optional[int] = None):
-        for lg in self._loggers:
-            lg.commit(step=step)
+        self._safe_call("commit", step=step)
 
     def log_image(self, *args, **kwargs):
-        for lg in self._loggers:
-            lg.log_image(*args, **kwargs)
+        self._safe_call("log_image", *args, **kwargs)
 
     def log_checkpoint(self, file_path: str):
-        for lg in self._loggers:
-            lg.log_checkpoint(file_path)
+        self._safe_call("log_checkpoint", file_path)
 
     def log_model(self, **kwargs):
-        for lg in self._loggers:
-            lg.log_model(**kwargs)
+        self._safe_call("log_model", **kwargs)
 
     def log_datasets(self, dataset_configs):
-        for lg in self._loggers:
-            lg.log_datasets(dataset_configs)
+        self._safe_call("log_datasets", dataset_configs)
 
     def finish(self):
-        for lg in self._loggers:
-            lg.finish()
+        self._safe_call("finish")
 
 
 class UILogger(EmptyLogger):
