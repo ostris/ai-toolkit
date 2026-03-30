@@ -254,7 +254,7 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
               />
             )}
-            {modelArch?.additionalSections?.includes('model.layer_offloading') && (
+            {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && (
               <>
                 <Checkbox
                   label={

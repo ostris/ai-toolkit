@@ -7,6 +7,7 @@ import torch
 import torchaudio
 
 from toolkit.prompt_utils import PromptEmbeds
+from torchao.quantization.quant_primitives import _DTYPE_TO_BIT_WIDTH
 
 ImgExt = Literal['jpg', 'png', 'webp']
 
@@ -668,6 +669,12 @@ class ModelConfig:
             self.qtype = "float8"
         if self.layer_offloading and self.qtype_te == "qfloat8":
             self.qtype_te = "float8"
+            
+        # Mac mps only works with torachao uint
+        if torch.backends.mps.is_available() and self.qtype == "qfloat8":
+            self.qtype = "int8"
+        if torch.backends.mps.is_available() and self.qtype_te == "qfloat8":
+            self.qtype_te = "int8"
         
         # 0 is off and 1.0 is 100% of the layers
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
