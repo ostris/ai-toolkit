@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import si from 'systeminformation';
+import { createRequire } from 'module';
 import os from 'os';
 import { CpuInfo } from '@/types';
 
@@ -12,7 +13,8 @@ export async function GET() {
 
     if (isMac) {
       try {
-        const ms = await import('macstats');
+        const nativeRequire = createRequire(import.meta.url);
+        const ms = nativeRequire('macstats') as any;
         const ramData = ms.getRAMUsageSync();
         const cpuData = ms.getCpuDataSync();
 
