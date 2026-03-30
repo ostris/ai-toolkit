@@ -658,6 +658,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 elif self.adapter_config.type == 'control_net':
                     # save in diffusers format
                     name_or_path = file_path.replace('.safetensors', '')
+                    file_path = name_or_path
                     # move it to the new dtype and cpu
                     orig_device = self.adapter.device
                     orig_dtype = self.adapter.dtype
