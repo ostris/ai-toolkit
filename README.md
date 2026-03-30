@@ -236,7 +236,7 @@ _Last updated: 2026-03-03 15:01 UTC_
 ## Installation
 
 Requirements:
-- python >3.10
+- python >=3.10 (3.12 recommended)
 - Nvidia GPU with enough ram to do what you need
 - python venv
 - git
@@ -267,6 +267,20 @@ python -m venv venv
 .\venv\Scripts\activate
 pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
+```
+
+MacOS:
+
+Experimental support for Silicon Macs is available. I do not have a Mac with enough RAM to fully test this
+so please let me know if there are issues. There is a convience script to install and run on MacOS 
+locates at `./run_mac.zsh` that will install the dependencies locally and run the UI. To run this, 
+do the following:
+
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+chmod +x run_mac.zsh
+./run_mac.zsh
 ```
 
 
