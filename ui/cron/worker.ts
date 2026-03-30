@@ -18,8 +18,12 @@ class CronWorker {
     try {
       // Loop logic here
       await this.loop();
-    } catch (error) {
-      console.error('Error in cron worker loop:', error);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        console.error('Error in cron worker loop:', error.message, error.stack);
+      } else {
+        console.error('Error in cron worker loop:', error);
+      }
     }
     this.is_running = false;
   }
