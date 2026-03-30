@@ -193,6 +193,10 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     delete jobConfig.config.process[0].model.auto_memory;
   }
 
+  if (jobConfig.config.process[0]?.save && !('push_to_hub_every_save' in jobConfig.config.process[0].save)) {
+    jobConfig.config.process[0].save.push_to_hub_every_save = false;
+  }
+
   if (!('logging' in jobConfig.config.process[0])) {
     //@ts-ignore
     jobConfig.config.process[0].logging = {

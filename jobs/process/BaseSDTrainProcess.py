@@ -19,8 +19,8 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
-from huggingface_hub import HfApi, Repository, interpreter_login
-from huggingface_hub.utils import HfFolder
+from huggingface_hub import HfApi, get_token, interpreter_login
+from huggingface_hub.utils import HfHubHTTPError
 from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
@@ -483,14 +483,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
     def post_save_hook(self, save_path):
         if self.save_config.push_to_hub and self.save_config.push_to_hub_every_save:
-            # Check for token without interactive prompting (would block training).
-            # Cache the result to avoid repeated checks and log messages.
-            if getattr(self, "_hub_no_token", False):
+            # Unlike the end-of-training push (which can prompt interactively via
+            # interpreter_login), intermediate pushes must not block the training
+            # loop, so we silently check for an existing token and bail out if
+            # none is found. The result is cached to avoid repeated checks.
+            if getattr(self, "_hub_push_disabled", False):
                 return
-            from huggingface_hub import get_token
             if "HF_TOKEN" not in os.environ and get_token() is None:
                 print_acc("No HF token available, skipping intermediate Hub pushes")
-                self._hub_no_token = True
+                self._hub_push_disabled = True
                 return
             if not os.path.exists(save_path):
                 print_acc(f"Checkpoint not found, skipping Hub push: {save_path}")
@@ -501,15 +502,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 try:
                     api.create_repo(repo_id, private=self.save_config.hf_private, exist_ok=True)
                     self._hub_repo_created = True
+                except HfHubHTTPError as e:
+                    print_acc(f"Failed to create Hub repo '{repo_id}': {e}")
+                    print_acc(traceback.format_exc())
+                    status = getattr(e.response, "status_code", None)
+                    if status in (401, 403):
+                        print_acc("Disabling intermediate Hub pushes for this run (auth/permission error)")
+                        self._hub_push_disabled = True
+                    return
                 except Exception as e:
                     print_acc(f"Failed to create Hub repo '{repo_id}': {e}")
-                    print_acc("Disabling intermediate Hub pushes for this run")
-                    self._hub_no_token = True
+                    print_acc(traceback.format_exc())
                     return
             try:
                 # Upload only the new checkpoint, not the entire save_root.
-                # The full folder (with README) is pushed at end of training
-                # when push_to_hub is also enabled.
+                # The full folder (with README) is pushed at end of training.
                 if os.path.isdir(save_path):
                     api.upload_folder(
                         repo_id=repo_id,
@@ -525,8 +532,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         repo_type="model",
                     )
                 print_acc(f"Pushed checkpoint to Hub: {os.path.basename(save_path)}")
+            except HfHubHTTPError as e:
+                print_acc(f"Failed to upload checkpoint to Hub: {e}")
+                print_acc(traceback.format_exc())
+                status = getattr(e.response, "status_code", None)
+                if status in (401, 403):
+                    print_acc("Disabling intermediate Hub pushes for this run (auth/permission error)")
+                    self._hub_push_disabled = True
             except Exception as e:
                 print_acc(f"Failed to upload checkpoint to Hub: {e}")
+                print_acc(traceback.format_exc())
     
     def done_hook(self):
         pass
@@ -708,7 +723,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     get_torch_dtype(self.save_config.dtype)
                 )
 
-        # snapshot the checkpoint path before it gets overwritten by SNR/optimizer saves
+        # Capture checkpoint path; file_path is reassigned below for SNR/optimizer saves
         checkpoint_path = file_path
 
         # save learnable params as json if we have thim
@@ -2458,6 +2473,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 except Exception as e:
                     print_acc("=" * 60)
                     print_acc(f"Failed to push final model to Hub: {e}")
+                    print_acc(traceback.format_exc())
                     print_acc(f"Model saved locally at: {self.save_root}")
                     print_acc("=" * 60)
         del (
