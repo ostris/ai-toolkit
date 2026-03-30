@@ -13,7 +13,7 @@ import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X } from 'lucide-react';
+import { X, Copy } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -148,7 +148,10 @@ export default function SimpleJob({
 
   return (
     <>
-      <form onSubmit={handleSubmit} className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}>
+      <form
+        onSubmit={handleSubmit}
+        className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
+      >
         {isLoading && (
           <div className="absolute inset-0 z-50 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
@@ -748,18 +751,34 @@ export default function SimpleJob({
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (
                 <div key={i} className="p-4 rounded-lg bg-gray-800 relative">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setJobConfig(
-                        jobConfig.config.process[0].datasets.filter((_, index) => index !== i),
-                        'config.process[0].datasets',
-                      )
-                    }
-                    className="absolute top-2 right-2 bg-red-800 hover:bg-red-700 rounded-full p-1 text-sm transition-colors"
-                  >
-                    <X />
-                  </button>
+                  <div className="absolute top-2 right-2 flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const duplicated = objectCopy(dataset);
+                        const datasets = [...jobConfig.config.process[0].datasets];
+                        datasets.splice(i + 1, 0, duplicated);
+                        setJobConfig(datasets, 'config.process[0].datasets');
+                      }}
+                      className="bg-gray-700 hover:bg-gray-600 rounded-full p-2 text-sm transition-colors"
+                      title="Duplicate Dataset"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setJobConfig(
+                          jobConfig.config.process[0].datasets.filter((_, index) => index !== i),
+                          'config.process[0].datasets',
+                        )
+                      }
+                      className="bg-red-800 hover:bg-red-700 rounded-full p-2 text-sm transition-colors"
+                      title="Remove Dataset"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                   <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <div>

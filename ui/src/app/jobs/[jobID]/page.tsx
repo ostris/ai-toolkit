@@ -2,6 +2,7 @@
 
 import { useState, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
+import { MdDashboard, MdImage, MdShowChart, MdCode } from 'react-icons/md';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
@@ -18,6 +19,7 @@ type PageKey = 'overview' | 'samples' | 'config' | 'loss_log';
 interface Page {
   name: string;
   value: PageKey;
+  icon: React.ComponentType<{ className?: string }>;
   component: React.ComponentType<{ job: Job }>;
   menuItem?: React.ComponentType<{ job?: Job | null }> | null;
   mainCss?: string;
@@ -27,12 +29,14 @@ const pages: Page[] = [
   {
     name: 'Overview',
     value: 'overview',
+    icon: MdDashboard,
     component: JobOverview,
     mainCss: 'pt-24',
   },
   {
     name: 'Samples',
     value: 'samples',
+    icon: MdImage,
     component: SampleImages,
     menuItem: SampleImagesMenu,
     mainCss: 'pt-24',
@@ -40,12 +44,14 @@ const pages: Page[] = [
   {
     name: 'Loss Graph',
     value: 'loss_log',
+    icon: MdShowChart,
     component: JobLossGraph,
     mainCss: 'pt-24',
   },
   {
     name: 'Config File',
     value: 'config',
+    icon: MdCode,
     component: JobConfigViewer,
     mainCss: 'pt-[80px] px-0 pb-0',
   },
@@ -101,8 +107,9 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           <Button
             key={page.value}
             onClick={() => setPageKey(page.value)}
-            className={`px-4 py-1 h-8  ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700' : ''}`}
+            className={`px-4 py-1 h-8 flex items-center gap-1.5 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700' : ''}`}
           >
+            <page.icon className="text-sm" />
             {page.name}
           </Button>
         ))}

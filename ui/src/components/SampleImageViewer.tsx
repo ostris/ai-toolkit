@@ -28,6 +28,7 @@ export default function SampleImageViewer({
 }: Props) {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
+  const [showingControlIdx, setShowingControlIdx] = useState<number | null>(null);
 
   useEffect(() => setMounted(true), []);
 
@@ -44,7 +45,10 @@ export default function SampleImageViewer({
     }
   }, [isOpen, imgPath, onChange]);
 
-  const onCancel = useCallback(() => setIsOpen(false), []);
+  const onCancel = useCallback(() => {
+    setShowingControlIdx(null);
+    setIsOpen(false);
+  }, []);
 
   const imgInfo = useMemo(() => {
     // handle windows C:\\Apps\\AI-Toolkit\\AI-Toolkit\\output\\LoRA-Name\\samples\\1763563000704__000004000_0.jpg
@@ -80,6 +84,7 @@ export default function SampleImageViewer({
   const setImageAtIndex = useCallback(
     (idx: number) => {
       if (idx < 0 || idx >= sampleImages.length) return;
+      setShowingControlIdx(null);
       onChange(sampleImages[idx]);
     },
     [sampleImages, numSamples, onChange],
@@ -158,6 +163,13 @@ export default function SampleImageViewer({
     return sampleConfig?.seed ?? '?';
   }, [sampleItem, sampleConfig]);
 
+  const displayedImgPath = useMemo(() => {
+    if (showingControlIdx !== null && controlImages[showingControlIdx]) {
+      return controlImages[showingControlIdx];
+    }
+    return imgPath;
+  }, [showingControlIdx, controlImages, imgPath]);
+
   // keyboard events while open
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -201,10 +213,10 @@ export default function SampleImageViewer({
             className="relative transform rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in max-w-[95%] max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col overflow-hidden"
           >
             <div className="overflow-hidden flex items-center justify-center">
-              {imgPath &&
-                (isVideo(imgPath) ? (
+              {displayedImgPath &&
+                (isVideo(displayedImgPath) ? (
                   <video
-                    src={`/api/img/${encodeURIComponent(imgPath)}`}
+                    src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                     className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
                     preload="none"
                     playsInline
@@ -214,7 +226,7 @@ export default function SampleImageViewer({
                   />
                 ) : (
                   <img
-                    src={`/api/img/${encodeURIComponent(imgPath)}`}
+                    src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                     alt="Sample Image"
                     className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
                   />
@@ -234,12 +246,25 @@ export default function SampleImageViewer({
               </div>
               {controlImages.length > 0 && (
                 <div key={imgPath} className="flex space-x-2 mr-4">
+                  {showingControlIdx !== null && (
+                    <img
+                      src={`/api/img/${encodeURIComponent(imgPath!)}`}
+                      alt="Main"
+                      className="max-h-12 max-w-12 object-contain bg-black border-2 border-gray-700 hover:border-gray-500 rounded cursor-pointer"
+                      onClick={() => setShowingControlIdx(null)}
+                      title="Main image"
+                    />
+                  )}
                   {controlImages.map((ci, idx) => (
                     <img
                       key={idx}
                       src={`/api/img/${encodeURIComponent(ci)}`}
                       alt={`Control ${idx + 1}`}
-                      className="max-h-12 max-w-12 object-contain bg-black border border-gray-700 rounded"
+                      className={`max-h-12 max-w-12 object-contain bg-black border-2 rounded cursor-pointer ${
+                        showingControlIdx === idx ? 'border-blue-500' : 'border-gray-700 hover:border-gray-500'
+                      }`}
+                      onClick={() => setShowingControlIdx(idx)}
+                      title={`Control image ${idx + 1}`}
                     />
                   ))}
                 </div>

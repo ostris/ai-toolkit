@@ -391,6 +391,8 @@ class Flux2Model(BaseModel):
                         control_img = control_img * 2 - 1
                         controls.append(control_img)
 
+                    if self.vae.device == torch.device("cpu"):
+                        self.vae.to(self.device_torch)
                     img_cond_seq_item, img_cond_seq_ids_item = encode_image_refs(
                         self.vae, controls, limit_pixels=control_image_max_res
                     )
