@@ -178,10 +178,9 @@ class MLflowLogger(EmptyLogger):
 
         self._mlflow = mlflow
 
-        if self.tracking_uri:
-            mlflow.set_tracking_uri(self.tracking_uri)
-
         try:
+            if self.tracking_uri:
+                mlflow.set_tracking_uri(self.tracking_uri)
             mlflow.set_experiment(self.experiment_name)
             self._run = mlflow.start_run(run_name=self.run_name)
         except Exception as e:
