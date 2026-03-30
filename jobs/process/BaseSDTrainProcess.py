@@ -483,13 +483,50 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
     def post_save_hook(self, save_path):
         if self.save_config.push_to_hub and self.save_config.push_to_hub_every_save:
+            # Check for token without interactive prompting (would block training).
+            # Cache the result to avoid repeated checks and log messages.
+            if getattr(self, "_hub_no_token", False):
+                return
+            from huggingface_hub import get_token
+            if "HF_TOKEN" not in os.environ and get_token() is None:
+                print_acc("No HF token available, skipping intermediate Hub pushes")
+                self._hub_no_token = True
+                return
+            if not os.path.exists(save_path):
+                print_acc(f"Checkpoint not found, skipping Hub push: {save_path}")
+                return
+            repo_id = self.save_config.hf_repo_id
+            api = HfApi()
+            if not getattr(self, "_hub_repo_created", False):
+                try:
+                    api.create_repo(repo_id, private=self.save_config.hf_private, exist_ok=True)
+                    self._hub_repo_created = True
+                except Exception as e:
+                    print_acc(f"Failed to create Hub repo '{repo_id}': {e}")
+                    print_acc("Disabling intermediate Hub pushes for this run")
+                    self._hub_no_token = True
+                    return
             try:
-                self.push_to_hub(
-                    repo_id=self.save_config.hf_repo_id,
-                    private=self.save_config.hf_private
-                )
+                # Upload only the new checkpoint, not the entire save_root.
+                # The full folder (with README) is pushed at end of training
+                # when push_to_hub is also enabled.
+                if os.path.isdir(save_path):
+                    api.upload_folder(
+                        repo_id=repo_id,
+                        folder_path=save_path,
+                        path_in_repo=os.path.basename(save_path),
+                        repo_type="model",
+                    )
+                else:
+                    api.upload_file(
+                        repo_id=repo_id,
+                        path_or_fileobj=save_path,
+                        path_in_repo=os.path.basename(save_path),
+                        repo_type="model",
+                    )
+                print_acc(f"Pushed checkpoint to Hub: {os.path.basename(save_path)}")
             except Exception as e:
-                print_acc(f"Failed to push checkpoint to Hub: {e}")
+                print_acc(f"Failed to upload checkpoint to Hub: {e}")
     
     def done_hook(self):
         pass
@@ -671,6 +708,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     get_torch_dtype(self.save_config.dtype)
                 )
 
+        # snapshot the checkpoint path before it gets overwritten by SNR/optimizer saves
+        checkpoint_path = file_path
+
         # save learnable params as json if we have thim
         if self.snr_gos:
             json_data = {
@@ -701,7 +741,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc("Could not save optimizer")
 
         self.clean_up_saves()
-        self.post_save_hook(file_path)
+        self.post_save_hook(checkpoint_path)
 
         if self.ema is not None:
             self.ema.train()
@@ -2416,7 +2456,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         private=self.save_config.hf_private
                     )
                 except Exception as e:
-                    print_acc(f"Failed to push model to Hub: {e}")
+                    print_acc("=" * 60)
+                    print_acc(f"Failed to push final model to Hub: {e}")
+                    print_acc(f"Model saved locally at: {self.save_root}")
+                    print_acc("=" * 60)
         del (
             self.sd,
             unet,
