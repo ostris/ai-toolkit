@@ -41,6 +41,7 @@ from torchvision.transforms import functional as TF
 from toolkit.accelerator import get_accelerator, unwrap_model
 from typing import TYPE_CHECKING
 from toolkit.print import print_acc
+from toolkit.basic import flush
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -88,11 +89,6 @@ class BlankNetwork:
 
     def train(self):
         pass
-
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
 
 
 UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。

@@ -14,12 +14,17 @@ interface JobOverviewProps {
 }
 
 export default function JobOverview({ job }: JobOverviewProps) {
-  const gpuIds = useMemo(() => job.gpu_ids.split(',').map(id => parseInt(id)), [job.gpu_ids]);
+  const gpuIds = useMemo(() => {
+    if (job.gpu_ids === 'mps') {
+      return [0]; // For MPS, we can just return a single GPU ID since it's virtualized
+    }
+    return job.gpu_ids.split(',').map(id => parseInt(id));
+  }, [job.gpu_ids]);
   const { log, setLog, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
   const logRef = useRef<HTMLDivElement>(null);
   // Track whether we should auto-scroll to bottom
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
-
+  console.log('job.gpu_ids', job.gpu_ids);
   const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
   const { cpuInfo, isCPUInfoLoaded } = useCPUInfo(5000);
   const totalSteps = getTotalSteps(job);

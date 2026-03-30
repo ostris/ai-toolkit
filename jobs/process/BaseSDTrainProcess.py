@@ -72,10 +72,7 @@ import hashlib
 
 from toolkit.util.blended_blur_noise import get_blended_blur_noise
 from toolkit.util.get_model import get_model_class
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
+from toolkit.basic import flush
 
 
 class BaseSDTrainProcess(BaseTrainProcess):

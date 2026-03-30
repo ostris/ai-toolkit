@@ -39,11 +39,7 @@ import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
 from PIL import Image
 from torchvision.transforms import functional as TF
-
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
+from toolkit.basic import flush
 
 
 adapter_transforms = transforms.Compose([
