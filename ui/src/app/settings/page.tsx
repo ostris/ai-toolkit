@@ -108,6 +108,24 @@ export default function Settings() {
                     placeholder="Enter datasets folder path"
                   />
                 </div>
+                <div>
+                  <label htmlFor="LORA_INSTALL_PATH" className="block text-sm font-medium mb-2">
+                    LoRA Install Path
+                    <div className="text-gray-500 text-sm ml-1">
+                      Directory where LoRA files will be copied when using the Install button on checkpoints. Leave blank
+                      to hide the Install button.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="LORA_INSTALL_PATH"
+                    name="LORA_INSTALL_PATH"
+                    value={settings.LORA_INSTALL_PATH}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="Enter LoRA install path"
+                  />
+                </div>
               </div>
             </div>
           </div>
