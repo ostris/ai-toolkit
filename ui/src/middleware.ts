@@ -9,9 +9,6 @@ export function middleware(request: NextRequest) {
   // check env var for AI_TOOLKIT_AUTH, if not set, approve all requests
   // if it is set make sure bearer token matches
   const tokenToUse = process.env.AI_TOOLKIT_AUTH || null;
-  if (!tokenToUse) {
-    return NextResponse.next();
-  }
 
   // Get the token from the headers
   const token = request.headers.get('Authorization')?.split(' ')[1];
@@ -24,6 +21,15 @@ export function middleware(request: NextRequest) {
   // Check if the route should be protected
   // This will apply to all API routes that start with /api/
   if (request.nextUrl.pathname.startsWith('/api/')) {
+    // If AI_TOOLKIT_AUTH is not set, all protected API routes are unauthorized by default.
+    if (!tokenToUse) {
+      return new NextResponse(JSON.stringify({ error: 'Unauthorized: AI_TOOLKIT_AUTH not configured' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // If AI_TOOLKIT_AUTH is set, proceed with token validation
     if (!token || token !== tokenToUse) {
       // Return a JSON response with 401 Unauthorized
       return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
