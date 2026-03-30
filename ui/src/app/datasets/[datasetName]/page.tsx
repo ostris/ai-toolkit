@@ -5,10 +5,9 @@ import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import { Button } from '@headlessui/react';
-import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
+import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
-import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -34,6 +33,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         setStatus('error');
       });
   };
+  useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
+
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
@@ -128,10 +129,6 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         )}
       </MainContent>
       <AddImagesModal />
-      <FullscreenDropOverlay
-        datasetName={datasetName}
-        onComplete={() => refreshImageList(datasetName)}
-      />
     </>
   );
 }
