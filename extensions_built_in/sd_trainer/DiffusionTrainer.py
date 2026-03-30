@@ -310,6 +310,7 @@ class DiffusionTrainer(SDTrainer):
     def save(self, step=None):
         self.maybe_stop()
         self.update_status("running", "Saving model")
-        super().save(step)
+        result = super().save(step)
         self.maybe_stop()
         self.update_status("running", "Training")
+        return result
