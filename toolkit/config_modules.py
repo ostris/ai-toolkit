@@ -695,6 +695,10 @@ class ModelConfig:
         # compile the model with torch compile
         self.compile = kwargs.get("compile", False)
         
+        if self.compile and self.quantize:
+            print("Warning: You cannot compile a quantized model. Disabling compile.")
+            self.compile = False
+        
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         

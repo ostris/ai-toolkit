@@ -2049,8 +2049,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # compile the model if needed (must be after LoRA/adapter injection AND accelerator.prepare)
         if self.model_config.compile:
             try:
-                print_acc(f"Compiling model with torch.compile")
-                self.sd.unet = torch.compile(self.sd.unet, dynamic=True, mode='reduce-overhead')
+                # make sure it is on the gpu
+                self.sd.unet.to(self.device_torch)
+                print_acc("Compiling model with torch.compile. The first forward will hang for a while using this. This is normal.")
+                self.sd.unet = torch.compile(self.sd.unet)
             except Exception as e:
                 print_acc(f"Failed to compile model: {e}")
                 print_acc("Continuing without compilation")
