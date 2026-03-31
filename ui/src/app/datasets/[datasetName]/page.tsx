@@ -55,27 +55,27 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       text = 'Loading Images';
       subtitle = 'Please wait while we fetch your dataset images...';
       showIt = true;
-      bgColor = 'bg-gray-50 dark:bg-gray-800/50';
-      textColor = 'text-gray-900 dark:text-gray-100';
-      iconColor = 'text-gray-500 dark:text-gray-400';
+      bgColor = 'bg-gray-800/50';
+      textColor = 'text-gray-100';
+      iconColor = 'text-gray-400';
     }
     if (status == 'error') {
       icon = <LuBan className="w-8 h-8" />;
       text = 'Error Loading Images';
       subtitle = 'There was a problem fetching the images. Please try refreshing the page.';
       showIt = true;
-      bgColor = 'bg-red-50 dark:bg-red-950/20';
-      textColor = 'text-red-900 dark:text-red-100';
-      iconColor = 'text-red-600 dark:text-red-400';
+      bgColor = 'bg-red-600/20';
+      textColor = 'text-red-100';
+      iconColor = 'text-red-400';
     }
     if (status == 'success' && imgList.length === 0) {
       icon = <LuImageOff className="w-8 h-8" />;
       text = 'No Images Found';
       subtitle = 'This dataset is empty. Click "Add Images" to get started.';
       showIt = true;
-      bgColor = 'bg-gray-50 dark:bg-gray-800/50';
-      textColor = 'text-gray-900 dark:text-gray-100';
-      iconColor = 'text-gray-500 dark:text-gray-400';
+      bgColor = 'bg-gray-800/50';
+      textColor = 'text-gray-100';
+      iconColor = 'text-gray-400';
     }
 
     if (!showIt) return null;
@@ -106,7 +106,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         <div className="flex-1"></div>
         <div>
           <Button
-            className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md"
+            className="text-white bg-slate-600 px-3 py-1 rounded-md"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
           >
             Add Images

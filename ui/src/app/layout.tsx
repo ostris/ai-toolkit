@@ -25,9 +25,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   const platform = os.platform();
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="apple-mobile-web-app-title" content="AI-Toolkit" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                var theme = localStorage.getItem('theme') || 'dark';
+                if (theme === 'dark') document.documentElement.classList.add('dark');
+              })();
+            `,
+          }}
+        />
       </head>
       <body className={inter.className}>
         <script dangerouslySetInnerHTML={{ __html: `window.server_platform = "${platform}";` }} />

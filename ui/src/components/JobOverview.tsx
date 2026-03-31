@@ -93,7 +93,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
       <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <h2 className="text-gray-100">
-            <Info className="w-5 h-5 mr-2 -mt-1 text-amber-400 inline-block" /> {job.info}
+            <Info className="w-5 h-5 mr-2 -mt-1 text-amber-600 dark:text-amber-400 inline-block" /> {job.info}
           </h2>
           <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>{job.status}</span>
         </div>
@@ -115,7 +115,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
           {/* Job Info Grid */}
           <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
             <div className="flex items-center space-x-4">
-              <HardDrive className="w-5 h-5 text-blue-400" />
+              <HardDrive className="w-5 h-5 text-blue-600 dark:text-blue-400" />
               <div>
                 <p className="text-xs text-gray-400">Job Name</p>
                 <p className="text-sm font-medium text-gray-200">{job.name}</p>
@@ -123,7 +123,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
             </div>
 
             <div className="flex items-center space-x-4">
-              <Cpu className="w-5 h-5 text-purple-400" />
+              <Cpu className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               <div>
                 <p className="text-xs text-gray-400">Assigned GPUs</p>
                 <p className="text-sm font-medium text-gray-200">GPUs: {job.gpu_ids}</p>
@@ -131,7 +131,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
             </div>
 
             <div className="flex items-center space-x-4">
-              <Gauge className="w-5 h-5 text-green-400" />
+              <Gauge className="w-5 h-5 text-green-600 dark:text-green-400" />
               <div>
                 <p className="text-xs text-gray-400">Speed</p>
                 <p className="text-sm font-medium text-gray-200">{job.speed_string == '' ? '?' : job.speed_string}</p>

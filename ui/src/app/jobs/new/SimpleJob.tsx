@@ -783,7 +783,7 @@ export default function SimpleJob({
                           'config.process[0].datasets',
                         )
                       }
-                      className="bg-red-800 hover:bg-red-700 rounded-full p-2 text-sm transition-colors"
+                      className="bg-red-600 hover:bg-red-700 text-white rounded-full p-2 text-sm transition-colors"
                       title="Remove Dataset"
                     >
                       <X className="w-4 h-4" />

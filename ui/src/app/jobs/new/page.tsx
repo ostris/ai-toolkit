@@ -210,10 +210,7 @@ export default function TrainingForm() {
             </div>
             <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
             <div>
-              <Button
-                className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
-                onClick={handleImportConfig}
-              >
+              <Button className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md" onClick={handleImportConfig}>
                 Import Config
               </Button>
             </div>
@@ -263,7 +260,7 @@ export default function TrainingForm() {
         </div>
         <div>
           <Button
-            className="text-gray-200 bg-green-800 px-3 py-1 rounded-md"
+            className="text-white bg-green-600 hover:bg-green-700 px-3 py-1 rounded-md"
             onClick={() => saveJob()}
             disabled={status === 'saving'}
           >

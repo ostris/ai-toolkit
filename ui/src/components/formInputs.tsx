@@ -232,7 +232,7 @@ export const Checkbox = (props: CheckboxProps) => {
         onClick={() => !disabled && onChange(!checked)}
         className={classNames(
           'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2',
-          checked ? 'bg-blue-600' : 'bg-gray-700',
+          checked ? 'bg-blue-500' : 'bg-gray-600',
           disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80',
         )}
       >
@@ -408,7 +408,7 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
 
             {/* Fill */}
             <div
-              className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 h-3 rounded-sm bg-blue-600"
+              className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 h-3 rounded-sm bg-blue-500"
               style={{ width: `${percent}%` }}
             />
 
