@@ -508,8 +508,13 @@ export default function SimpleJob({
                   value={jobConfig.config.process[0].train.optimizer}
                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
                   options={[
-                    { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'adafactor', label: 'Adafactor' },
+                    { value: 'adam', label: 'Adam' },
+                    { value: 'adamw', label: 'AdamW' },
+                    { value: 'adamw8bit', label: 'AdamW8Bit' },
+                    { value: 'automagic', label: 'Automagic' },
+                    { value: 'prodigyopt', label: 'Prodigy' },
+                    { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
                 />
                 <NumberInput
