@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { defaultJobConfig, defaultDatasetConfig, migrateJobConfig } from './jobConfig';
 import { jobTypeOptions } from './options';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
-import { useNestedState } from '@/utils/hooks';
+import { useNestedState, setNestedValue } from '@/utils/hooks';
 import { SelectInput } from '@/components/formInputs';
 import useSettings from '@/hooks/useSettings';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import useDatasetList from '@/hooks/useDatasetList';
+import YAML from 'yaml';
 import path from 'path';
 import { TopBar, MainContent } from '@/components/layout';
 import { Button } from '@headlessui/react';
@@ -34,8 +35,51 @@ export default function TrainingForm() {
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
   const [showAdvancedView, setShowAdvancedView] = useState(false);
 
-  const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
+  const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(migrateJobConfig(defaultJobConfig)));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportConfig = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result as string;
+        let parsed: any;
+        if (file.name.endsWith('.json') || file.name.endsWith('.jsonc')) {
+          parsed = JSON.parse(text.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, ''));
+        } else {
+          parsed = YAML.parse(text);
+        }
+
+        // Set required fields (same pattern as AdvancedJob.handleChange)
+        try {
+          parsed.config.process[0].sqlite_db_path = './aitk_db.db';
+          parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
+          parsed.config.process[0].device = 'cuda';
+          parsed.config.process[0].performance_log_every = 10;
+        } catch (err) {
+          console.warn('Could not set required fields on imported config:', err);
+        }
+
+        migrateJobConfig(parsed);
+        setJobConfig(parsed);
+      } catch (err) {
+        console.error('Failed to parse config file:', err);
+        alert('Failed to parse config file. Please check the file format.');
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset so the same file can be re-imported
+    e.target.value = '';
+  };
 
   useEffect(() => {
     if (!isSettingsLoaded) return;
@@ -43,15 +87,19 @@ export default function TrainingForm() {
 
     const datasetOptions = datasets.map(name => ({ value: path.join(settings.DATASETS_FOLDER, name), label: name }));
     setDatasetOptions(datasetOptions);
-    const defaultDatasetPath = defaultDatasetConfig.folder_path;
 
-    for (let i = 0; i < jobConfig.config.process[0].datasets.length; i++) {
-      const dataset = jobConfig.config.process[0].datasets[i];
-      if (dataset.folder_path === defaultDatasetPath) {
-        if (datasetOptions.length > 0) {
-          setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+    if (datasetOptions.length > 0) {
+      const defaultDatasetPath = defaultDatasetConfig.folder_path;
+      // Use functional updater so we check the *current* state, not a stale closure
+      setJobConfig((prev: JobConfig) => {
+        let updated = prev;
+        for (let i = 0; i < prev.config.process[0].datasets.length; i++) {
+          if (prev.config.process[0].datasets[i].folder_path === defaultDatasetPath) {
+            updated = setNestedValue(updated, datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+          }
         }
-      }
+        return updated;
+      });
     }
   }, [datasets, settings, isSettingsLoaded, datasetFetchStatus]);
 
@@ -161,6 +209,12 @@ export default function TrainingForm() {
               />
             </div>
             <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+            <div>
+              <Button className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md" onClick={handleImportConfig}>
+                Import Config
+              </Button>
+            </div>
+            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
           </>
         )}
         {!showAdvancedView && (
@@ -206,7 +260,7 @@ export default function TrainingForm() {
         </div>
         <div>
           <Button
-            className="text-gray-200 bg-green-800 px-3 py-1 rounded-md"
+            className="text-white bg-green-600 hover:bg-green-700 px-3 py-1 rounded-md"
             onClick={() => saveJob()}
             disabled={status === 'saving'}
           >
@@ -214,6 +268,14 @@ export default function TrainingForm() {
           </Button>
         </div>
       </TopBar>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".yaml,.yml,.json,.jsonc"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
 
       {showAdvancedView ? (
         <div className="pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto">
@@ -249,6 +311,7 @@ export default function TrainingForm() {
               setGpuIDs={setGpuIDs}
               gpuList={gpuList}
               datasetOptions={datasetOptions}
+              isLoading={!isSettingsLoaded || !isGPUInfoLoaded || datasetFetchStatus !== 'success'}
             />
           </ErrorBoundary>
 

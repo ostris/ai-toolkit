@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { Home, Settings, BrainCircuit, Images, Plus } from 'lucide-react';
 import { FaXTwitter, FaDiscord, FaYoutube } from 'react-icons/fa6';
+import ThemeToggle from './ThemeToggle';
+import ThemeLogo from './ThemeLogo';
 
 const Sidebar = () => {
   const navigation = [
@@ -19,7 +21,7 @@ const Sidebar = () => {
     <div className="flex flex-col w-59 bg-gray-900 text-gray-100">
       <div className="px-4 py-3">
         <h1 className="text-l">
-          <img src="/ostris_logo.png" alt="Ostris AI Toolkit" className="w-auto h-7 mr-3 inline" />
+          <ThemeLogo />
           <span className="font-bold uppercase">Ostris</span>
           <span className="ml-2 uppercase text-gray-300">AI-Toolkit</span>
         </h1>
@@ -60,7 +62,7 @@ const Sidebar = () => {
 
       {/* Social links grid */}
       <div className="px-1 py-1 border-t border-gray-800">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <a href="https://discord.gg/VXmU2f5WEU" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaDiscord className={socialIconClass} />
             {/* <span className="text-xs text-gray-500 mt-1">Discord</span> */}
@@ -73,6 +75,7 @@ const Sidebar = () => {
             <FaXTwitter className={socialIconClass} />
             {/* <span className="text-xs text-gray-500 mt-1">X</span> */}
           </a>
+          <ThemeToggle />
         </div>
       </div>
     </div>

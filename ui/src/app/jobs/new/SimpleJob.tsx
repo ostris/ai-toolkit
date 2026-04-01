@@ -13,12 +13,13 @@ import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
 import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X } from 'lucide-react';
+import { X, Copy } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
+import { isMac } from '@/helpers/basic';
 
 type Props = {
   jobConfig: JobConfig;
@@ -30,6 +31,7 @@ type Props = {
   setGpuIDs: (value: string | null) => void;
   gpuList: any;
   datasetOptions: any;
+  isLoading?: boolean;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -44,6 +46,7 @@ export default function SimpleJob({
   setGpuIDs,
   gpuList,
   datasetOptions,
+  isLoading,
 }: Props) {
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
@@ -144,9 +147,22 @@ export default function SimpleJob({
     return newQuantizationOptions;
   }, [modelArch]);
 
+  const showGPUSelect = !isMac();
+
   return (
     <>
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <form
+        onSubmit={handleSubmit}
+        className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
+      >
+        {isLoading && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-400 border-t-blue-500" />
+              <span className="text-sm text-gray-400">Loading...</span>
+            </div>
+          </div>
+        )}
         <div className={topBarClass}>
           <Card title="Job">
             <TextInput
@@ -158,13 +174,15 @@ export default function SimpleJob({
               disabled={runId !== null}
               required
             />
-            <SelectInput
-              label="GPU ID"
-              value={`${gpuIDs}`}
-              docKey="gpuids"
-              onChange={value => setGpuIDs(value)}
-              options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
-            />
+            {showGPUSelect && (
+              <SelectInput
+                label="GPU ID"
+                value={`${gpuIDs}`}
+                docKey="gpuids"
+                onChange={value => setGpuIDs(value)}
+                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              />
+            )}
             {disableSections.includes('trigger_word') ? null : (
               <TextInput
                 label="Trigger Word"
@@ -236,7 +254,7 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
               />
             )}
-            {modelArch?.additionalSections?.includes('model.layer_offloading') && (
+            {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && (
               <>
                 <Checkbox
                   label={
@@ -490,8 +508,13 @@ export default function SimpleJob({
                   value={jobConfig.config.process[0].train.optimizer}
                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
                   options={[
-                    { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'adafactor', label: 'Adafactor' },
+                    { value: 'adam', label: 'Adam' },
+                    { value: 'adamw', label: 'AdamW' },
+                    { value: 'adamw8bit', label: 'AdamW8Bit' },
+                    { value: 'automagic', label: 'Automagic' },
+                    { value: 'prodigyopt', label: 'Prodigy' },
+                    { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
                 />
                 <NumberInput
@@ -577,7 +600,7 @@ export default function SimpleJob({
                     label="EMA Decay"
                     className="pt-2"
                     value={jobConfig.config.process[0].train.ema_config?.ema_decay as number}
-                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config?.ema_decay')}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.ema_config.ema_decay')}
                     placeholder="eg. 0.99"
                     min={0}
                   />
@@ -738,18 +761,34 @@ export default function SimpleJob({
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (
                 <div key={i} className="p-4 rounded-lg bg-gray-800 relative">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setJobConfig(
-                        jobConfig.config.process[0].datasets.filter((_, index) => index !== i),
-                        'config.process[0].datasets',
-                      )
-                    }
-                    className="absolute top-2 right-2 bg-red-800 hover:bg-red-700 rounded-full p-1 text-sm transition-colors"
-                  >
-                    <X />
-                  </button>
+                  <div className="absolute top-2 right-2 flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const duplicated = objectCopy(dataset);
+                        const datasets = [...jobConfig.config.process[0].datasets];
+                        datasets.splice(i + 1, 0, duplicated);
+                        setJobConfig(datasets, 'config.process[0].datasets');
+                      }}
+                      className="bg-gray-700 hover:bg-gray-600 rounded-full p-2 text-sm transition-colors"
+                      title="Duplicate Dataset"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setJobConfig(
+                          jobConfig.config.process[0].datasets.filter((_, index) => index !== i),
+                          'config.process[0].datasets',
+                        )
+                      }
+                      className="bg-red-600 hover:bg-red-700 text-white rounded-full p-2 text-sm transition-colors"
+                      title="Remove Dataset"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                   <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     <div>
@@ -846,7 +885,7 @@ export default function SimpleJob({
                         min={0}
                         required
                       />
-                      {modelArch?.additionalSections?.includes('datasets.num_frames') && (
+                      {modelArch?.additionalSections?.includes('datasets.num_frames') && !dataset.auto_frame_count && (
                         <NumberInput
                           label="Num Frames"
                           className="pt-2"
@@ -873,6 +912,14 @@ export default function SimpleJob({
                           checked={dataset.is_reg || false}
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].is_reg`)}
                         />
+                        {modelArch?.additionalSections?.includes('datasets.auto_frame_count') && (
+                          <Checkbox
+                            label="Auto Frame Count"
+                            checked={dataset.auto_frame_count || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].auto_frame_count`)}
+                            docKey="datasets.auto_frame_count"
+                          />
+                        )}
                         {modelArch?.additionalSections?.includes('datasets.do_i2v') && (
                           <Checkbox
                             label="Do I2V"
@@ -949,8 +996,8 @@ export default function SimpleJob({
                       <FormGroup label="Resolutions" className="pt-2">
                         <div className="grid grid-cols-2 gap-2">
                           {[
-                            [256, 512, 768],
-                            [1024, 1280, 1536],
+                            [256, 512, 768, 1024],
+                            [1280, 1328, 1536],
                           ].map(resGroup => (
                             <div key={resGroup[0]} className="space-y-2">
                               {resGroup.map(res => (

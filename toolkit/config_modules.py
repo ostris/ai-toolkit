@@ -7,6 +7,7 @@ import torch
 import torchaudio
 
 from toolkit.prompt_utils import PromptEmbeds
+from torchao.quantization.quant_primitives import _DTYPE_TO_BIT_WIDTH
 
 ImgExt = Literal['jpg', 'png', 'webp']
 
@@ -389,6 +390,7 @@ class TrainConfig:
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
         self.weight_jitter = kwargs.get('weight_jitter', 0.0)
         self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
+        self.merge_network_on_save_strength = kwargs.get('merge_network_on_save_strength', 1.0)
         self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
@@ -398,6 +400,12 @@ class TrainConfig:
         self.target_noise_multiplier = kwargs.get('target_noise_multiplier', 1.0)
         self.random_noise_multiplier = kwargs.get('random_noise_multiplier', 0.0)
         self.do_signal_correction_noise = kwargs.get('do_signal_correction_noise', False)
+        # batch noise correction adds other images in the batch as noise to correct away from other images
+        self.do_batch_noise_correction = kwargs.get('do_batch_noise_correction', False)
+        self.batch_noise_correction_scale = kwargs.get('batch_noise_correction_scale', 0.1)
+        self.do_signal_amplification = kwargs.get('do_signal_amplification', False)
+        self.signal_amplification_strength = kwargs.get('signal_amplification_strength', 0.5)
+        
         self.signal_correction_noise_scale = kwargs.get('signal_correction_noise_scale', 1.0)
         self.random_noise_shift = kwargs.get('random_noise_shift', 0.0)
         self.img_multiplier = kwargs.get('img_multiplier', 1.0)
@@ -491,6 +499,9 @@ class TrainConfig:
         self.correct_pred_norm_multiplier = kwargs.get('correct_pred_norm_multiplier', 1.0)
 
         self.loss_type = kwargs.get('loss_type', 'mse') # mse, mae, wavelet, pixelspace, mean_flow
+        
+        # do the loss on a timestep to 0 prediction
+        self.t0_loss_target = kwargs.get('t0_loss_target', False)
 
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
@@ -563,6 +574,8 @@ class TrainConfig:
 
         # stabilizes empty prompts to be zeroed predictions
         self.do_blank_stabilization = kwargs.get('do_blank_stabilization', False)
+        
+        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
 
 
 ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
@@ -657,6 +670,12 @@ class ModelConfig:
             self.qtype = "float8"
         if self.layer_offloading and self.qtype_te == "qfloat8":
             self.qtype_te = "float8"
+            
+        # Mac mps only works with torachao uint
+        if torch.backends.mps.is_available() and self.qtype == "qfloat8":
+            self.qtype = "int8"
+        if torch.backends.mps.is_available() and self.qtype_te == "qfloat8":
+            self.qtype_te = "int8"
         
         # 0 is off and 1.0 is 100% of the layers
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
@@ -677,13 +696,15 @@ class ModelConfig:
         # compile the model with torch compile
         self.compile = kwargs.get("compile", False)
         
+        if self.compile and self.quantize:
+            print("Warning: You cannot compile a quantized model. Disabling compile.")
+            self.compile = False
+        
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         
         # model paths for models that support it
         self.model_paths = kwargs.get("model_paths", {})
-        
-        self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
         
         # allow frontend to pass arch with a color like arch:tag
         # but remove the tag
@@ -970,6 +991,11 @@ class DatasetConfig:
         # this could have various issues with shorter videos and videos with variable fps
         # I recommend trimming your videos to the desired length and using shrink_video_to_frames(default)
         self.fps: int = kwargs.get('fps', 24)
+        
+        # auto_frame_count pull as many frames as in the video at given fps
+        # Important, make sure fps for dataset is set correctly.
+        # this wont work with bucketing for now until I can handle this before bucketing.
+        self.auto_frame_count: bool = kwargs.get('auto_frame_count', False)
         
         # debug the frame count and frame selection. You dont need this. It is for debugging.
         self.debug: bool = kwargs.get('debug', False)
@@ -1354,5 +1380,8 @@ def validate_configs(
     
     if train_config.diff_output_preservation and train_config.blank_prompt_preservation:
         raise ValueError("Cannot use both differential output preservation and blank prompt preservation at the same time. Please set one of them to False.")
+    
+    if train_config.batch_size > 1 and any(dataset_config.auto_frame_count for dataset_config in dataset_configs):
+        raise ValueError("Cannot use batch size greater than 1 with auto_frame_count. Please set batch_size to 1 or auto_frame_count to False.")
 
     

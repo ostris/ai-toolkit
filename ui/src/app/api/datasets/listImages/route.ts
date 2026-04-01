@@ -51,7 +51,7 @@ function findImagesRecursively(dir: string): string[] {
     } else {
       // If it's a file, check if it's an image
       const ext = path.extname(itemPath).toLowerCase();
-      if (imageExtensions.includes(ext)) {
+      if (imageExtensions.includes(ext) && !item.startsWith('.')) {
         results.push(itemPath);
       }
     }

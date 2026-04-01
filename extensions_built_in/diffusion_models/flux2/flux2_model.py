@@ -383,8 +383,8 @@ class Flux2Model(BaseModel):
                             "match_target_res", False
                         ):
                             ratio = control_img.shape[2] / control_img.shape[3]
-                            c_width = math.sqrt(control_image_res * ratio)
-                            c_height = c_width / ratio
+                            c_height = math.sqrt(control_image_res * ratio)
+                            c_width = c_height / ratio
 
                             c_width = round(c_width / 32) * 32
                             c_height = round(c_height / 32) * 32
@@ -397,6 +397,8 @@ class Flux2Model(BaseModel):
                         control_img = control_img * 2 - 1
                         controls.append(control_img)
 
+                    if self.vae.device == torch.device("cpu"):
+                        self.vae.to(self.device_torch)
                     img_cond_seq_item, img_cond_seq_ids_item = encode_image_refs(
                         self.vae, controls, limit_pixels=control_image_max_res
                     )
@@ -418,8 +420,8 @@ class Flux2Model(BaseModel):
                 assert img_cond_seq_ids is not None, (
                     "You need to provide either both or neither of the sequence conditioning"
                 )
-                img_input = torch.cat((img_input, img_cond_seq), dim=1)
-                img_input_ids = torch.cat((img_input_ids, img_cond_seq_ids), dim=1)
+                img_input = torch.cat((img_input, img_cond_seq.to(img_input.device, img_input.dtype)), dim=1)
+                img_input_ids = torch.cat((img_input_ids, img_cond_seq_ids.to(img_input_ids.device)), dim=1)
 
             guidance_vec = torch.full(
                 (img_input.shape[0],),
