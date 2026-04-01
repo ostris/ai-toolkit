@@ -632,7 +632,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 
                 print_acc("Merging network weights into full model for saving...")
                 
-                self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_weight)
+                self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_strength)
                 # reset weights to zero
                 self.network.reset_weights()
                 self.network.is_merged_in = False
