@@ -71,7 +71,7 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
       render: row => {
         let statusClass = 'text-gray-400';
         if (row.status === 'completed') statusClass = 'text-green-400';
-        if (row.status === 'failed') statusClass = 'text-red-400';
+        if (row.status === 'error') statusClass = 'text-red-400';
         if (row.status === 'running') statusClass = 'text-blue-400';
 
         return <span className={statusClass}>{row.status}</span>;
@@ -96,33 +96,45 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
     if (!isGPUInfoLoaded) return {};
     if (jobs.length === 0) return {};
     let jd: { [key: string]: { name: string; jobs: Job[] } } = {};
+    // Create entries for each individual GPU
     gpuList.forEach(gpu => {
       jd[`${gpu.index}`] = { name: `${gpu.name}`, jobs: [] };
     });
     jd['Idle'] = { name: 'Idle', jobs: [] };
     jobs.forEach(job => {
-      const gpu = gpuList.find(gpu => job.gpu_ids?.split(',').includes(gpu.index.toString())) as GpuInfo;
-      const key = `${gpu?.index || '0'}`;
-      if (['queued', 'running', 'stopping'].includes(job.status) && key in jd) {
+      if (!['queued', 'running', 'error'].includes(job.status)) {
+        jd['Idle'].jobs.push(job);
+        return;
+      }
+      const gpuIds = (job.gpu_ids || '0')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter((s: string) => s.length > 0);
+      if (gpuIds.length > 1) {
+        // Multi-GPU job: group under the combined gpu_ids key (numerically sorted for consistency)
+        const key = gpuIds.sort((a: string, b: string) => parseInt(a) - parseInt(b)).join(',');
+        if (!(key in jd)) {
+          const gpuName = gpuList.find(g => g.index.toString() === gpuIds[0])?.name || 'GPU';
+          jd[key] = { name: `${gpuName} (x${gpuIds.length})`, jobs: [] };
+        }
         jd[key].jobs.push(job);
       } else {
-        jd['Idle'].jobs.push(job);
+        const key = gpuIds[0];
+        if (key in jd) {
+          jd[key].jobs.push(job);
+        } else {
+          jd['Idle'].jobs.push(job);
+        }
       }
     });
     // sort the queued/running jobs by queue position
     Object.keys(jd).forEach(key => {
-      if (key === 'Idle') {
-        jd[key].jobs.sort((a, b) => {
-          // sort by updated_at, newest first
-          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-        });
-      } else {
-        jd[key].jobs.sort((a, b) => {
-          if (a.queue_position === null) return 1;
-          if (b.queue_position === null) return -1;
-          return a.queue_position - b.queue_position;
-        });
-      }
+      if (key === 'Idle') return;
+      jd[key].jobs.sort((a, b) => {
+        if (a.queue_position === null) return 1;
+        if (b.queue_position === null) return -1;
+        return a.queue_position - b.queue_position;
+      });
     });
     return jd;
   }, [jobs, queues, isGPUInfoLoaded]);
@@ -138,7 +150,22 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
         .sort()
         .filter(key => key !== 'Idle')
         .map(gpuKey => {
-          const queue = queues.find(q => `${q.gpu_ids}` === gpuKey) as Queue;
+          // Use set-based comparison: gpu_ids may be stored in different order than the sorted key
+          const gpuKeySet = new Set(
+            gpuKey
+              .split(',')
+              .map(s => s.trim())
+              .filter(s => s.length > 0),
+          );
+          const queue = queues.find(q => {
+            const qSet = new Set(
+              `${q.gpu_ids}`
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => s.length > 0),
+            );
+            return qSet.size === gpuKeySet.size && [...gpuKeySet].every(id => qSet.has(id));
+          }) ?? null;
           return (
             <div key={gpuKey} className="mb-6">
               <div
@@ -150,7 +177,9 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
               >
                 <div className="flex items-center space-x-2 flex-1 py-2">
                   <h2 className="font-semibold text-white">{jobsDict[gpuKey].name}</h2>
-                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {queue?.gpu_ids}</span>
+                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">
+                    # {queue?.gpu_ids ?? gpuKey}
+                  </span>
                 </div>
                 <div className="text-sm text-gray-300 italic flex items-center">
                   {queue?.is_running ? (

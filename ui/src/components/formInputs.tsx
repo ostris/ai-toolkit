@@ -26,12 +26,24 @@ export interface InputProps {
 export interface TextInputProps extends InputProps {
   value: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   type?: 'text' | 'password';
   disabled?: boolean;
 }
 
 export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: TextInputProps, ref) => {
-  const { label, value, onChange, placeholder, required, disabled, type = 'text', className, docKey = null } = props;
+  const {
+    label,
+    value,
+    onChange,
+    onBlur,
+    placeholder,
+    required,
+    disabled,
+    type = 'text',
+    className,
+    docKey = null,
+  } = props;
   let { doc } = props;
   if (!doc && docKey) {
     doc = getDoc(docKey);
@@ -55,6 +67,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
         onChange={e => {
           if (!disabled) onChange(e.target.value);
         }}
+        onBlur={onBlur}
         className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
         placeholder={placeholder}
         required={required}

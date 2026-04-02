@@ -55,12 +55,10 @@ config:
         # IMPORTANT: this is for Wan 2.2 MOE. It will switch training one stage or the other every this many steps
         switch_boundary_every: 10
 
-        # required for 24GB cards. You must do either unload_text_encoder or cache_text_embeddings but not both
-
-        # this will encode your trigger word and use those embeddings for every image in the dataset, captions will be ignored
+        # required for 24GB cards
+        # unload_text_encoder automatically caches all text embeddings before unloading
+        # either option works — unload_text_encoder implies cache_text_embeddings
         # unload_text_encoder: true
-
-        # this will cache all captions in your dataset.
         cache_text_embeddings: true
 
       model:

@@ -1366,7 +1366,9 @@ def validate_configs(
         
         # check if they are doing differential output preservation
         if train_config.diff_output_preservation:
-            raise ValueError("Cannot use differential output preservation with caching text embeddings. Please set diff_output_preservation to False.")
+            raise ValueError("Cannot use differential output preservation with caching text embeddings. "
+                             "Note: unload_text_encoder automatically enables text embedding caching. "
+                             "Please set diff_output_preservation to False.")
     
         # make sure they are all cached
         for dataset in dataset_configs:

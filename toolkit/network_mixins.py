@@ -536,6 +536,12 @@ class ToolkitNetworkMixin:
 
         for key in list(state_dict.keys()):
             v = state_dict[key]
+            # Under FSDP v2, parameters are DTensors sharded across ranks.
+            # full_tensor() is a collective op (all ranks must call it) that
+            # gathers the full parameter. The caller must ensure all ranks
+            # enter get_state_dict() together.
+            if hasattr(v, 'full_tensor'):
+                v = v.full_tensor()
             v = v.detach().clone().to("cpu").to(dtype)
             save_key = save_keymap[key] if key in save_keymap else key
             save_dict[save_key] = v

@@ -17,8 +17,8 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'GPU ID',
     description: (
       <>
-        This is the GPU that will be used for training. Only one GPU can be used per job at a time via the UI currently.
-        However, you can start multiple jobs in parallel, each using a different GPU.
+        Select one or more GPUs for training. Multiple GPUs use FSDP v2 to shard the model across devices.
+        You can also run multiple single-GPU jobs in parallel, each using a different GPU.
       </>
     ),
   },
@@ -157,8 +157,9 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Unload Text Encoder',
     description: (
       <>
-        Unloading text encoder will cache the trigger word and the sample prompts and unload the text encoder from the
-        GPU. Captions in for the dataset will be ignored
+        Caches the trigger word and sample prompts, then unloads the text encoder from the GPU.
+        Implies Cache Text Embeddings. Captions in the dataset will be ignored.
+        Automatically enabled when using FSDP.
       </>
     ),
   },
@@ -166,11 +167,10 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Cache Text Embeddings',
     description: (
       <>
-        <small>(experimental)</small>
-        <br />
-        Caching text embeddings will process and cache all the text embeddings from the text encoder to the disk. The
-        text encoder will be unloaded from the GPU. This does not work with things that dynamically change the prompt
-        such as trigger words, caption dropout, etc.
+        Caches all text embeddings from the text encoder to disk. On subsequent runs, the text encoder
+        is skipped entirely (never loaded or quantized), saving significant VRAM and startup time.
+        Does not work with features that dynamically change the prompt such as caption dropout.
+        Automatically enabled by FSDP and Unload Text Encoder.
       </>
     ),
   },

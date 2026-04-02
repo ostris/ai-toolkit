@@ -12,7 +12,8 @@ import torch
 from PIL import Image
 from PIL.ImageOps import exif_transpose
 from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+from torch.utils.data import Dataset, DataLoader, ConcatDataset, WeightedRandomSampler
+from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 import albumentations as A
 
@@ -592,8 +593,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 self.cache_latents_all_latents()
             if self.is_caching_clip_vision_to_disk:
                 self.cache_clip_vision_to_disk()
-            if self.is_caching_text_embeddings:
-                self.cache_text_embeddings()
+            # text embedding caching is deferred to hook_before_train_loop
+            # where the text encoder is guaranteed to be on GPU
             if self.is_generating_controls:
                 # always do this last
                 self.setup_controls()
@@ -630,13 +631,88 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             return self._get_single_item(item)
 
 
+def _build_weighted_sampler(datasets, concatenated_dataset):
+    """Build WeightedRandomSampler if any dataset has sampling_weight set."""
+    has_weights = any(ds.dataset_config.sampling_weight is not None for ds in datasets)
+    if not has_weights:
+        return None
+
+    weights = [ds.dataset_config.sampling_weight if ds.dataset_config.sampling_weight is not None else 1.0 for ds in datasets]
+    if any(w < 0 for w in weights):
+        raise ValueError("sampling_weight values must be non-negative")
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        raise ValueError("sampling_weight values must sum to a positive number")
+
+    total_items = len(concatenated_dataset)
+
+    sample_weights = []
+    for ds, w in zip(datasets, weights):
+        n = len(ds)
+        per_item_w = (w / total_weight) / (n / total_items) if n > 0 else 0.0
+        sample_weights.extend([per_item_w] * n)
+
+    for ds, w in zip(datasets, weights):
+        print_acc(f"Dataset '{ds.dataset_config.folder_path}': sampling_weight={w} ({w/total_weight*100:.1f}%)")
+
+    return WeightedRandomSampler(sample_weights, num_samples=total_items, replacement=True)
+
+
+def _build_oversampled_concat_dataset(datasets):
+    """Build a ConcatDataset with oversampling baked in to preserve weighted ratios.
+
+    When using DistributedSampler (which shards uniformly), we can't use
+    WeightedRandomSampler. Instead, we repeat dataset entries according to
+    their sampling_weight so the desired ratio is baked into the dataset itself.
+    DistributedSampler then shards the pre-weighted data, preserving ratios.
+    """
+    has_weights = any(ds.dataset_config.sampling_weight is not None for ds in datasets)
+    if not has_weights:
+        return ConcatDataset(datasets), False
+
+    weights = [ds.dataset_config.sampling_weight if ds.dataset_config.sampling_weight is not None else 1.0 for ds in datasets]
+    if any(w < 0 for w in weights):
+        raise ValueError("sampling_weight values must be non-negative")
+    # Filter out datasets with zero weight
+    filtered = [(ds, w) for ds, w in zip(datasets, weights) if w > 0]
+    if not filtered:
+        raise ValueError("sampling_weight values must sum to a positive number")
+    datasets, weights = zip(*filtered)
+    datasets, weights = list(datasets), list(weights)
+    total_weight = sum(weights)
+
+    # Compute repeat factors to match desired sampling ratios.
+    # For each dataset: desired_fraction / current_fraction tells us how much
+    # to oversample. Normalize so the minimum repeat is 1 (no undersampling).
+    normalized = [w / total_weight for w in weights]
+    lens = [len(ds) for ds in datasets]
+    total_items = sum(lens)
+
+    # ratio_i = (desired_fraction_i) / (natural_fraction_i)
+    # = (w_i / total_weight) / (len_i / total_items)
+    ratios = [(n * total_items) / (l if l > 0 else 1) for n, l in zip(normalized, lens)]
+    min_ratio = min(r for r in ratios if r > 0) if any(r > 0 for r in ratios) else 1.0
+    repeat_factors = [max(1, round(r / min_ratio)) for r in ratios]
+
+    oversampled_datasets = []
+    for ds, repeat, w in zip(datasets, repeat_factors, weights):
+        for _ in range(repeat):
+            oversampled_datasets.append(ds)
+        print_acc(f"Dataset '{ds.dataset_config.folder_path}': sampling_weight={w} ({w/total_weight*100:.1f}%), repeat={repeat}x for distributed")
+
+    return ConcatDataset(oversampled_datasets), True
+
+
 def get_dataloader_from_datasets(
         dataset_options,
         batch_size=1,
         sd: 'StableDiffusion' = None,
+        accelerator=None,
 ) -> DataLoader:
     if dataset_options is None or len(dataset_options) == 0:
         return None
+
+    is_distributed = accelerator is not None and accelerator.num_processes > 1
 
     datasets = []
     has_buckets = False
@@ -665,7 +741,21 @@ def get_dataloader_from_datasets(
         else:
             raise ValueError(f"invalid dataset type: {config.type}")
 
-    concatenated_dataset = ConcatDataset(datasets)
+    # In distributed mode, bake weighted sampling into dataset via oversampling
+    # (can't use WeightedRandomSampler with DistributedSampler)
+    if is_distributed:
+        concatenated_dataset, used_oversampling = _build_oversampled_concat_dataset(datasets)
+        sampler = DistributedSampler(
+            concatenated_dataset,
+            num_replicas=accelerator.num_processes,
+            rank=accelerator.process_index,
+            shuffle=True,
+        )
+        print_acc(f"Distributed training: rank {accelerator.process_index}/{accelerator.num_processes}, "
+                  f"dataset size per rank: ~{len(concatenated_dataset) // accelerator.num_processes}")
+    else:
+        concatenated_dataset = ConcatDataset(datasets)
+        sampler = _build_weighted_sampler(datasets, concatenated_dataset)
 
     # todo build scheduler that can get buckets from all datasets that match
     # todo and evenly distribute reg images
@@ -696,7 +786,8 @@ def get_dataloader_from_datasets(
             concatenated_dataset,
             batch_size=None,  # we batch in the datasets for now
             drop_last=False,
-            shuffle=True,
+            shuffle=(sampler is None),
+            sampler=sampler,
             collate_fn=dto_collation,  # Use the custom collate function
             **dataloader_kwargs
         )
@@ -704,24 +795,35 @@ def get_dataloader_from_datasets(
         data_loader = DataLoader(
             concatenated_dataset,
             batch_size=batch_size,
-            shuffle=True,
+            shuffle=(sampler is None),
+            sampler=sampler,
             collate_fn=dto_collation,
             **dataloader_kwargs
         )
     return data_loader
 
 
-def trigger_dataloader_setup_epoch(dataloader: DataLoader):
+def trigger_dataloader_setup_epoch(dataloader: DataLoader, epoch_num: int = 0):
     # hacky but needed because of different types of datasets and dataloaders
     dataloader.len = None
+
+    # Update DistributedSampler epoch for proper shuffling across ranks
+    if hasattr(dataloader, 'sampler') and isinstance(dataloader.sampler, DistributedSampler):
+        dataloader.sampler.set_epoch(epoch_num)
+
+    # Use a seen set to avoid calling setup_epoch multiple times on the same
+    # dataset object (happens when oversampling repeats dataset references).
+    seen = set()
     if isinstance(dataloader.dataset, list):
         for dataset in dataloader.dataset:
             if hasattr(dataset, 'datasets'):
                 for sub_dataset in dataset.datasets:
-                    if hasattr(sub_dataset, 'setup_epoch'):
+                    if id(sub_dataset) not in seen and hasattr(sub_dataset, 'setup_epoch'):
+                        seen.add(id(sub_dataset))
                         sub_dataset.setup_epoch()
                         sub_dataset.len = None
-            elif hasattr(dataset, 'setup_epoch'):
+            elif id(dataset) not in seen and hasattr(dataset, 'setup_epoch'):
+                seen.add(id(dataset))
                 dataset.setup_epoch()
                 dataset.len = None
     elif hasattr(dataloader.dataset, 'setup_epoch'):
@@ -730,7 +832,8 @@ def trigger_dataloader_setup_epoch(dataloader: DataLoader):
     elif hasattr(dataloader.dataset, 'datasets'):
         dataloader.dataset.len = None
         for sub_dataset in dataloader.dataset.datasets:
-            if hasattr(sub_dataset, 'setup_epoch'):
+            if id(sub_dataset) not in seen and hasattr(sub_dataset, 'setup_epoch'):
+                seen.add(id(sub_dataset))
                 sub_dataset.setup_epoch()
                 sub_dataset.len = None
 
