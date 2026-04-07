@@ -1590,7 +1590,7 @@ class BaseModel:
     
     def get_base_model_version(self) -> str:
         # override in child classes to get the base model version
-        return "unknown"
+        return self.arch if self.arch is not None else 'unknown'
 
     def get_model_to_train(self):
         # called to get model to attach LoRAs to. Can be overridden in child classes
