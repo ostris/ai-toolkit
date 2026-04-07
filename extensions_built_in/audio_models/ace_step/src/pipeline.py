@@ -61,13 +61,13 @@ class AceStep15Pipeline:
         )
 
         text_embeddings = self.text_encoder.encode_text(
-            cap_tok.input_ids.to(self.transformer.device)
+            cap_tok.input_ids.to(self.text_encoder.device)
         ).to(self.transformer.dtype)
-        text_mask = cap_tok.attention_mask.to(self.transformer.device).bool()
+        text_mask = cap_tok.attention_mask.to(self.text_encoder.device).bool()
         lyric_embeddings = self.text_encoder.encode_lyrics(
-            lyr_tok.input_ids.to(self.transformer.device)
+            lyr_tok.input_ids.to(self.text_encoder.device)
         ).to(self.transformer.dtype)
-        lyric_mask = lyr_tok.attention_mask.to(self.transformer.device).bool()
+        lyric_mask = lyr_tok.attention_mask.to(self.text_encoder.device).bool()
 
         return text_embeddings, text_mask, lyric_embeddings, lyric_mask
 
@@ -93,10 +93,7 @@ class AceStep15Pipeline:
         dtype = self.transformer.dtype
 
         # Text encoding
-        if (
-            encoder_embeddings is not None
-            and encoder_mask is not None
-        ):
+        if encoder_embeddings is not None and encoder_mask is not None:
             enc_h = encoder_embeddings
             enc_m = encoder_mask
             sil = get_silence_latent(latent_len, device, dtype)  # [1, 64, T]

@@ -743,6 +743,14 @@ class ConditionEncoder(nn.Module):
         self.timbre_encoder = TimbreEncoder(
             timbre_dim, hidden, n_timbre, heads, kv, head_dim, inter, eps
         )
+    
+    @property
+    def device(self):
+        return next(self.parameters()).device
+    
+    @property
+    def dtype(self):
+        return next(self.parameters()).dtype
 
     def forward(self, text_h, text_m, lyric_h, lyric_m, refer_packed, refer_order):
         text_proj = self.text_projector(text_h)

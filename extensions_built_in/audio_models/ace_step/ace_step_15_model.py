@@ -162,6 +162,12 @@ class AceStep15Model(BaseAudioModel):
             prompts = [prompt]
         else:
             prompts = prompt
+        
+        if self.text_encoder.device == torch.device("cpu"):
+            self.text_encoder.to(self.device_torch)
+        # we need the encoder from the model
+        if self.model.encoder.device == torch.device("cpu"):
+            self.model.encoder.to(self.device_torch)
 
         # the prompt should be json as a string. Try to parse it.
         json_prompts = []
@@ -239,6 +245,8 @@ class AceStep15Model(BaseAudioModel):
         generator: torch.Generator,
         extra: dict,
     ):
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
         # make sure gen config is setup for audio
         if gen_config.output_ext not in ['mp3', 'wav']:
             gen_config.output_ext = 'mp3'
@@ -254,8 +262,8 @@ class AceStep15Model(BaseAudioModel):
 
         output = self.pipeline(
             prompt=None,  # we are passing in the embeds directly, so no need for a prompt
-            encoder_embeddings=conditional_embeds.text_embeds,
-            encoder_mask=conditional_embeds.attention_mask,
+            encoder_embeddings=conditional_embeds.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+            encoder_mask=conditional_embeds.attention_mask.to(self.device_torch, dtype=torch.bool),
             num_inference_steps=gen_config.num_inference_steps,
             duration=duration,
             generator=generator,
@@ -274,6 +282,8 @@ class AceStep15Model(BaseAudioModel):
         text_embeddings: PromptEmbeds,
         **kwargs,
     ):
+        if self.model.decoder.device == torch.device("cpu"):
+            self.model.decoder.to(self.device_torch)
         with torch.no_grad():
             model: AceStep15 = self.model
             tt = timestep.to(self.device_torch, dtype=torch.long) / 1000
@@ -293,8 +303,8 @@ class AceStep15Model(BaseAudioModel):
             timestep=tt,
             timestep_r=tt,
             attention_mask=attn,
-            enc_h=text_embeddings.text_embeds,
-            enc_m=text_embeddings.attention_mask,
+            enc_h=text_embeddings.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
+            enc_m=text_embeddings.attention_mask.to(self.device_torch, dtype=torch.bool),
             context=context,
         )
         return pred

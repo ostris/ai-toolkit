@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { isVideo } from '@/utils/basic';
+import { isVideo, isAudio } from '@/utils/basic';
+import AudioPlayer from './AudioPlayer';
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -63,7 +64,12 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: '100%' }} onClick={onClick}>
         <div className="absolute inset-0 rounded-t-lg shadow-md">
           {isVisible ? (
-            isVideo(imageUrl) ? (
+            isAudio(imageUrl) ? (
+              <AudioPlayer
+                src={`/api/img/${encodeURIComponent(imageUrl)}`}
+                title={imageUrl.replace(/^.*[\\/]/, '')}
+              />
+            ) : isVideo(imageUrl) ? (
               <video
                 ref={videoRef}
                 src={`/api/img/${encodeURIComponent(imageUrl)}`}
