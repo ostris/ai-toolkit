@@ -7,6 +7,7 @@ import torch
 import torchaudio
 
 from toolkit.prompt_utils import PromptEmbeds
+from torchao.quantization.quant_primitives import _DTYPE_TO_BIT_WIDTH
 
 ImgExt = Literal['jpg', 'png', 'webp']
 
@@ -389,6 +390,7 @@ class TrainConfig:
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', True)
         self.weight_jitter = kwargs.get('weight_jitter', 0.0)
         self.merge_network_on_save = kwargs.get('merge_network_on_save', False)
+        self.merge_network_on_save_strength = kwargs.get('merge_network_on_save_strength', 1.0)
         self.max_grad_norm = kwargs.get('max_grad_norm', 1.0)
         self.start_step = kwargs.get('start_step', None)
         self.free_u = kwargs.get('free_u', False)
@@ -668,6 +670,12 @@ class ModelConfig:
             self.qtype = "float8"
         if self.layer_offloading and self.qtype_te == "qfloat8":
             self.qtype_te = "float8"
+            
+        # Mac mps only works with torachao uint
+        if torch.backends.mps.is_available() and self.qtype == "qfloat8":
+            self.qtype = "int8"
+        if torch.backends.mps.is_available() and self.qtype_te == "qfloat8":
+            self.qtype_te = "int8"
         
         # 0 is off and 1.0 is 100% of the layers
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
@@ -687,6 +695,10 @@ class ModelConfig:
 
         # compile the model with torch compile
         self.compile = kwargs.get("compile", False)
+        
+        if self.compile and self.quantize:
+            print("Warning: You cannot compile a quantized model. Disabling compile.")
+            self.compile = False
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})

@@ -424,6 +424,12 @@ class LTX2Model(BaseModel):
         # remove the vision tower
         text_encoder.model.vision_tower = None
         flush()
+        
+        if self.model_config.quantize_te:
+            self.print_and_status_update("Quantizing Text Encoder")
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+            freeze(text_encoder)
+            flush()
 
         if (
             self.model_config.layer_offloading
@@ -440,12 +446,6 @@ class LTX2Model(BaseModel):
 
         text_encoder.to(self.device_torch, dtype=dtype)
         flush()
-
-        if self.model_config.quantize_te:
-            self.print_and_status_update("Quantizing Text Encoder")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
-            flush()
 
         self.print_and_status_update("Loading VAEs and other components")
         if combined_state_dict is not None:

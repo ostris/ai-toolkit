@@ -101,15 +101,36 @@ class DiffusionTrainer(SDTrainer):
             loop.run_until_complete(task)
 
     async def _execute_db_operation(self, operation_func):
-        """Execute a database operation in a separate thread to avoid blocking."""
+        """Execute a database operation in a separate thread with retry on lock."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.thread_pool, operation_func)
+        return await loop.run_in_executor(
+            self.thread_pool, lambda: self._retry_db_operation(operation_func)
+        )
 
     def _db_connect(self):
         """Create a new connection for each operation to avoid locking."""
-        conn = sqlite3.connect(self.sqlite_db_path, timeout=10.0)
+        conn = sqlite3.connect(self.sqlite_db_path, timeout=30.0)
         conn.isolation_level = None  # Enable autocommit mode
         return conn
+
+    def _retry_db_operation(self, operation_func, max_retries=3, base_delay=2.0):
+        """Retry a database operation with exponential backoff on lock errors."""
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return operation_func()
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e):
+                    last_error = e
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt)  # 2s, 4s, 8s
+                        print(f"[AITK] Database locked (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                    else:
+                        print(f"[AITK] Database locked after {max_retries + 1} attempts, giving up.")
+                else:
+                    raise
+        raise last_error
 
     def should_stop(self):
         if not self.is_ui_trainer:
@@ -122,7 +143,7 @@ class DiffusionTrainer(SDTrainer):
                 stop = cursor.fetchone()
                 return False if stop is None else stop[0] == 1
 
-        return _check_stop()
+        return self._retry_db_operation(_check_stop)
 
     def should_return_to_queue(self):
         if not self.is_ui_trainer:
@@ -135,7 +156,7 @@ class DiffusionTrainer(SDTrainer):
                 return_to_queue = cursor.fetchone()
                 return False if return_to_queue is None else return_to_queue[0] == 1
 
-        return _check_return_to_queue()
+        return self._retry_db_operation(_check_return_to_queue)
 
     def maybe_stop(self):
         if not self.is_ui_trainer:
@@ -230,11 +251,15 @@ class DiffusionTrainer(SDTrainer):
     def on_error(self, e: Exception):
         super(DiffusionTrainer, self).on_error(e)
         if self.is_ui_trainer:
-            if self.accelerator.is_main_process and not self.is_stopping:
-                self.update_status("error", str(e))
-            self.update_db_key("step", self.last_save_step)
-            asyncio.run(self.wait_for_all_async())
-            self.thread_pool.shutdown(wait=True)
+            try:
+                if self.accelerator.is_main_process and not self.is_stopping:
+                    self.update_status("error", str(e))
+                self.update_db_key("step", self.last_save_step)
+                asyncio.run(self.wait_for_all_async())
+            except Exception as db_err:
+                print(f"[AITK] Warning: failed to update DB during error handling: {db_err}")
+            finally:
+                self.thread_pool.shutdown(wait=True)
 
     def handle_timing_print_hook(self, timing_dict):
         if "train_loop" not in timing_dict:

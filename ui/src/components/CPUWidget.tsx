@@ -21,7 +21,7 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
 
   if (!cpu) {
     return (
-      <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden hover:shadow-2xl transition-all duration-300 border border-gray-800">
+      <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <h2 className="font-semibold text-gray-100">CPU Info</h2>
@@ -35,7 +35,7 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
   }
 
   return (
-    <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden hover:shadow-2xl transition-all duration-300 border border-gray-800">
+    <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
       <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center space-x-2">
           <h2 className="font-semibold text-gray-100">{cpu.name}</h2>
@@ -61,7 +61,7 @@ export default function CPUWidget({ cpu }: CPUWidgetProps) {
           </div>
           <div>
             <div className="flex items-center space-x-2 mb-1 mt-1">
-              <HardDrive className="w-4 h-4 text-blue-400" />
+              <HardDrive className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <p className="text-xs text-gray-400">Memory</p>
               <span className="text-xs text-gray-300 ml-auto">
                 {(((cpu.totalMemory - cpu.availableMemory) / cpu.totalMemory) * 100).toFixed(1)}%

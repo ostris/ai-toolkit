@@ -107,7 +107,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           <Button
             key={page.value}
             onClick={() => setPageKey(page.value)}
-            className={`px-4 py-1 h-8 flex items-center gap-1.5 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700' : ''}`}
+            className={`px-4 py-1 h-8 flex items-center gap-1.5 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700 text-white' : ''}`}
           >
             <page.icon className="text-sm" />
             {page.name}

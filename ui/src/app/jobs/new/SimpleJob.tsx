@@ -19,6 +19,7 @@ import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
+import { isMac } from '@/helpers/basic';
 
 type Props = {
   jobConfig: JobConfig;
@@ -146,6 +147,8 @@ export default function SimpleJob({
     return newQuantizationOptions;
   }, [modelArch]);
 
+  const showGPUSelect = !isMac();
+
   return (
     <>
       <form
@@ -171,13 +174,15 @@ export default function SimpleJob({
               disabled={runId !== null}
               required
             />
-            <SelectInput
-              label="GPU ID"
-              value={`${gpuIDs}`}
-              docKey="gpuids"
-              onChange={value => setGpuIDs(value)}
-              options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
-            />
+            {showGPUSelect && (
+              <SelectInput
+                label="GPU ID"
+                value={`${gpuIDs}`}
+                docKey="gpuids"
+                onChange={value => setGpuIDs(value)}
+                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              />
+            )}
             {disableSections.includes('trigger_word') ? null : (
               <TextInput
                 label="Trigger Word"
@@ -249,7 +254,7 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
               />
             )}
-            {modelArch?.additionalSections?.includes('model.layer_offloading') && (
+            {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && (
               <>
                 <Checkbox
                   label={
@@ -503,8 +508,13 @@ export default function SimpleJob({
                   value={jobConfig.config.process[0].train.optimizer}
                   onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
                   options={[
-                    { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'adafactor', label: 'Adafactor' },
+                    { value: 'adam', label: 'Adam' },
+                    { value: 'adamw', label: 'AdamW' },
+                    { value: 'adamw8bit', label: 'AdamW8Bit' },
+                    { value: 'automagic', label: 'Automagic' },
+                    { value: 'prodigyopt', label: 'Prodigy' },
+                    { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
                 />
                 <NumberInput
@@ -773,7 +783,7 @@ export default function SimpleJob({
                           'config.process[0].datasets',
                         )
                       }
-                      className="bg-red-800 hover:bg-red-700 rounded-full p-2 text-sm transition-colors"
+                      className="bg-red-600 hover:bg-red-700 text-white rounded-full p-2 text-sm transition-colors"
                       title="Remove Dataset"
                     >
                       <X className="w-4 h-4" />

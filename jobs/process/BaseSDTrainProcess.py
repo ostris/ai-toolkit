@@ -72,10 +72,7 @@ import hashlib
 
 from toolkit.util.blended_blur_noise import get_blended_blur_noise
 from toolkit.util.get_model import get_model_class
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
+from toolkit.basic import flush
 
 
 class BaseSDTrainProcess(BaseTrainProcess):
@@ -635,7 +632,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 
                 print_acc("Merging network weights into full model for saving...")
                 
-                self.network.merge_in(merge_weight=1.0)
+                self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_strength)
                 # reset weights to zero
                 self.network.reset_weights()
                 self.network.is_merged_in = False
@@ -1618,14 +1615,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # run base sd process run
         self.sd.load_model()
         
-        # compile the model if needed
-        if self.model_config.compile:
-            try:
-                torch.compile(self.sd.unet, dynamic=True, fullgraph=True, mode='max-autotune')
-            except Exception as e:
-                print_acc(f"Failed to compile model: {e}")
-                print_acc("Continuing without compilation")
-
         self.sd.add_after_sample_image_hook(self.sample_step_hook)
 
         dtype = get_torch_dtype(self.train_config.dtype)
@@ -1962,6 +1951,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.adapter_config is not None and self.adapter is None:
                 self.setup_adapter()
         flush()
+
         ### HOOK ###
         params = self.hook_add_extra_train_params(params)
         self.params = params
@@ -2055,6 +2045,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
+
+        # compile the model if needed (must be after LoRA/adapter injection AND accelerator.prepare)
+        if self.model_config.compile:
+            try:
+                # make sure it is on the gpu
+                self.sd.unet.to(self.device_torch)
+                print_acc("Compiling model with torch.compile. The first forward will hang for a while using this. This is normal.")
+                self.sd.unet = torch.compile(self.sd.unet)
+            except Exception as e:
+                print_acc(f"Failed to compile model: {e}")
+                print_acc("Continuing without compilation")
 
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")

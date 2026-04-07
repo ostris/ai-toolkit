@@ -2,16 +2,39 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Light mode (default root values, overridden by .dark) */
 :root {
-  --background: #ffffff;
+  --background: #fafafa;
   --foreground: #171717;
+
+  /* Gray scale: inverted for light mode so bg-gray-950 = light bg, text-gray-100 = dark text */
+  --gray-950: 235 235 235;
+  --gray-900: 215 215 215;
+  --gray-800: 195 195 195;
+  --gray-700: 175 175 175;
+  --gray-600: 163 163 163;
+  --gray-500: 115 115 115;
+  --gray-400: 82 82 82;
+  --gray-300: 64 64 64;
+  --gray-200: 38 38 38;
+  --gray-100: 23 23 23;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Dark mode */
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+
+  --gray-950: 10 10 10;
+  --gray-900: 23 23 23;
+  --gray-800: 38 38 38;
+  --gray-700: 64 64 64;
+  --gray-600: 82 82 82;
+  --gray-500: 115 115 115;
+  --gray-400: 163 163 163;
+  --gray-300: 212 212 212;
+  --gray-200: 229 229 229;
+  --gray-100: 245 245 245;
 }
 
 body {
@@ -28,12 +51,12 @@ body {
 
   /* selected label */
   .aitk-react-select-container .aitk-react-select__single-value {
-    @apply flex-1 min-w-0 truncate text-sm text-neutral-200;
+    @apply flex-1 min-w-0 truncate text-sm text-gray-200;
   }
 
   /* invisible input (keeps focus & typing, never wraps) */
   .aitk-react-select-container .aitk-react-select__input-container {
-    @apply text-neutral-200;
+    @apply text-gray-200;
   }
 
   /* focus */
@@ -48,7 +71,7 @@ body {
 
   /* options */
   .aitk-react-select-container .aitk-react-select__option {
-    @apply text-sm text-neutral-200 bg-gray-800 hover:bg-gray-700;
+    @apply text-sm text-gray-200 bg-gray-800 hover:bg-gray-700;
   }
 
   /* indicator separator */
@@ -64,9 +87,6 @@ body {
 
   /* placeholder */
   .aitk-react-select-container .aitk-react-select__placeholder {
-    @apply text-sm text-neutral-200;
+    @apply text-sm text-gray-200;
   }
 }
-
-
-
