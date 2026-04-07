@@ -8,6 +8,8 @@ from toolkit.prompt_utils import PromptEmbeds
 
 
 class BaseAudioModel(BaseModel):
+    sample_rate = 48000
+
     def __init__(
         self,
         device,
@@ -54,17 +56,19 @@ class BaseAudioModel(BaseModel):
         raise NotImplementedError(
             "generate_single_audio is not implemented for this model"
         )
-    
+
     def get_model_has_grad(self):
         return False
 
     def get_te_has_grad(self):
         return False
-    
+
     def save_model(self, output_path, meta, save_dtype):
         # we need to save the model, vae, text encoder, and tokenizer together since they are all trained together and depend on each other
-        raise NotImplementedError("save_model is not implemented for this model. Use the pipeline directly instead.")
-    
+        raise NotImplementedError(
+            "save_model is not implemented for this model. Use the pipeline directly instead."
+        )
+
     def convert_lora_weights_before_save(self, state_dict):
         # currently starte with transformer. but needs to start with diffusion_model. for comfyui
         new_sd = {}
@@ -80,3 +84,16 @@ class BaseAudioModel(BaseModel):
             new_key = key.replace("diffusion_model.", "transformer.")
             new_sd[new_key] = value
         return new_sd
+
+    def encode_images(self, image_list: torch.Tensor, device=None, dtype=None):
+        # make it more obvious for audio models
+        return self.encode_audio(image_list, device=device, dtype=dtype)
+
+    def encode_audio(self, audio_tensor: torch.Tensor, device=None, dtype=None):
+        if device is None:
+            device = self.device_torch
+        if dtype is None:
+            dtype = self.torch_dtype
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(device)
+        return self.vae.encode(audio_tensor.to(device=device, dtype=dtype))

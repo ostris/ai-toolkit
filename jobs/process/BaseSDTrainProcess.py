@@ -1188,7 +1188,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     if self.sd.is_flux or 'flex' in self.sd.arch:
                         # flux is a patch size of 1, but latents are divided by 2, so we need to double it
                         patch_size = 2
-                    elif hasattr(self.sd.unet.config, 'patch_size'):
+                    elif hasattr(self.sd.unet, 'config') and hasattr(self.sd.unet.config, 'patch_size'):
                         patch_size = self.sd.unet.config.patch_size
                     
                     self.sd.noise_scheduler.set_train_timesteps(

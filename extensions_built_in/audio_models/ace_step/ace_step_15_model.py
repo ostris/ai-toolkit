@@ -5,11 +5,15 @@ import huggingface_hub
 import torch
 from safetensors.torch import load_file, save_file
 from extensions_built_in.audio_models.base_audio_model import BaseAudioModel
+from toolkit.basic import flush
 from toolkit.config_modules import GenerateImageConfig
 from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
+from toolkit.util.quantize import get_qtype, quantize, quantize_model
+
+from optimum.quanto import freeze
 from .src.model import (
     AceStep15,
     OobleckVAE,
@@ -63,6 +67,7 @@ def parse_ace_step_caption(text):
 
 class AceStep15Model(BaseAudioModel):
     arch = "ace_step_15"
+    sample_rate = 48000
 
     def __init__(
         self,
@@ -104,12 +109,46 @@ class AceStep15Model(BaseAudioModel):
                 filename=path_parts[2],
             )
         # load the models from the single safetensors file
-        models = load_models(model_path, device=device, dtype=dtype)
+        load_device = device
+        if self.model_config.low_vram:
+            load_device = "cpu"
+            
+        models = load_models(model_path, device=load_device, dtype=dtype)
 
         self.model = models["model"]
-        self.vae = models["vae"]
+        
+        if self.model_config.quantize:
+            self.print_and_status_update("Quantizing Transformer")
+            quantize_model(self, self.model)
+            flush()
+        
+        if self.model_config.low_vram:
+            self.print_and_status_update("Moving transformer to CPU")
+            self.model.to("cpu")
+            
+        
+        if (
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_transformer_percent > 0
+        ):
+            raise NotImplementedError("Layer offloading not yet implemented for AceStep15Model")
+        
         self.text_encoder = models["text_encoder"]
+        
+        if self.model_config.quantize_te:
+            self.print_and_status_update("Quantizing Text Encoder")
+            quantize(self.text_encoder, weights=get_qtype(self.model_config.qtype_te))
+            freeze(self.text_encoder)
+            flush()
+        
+        self.vae = models["vae"]
+        
+        # move back to device
+        self.model.to(device)
+        self.text_encoder.to(device)
+        self.vae.to(device)
         self.tokenizer = models["tokenizer"]
+        
         self.pipeline = AceStep15Pipeline(
             transformer=self.model,
             vae=self.vae,
@@ -167,7 +206,7 @@ class AceStep15Model(BaseAudioModel):
             # Reference audio (silence)
             ref = sil[:, :, :750].transpose(1, 2)  # [1, 750, 64]
             ref_order = torch.zeros(1, device=device, dtype=torch.long)
-            enc_h, enc_m, ctx = self.pipeline.transformer.prepare_condition(
+            enc_h, enc_m, _ = self.pipeline.transformer.prepare_condition(
                 text_embeddings,
                 text_mask,
                 lyric_embeddings,
@@ -178,7 +217,7 @@ class AceStep15Model(BaseAudioModel):
                 chunk_masks,
             )
 
-            pe = PromptEmbeds([[enc_h, ctx], None], attention_mask=enc_m)
+            pe = PromptEmbeds(enc_h, attention_mask=enc_m)
             if batch_pe is None:
                 batch_pe = pe
             else:
@@ -215,9 +254,8 @@ class AceStep15Model(BaseAudioModel):
 
         output = self.pipeline(
             prompt=None,  # we are passing in the embeds directly, so no need for a prompt
-            encoder_embeddings=conditional_embeds.text_embeds[0],
+            encoder_embeddings=conditional_embeds.text_embeds,
             encoder_mask=conditional_embeds.attention_mask,
-            encoder_context=conditional_embeds.text_embeds[1],
             num_inference_steps=gen_config.num_inference_steps,
             duration=duration,
             generator=generator,
@@ -231,14 +269,52 @@ class AceStep15Model(BaseAudioModel):
 
     def get_noise_prediction(
         self,
-        latent_model_input: torch.Tensor,
+        latent_model_input: torch.Tensor, #(1, 300, 64)
         timestep: torch.Tensor,  # 0 to 1000 scale
         text_embeddings: PromptEmbeds,
         **kwargs,
     ):
-        raise NotImplementedError(
-            "get_noise_prediction is not implemented for this model. Use the pipeline directly instead."
+        with torch.no_grad():
+            model: AceStep15 = self.model
+            tt = timestep.to(self.device_torch, dtype=torch.long) / 1000
+            latent_len = latent_model_input.shape[1]
+            device = self.device_torch
+            dtype = self.torch_dtype
+            attn = torch.ones(1, latent_len, device=device, dtype=dtype)
+
+            # build context from silence latent matching the actual input length
+            sil = get_silence_latent(latent_len, device, dtype)  # [1, 64, T]
+            src = sil.transpose(1, 2)  # [1, T, 64]
+            chunk_masks = torch.ones_like(src)
+            context = torch.cat([src, chunk_masks], dim=-1)  # [1, T, 128]
+
+        pred = model.decoder(
+            x=latent_model_input,
+            timestep=tt,
+            timestep_r=tt,
+            attention_mask=attn,
+            enc_h=text_embeddings.text_embeds,
+            enc_m=text_embeddings.attention_mask,
+            context=context,
         )
+        return pred
+    
+    def get_loss_target(self, *args, **kwargs):
+        noise = kwargs.get("noise")
+        batch = kwargs.get("batch")
+        return (noise - batch.latents).detach()
+    
+    def encode_audio(self, audio_tensor: torch.Tensor, device=None, dtype=None):
+        if device is None:
+            device = self.device_torch
+        if dtype is None:
+            dtype = self.torch_dtype
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(device)
+        output = self.vae.encode(audio_tensor.to(device=device, dtype=dtype))
+        # transpose from [B, 64, T] to [B, T, 64] for DiT
+        output = output.transpose(1, 2)
+        return output
 
 
 class AceStep15XLModel(AceStep15Model):

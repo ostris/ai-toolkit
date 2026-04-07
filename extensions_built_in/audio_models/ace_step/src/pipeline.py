@@ -8,11 +8,12 @@ from .model import (
     AceStep15,
     OobleckVAE,
     TextEncoder,
-    get_silence_latent, 
-    compute_timesteps
+    get_silence_latent,
+    compute_timesteps,
 )
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import AutoTokenizer
+
 SFT_PROMPT = """# Instruction
 {instruction}
 
@@ -28,7 +29,7 @@ class AceStep15Pipeline:
     SAMPLE_RATE = 48000
     LATENT_RATE = 25  # 48000 / 1920
     SFT_PROMPT = SFT_PROMPT
-    
+
     def __init__(self, transformer, vae, text_encoder, tokenizer, scheduler):
         self.transformer: AceStep15 = transformer
         self.vae: OobleckVAE = vae
@@ -40,8 +41,10 @@ class AceStep15Pipeline:
         self.transformer.to(*args, **kwargs)
         self.vae.to(*args, **kwargs)
         self.text_encoder.to(*args, **kwargs)
-        
-    def get_text_embedings(self, prompt, lyrics, bpm, key, time_sig, duration, language):
+
+    def get_text_embedings(
+        self, prompt, lyrics, bpm, key, time_sig, duration, language
+    ):
         metas = f"- bpm: {bpm}\n- timesignature: {time_sig}\n- keyscale: {key}\n- duration: {int(duration)} seconds\n"
         caption = self.SFT_PROMPT.format(
             instruction="Fill the audio semantic mask based on the given conditions:",
@@ -50,23 +53,30 @@ class AceStep15Pipeline:
         )
         lyrics_text = f"# Languages\n{language}\n\n# Lyric\n{lyrics}<|endoftext|>"
 
-        cap_tok = self.tokenizer(caption, truncation=True, max_length=256, return_tensors="pt")
-        lyr_tok = self.tokenizer(lyrics_text, truncation=True, max_length=2048, return_tensors="pt")
+        cap_tok = self.tokenizer(
+            caption, truncation=True, max_length=256, return_tensors="pt"
+        )
+        lyr_tok = self.tokenizer(
+            lyrics_text, truncation=True, max_length=2048, return_tensors="pt"
+        )
 
-        text_embeddings = self.text_encoder.encode_text(cap_tok.input_ids.to(self.transformer.device)).to(self.transformer.dtype)
+        text_embeddings = self.text_encoder.encode_text(
+            cap_tok.input_ids.to(self.transformer.device)
+        ).to(self.transformer.dtype)
         text_mask = cap_tok.attention_mask.to(self.transformer.device).bool()
-        lyric_embeddings = self.text_encoder.encode_lyrics(lyr_tok.input_ids.to(self.transformer.device)).to(self.transformer.dtype)
+        lyric_embeddings = self.text_encoder.encode_lyrics(
+            lyr_tok.input_ids.to(self.transformer.device)
+        ).to(self.transformer.dtype)
         lyric_mask = lyr_tok.attention_mask.to(self.transformer.device).bool()
-        
+
         return text_embeddings, text_mask, lyric_embeddings, lyric_mask
 
     def __call__(
         self,
         prompt="",
         lyrics="",
-        encoder_embeddings:Optional[List[torch.Tensor]]=None,
-        encoder_mask:Optional[List[torch.Tensor]]=None,
-        encoder_context:Optional[torch.Tensor]=None,
+        encoder_embeddings: Optional[List[torch.Tensor]] = None,
+        encoder_mask: Optional[List[torch.Tensor]] = None,
         # uses a null conditional for unconditional if not provided, which is what we want for CFG
         num_inference_steps=50,
         duration=30.0,
@@ -83,15 +93,21 @@ class AceStep15Pipeline:
         dtype = self.transformer.dtype
 
         # Text encoding
-        if encoder_embeddings is not None and encoder_mask is not None and encoder_context is not None:
+        if (
+            encoder_embeddings is not None
+            and encoder_mask is not None
+        ):
             enc_h = encoder_embeddings
             enc_m = encoder_mask
-            ctx = encoder_context
+            sil = get_silence_latent(latent_len, device, dtype)  # [1, 64, T]
+            src = sil.transpose(1, 2)  # [1, T, 64]
+            chunk_masks = torch.ones_like(src)
+            ctx = torch.cat([src, chunk_masks.to(src.dtype)], dim=-1)
         else:
             text_h, text_m, lyric_h, lyric_m = self.get_text_embedings(
                 prompt, lyrics, bpm, key, time_sig, duration, language
             )
-            
+
             # Silence as source latent [1, 64, T] -> [1, T, 64] for DiT
             sil = get_silence_latent(latent_len, device, dtype)  # [1, 64, T]
             src = sil.transpose(1, 2)  # [1, T, 64]
@@ -116,7 +132,9 @@ class AceStep15Pipeline:
         if generator is None:
             generator = torch.Generator(device=device)
         noise_ch = ctx.shape[-1] // 2
-        xt= randn_tensor((1, latent_len, noise_ch), generator=generator, device=device, dtype=dtype)
+        xt = randn_tensor(
+            (1, latent_len, noise_ch), generator=generator, device=device, dtype=dtype
+        )
         # xt = torch.randn(1, latent_len, noise_ch, generator=generator, device=device, dtype=dtype)
 
         # Diffusion
@@ -130,7 +148,9 @@ class AceStep15Pipeline:
             vt_cond = self.transformer.decoder(xt, tt, tt, attn, enc_h, enc_m, ctx)
 
             if use_cfg:
-                vt_uncond = self.transformer.decoder(xt, tt, tt, attn, enc_h_uncond, enc_m, ctx)
+                vt_uncond = self.transformer.decoder(
+                    xt, tt, tt, attn, enc_h_uncond, enc_m, ctx
+                )
                 vt = vt_uncond + guidance_scale * (vt_cond - vt_uncond)
             else:
                 vt = vt_cond

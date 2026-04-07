@@ -24,6 +24,7 @@ import torchaudio
 from safetensors.torch import load_file
 from torch import nn
 from transformers import AutoTokenizer
+import torch.utils.checkpoint as ckpt
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Constants
@@ -807,6 +808,15 @@ class DiTModel(nn.Module):
             nn.ConvTranspose1d(hidden, out_ch, kernel_size=patch, stride=patch),
         )
         self.scale_shift_table = nn.Parameter(torch.empty(1, 2, hidden))
+        self.gradient_checkpointing = False
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    @property
+    def dtype(self):
+        return next(self.parameters()).dtype
 
     def forward(self, x, timestep, timestep_r, attention_mask, enc_h, enc_m, context):
         temb_t, proj_t = self.time_embed(timestep, dtype=x.dtype)
@@ -822,7 +832,12 @@ class DiTModel(nn.Module):
         enc = self.condition_embedder(enc_h)
         cos, sin = self.rotary_emb(h, h.shape[1])
         for layer in self.layers:
-            h = layer(h, tproj, enc, (cos, sin))
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                h = ckpt.checkpoint(
+                    layer, h, tproj, enc, (cos, sin), use_reentrant=False
+                )
+            else:
+                h = layer(h, tproj, enc, (cos, sin))
         shift, scale = (self.scale_shift_table.to(temb) + temb.unsqueeze(1)).chunk(
             2, dim=1
         )
@@ -893,8 +908,8 @@ class AceStep15(nn.Module):
             eps,
         )
         self.null_condition_emb = nn.Parameter(torch.empty(1, 1, eh))
-        self.gradient_checkpointing = False
-    
+        self._gradient_checkpointing = False
+
     @property
     def device(self):
         return next(self.parameters()).device
@@ -905,6 +920,15 @@ class AceStep15(nn.Module):
 
     def enable_gradient_checkpointing(self):
         self.gradient_checkpointing = True
+
+    @property
+    def gradient_checkpointing(self):
+        return self._gradient_checkpointing
+
+    @gradient_checkpointing.setter
+    def gradient_checkpointing(self, value):
+        self._gradient_checkpointing = value
+        self.decoder.gradient_checkpointing = value
 
     def prepare_condition(
         self,
@@ -1055,11 +1079,11 @@ class OobleckVAE(nn.Module):
 
     def decode(self, x):
         return self.decoder(self.bottleneck.decode(x))
-    
+
     @property
     def device(self):
         return next(self.parameters()).device
-    
+
     @property
     def dtype(self):
         return next(self.parameters()).dtype
@@ -1082,15 +1106,14 @@ class TextEncoder(nn.Module):
 
     def encode_lyrics(self, input_ids):
         return self.model.embed_tokens(input_ids)
-    
+
     @property
     def device(self):
         return next(self.parameters()).device
-    
+
     @property
     def dtype(self):
         return next(self.parameters()).dtype
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1113,23 +1136,56 @@ def infer_dit_config(dit_sd):
     k_size = dit_sd["decoder.layers.0.self_attn.k_proj.weight"].shape[0]
     kv = k_size // head_dim
     # num_dit_layers: count unique layer indices
-    n_dit = max(int(k.split(".")[2]) for k in dit_sd if k.startswith("decoder.layers.")) + 1
+    n_dit = (
+        max(int(k.split(".")[2]) for k in dit_sd if k.startswith("decoder.layers.")) + 1
+    )
     # encoder hidden (may differ from decoder hidden for XL models)
     enc_hidden = dit_sd["encoder.text_projector.weight"].shape[0]
     # encoder layers
-    n_lyric = max(int(k.split(".")[3]) for k in dit_sd if k.startswith("encoder.lyric_encoder.layers.")) + 1
-    n_timbre = max(int(k.split(".")[3]) for k in dit_sd if k.startswith("encoder.timbre_encoder.layers.")) + 1
+    n_lyric = (
+        max(
+            int(k.split(".")[3])
+            for k in dit_sd
+            if k.startswith("encoder.lyric_encoder.layers.")
+        )
+        + 1
+    )
+    n_timbre = (
+        max(
+            int(k.split(".")[3])
+            for k in dit_sd
+            if k.startswith("encoder.timbre_encoder.layers.")
+        )
+        + 1
+    )
     # encoder attention config
-    enc_heads = dit_sd["encoder.lyric_encoder.layers.0.self_attn.q_proj.weight"].shape[0] // head_dim
-    enc_kv = dit_sd["encoder.lyric_encoder.layers.0.self_attn.k_proj.weight"].shape[0] // head_dim
+    enc_heads = (
+        dit_sd["encoder.lyric_encoder.layers.0.self_attn.q_proj.weight"].shape[0]
+        // head_dim
+    )
+    enc_kv = (
+        dit_sd["encoder.lyric_encoder.layers.0.self_attn.k_proj.weight"].shape[0]
+        // head_dim
+    )
     enc_inter = dit_sd["encoder.lyric_encoder.layers.0.mlp.gate_proj.weight"].shape[0]
     config = dict(
-        hidden=hidden, inter=inter, heads=heads, kv=kv, head_dim=head_dim,
-        n_dit=n_dit, n_lyric=n_lyric, n_timbre=n_timbre,
-        enc_hidden=enc_hidden, enc_heads=enc_heads, enc_kv=enc_kv, enc_inter=enc_inter,
+        hidden=hidden,
+        inter=inter,
+        heads=heads,
+        kv=kv,
+        head_dim=head_dim,
+        n_dit=n_dit,
+        n_lyric=n_lyric,
+        n_timbre=n_timbre,
+        enc_hidden=enc_hidden,
+        enc_heads=enc_heads,
+        enc_kv=enc_kv,
+        enc_inter=enc_inter,
     )
-    print(f"    Detected config: hidden={hidden}, inter={inter}, heads={heads}, kv={kv}, "
-          f"n_dit={n_dit}, enc_hidden={enc_hidden}")
+    print(
+        f"    Detected config: hidden={hidden}, inter={inter}, heads={heads}, kv={kv}, "
+        f"n_dit={n_dit}, enc_hidden={enc_hidden}"
+    )
     return config
 
 
@@ -1149,11 +1205,18 @@ def load_models(checkpoint_path, device="cuda", dtype=torch.bfloat16):
     }
     cfg = infer_dit_config(dit_sd)
     model = AceStep15(
-        hidden=cfg["hidden"], inter=cfg["inter"], heads=cfg["heads"],
-        kv=cfg["kv"], head_dim=cfg["head_dim"], n_dit=cfg["n_dit"],
-        n_lyric=cfg["n_lyric"], n_timbre=cfg["n_timbre"],
-        enc_hidden=cfg["enc_hidden"], enc_heads=cfg["enc_heads"],
-        enc_kv=cfg["enc_kv"], enc_inter=cfg["enc_inter"],
+        hidden=cfg["hidden"],
+        inter=cfg["inter"],
+        heads=cfg["heads"],
+        kv=cfg["kv"],
+        head_dim=cfg["head_dim"],
+        n_dit=cfg["n_dit"],
+        n_lyric=cfg["n_lyric"],
+        n_timbre=cfg["n_timbre"],
+        enc_hidden=cfg["enc_hidden"],
+        enc_heads=cfg["enc_heads"],
+        enc_kv=cfg["enc_kv"],
+        enc_inter=cfg["enc_inter"],
     )
     missing, unexpected = model.load_state_dict(dit_sd, strict=False)
     # tokenizer/detokenizer keys are expected to be unused (cover mode only)
