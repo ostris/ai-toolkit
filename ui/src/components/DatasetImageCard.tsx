@@ -129,6 +129,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
+  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
   const isItImage = !isItAVideo && !isItAudio;
@@ -154,7 +156,22 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   controls
                 />
               )}
-              {isItAudio && (
+              {isItAudio && !showAudioPlayer && (
+                <div
+                  className="w-full h-full cursor-pointer flex items-center justify-center bg-gray-900"
+                  onClick={() => setShowAudioPlayer(true)}
+                >
+                  <img
+                    src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
+                    alt={alt}
+                    className="w-full h-full object-contain"
+                    onError={e => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
+              {isItAudio && showAudioPlayer && (
                 <AudioPlayer
                   src={`/api/img/${encodeURIComponent(imageUrl)}`}
                   title={imageUrl.replace(/^.*[\\/]/, '')}
