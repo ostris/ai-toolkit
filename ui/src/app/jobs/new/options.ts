@@ -33,12 +33,13 @@ type AdditionalSections =
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
-type SampleTag = {
+export type SampleTag = {
   title: string;
   type: 'text' | 'multiline' | 'number'
+  full?: boolean;
 }
 
-interface SampleTags {
+export interface SampleTags {
   [key: string]: SampleTag;
 }
 
@@ -791,10 +792,12 @@ export const modelArchs: ModelArch[] = [
       "CAPTION": {
         title: "Audio Prompt",
         type: "text",
+        full: true,
       },
       "LYRICS": {
         title: "Lyrics",
         type: "multiline",
+        full: true,
       },
       "BPM": {
         title: "BPM",
@@ -809,7 +812,7 @@ export const modelArchs: ModelArch[] = [
         type: "text",
       },
       "DURATION": {
-        title: "Duration (seconds)",
+        title: "Duration (sec)",
         type: "number",
       },
       "LANGUAGE": {

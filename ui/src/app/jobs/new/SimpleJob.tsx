@@ -7,6 +7,7 @@ import {
   quantizationOptions,
   defaultQtype,
   jobTypeOptions,
+  SampleTags,
 } from './options';
 import { defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
@@ -90,6 +91,30 @@ export default function SimpleJob({
     }
     return sampleArr;
   }, [modelArch, jobConfig.config.process[0].sample.samples]);
+
+  const modelArchTagSections: SampleTags[] | null = useMemo(() => {
+    if (!modelArch?.sampleTags) return null;
+    const maxPerGroup = 5;
+    let sections: SampleTags[] = [];
+    let subSection: SampleTags = {};
+    for (const [tagKey, tag] of Object.entries(modelArch.sampleTags)) {
+      if ((tag.full && Object.keys(subSection).length > 0) || Object.keys(subSection).length >= maxPerGroup) {
+        // reset the sub section build if the next tag is full or max per group is reached
+        sections.push(subSection);
+        subSection = {};
+      }
+      subSection[tagKey] = tag;
+      if (tag.full) {
+        // if the tag is full, push the section immediately and reset the sub section build
+        sections.push(subSection);
+        subSection = {};
+      }
+    }
+    if (Object.keys(subSection).length > 0) {
+      sections.push(subSection);
+    }
+    return sections.length > 0 ? sections : null;
+  }, [modelArch]);
 
   const numTopCards = useMemo(() => {
     let count = 4; // job settings, model config, target config, save config
@@ -1242,55 +1267,59 @@ export default function SimpleJob({
                   <div className="flex-1">
                     <div className="flex">
                       <div className="flex-1">
-                        {modelArch?.sampleTags && taggedSampleArr ? (
+                        {modelArch?.sampleTags && taggedSampleArr && modelArchTagSections ? (
                           <>
-                            {Object.entries(modelArch.sampleTags).map(([tagKey, tag]) => (
-                              <div key={tagKey} className="mb-2">
-                                {tag.type === 'text' && (
-                                  <TextInput
-                                    label={tag.title}
-                                    value={taggedSampleArr[i][tagKey] ?? ''}
-                                    onChange={value => {
-                                      let taggedSample = { ...taggedSampleArr[i] };
-                                      taggedSample[tagKey] = value;
-                                      setJobConfig(
-                                        objToTags(taggedSample),
-                                        `config.process[0].sample.samples[${i}].prompt`,
-                                      );
-                                    }}
-                                    placeholder={`Enter ${tag.title.toLowerCase()}`}
-                                  />
-                                )}
-                                {tag.type === 'multiline' && (
-                                  <TextAreaInput
-                                    label={tag.title}
-                                    value={taggedSampleArr[i][tagKey] ?? ''}
-                                    onChange={value => {
-                                      let taggedSample = { ...taggedSampleArr[i] };
-                                      taggedSample[tagKey] = value;
-                                      setJobConfig(
-                                        objToTags(taggedSample),
-                                        `config.process[0].sample.samples[${i}].prompt`,
-                                      );
-                                    }}
-                                    placeholder={`Enter ${tag.title.toLowerCase()}`}
-                                  />
-                                )}
-                                {tag.type === 'number' && (
-                                  <NumberInput
-                                    label={tag.title}
-                                    value={taggedSampleArr[i][tagKey] ?? ''}
-                                    onChange={value => {
-                                      let taggedSample = { ...taggedSampleArr[i] };
-                                      taggedSample[tagKey] = value;
-                                      setJobConfig(
-                                        objToTags(taggedSample),
-                                        `config.process[0].sample.samples[${i}].prompt`,
-                                      );
-                                    }}
-                                    placeholder={`Enter ${tag.title.toLowerCase()}`}
-                                  />
-                                )}
+                            {modelArchTagSections.map((sampleTagSection, sti) => (
+                              <div key={sti} className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
+                                {Object.entries(sampleTagSection).map(([tagKey, tag]) => (
+                                  <div key={tagKey} className="mb-2">
+                                    {tag.type === 'text' && (
+                                      <TextInput
+                                        label={tag.title}
+                                        value={taggedSampleArr[i][tagKey] ?? ''}
+                                        onChange={value => {
+                                          let taggedSample = { ...taggedSampleArr[i] };
+                                          taggedSample[tagKey] = value;
+                                          setJobConfig(
+                                            objToTags(taggedSample),
+                                            `config.process[0].sample.samples[${i}].prompt`,
+                                          );
+                                        }}
+                                        placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                      />
+                                    )}
+                                    {tag.type === 'multiline' && (
+                                      <TextAreaInput
+                                        label={tag.title}
+                                        value={taggedSampleArr[i][tagKey] ?? ''}
+                                        onChange={value => {
+                                          let taggedSample = { ...taggedSampleArr[i] };
+                                          taggedSample[tagKey] = value;
+                                          setJobConfig(
+                                            objToTags(taggedSample),
+                                            `config.process[0].sample.samples[${i}].prompt`,
+                                          );
+                                        }}
+                                        placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                      />
+                                    )}
+                                    {tag.type === 'number' && (
+                                      <NumberInput
+                                        label={tag.title}
+                                        value={taggedSampleArr[i][tagKey] ?? ''}
+                                        onChange={value => {
+                                          let taggedSample = { ...taggedSampleArr[i] };
+                                          taggedSample[tagKey] = value;
+                                          setJobConfig(
+                                            objToTags(taggedSample),
+                                            `config.process[0].sample.samples[${i}].prompt`,
+                                          );
+                                        }}
+                                        placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                      />
+                                    )}
+                                  </div>
+                                ))}
                               </div>
                             ))}
                           </>
@@ -1316,7 +1345,7 @@ export default function SimpleJob({
                           </>
                         )}
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
+                        <div className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
                           <TextInput
                             label={`Width`}
                             value={sample.width ? `${sample.width}` : ''}
