@@ -119,7 +119,9 @@ class AceStep15Model(BaseAudioModel):
         
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
-            quantize_model(self, self.model)
+            # quantize_model(self, self.model.decoder)
+            quantize(self.model, weights=get_qtype(self.model_config.qtype))
+            freeze(self.model)
             flush()
         
         if self.model_config.low_vram:
