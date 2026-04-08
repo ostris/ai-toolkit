@@ -347,6 +347,8 @@ class Wan21I2V(Wan21):
             image_configs,
             sampler=None,
             pipeline=None,
+            use_fsdp=False,
+            is_main_process=True,
     ):
         # will oom on 24gb vram if we dont unload vision encoder first
         if self.model_config.low_vram:
@@ -359,6 +361,8 @@ class Wan21I2V(Wan21):
             image_configs,
             sampler=sampler,
             pipeline=pipeline,
+            use_fsdp=use_fsdp,
+            is_main_process=is_main_process,
         )
     
     def set_device_state_preset(self, *args, **kwargs):

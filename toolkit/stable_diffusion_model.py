@@ -1131,6 +1131,8 @@ class StableDiffusion:
             image_configs: List[GenerateImageConfig],
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
+            use_fsdp=False,
+            is_main_process=True,
     ):
         network = unwrap_model(self.network)
         merge_multiplier = 1.0
@@ -1153,11 +1155,13 @@ class StableDiffusion:
 
         if network is not None:
             network.eval()
-            # check if we have the same network weight for all samples. If we do, we can merge in th
-            # the network to drastically speed up inference
+            # check if we have the same network weight for all samples. If we do, we can merge in
+            # the network to drastically speed up inference.
+            # Under FSDP, skip merge_in — it directly mutates org_module weights which are
+            # DTensor shards; the LoRA hooks still apply correctly via forward hooks.
             unique_network_weights = set([x.network_multiplier for x in image_configs])
-            if len(unique_network_weights) == 1 and network.can_merge_in:
-                # make sure it is on device before merging. 
+            if len(unique_network_weights) == 1 and network.can_merge_in and not use_fsdp:
+                # make sure it is on device before merging.
                 self.unet.to(self.device_torch)
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
@@ -1166,7 +1170,9 @@ class StableDiffusion:
             network = BlankNetwork()
 
         self.save_device_state()
-        self.set_device_state_preset('generate')
+        if not use_fsdp:
+            # Under FSDP, skip — 'generate' preset moves TEs to GPU but we use cached embeddings
+            self.set_device_state_preset('generate')
 
         # save current seed state for training
         rng_state = torch.get_rng_state()
@@ -1238,23 +1244,34 @@ class StableDiffusion:
                 pipeline = Pipe(
                     vae=self.vae,
                     unet=self.unet,
-                    text_encoder=self.text_encoder[0],
-                    text_encoder_2=self.text_encoder[1],
-                    tokenizer=self.tokenizer[0],
-                    tokenizer_2=self.tokenizer[1],
+                    text_encoder=None if use_fsdp else self.text_encoder[0],
+                    text_encoder_2=None if use_fsdp else self.text_encoder[1],
+                    tokenizer=None if use_fsdp else self.tokenizer[0],
+                    tokenizer_2=None if use_fsdp else self.tokenizer[1],
                     scheduler=noise_scheduler,
                     **extra_args
-                ).to(self.device_torch)
+                )
+                if not use_fsdp:
+                    pipeline = pipeline.to(self.device_torch)
                 pipeline.watermark = None
             elif self.is_flux:
+                # Under FSDP, pass the wrapped transformer directly (don't unwrap — it
+                # would strip FSDP sharding). TEs are not on GPU under FSDP; pass None
+                # since we always use pre-cached prompt_embeds.
+                transformer = self.unet if use_fsdp else unwrap_model(self.unet)
+                te0 = None if use_fsdp else unwrap_model(self.text_encoder[0])
+                te1 = None if use_fsdp else unwrap_model(self.text_encoder[1])
+                tok0 = None if use_fsdp else self.tokenizer[0]
+                tok1 = None if use_fsdp else self.tokenizer[1]
+
                 if self.model_config.use_flux_cfg:
                     pipeline = FluxWithCFGPipeline(
                         vae=self.vae,
-                        transformer=unwrap_model(self.unet),
-                        text_encoder=unwrap_model(self.text_encoder[0]),
-                        text_encoder_2=unwrap_model(self.text_encoder[1]),
-                        tokenizer=self.tokenizer[0],
-                        tokenizer_2=self.tokenizer[1],
+                        transformer=transformer,
+                        text_encoder=te0,
+                        text_encoder_2=te1,
+                        tokenizer=tok0,
+                        tokenizer_2=tok1,
                         scheduler=noise_scheduler,
                         **extra_args
                     )
@@ -1267,25 +1284,25 @@ class StableDiffusion:
                             Pipe = FluxAdvancedControlPipeline
                             extra_args['do_inpainting'] = self.adapter.config.has_inpainting_input
                             extra_args['num_controls'] = self.adapter.config.num_control_images
-                    
+
                     pipeline = Pipe(
                         vae=self.vae,
-                        transformer=unwrap_model(self.unet),
-                        text_encoder=unwrap_model(self.text_encoder[0]),
-                        text_encoder_2=unwrap_model(self.text_encoder[1]),
-                        tokenizer=self.tokenizer[0],
-                        tokenizer_2=self.tokenizer[1],
+                        transformer=transformer,
+                        text_encoder=te0,
+                        text_encoder_2=te1,
+                        tokenizer=tok0,
+                        tokenizer_2=tok1,
                         scheduler=noise_scheduler,
                         **extra_args
                     )
-                    
+
                 pipeline.watermark = None
             elif self.is_lumina2:
                 pipeline = Lumina2Pipeline(
                     vae=self.vae,
                     transformer=self.unet,
-                    text_encoder=self.text_encoder,
-                    tokenizer=self.tokenizer,
+                    text_encoder=None if use_fsdp else self.text_encoder,
+                    tokenizer=None if use_fsdp else self.tokenizer,
                     scheduler=noise_scheduler,
                     **extra_args
                 )
@@ -1293,12 +1310,12 @@ class StableDiffusion:
                 pipeline = Pipe(
                     vae=self.vae,
                     transformer=self.unet,
-                    text_encoder=self.text_encoder[0],
-                    text_encoder_2=self.text_encoder[1],
-                    text_encoder_3=self.text_encoder[2],
-                    tokenizer=self.tokenizer[0],
-                    tokenizer_2=self.tokenizer[1],
-                    tokenizer_3=self.tokenizer[2],
+                    text_encoder=None if use_fsdp else self.text_encoder[0],
+                    text_encoder_2=None if use_fsdp else self.text_encoder[1],
+                    text_encoder_3=None if use_fsdp else self.text_encoder[2],
+                    tokenizer=None if use_fsdp else self.tokenizer[0],
+                    tokenizer_2=None if use_fsdp else self.tokenizer[1],
+                    tokenizer_3=None if use_fsdp else self.tokenizer[2],
                     scheduler=noise_scheduler,
                     **extra_args
                 )
@@ -1306,8 +1323,8 @@ class StableDiffusion:
                 pipeline = PixArtSigmaPipeline(
                     vae=self.vae,
                     transformer=self.unet,
-                    text_encoder=self.text_encoder,
-                    tokenizer=self.tokenizer,
+                    text_encoder=None if use_fsdp else self.text_encoder,
+                    tokenizer=None if use_fsdp else self.tokenizer,
                     scheduler=noise_scheduler,
                     **extra_args
                 )
@@ -1316,8 +1333,8 @@ class StableDiffusion:
                 pipeline = AuraFlowPipeline(
                     vae=self.vae,
                     transformer=self.unet,
-                    text_encoder=self.text_encoder,
-                    tokenizer=self.tokenizer,
+                    text_encoder=None if use_fsdp else self.text_encoder,
+                    tokenizer=None if use_fsdp else self.tokenizer,
                     scheduler=noise_scheduler,
                     **extra_args
                 )
@@ -1326,8 +1343,8 @@ class StableDiffusion:
                 pipeline = Pipe(
                     vae=self.vae,
                     unet=self.unet,
-                    text_encoder=self.text_encoder,
-                    tokenizer=self.tokenizer,
+                    text_encoder=None if use_fsdp else self.text_encoder,
+                    tokenizer=None if use_fsdp else self.tokenizer,
                     scheduler=noise_scheduler,
                     safety_checker=None,
                     feature_extractor=None,
@@ -1342,8 +1359,8 @@ class StableDiffusion:
                 pipeline.set_scheduler(sampler)
 
         refiner_pipeline = None
-        if self.refiner_unet:
-            # build refiner pipeline
+        if self.refiner_unet and not use_fsdp:
+            # build refiner pipeline (refiner not supported under FSDP)
             refiner_pipeline = StableDiffusionXLImg2ImgPipeline(
                 vae=pipeline.vae,
                 unet=self.refiner_unet,
@@ -1371,7 +1388,7 @@ class StableDiffusion:
                 if network is not None:
                     assert network.is_active
 
-                for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
+                for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False, disable=not is_main_process):
                     gen_config = image_configs[i]
 
                     extra = {}
@@ -1454,7 +1471,13 @@ class StableDiffusion:
                     if self.sample_prompts_cache is not None:
                         conditional_embeds = self.sample_prompts_cache[i]['conditional'].to(self.device_torch, dtype=self.torch_dtype)
                         unconditional_embeds = self.sample_prompts_cache[i]['unconditional'].to(self.device_torch, dtype=self.torch_dtype)
-                    else: 
+                    elif use_fsdp:
+                        raise RuntimeError(
+                            "FSDP sampling requires pre-cached sample prompt embeddings, "
+                            "but sample_prompts_cache is None. Ensure sampling prompts are "
+                            "configured and text embeddings were cached at startup."
+                        )
+                    else:
                         # encode the prompt ourselves so we can do fun stuff with embeddings
                         if isinstance(self.adapter, CustomAdapter):
                             self.adapter.is_unconditional_run = False
@@ -1708,9 +1731,10 @@ class StableDiffusion:
                             generator=generator,
                         ).images[0]
 
-                    gen_config.save_image(img, i)
-                    gen_config.log_image(img, i)
-                    self._after_sample_image(i, len(image_configs))
+                    if is_main_process:
+                        gen_config.save_image(img, i)
+                        gen_config.log_image(img, i)
+                        self._after_sample_image(i, len(image_configs))
                     flush()
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
@@ -1727,12 +1751,15 @@ class StableDiffusion:
         if cuda_rng_state is not None:
             torch.cuda.set_rng_state(cuda_rng_state)
 
-        self.restore_device_state()
+        if not use_fsdp:
+            self.restore_device_state()
         if network is not None:
             network.train()
             network.multiplier = start_multiplier
 
-        self.unet.to(self.device_torch, dtype=self.torch_dtype)
+        if not use_fsdp:
+            # Under FSDP, unet is already on device and managed by FSDP — don't manually move
+            self.unet.to(self.device_torch, dtype=self.torch_dtype)
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])
@@ -3109,12 +3136,15 @@ class StableDiffusion:
         self.set_device_state(state)
 
     def text_encoder_to(self, *args, **kwargs):
+        if self.text_encoder is None:
+            return
         if isinstance(self.text_encoder, list):
             for encoder in self.text_encoder:
                 encoder.to(*args, **kwargs)
         else:
             self.text_encoder.to(*args, **kwargs)
-            
+
+
     def convert_lora_weights_before_save(self, state_dict):
         # can be overridden in child classes to convert weights before saving
         return state_dict

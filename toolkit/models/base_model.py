@@ -367,6 +367,8 @@ class BaseModel:
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline,
                             StableDiffusionXLPipeline] = None,
+            use_fsdp=False,
+            is_main_process=True,
     ):
         network = self.network
         merge_multiplier = 1.0
@@ -391,11 +393,12 @@ class BaseModel:
         if network is not None:
             network = unwrap_model(self.network)
             network.eval()
-            # check if we have the same network weight for all samples. If we do, we can merge in th
-            # the network to drastically speed up inference
+            # check if we have the same network weight for all samples. If we do, we can merge in
+            # the network to drastically speed up inference.
+            # Under FSDP, skip merge_in — it directly mutates DTensor shards.
             unique_network_weights = set(
                 [x.network_multiplier for x in image_configs])
-            if len(unique_network_weights) == 1 and network.can_merge_in:
+            if len(unique_network_weights) == 1 and network.can_merge_in and not use_fsdp:
                 can_merge_in = True
                 merge_multiplier = unique_network_weights.pop()
                 network.merge_in(merge_weight=merge_multiplier)
@@ -403,7 +406,8 @@ class BaseModel:
             network = BlankNetwork()
 
         self.save_device_state()
-        self.set_device_state_preset('generate')
+        if not use_fsdp:
+            self.set_device_state_preset('generate')
 
         # save current seed state for training
         rng_state = torch.get_rng_state()
@@ -415,6 +419,18 @@ class BaseModel:
                 pipeline.set_progress_bar_config(disable=True)
             except:
                 pass
+            if use_fsdp:
+                # Under FSDP: restore the FSDP-wrapped model so all-gather
+                # hooks fire during forward. Also null out TEs/tokenizers since
+                # we always use pre-cached prompt_embeds.
+                for attr in ['transformer', 'unet']:
+                    if hasattr(pipeline, attr) and getattr(pipeline, attr) is not None:
+                        setattr(pipeline, attr, self.unet)
+                        break
+                for attr in ['text_encoder', 'text_encoder_2', 'text_encoder_3',
+                             'tokenizer', 'tokenizer_2', 'tokenizer_3']:
+                    if hasattr(pipeline, attr):
+                        setattr(pipeline, attr, None)
 
         start_multiplier = 1.0
         if network is not None:
@@ -427,7 +443,7 @@ class BaseModel:
                 if network is not None:
                     assert network.is_active
 
-                for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
+                for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False, disable=not is_main_process):
                     gen_config = image_configs[i]
 
                     extra = {}
@@ -659,9 +675,10 @@ class BaseModel:
                         extra,
                     )
 
-                    gen_config.save_image(img, i)
-                    gen_config.log_image(img, i)
-                    self._after_sample_image(i, len(image_configs))
+                    if is_main_process:
+                        gen_config.save_image(img, i)
+                        gen_config.log_image(img, i)
+                        self._after_sample_image(i, len(image_configs))
                     flush()
 
                 if self.adapter is not None and isinstance(self.adapter, ReferenceAdapter):
@@ -676,12 +693,14 @@ class BaseModel:
         if cuda_rng_state is not None:
             torch.cuda.set_rng_state(cuda_rng_state)
 
-        self.restore_device_state()
+        if not use_fsdp:
+            self.restore_device_state()
         if network is not None:
             network.train()
             network.multiplier = start_multiplier
 
-        self.unet.to(self.device_torch, dtype=self.torch_dtype)
+        if not use_fsdp:
+            self.unet.to(self.device_torch, dtype=self.torch_dtype)
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])
@@ -1566,12 +1585,15 @@ class BaseModel:
         self.set_device_state(state)
 
     def text_encoder_to(self, *args, **kwargs):
+        if self.text_encoder is None:
+            return
         if isinstance(self.text_encoder, list):
             for encoder in self.text_encoder:
                 encoder.to(*args, **kwargs)
         else:
             self.text_encoder.to(*args, **kwargs)
-    
+
+
     def convert_lora_weights_before_save(self, state_dict):
         # can be overridden in child classes to convert weights before saving
         return state_dict

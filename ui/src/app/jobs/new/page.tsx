@@ -152,12 +152,22 @@ export default function TrainingForm() {
     if (status === 'saving') return;
     setStatus('saving');
 
+    // Enforce FSDP → unload_text_encoder → cache_text_embeddings cascade
+    const configToSave = objectCopy(jobConfig);
+    const isFSDP = (gpuIDs || '').includes(',');
+    if (isFSDP) {
+      configToSave.config.process[0].train.unload_text_encoder = true;
+    }
+    if (configToSave.config.process[0].train.unload_text_encoder) {
+      configToSave.config.process[0].train.cache_text_embeddings = true;
+    }
+
     apiClient
       .post('/api/jobs', {
         id: runId,
-        name: jobConfig.config.name,
+        name: configToSave.config.name,
         gpu_ids: gpuIDs,
-        job_config: jobConfig,
+        job_config: configToSave,
       })
       .then(res => {
         setStatus('success');
@@ -201,12 +211,35 @@ export default function TrainingForm() {
         <div className="flex-1"></div>
         {showAdvancedView && (
           <>
-            <div>
-              <SelectInput
-                value={`${gpuIDs}`}
-                onChange={value => setGpuIDs(value)}
-                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
-              />
+            <div className="flex items-center gap-1">
+              {gpuList.map((gpu: any) => {
+                const gpuId = `${gpu.index}`;
+                const selectedIds = (gpuIDs || '0').split(',').map((s: string) => s.trim());
+                const isSelected = selectedIds.includes(gpuId);
+                return (
+                  <button
+                    key={gpuId}
+                    type="button"
+                    className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                      isSelected ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    }`}
+                    onClick={() => {
+                      let newIds: string[];
+                      if (isSelected && selectedIds.length > 1) {
+                        newIds = selectedIds.filter((id: string) => id !== gpuId);
+                      } else if (!isSelected) {
+                        newIds = [...selectedIds, gpuId];
+                      } else {
+                        newIds = selectedIds;
+                      }
+                      newIds.sort((a: string, b: string) => parseInt(a) - parseInt(b));
+                      setGpuIDs(newIds.join(','));
+                    }}
+                  >
+                    GPU {gpu.index}
+                  </button>
+                );
+              })}
             </div>
             <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
             <div>
@@ -311,7 +344,6 @@ export default function TrainingForm() {
               setGpuIDs={setGpuIDs}
               gpuList={gpuList}
               datasetOptions={datasetOptions}
-              isLoading={!isSettingsLoaded || !isGPUInfoLoaded || datasetFetchStatus !== 'success'}
             />
           </ErrorBoundary>
 

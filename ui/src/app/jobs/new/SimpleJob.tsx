@@ -19,7 +19,6 @@ import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
-import { isMac } from '@/helpers/basic';
 
 type Props = {
   jobConfig: JobConfig;
@@ -31,7 +30,6 @@ type Props = {
   setGpuIDs: (value: string | null) => void;
   gpuList: any;
   datasetOptions: any;
-  isLoading?: boolean;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -46,7 +44,6 @@ export default function SimpleJob({
   setGpuIDs,
   gpuList,
   datasetOptions,
-  isLoading,
 }: Props) {
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
@@ -147,22 +144,9 @@ export default function SimpleJob({
     return newQuantizationOptions;
   }, [modelArch]);
 
-  const showGPUSelect = !isMac();
-
   return (
     <>
-      <form
-        onSubmit={handleSubmit}
-        className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
-      >
-        {isLoading && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-400 border-t-blue-500" />
-              <span className="text-sm text-gray-400">Loading...</span>
-            </div>
-          </div>
-        )}
+      <form onSubmit={handleSubmit} className="space-y-8">
         <div className={topBarClass}>
           <Card title="Job">
             <TextInput
@@ -174,15 +158,44 @@ export default function SimpleJob({
               disabled={runId !== null}
               required
             />
-            {showGPUSelect && (
-              <SelectInput
-                label="GPU ID"
-                value={`${gpuIDs}`}
-                docKey="gpuids"
-                onChange={value => setGpuIDs(value)}
-                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
-              />
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">GPU{gpuList.length > 1 ? 's' : ''}</label>
+              <div className="flex flex-wrap gap-2">
+                {gpuList.map((gpu: any) => {
+                  const gpuId = `${gpu.index}`;
+                  const selectedIds = (gpuIDs || '0').split(',').map((s: string) => s.trim());
+                  const isSelected = selectedIds.includes(gpuId);
+                  return (
+                    <button
+                      key={gpuId}
+                      type="button"
+                      className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                        isSelected ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      }`}
+                      onClick={() => {
+                        let newIds: string[];
+                        if (isSelected && selectedIds.length > 1) {
+                          newIds = selectedIds.filter((id: string) => id !== gpuId);
+                        } else if (!isSelected) {
+                          newIds = [...selectedIds, gpuId];
+                        } else {
+                          newIds = selectedIds; // can't deselect the last GPU
+                        }
+                        newIds.sort((a: string, b: string) => parseInt(a) - parseInt(b));
+                        setGpuIDs(newIds.join(','));
+                      }}
+                    >
+                      GPU #{gpu.index}
+                    </button>
+                  );
+                })}
+              </div>
+              {(gpuIDs || '').includes(',') && (
+                <p className="text-xs text-blue-400 mt-1">
+                  FSDP v2: model sharded across {(gpuIDs || '').split(',').length} GPUs
+                </p>
+              )}
+            </div>
             {disableSections.includes('trigger_word') ? null : (
               <TextInput
                 label="Trigger Word"
@@ -254,7 +267,7 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.match_target_res')}
               />
             )}
-            {modelArch?.additionalSections?.includes('model.layer_offloading') && !isMac() && (
+            {modelArch?.additionalSections?.includes('model.layer_offloading') && (
               <>
                 <Checkbox
                   label={
@@ -607,30 +620,38 @@ export default function SimpleJob({
                 )}
 
                 <FormGroup label="Text Encoder Optimizations" className="pt-2">
-                  {!disableSections.includes('train.unload_text_encoder') && (
-                    <Checkbox
-                      label="Unload TE"
-                      checked={jobConfig.config.process[0].train.unload_text_encoder || false}
-                      docKey={'train.unload_text_encoder'}
-                      onChange={value => {
-                        setJobConfig(value, 'config.process[0].train.unload_text_encoder');
-                        if (value) {
-                          setJobConfig(false, 'config.process[0].train.cache_text_embeddings');
-                        }
-                      }}
-                    />
-                  )}
-                  <Checkbox
-                    label="Cache Text Embeddings"
-                    checked={jobConfig.config.process[0].train.cache_text_embeddings || false}
-                    docKey={'train.cache_text_embeddings'}
-                    onChange={value => {
-                      setJobConfig(value, 'config.process[0].train.cache_text_embeddings');
-                      if (value) {
-                        setJobConfig(false, 'config.process[0].train.unload_text_encoder');
-                      }
-                    }}
-                  />
+                  {(() => {
+                    const isFSDP = (gpuIDs || '').includes(',');
+                    const unloadTE = isFSDP || (jobConfig.config.process[0].train.unload_text_encoder || false);
+                    const cacheEmbeds = unloadTE || (jobConfig.config.process[0].train.cache_text_embeddings || false);
+                    return (
+                      <>
+                        {!disableSections.includes('train.unload_text_encoder') && (
+                          <Checkbox
+                            label={`Unload TE${isFSDP ? ' (required by FSDP)' : ''}`}
+                            checked={unloadTE}
+                            disabled={isFSDP}
+                            docKey={'train.unload_text_encoder'}
+                            onChange={value => {
+                              setJobConfig(value, 'config.process[0].train.unload_text_encoder');
+                              if (value) {
+                                setJobConfig(true, 'config.process[0].train.cache_text_embeddings');
+                              }
+                            }}
+                          />
+                        )}
+                        <Checkbox
+                          label={`Cache Text Embeddings${unloadTE ? ' (required by Unload TE)' : ''}`}
+                          checked={cacheEmbeds}
+                          disabled={unloadTE}
+                          docKey={'train.cache_text_embeddings'}
+                          onChange={value => {
+                            setJobConfig(value, 'config.process[0].train.cache_text_embeddings');
+                          }}
+                        />
+                      </>
+                    );
+                  })()}
                 </FormGroup>
               </div>
               <div>

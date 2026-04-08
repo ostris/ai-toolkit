@@ -56,7 +56,8 @@ config:
         batch_size: 3
         gradient_accumulation: 2
 
-        # captions are not needed for this training, we cache a blank proompt and rely on the vision encoder
+        # captions are not needed for this training, we cache a blank prompt and rely on the vision encoder
+        # unload_text_encoder now automatically caches all text embeddings before unloading
         unload_text_encoder: true
 
         loss_type: "mse"

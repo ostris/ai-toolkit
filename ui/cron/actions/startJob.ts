@@ -1,10 +1,52 @@
 import prisma from '../prisma';
 import { Job } from '@prisma/client';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { TOOLKIT_ROOT, getTrainingFolder, getHFToken } from '../paths';
 const isWindows = process.platform === 'win32';
+
+/**
+ * Find a free port by probing with Python's socket module.
+ * Falls back to a hash-based port if the probe fails.
+ */
+function findFreePort(pythonPath: string, fallbackSeed: string): number {
+  try {
+    const port = execSync(
+      `"${pythonPath.replace(/"/g, '\\"')}" -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()"`,
+      { timeout: 5000, encoding: 'utf-8' },
+    ).trim();
+    const parsed = parseInt(port, 10);
+    if (isNaN(parsed)) throw new Error(`Invalid port: ${port}`);
+    return parsed;
+  } catch {
+    // Fallback: hash-based port in range 29500-39999
+    let hash = 0;
+    for (let i = 0; i < fallbackSeed.length; i++) {
+      hash = ((hash << 5) - hash + fallbackSeed.charCodeAt(i)) | 0;
+    }
+    return 29500 + (Math.abs(hash) % 10500);
+  }
+}
+
+/**
+ * Find the accelerate binary in the venv.
+ */
+function findAcceleratePath(): string | null {
+  const venvDirs = ['.venv', 'venv'];
+  for (const venv of venvDirs) {
+    const venvPath = path.join(TOOLKIT_ROOT, venv);
+    if (fs.existsSync(venvPath)) {
+      const accelPath = isWindows
+        ? path.join(venvPath, 'Scripts', 'accelerate.exe')
+        : path.join(venvPath, 'bin', 'accelerate');
+      if (fs.existsSync(accelPath)) {
+        return accelPath;
+      }
+    }
+  }
+  return null;
+}
 
 const startAndWatchJob = (job: Job) => {
   // starts and watches the job asynchronously
@@ -78,15 +120,33 @@ const startAndWatchJob = (job: Job) => {
           info: `Error launching job: run.py not found`,
         },
       });
+      resolve();
       return;
     }
+
+    // Determine if this is a multi-GPU distributed job
+    const gpuIdList = job.gpu_ids
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+    const isMultiGPU = gpuIdList.length > 1;
 
     const additionalEnv: any = {
       AITK_JOB_ID: jobID,
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
-      CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
+      HF_HOME: process.env.HF_HOME || path.join(process.env.HOME || '/root', '.cache', 'huggingface'),
+      HF_HUB_ENABLE_HF_TRANSFER: '0',
+      HF_HUB_DISABLE_XET: '1',
+      HF_HUB_DOWNLOAD_TIMEOUT: '300',
     };
+
+    // For multi-GPU on Linux, accelerate launch --gpu_ids handles device assignment.
+    // Setting CUDA_VISIBLE_DEVICES alongside --gpu_ids causes conflicts (Accelerate #1848).
+    // On Windows, accelerate launch is not supported, so always set CUDA_VISIBLE_DEVICES.
+    if (!isMultiGPU || isWindows) {
+      additionalEnv.CUDA_VISIBLE_DEVICES = `${job.gpu_ids}`;
+    }
 
     // HF_TOKEN
     const hfToken = await getHFToken();
@@ -94,15 +154,56 @@ const startAndWatchJob = (job: Job) => {
       additionalEnv.HF_TOKEN = hfToken;
     }
 
-    // Add the --log argument to the command
-    const args = [runFilePath, configPath, '--log', logPath];
-
     try {
-      let subprocess;
+      let childProcess;
 
-      if (isWindows) {
+      if (isMultiGPU && !isWindows) {
+        // Multi-GPU distributed training via accelerate launch
+        const acceleratePath = findAcceleratePath();
+        if (!acceleratePath) {
+          console.error('accelerate binary not found in venv');
+          await prisma.job.update({
+            where: { id: jobID },
+            data: {
+              status: 'error',
+              info: 'Error launching distributed job: accelerate binary not found in venv',
+            },
+          });
+          resolve();
+          return;
+        }
+
+        const masterPort = findFreePort(pythonPath, jobID);
+        const numProcesses = gpuIdList.length;
+
+        const launchArgs = [
+          'launch',
+          `--num_processes=${numProcesses}`,
+          `--gpu_ids=${gpuIdList.join(',')}`,
+          `--main_process_port=${masterPort}`,
+          '--mixed_precision=no', // precision handled by toolkit config
+          runFilePath,
+          configPath,
+          '--log',
+          logPath,
+        ];
+
+        console.log(`Distributed launch: ${acceleratePath} ${launchArgs.join(' ')}`);
+        console.log(`  GPUs: ${gpuIdList.join(',')}, port: ${masterPort}`);
+
+        childProcess = spawn(acceleratePath, launchArgs, {
+          detached: true,
+          stdio: 'ignore',
+          env: {
+            ...process.env,
+            ...additionalEnv,
+          },
+          cwd: TOOLKIT_ROOT,
+        });
+      } else if (isWindows) {
         // Spawn Python directly on Windows so the process can survive parent exit
-        subprocess = spawn(pythonPath, args, {
+        const args = [runFilePath, configPath, '--log', logPath];
+        childProcess = spawn(pythonPath, args, {
           env: {
             ...process.env,
             ...additionalEnv,
@@ -113,8 +214,9 @@ const startAndWatchJob = (job: Job) => {
           stdio: 'ignore', // don't tie stdio to parent
         });
       } else {
-        // For non-Windows platforms, fully detach and ignore stdio so it survives daemon-like
-        subprocess = spawn(pythonPath, args, {
+        // Single-GPU: existing path, spawn python directly
+        const args = [runFilePath, configPath, '--log', logPath];
+        childProcess = spawn(pythonPath, args, {
           detached: true,
           stdio: 'ignore',
           env: {
@@ -125,23 +227,28 @@ const startAndWatchJob = (job: Job) => {
         });
       }
 
-      // Save the PID to the database and a file for future management (stop/inspect)
-      const pid = subprocess.pid ?? null;
+      // Important: let the child run independently of this Node process.
+      if (childProcess.unref) {
+        childProcess.unref();
+      }
+
+      // Write pid to database and file for future management (stop/inspect).
+      // For distributed jobs, this is the launcher PID (process group leader).
+      const pid = childProcess.pid ?? null;
       if (pid != null) {
-        await prisma.job.update({
-          where: { id: jobID },
-          data: { pid },
-        });
+        try {
+          await prisma.job.update({
+            where: { id: jobID },
+            data: { pid },
+          });
+        } catch (e) {
+          console.error('Error updating pid in database:', e);
+        }
       }
       try {
         fs.writeFileSync(path.join(trainingFolder, 'pid.txt'), String(pid ?? ''), { flag: 'w' });
       } catch (e) {
         console.error('Error writing pid file:', e);
-      }
-
-      // Important: let the child run independently of this Node process.
-      if (subprocess.unref) {
-        subprocess.unref();
       }
 
       // (No stdout/stderr listeners — logging should go to --log handled by your Python)
@@ -157,6 +264,7 @@ const startAndWatchJob = (job: Job) => {
           info: `Error launching job: ${error?.message || 'Unknown error'}`,
         },
       });
+      resolve();
       return;
     }
     // Resolve the promise immediately after starting the process

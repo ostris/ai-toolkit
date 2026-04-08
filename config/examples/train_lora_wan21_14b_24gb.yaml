@@ -67,7 +67,7 @@ config:
           ema_decay: 0.99
         dtype: bf16
         # required for 24GB cards
-        # this will encode your trigger word and use those embeddings for every image in the dataset
+        # automatically caches all text embeddings before unloading the text encoder
         unload_text_encoder: true
       model:
         # huggingface model name or path

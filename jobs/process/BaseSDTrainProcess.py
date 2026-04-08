@@ -106,6 +106,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.network_config = NetworkConfig(**network_config)
         else:
             self.network_config = None
+        # Detect FSDP early — needed for device state presets before model loading
+        self._will_use_fsdp = (self.accelerator.num_processes > 1 and self.network_config is not None)
         self.train_config = TrainConfig(**self.get_conf('train', {}))
         model_config = self.get_conf('model', {})
         self.modules_being_trained: List[torch.nn.Module] = []
@@ -146,8 +148,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.dataset_configs: List[DatasetConfig] = []
         self.params = []
         
-        # add dataset text embedding cache to their config
-        if self.train_config.cache_text_embeddings:
+        # unload_text_encoder always implies cache_text_embeddings
+        if self.train_config.unload_text_encoder:
+            self.train_config.cache_text_embeddings = True
+        if self.train_config.cache_text_embeddings and raw_datasets is not None:
             for raw_dataset in raw_datasets:
                 raw_dataset['cache_text_embeddings'] = True
         
@@ -209,6 +213,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # 'ratio', 0.25)
 
         # get the device state preset based on what we are training
+        # Under FSDP, unload TE during training to save GPU memory for
+        # the transformer forward/backward pass. TE is loaded on-demand for encoding.
+        fsdp_unload_te = getattr(self, '_will_use_fsdp', False)
         self.train_device_state_preset = get_train_sd_device_state_preset(
             device=self.device_torch,
             train_unet=self.train_config.train_unet,
@@ -219,10 +226,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             train_embedding=self.embed_config is not None,
             train_decorator=self.decorator_config is not None,
             train_refiner=self.train_config.train_refiner,
-            unload_text_encoder=self.train_config.unload_text_encoder or self.is_caching_text_embeddings,
+            unload_text_encoder=self.train_config.unload_text_encoder or self.is_caching_text_embeddings or fsdp_unload_te,
             require_grads=False  # we ensure them later
         )
-        
+
         self.get_params_device_state_preset = get_train_sd_device_state_preset(
             device=self.device_torch,
             train_unet=self.train_config.train_unet,
@@ -233,7 +240,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             train_embedding=self.embed_config is not None,
             train_decorator=self.decorator_config is not None,
             train_refiner=self.train_config.train_refiner,
-            unload_text_encoder=self.train_config.unload_text_encoder or self.is_caching_text_embeddings,
+            unload_text_encoder=self.train_config.unload_text_encoder or self.is_caching_text_embeddings or fsdp_unload_te,
             require_grads=True  # We check for grads when getting params
         )
 
@@ -267,7 +274,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return generate_image_config_list
 
     def sample(self, step=None, is_first=False):
-        if not self.accelerator.is_main_process:
+        # Under FSDP, all ranks must participate in the forward pass because
+        # parameters are sharded. All ranks run the sampling pipeline together
+        # with identical inputs; only rank 0 saves images.
+        if not self.use_fsdp and not self.accelerator.is_main_process:
             return
         flush()
         sample_folder = os.path.join(self.save_root, 'samples')
@@ -361,8 +371,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
         
-        # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        # send to be generated — under FSDP all ranks run forward, only rank 0 saves
+        self.sd.generate_images(
+            gen_img_config_list,
+            sampler=sample_config.sampler,
+            use_fsdp=self.use_fsdp,
+            is_main_process=self.accelerator.is_main_process,
+        )
 
         
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
@@ -488,7 +503,116 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def end_step_hook(self):
         pass
 
-    def save(self, step=None):
+    def _save_fsdp(self, step=None, is_temp=False):
+        """FSDP-aware save: all ranks gather state dict, only rank 0 writes files.
+
+        get_state_dict() calls full_tensor() on DTensors, which is a collective
+        op requiring all ranks. After gathering, only rank 0 does file I/O.
+        All ranks must wait for file I/O to complete before the next training
+        step — FSDP's forward pass (AllGather) is collective.
+        """
+        # All ranks: gather the LoRA state dict (collective operation)
+        save_dict = None
+        if self.network is not None:
+            prev_multiplier = self.network.multiplier
+            self.network.multiplier = 1.0
+            try:
+                embedding_dict = self.embedding.state_dict() if self.embedding else None
+                save_dict = self.network.get_state_dict(
+                    extra_state_dict=embedding_dict,
+                    dtype=get_torch_dtype(self.save_config.dtype),
+                )
+            finally:
+                self.network.multiplier = prev_multiplier
+
+        self.accelerator.wait_for_everyone()
+
+        # All ranks: gather full optimizer state (collective op on DTensors).
+        # Must happen outside the rank 0 block so all ranks participate.
+        optim_state = None
+        if self.optimizer is not None:
+            if self.sd.network is not None:
+                # LoRA params live in the separate network module, not the
+                # FSDP-wrapped unet, so plain state_dict works.
+                optim_state = self.optimizer.state_dict()
+            else:
+                # get_optimizer_state_dict is a collective op — all ranks must call it.
+                # Do NOT wrap in try/except: asymmetric failure would deadlock.
+                from torch.distributed.checkpoint.state_dict import get_optimizer_state_dict
+                optim_state = get_optimizer_state_dict(self.sd.unet, self.optimizer)
+
+        # Only rank 0: write files (other ranks wait at the barrier below).
+        # try/finally ensures the final barrier is always reached even if
+        # file I/O fails — otherwise non-rank-0 would deadlock at the barrier.
+        try:
+            if self.accelerator.is_main_process:
+                flush()
+                if not os.path.exists(self.save_root):
+                    os.makedirs(self.save_root, exist_ok=True)
+
+                step_num = ''
+                if step is not None:
+                    step_num = f"_{str(step).zfill(9)}"
+
+                self.update_training_metadata()
+                save_meta = copy.deepcopy(self.meta)
+                save_meta = get_meta_for_safetensors(save_meta, self.job.name)
+
+                file_path = None
+                if self.network is not None and save_dict is not None:
+                    lora_name = self.job.name
+                    if self.named_lora:
+                        lora_name += '_LoRA'
+                    filename = f'{lora_name}{step_num}.safetensors'
+                    file_path = os.path.join(self.save_root, filename)
+
+                    if os.path.splitext(file_path)[1] == ".safetensors":
+                        from safetensors.torch import save_file as sf_save
+                        from toolkit.metadata import add_model_hash_to_meta
+                        metadata = OrderedDict()
+                        metadata = add_model_hash_to_meta(save_dict, metadata)
+                        metadata.update(save_meta)
+                        sf_save(save_dict, file_path, metadata)
+                    else:
+                        torch.save(save_dict, file_path)
+
+                    print_acc(f"Saved checkpoint to {file_path}")
+
+                # Save standalone embedding file (even if also included in LoRA dict)
+                if self.embedding is not None:
+                    emb_filename = f'{self.embed_config.trigger}{step_num}.safetensors'
+                    emb_file_path = os.path.join(self.save_root, emb_filename)
+                    self.embedding.step = self.step_num
+                    if self.embed_config.save_format == "pt":
+                        emb_file_path = os.path.splitext(emb_file_path)[0] + ".pt"
+                    self.embedding.save(emb_file_path)
+
+                # Save gathered optimizer state
+                if optim_state is not None:
+                    try:
+                        opt_file_path = os.path.join(self.save_root, 'optimizer.pt')
+                        torch.save(optim_state, opt_file_path)
+                        print_acc(f"Saved optimizer to {opt_file_path}")
+                    except Exception as e:
+                        print_acc(e)
+                        print_acc("Could not save optimizer")
+
+                self.clean_up_saves()
+                self.post_save_hook(file_path or self.save_root)
+        finally:
+            # All ranks: update step and wait for rank 0 to finish file I/O
+            if step is not None:
+                self.last_save_step = step
+            self.accelerator.wait_for_everyone()
+
+    def save(self, step=None, is_temp=False):
+        # Under FSDP, get_state_dict() contains full_tensor() calls which are
+        # collective ops requiring all ranks. All ranks must enter save(), but
+        # only rank 0 does file I/O. Non-rank-0 processes participate in the
+        # collective gather inside network.save_weights() then return.
+        if self.use_fsdp:
+            self._save_fsdp(step, is_temp=is_temp)
+            return
         if not self.accelerator.is_main_process:
             return
         flush()
@@ -698,6 +822,55 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.ema.train()
         flush()
 
+    def save_on_interrupt(self):
+        """Save a temporary checkpoint when training is interrupted so no steps are lost."""
+        if not self.use_fsdp and not self.accelerator.is_main_process:
+            return
+        if self.use_fsdp:
+            # All ranks must agree on whether to save — collective ops require
+            # all-or-nothing participation. Rank 0 decides, broadcasts to all.
+            # Use a timeout: if ranks can't synchronize (e.g., one rank crashed
+            # or is stuck in a different collective), skip the save rather than
+            # deadlocking forever.
+            import torch.distributed as dist
+            try:
+                # Use a barrier with timeout rather than wait_for_everyone() to avoid
+                # indefinite hangs when only a subset of ranks enter this code path.
+                if dist.is_initialized():
+                    dist.barrier(device_ids=[torch.cuda.current_device()] if torch.cuda.is_available() else None)
+                should_save = 0
+                if self.accelerator.is_main_process:
+                    if self.step_num > self.last_save_step and self.step_num > self.start_step:
+                        should_save = 1
+                save_tensor = torch.tensor([should_save], device=self.accelerator.device)
+                dist.broadcast(save_tensor, src=0)
+                if save_tensor.item() == 0:
+                    return
+            except Exception as e:
+                if self.accelerator.is_main_process:
+                    print_acc(f"Warning: FSDP interrupt save coordination failed: {e}")
+                    print_acc("Skipping interrupt save — ranks could not synchronize.")
+                return
+        else:
+            if self.step_num <= self.last_save_step:
+                return
+            if self.step_num <= self.start_step:
+                return
+        if self.accelerator.is_main_process:
+            print_acc(f"\nSaving interrupt checkpoint at step {self.step_num}")
+        try:
+            self.save(self.step_num)
+        except Exception as e:
+            if self.accelerator.is_main_process:
+                print_acc(f"Warning: Failed to save interrupt checkpoint: {e}")
+
+    def on_error(self, e: Exception):
+        try:
+            self.save_on_interrupt()
+        except Exception as save_err:
+            print_acc(f"Warning: Failed to save on error: {save_err}")
+        super().on_error(e)
+
     # Called before the model is loaded
     def hook_before_model_load(self):
         # override in subclass
@@ -711,23 +884,116 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return params
 
+    @property
+    def use_fsdp(self):
+        """Whether FSDP v2 parameter sharding is active for this training run.
+        Auto-enabled for multi-GPU + LoRA training when block classes are detected."""
+        return getattr(self, '_fsdp_active', False)
+
     def hook_before_train_loop(self):
         if self.accelerator.is_main_process:
             self.logger.start()
+
+        # For multi-GPU LoRA, recreate accelerator with FSDP v2 plugin
+        # before prepare_accelerator() wraps models.
+        if (self.accelerator.num_processes > 1 and self.network_config is not None):
+            self._setup_fsdp_accelerator()
+
         self.prepare_accelerator()
-        
+
+    def _setup_fsdp_accelerator(self):
+        """Recreate the accelerator with FSDP v2 for parameter sharding."""
+        from toolkit.fsdp_utils import create_fsdp_plugin, get_block_class_names
+        from toolkit.accelerator import reset_accelerator
+
+        transformer = self.sd.unet
+        block_class_names = get_block_class_names(transformer, model=self.sd)
+
+        if not block_class_names:
+            print_acc("WARNING: Could not detect transformer block classes for FSDP wrapping. "
+                      "Falling back to standard DDP.")
+            # Clear the intent flag so device state presets and model loading
+            # don't behave as if FSDP is active.
+            self._will_use_fsdp = False
+            # Model was loaded to CPU for FSDP — move transformer to GPU for DDP.
+            if self.sd.unet is not None:
+                self.sd.unet.to(self.device_torch)
+            return
+
+        print_acc(f"FSDP v2: sharding transformer across {self.accelerator.num_processes} GPUs")
+        print_acc(f"  Block classes to wrap: {block_class_names}")
+
+        plugin = create_fsdp_plugin(block_class_names)
+        self.accelerator = reset_accelerator(fsdp_plugin=plugin)
+        self.device = str(self.accelerator.device)
+        self.device_torch = self.accelerator.device
+        # Update stale accelerator references captured at init time
+        if hasattr(self, 'sd') and self.sd is not None:
+            self.sd.accelerator = self.accelerator
+        self._fsdp_active = True
+
     def sample_step_hook(self, img_num, total_imgs):
         pass
     
     def prepare_accelerator(self):
-        # set some config
-        self.accelerator.even_batches=False
-        
-        # # prepare all the models stuff for accelerator (hopefully we dont miss any)
+        # Validate incompatible features with distributed training
+        if self.accelerator.num_processes > 1:
+            if self.model_config.split_model_over_gpus:
+                raise ValueError(
+                    "split_model_over_gpus (model parallelism) cannot be combined with "
+                    "multi-GPU distributed training. Use one or the other."
+                )
+            if self.train_config.do_paramiter_swapping:
+                raise ValueError(
+                    "Parameter swapping is not compatible with distributed training."
+                )
+            if self.use_fsdp:
+                # Quantized transformer can't be FSDP-sharded (QTensors don't survive DTensor)
+                quant_flags = ['quantize', 'load_in_4bit', 'load_in_8bit']
+                has_quant = any(getattr(self.model_config, f, False) for f in quant_flags)
+                if has_quant:
+                    raise ValueError(
+                        "Quantization of the transformer cannot be combined with FSDP v2. "
+                        "FSDP already reduces per-GPU memory by sharding parameters."
+                    )
+                # quantize_te is OK — quantized TEs skip FSDP wrapping and go to GPU directly
+            if self.use_fsdp and self.train_config.train_text_encoder:
+                raise ValueError(
+                    "Training text encoders is not yet supported with FSDP v2 multi-GPU. "
+                    "Only LoRA on the transformer is supported."
+                )
+            if self.use_fsdp:
+                has_offload = (
+                    getattr(self.model_config, 'layer_offloading', False) or
+                    (self.network_config is not None and getattr(self.network_config, 'layer_offloading', False))
+                )
+                if has_offload:
+                    raise ValueError(
+                        "Layer offloading cannot be combined with FSDP v2. "
+                        "FSDP shards parameters across GPUs — offloading them to CPU breaks the sharding contract."
+                    )
+            # Warn about bucket batching in distributed mode for non-LoRA training.
+            if self.network_config is None and self.datasets is not None:
+                has_buckets = any(
+                    ds.get('buckets', False) if isinstance(ds, dict) else getattr(ds, 'buckets', False)
+                    for ds in self.datasets
+                )
+                if has_buckets:
+                    print_acc("WARNING: Bucket batching with distributed training may cause shape "
+                              "mismatches across ranks for non-LoRA training. This is safe for LoRA.")
+
+        self.accelerator.even_batches = False
+
+        if self.use_fsdp:
+            self._prepare_accelerator_fsdp()
+        else:
+            self._prepare_accelerator_standard()
+
+    def _prepare_accelerator_standard(self):
+        """Standard DDP preparation — wraps all models with accelerator.prepare()."""
         self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
             self.sd.unet = self.accelerator.prepare(self.sd.unet)
-            # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
         if self.sd.text_encoder is not None and self.train_config.train_text_encoder:
             if isinstance(self.sd.text_encoder, list):
@@ -739,22 +1005,91 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.sd.refiner_unet is not None and self.train_config.train_refiner:
             self.sd.refiner_unet = self.accelerator.prepare(self.sd.refiner_unet)
             self.modules_being_trained.append(self.sd.refiner_unet)
-        # todo, do we need to do the network or will "unet" get it?
         if self.sd.network is not None:
             self.sd.network = self.accelerator.prepare(self.sd.network)
             self.modules_being_trained.append(self.sd.network)
         if self.adapter is not None and self.adapter_config.train:
-            # todo adapters may not be a module. need to check
             self.adapter = self.accelerator.prepare(self.adapter)
             self.modules_being_trained.append(self.adapter)
-        
-        # prepare other things
+
         self.optimizer = self.accelerator.prepare(self.optimizer)
         if self.lr_scheduler is not None:
             self.lr_scheduler = self.accelerator.prepare(self.lr_scheduler)
-        # self.data_loader = self.accelerator.prepare(self.data_loader)
-        # if self.data_loader_reg is not None:
-        #     self.data_loader_reg = self.accelerator.prepare(self.data_loader_reg)
+
+    def _prepare_accelerator_fsdp(self):
+        """FSDP v2 preparation — transformer and text encoders are FSDP-wrapped.
+
+        Both are sharded across GPUs via FSDP, reducing per-GPU memory.
+        VAE is excluded (small, no gradients).
+        """
+        # FSDP2 requires model and optimizer in the SAME prepare() call so
+        # Accelerate can rebind optimizer param_groups to sharded DTensors.
+        # Models are already on CPU (loaded there when _will_use_fsdp=True),
+        # so Accelerate's fsdp2_prepare_model() can: save state_dict on CPU,
+        # move to meta device, fully_shard(), then distribute sharded weights.
+        if self.sd.unet is not None:
+            self.sd.unet, self.optimizer = self.accelerator.prepare(
+                self.sd.unet, self.optimizer
+            )
+            self.modules_being_trained.append(self.sd.unet)
+
+        # Text encoders stay on CPU under FSDP — unloaded during training,
+        # loaded to GPU on-demand for encoding via set_device_state().
+        # This keeps GPU memory free for the transformer forward/backward pass.
+
+        # Update model's device references — they were set to CPU during
+        # construction but now the accelerator device is GPU after FSDP reset.
+        self.sd.device_torch = self.device_torch
+        self.sd.device = str(self.device_torch)
+        self.sd.vae_device_torch = self.device_torch
+        self.sd.te_device_torch = self.device_torch
+
+        # Move VAE to GPU (small enough to fit without sharding)
+        if self.sd.vae is not None:
+            self.sd.vae = self.sd.vae.to(self.device_torch)
+
+        # Network (LoRA) is part of the transformer, no separate prepare needed.
+        if self.sd.network is not None:
+            self.modules_being_trained.append(self.sd.network)
+
+        # Optimizer already prepared above with model.
+        if self.lr_scheduler is not None:
+            self.lr_scheduler = self.accelerator.prepare(self.lr_scheduler)
+
+
+    def sync_network_gradients(self):
+        """Manually sync LoRA network gradients across ranks in distributed training.
+
+        Required because LoRA's forward-hook injection (monkey-patching org_module.forward)
+        bypasses DDP's bucket-based gradient reduction. The forward pass goes through the
+        parent model's layers, not through the DDP wrapper's forward(), so DDP's autograd
+        hooks don't fire correctly for LoRA parameters.
+        See: kohya-ss/sd-scripts PR #989
+
+        IMPORTANT: Only call on optimizer-step boundaries, NOT every accumulation step.
+        The accumulate() context uses no_sync() internally; calling all_reduce on every
+        step would defeat gradient accumulation.
+
+        NOTE: If an OOM occurs on only some ranks, the ranks that succeeded will call
+        this while the failed ranks won't (they exit via exception). This would cause
+        a hang. In practice, all ranks process the same batch size on identical GPUs,
+        so OOM is almost always all-or-nothing. A full collective OOM broadcast would
+        be the robust fix but is deferred for now.
+        """
+        if self.accelerator.num_processes <= 1:
+            return
+        if self.use_fsdp:
+            # FSDP handles gradient reduce-scatter automatically
+            return
+        if self.sd.network is None:
+            return
+        import torch.distributed as dist
+        network = unwrap_model(self.sd.network)
+        world_size = self.accelerator.num_processes
+        for param in network.parameters():
+            if param.grad is not None:
+                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                param.grad /= world_size
             
 
     def ensure_params_requires_grad(self, force=False):
@@ -840,8 +1175,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return latest_path
 
     def load_training_state_from_metadata(self, path):
+        # Under FSDP, all ranks must agree on step_num/start_step because
+        # save and sample triggers are collective operations. Rank 0 reads
+        # metadata from disk and broadcasts to other ranks.
+        if self.accelerator.num_processes > 1:
+            import torch.distributed as dist
+            if self.accelerator.is_main_process:
+                self._load_training_state_from_metadata_impl(path)
+            # broadcast step_num and epoch_num from rank 0
+            step_tensor = torch.tensor([self.step_num, self.epoch_num], device=self.accelerator.device)
+            dist.broadcast(step_tensor, src=0)
+            if not self.accelerator.is_main_process:
+                self.step_num = int(step_tensor[0].item())
+                self.epoch_num = int(step_tensor[1].item())
+                self.start_step = self.step_num
+            return
         if not self.accelerator.is_main_process:
             return
+        self._load_training_state_from_metadata_impl(path)
+
+    def _load_training_state_from_metadata_impl(self, path):
         if path is not None and self.network_config is not None and path == self.network_config.pretrained_lora_path:
             # dont load metadata from pretrained lora
             return
@@ -1601,10 +1954,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 model_config_to_load.refiner_name_or_path = previous_refiner_save
                 self.load_training_state_from_metadata(previous_refiner_save)
 
+        # When FSDP is planned, load model to CPU so accelerator.prepare()
+        # can shard without a GPU memory spike. FSDP will distribute sharded
+        # weights to GPUs during prepare().
+        model_device = torch.device("cpu") if self._will_use_fsdp else self.accelerator.device
+        if self._will_use_fsdp:
+            print_acc(f"FSDP: Loading model to CPU (device={model_device})")
+
         self.sd = ModelClass(
-            # todo handle single gpu and multi gpu here
-            # device=self.device,
-            device=self.accelerator.device,
+            device=model_device,
             model_config=model_config_to_load,
             dtype=self.train_config.dtype,
             custom_pipeline=self.custom_pipeline,
@@ -1706,7 +2064,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             text_encoder.requires_grad_(False)
             text_encoder.eval()
-        unet.to(self.device_torch, dtype=dtype)
+        if not self._will_use_fsdp:
+            unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
         vae = vae.to(torch.device('cpu'), dtype=dtype)
@@ -1980,44 +2339,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # only works for adafactor, but it should have thrown an error prior to this otherwise
             self.optimizer.enable_paramiter_swapping(self.train_config.paramiter_swapping_factor)
 
-        # check if it exists
-        optimizer_state_filename = f'optimizer.pt'
-        optimizer_state_file_path = os.path.join(self.save_root, optimizer_state_filename)
+        # Resolve optimizer state file path. Actual loading is deferred until
+        # after FSDP wrapping so state buffers match sharded params.
+        optimizer_state_file_path = os.path.join(self.save_root, 'optimizer.pt')
         if os.path.exists(optimizer_state_file_path):
-            # try to load
-            # previous param groups
-            # previous_params = copy.deepcopy(optimizer.param_groups)
-            previous_lrs = []
-            for group in optimizer.param_groups:
-                previous_lrs.append(group['lr'])
+            self._optimizer_state_file_path = optimizer_state_file_path
+        else:
+            self._optimizer_state_file_path = None
 
-            load_optimizer = True
-            if self.network is not None:
-                if self.network.did_change_weights:
-                    # do not load optimizer if the network changed, it will result in
-                    # a double state that will oom.
-                    load_optimizer = False
-
-            if load_optimizer:
-                try:
-                    print_acc(f"Loading optimizer state from {optimizer_state_file_path}")
-                    optimizer_state_dict = torch.load(optimizer_state_file_path, weights_only=True)
-                    optimizer.load_state_dict(optimizer_state_dict)
-                    del optimizer_state_dict
-                    flush()
-                except Exception as e:
-                    print_acc(f"Failed to load optimizer state from {optimizer_state_file_path}")
-                    print_acc(e)
-
-            # update the optimizer LR from the params
-            print_acc(f"Updating optimizer LR from params")
-            if len(previous_lrs) > 0:
-                for i, group in enumerate(optimizer.param_groups):
-                    group['lr'] = previous_lrs[i]
-                    group['initial_lr'] = previous_lrs[i]
-
-            # Update the learning rates if they changed
-            # optimizer.param_groups = previous_params
+        if self._optimizer_state_file_path is not None:
+            self._load_optimizer_on_resume = True
+            if self.network is not None and self.network.did_change_weights:
+                # do not load optimizer if the network changed, it will result in
+                # a double state that will oom.
+                self._load_optimizer_on_resume = False
 
         lr_scheduler_params = self.train_config.lr_scheduler_params
 
@@ -2036,15 +2371,46 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.before_dataset_load()
         # load datasets if passed in the root process
         if self.datasets is not None:
-            self.data_loader = get_dataloader_from_datasets(self.datasets, self.train_config.batch_size, self.sd)
+            self.data_loader = get_dataloader_from_datasets(
+                self.datasets, self.train_config.batch_size, self.sd, accelerator=self.accelerator)
         if self.datasets_reg is not None:
-            self.data_loader_reg = get_dataloader_from_datasets(self.datasets_reg, self.train_config.batch_size,
-                                                                self.sd)
+            self.data_loader_reg = get_dataloader_from_datasets(
+                self.datasets_reg, self.train_config.batch_size, self.sd, accelerator=self.accelerator)
 
         flush()
         self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
+
+        # Load optimizer state AFTER FSDP wrapping so state buffers match sharded params.
+        # For FSDP, use set_optimizer_state_dict (inverse of get_optimizer_state_dict used
+        # during save) to correctly scatter the gathered state to sharded DTensors.
+        # For non-FSDP, use plain load_state_dict as before.
+        # Re-bind local after prepare() which may return a new wrapped optimizer
+        optimizer = self.optimizer
+
+        if getattr(self, '_optimizer_state_file_path', None) is not None and getattr(self, '_load_optimizer_on_resume', False):
+            previous_lrs = [group['lr'] for group in optimizer.param_groups]
+            try:
+                print_acc(f"Loading optimizer state from {self._optimizer_state_file_path}")
+                optimizer_state_dict = torch.load(self._optimizer_state_file_path, weights_only=True)
+                if self.use_fsdp and self.sd.network is None:
+                    from torch.distributed.checkpoint.state_dict import set_optimizer_state_dict
+                    set_optimizer_state_dict(self.sd.unet, optimizer, optim_state_dict=optimizer_state_dict)
+                else:
+                    optimizer.load_state_dict(optimizer_state_dict)
+                del optimizer_state_dict
+                flush()
+            except Exception as e:
+                print_acc(f"Failed to load optimizer state from {self._optimizer_state_file_path}")
+                print_acc(e)
+
+            # Restore LR from config (user may have changed it between runs)
+            print_acc(f"Updating optimizer LR from params")
+            for i, group in enumerate(optimizer.param_groups):
+                if i < len(previous_lrs):
+                    group['lr'] = previous_lrs[i]
+                    group['initial_lr'] = previous_lrs[i]
 
         # compile the model if needed (must be after LoRA/adapter injection AND accelerator.prepare)
         if self.model_config.compile:
@@ -2056,6 +2422,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             except Exception as e:
                 print_acc(f"Failed to compile model: {e}")
                 print_acc("Continuing without compilation")
+
+        # Log distributed training info (after hook_before_train_loop which sets up FSDP)
+        if self.accelerator.num_processes > 1 and self.accelerator.is_main_process:
+            grad_accum = max(self.train_config.gradient_accumulation_steps, self.train_config.gradient_accumulation)
+            effective_batch = self.train_config.batch_size * self.accelerator.num_processes * max(1, grad_accum)
+            print_acc(f"")
+            print_acc(f"========================================")
+            print_acc(f"Distributed training enabled")
+            print_acc(f"  Mode: {'FSDP v2 (parameter sharding)' if self.use_fsdp else 'DDP (data parallel)'}")
+            print_acc(f"  GPUs: {self.accelerator.num_processes}")
+            print_acc(f"  Batch size per GPU: {self.train_config.batch_size}")
+            print_acc(f"  Gradient accumulation: {max(1, grad_accum)}")
+            print_acc(f"  Effective batch size: {effective_batch}")
+            print_acc(f"========================================")
+            print_acc(f"")
 
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")
@@ -2160,7 +2541,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 if self.progress_bar is not None:
                                     self.progress_bar.pause()
                                 dataloader_iterator_reg = iter(dataloader_reg)
-                                trigger_dataloader_setup_epoch(dataloader_reg)
+                                trigger_dataloader_setup_epoch(dataloader_reg, self.epoch_num)
 
                             with self.timer('get_batch:reg'):
                                 batch = next(dataloader_iterator_reg)
@@ -2177,8 +2558,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 if self.progress_bar is not None:
                                     self.progress_bar.pause()
                                 dataloader_iterator = iter(dataloader)
-                                trigger_dataloader_setup_epoch(dataloader)
                                 self.epoch_num += 1
+                                trigger_dataloader_setup_epoch(dataloader, self.epoch_num)
                                 if self.train_config.gradient_accumulation_steps == -1:
                                     # if we are accumulating for an entire epoch, trigger a step
                                     self.is_grad_accumulation_step = False
@@ -2223,6 +2604,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     raise  # not an OOM; surface real errors
             if did_oom:
+                # Under FSDP, OOM on one rank causes divergent execution paths —
+                # FSDP's internal reduce-scatter needs all ranks to participate.
+                # Re-raise immediately so all ranks fail together via os.killpg().
+                if self.use_fsdp:
+                    raise RuntimeError("OOM during FSDP training step. Cannot recover "
+                                       "from asymmetric OOM under FSDP — all ranks must fail together.")
                 self.num_consecutive_oom += 1
                 if self.num_consecutive_oom > 3:
                     raise RuntimeError("OOM during training step 3 times in a row, aborting training")
@@ -2288,7 +2675,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.accelerator.wait_for_everyone()
                         
                     if is_save_step:
-                        self.accelerator
                         # print above the progress bar
                         if self.progress_bar is not None:
                             self.progress_bar.pause()
@@ -2395,8 +2781,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
         print_acc("")
+        # save() must be called by all ranks under FSDP so all participate
+        # in the collective gather. The rank-0 guard is inside save() itself.
+        self.save()
         if self.accelerator.is_main_process:
-            self.save()
             self.logger.finish()
         self.accelerator.end_training()
 

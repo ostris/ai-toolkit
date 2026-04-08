@@ -40,7 +40,9 @@ if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import FileItemDTO
     from toolkit.stable_diffusion_model import StableDiffusion
 
-accelerator = get_accelerator()
+def _get_acc():
+    """Lazy accessor to avoid capturing a stale accelerator reference."""
+    return get_accelerator()
 
 # def get_associated_caption_from_img_path(img_path):
 # https://demo.albumentations.ai/
@@ -1852,7 +1854,7 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
-        with accelerator.main_process_first():
+        with _get_acc().main_process_first():
             print_acc(f"Caching latents for {self.dataset_path}")
             # cache all latents to disk
             to_disk = self.is_caching_latents_to_disk
@@ -2020,7 +2022,7 @@ class TextEmbeddingCachingMixin:
         self.is_caching_text_embeddings = self.dataset_config.cache_text_embeddings
 
     def cache_text_embeddings(self: 'AiToolkitDataset'):
-        with accelerator.main_process_first():
+        with _get_acc().main_process_first():
             print_acc(f"Caching text_embeddings for {self.dataset_path}")
             print_acc(" - Saving text embeddings to disk")
             

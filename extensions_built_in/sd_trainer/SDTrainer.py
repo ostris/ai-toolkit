@@ -239,6 +239,12 @@ class SDTrainer(BaseSDTrainProcess):
             self.taesd.requires_grad_(False)
 
     def hook_before_train_loop(self):
+        # Under FSDP, force TE unloading: pre-compute embeddings with TE on GPU,
+        # then unload TE before training. This prevents the TE and sharded
+        # transformer from coexisting on GPU during training steps.
+        if getattr(self, '_will_use_fsdp', False):
+            self.train_config.unload_text_encoder = True
+
         super().hook_before_train_loop()
         if self.is_caching_text_embeddings:
             # make sure model is on cpu for this part so we don't oom.
@@ -325,23 +331,39 @@ class SDTrainer(BaseSDTrainProcess):
                     self.diff_output_preservation_embeds = self.sd.encode_prompt(self.train_config.diff_output_preservation_class)
                 
                 self.cache_sample_prompts()
-                
+
+                # cache per-image text embeddings with TE on GPU
+                # only main process caches (files on shared disk), others wait
+                if self.is_caching_text_embeddings:
+                    from toolkit.data_loader import get_dataloader_datasets
+                    all_datasets = get_dataloader_datasets(self.data_loader)
+                    if self.data_loader_reg is not None:
+                        all_datasets += get_dataloader_datasets(self.data_loader_reg)
+                    if self.accelerator.is_main_process:
+                        for dataset in all_datasets:
+                            if hasattr(dataset, 'cache_text_embeddings'):
+                                dataset.cache_text_embeddings()
+                    # sync so non-main ranks wait for caching to finish
+                    if self.accelerator.num_processes > 1:
+                        self.accelerator.wait_for_everyone()
+                    # mark all file items as cached on non-main ranks
+                    if not self.accelerator.is_main_process:
+                        for dataset in all_datasets:
+                            if hasattr(dataset, 'file_list'):
+                                for file_item in dataset.file_list:
+                                    file_item.is_text_embedding_cached = True
+
                 print_acc("\n***** UNLOADING TEXT ENCODER *****")
                 if self.is_caching_text_embeddings:
-                    print_acc("Embeddings cached to disk. We dont need the text encoder anymore")
+                    print_acc("Text embeddings cached to disk. Unloading text encoder.")
                 else:
-                    print_acc("This will train only with a blank prompt or trigger word, if set")
-                    print_acc("If this is not what you want, remove the unload_text_encoder flag")
+                    print_acc("WARNING: Text embedding caching is not enabled.")
+                    print_acc("Training will use only blank prompt or trigger word.")
                 print_acc("***********************************")
                 print_acc("")
 
                 # unload the text encoder
-                if self.is_caching_text_embeddings:
-                    unload_text_encoder(self.sd)
-                else:
-                    # todo once every model is tested to work, unload properly. Though, this will all be merged into one thing.
-                    # keep legacy usage for now. 
-                    self.sd.text_encoder_to("cpu")
+                unload_text_encoder(self.sd)
                 flush()
         
         if self.train_config.blank_prompt_preservation and self.cached_blank_embeds is None:
@@ -2090,6 +2112,10 @@ class SDTrainer(BaseSDTrainProcess):
 
 
         if not self.is_grad_accumulation_step:
+            # Sync LoRA gradients across ranks before optimizer step.
+            # Must be outside accumulate() context and only on optimizer-step boundaries.
+            self.sync_network_gradients()
+
             # fix this for multi params
             if self.train_config.optimizer != 'adafactor':
                 if isinstance(self.params[0], dict):
