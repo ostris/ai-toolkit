@@ -33,6 +33,15 @@ type AdditionalSections =
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
+type SampleTag = {
+  title: string;
+  type: 'text' | 'multiline' | 'number'
+}
+
+interface SampleTags {
+  [key: string]: SampleTag;
+}
+
 export interface ModelArch {
   name: string;
   label: string;
@@ -44,6 +53,7 @@ export interface ModelArch {
   disableSections?: DisableableSections[];
   additionalSections?: AdditionalSections[];
   accuracyRecoveryAdapters?: { [key: string]: string };
+  sampleTags?: SampleTags;
 }
 
 const defaultNameOrPath = '';
@@ -777,7 +787,36 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
-    hasMultiLinePrompts: true,
+    sampleTags: {
+      "CAPTION": {
+        title: "Audio Prompt",
+        type: "text",
+      },
+      "LYRICS": {
+        title: "Lyrics",
+        type: "multiline",
+      },
+      "BPM": {
+        title: "BPM",
+        type: "number",
+      },
+      "KEYSCALE": {
+        title: "Key Scale",
+        type: "text",
+      },
+      "TIMESIGNATURE": {
+        title: "Time Signature",
+        type: "text",
+      },
+      "DURATION": {
+        title: "Duration (seconds)",
+        type: "number",
+      },
+      "LANGUAGE": {
+        title: "Language",
+        type: "text",
+      },
+    },
     disableSections: ['network.conv'],
     additionalSections: [
       'sample.multi_ctrl_imgs',

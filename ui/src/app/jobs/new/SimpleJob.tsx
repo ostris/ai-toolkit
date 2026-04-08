@@ -10,15 +10,15 @@ import {
 } from './options';
 import { defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
-import { objectCopy } from '@/utils/basic';
-import { 
-  TextInput, 
-  TextAreaInput, 
-  SelectInput, 
-  Checkbox, 
+import { objectCopy, tagsToObj, objToTags } from '@/utils/basic';
+import {
+  TextInput,
+  TextAreaInput,
+  SelectInput,
+  Checkbox,
   FormGroup,
-  NumberInput, 
-  SliderInput
+  NumberInput,
+  SliderInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X, Copy } from 'lucide-react';
@@ -77,6 +77,19 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
   const isAudioModel = !!(modelArch?.group === 'audio');
+
+  const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
+    if (!modelArch) return null;
+    if (!modelArch.sampleTags) return null;
+    if (!jobConfig.config.process[0].sample.samples) return null;
+    let sampleArr: any[] = [];
+    for (let i = 0; i < jobConfig.config.process[0].sample.samples.length; i++) {
+      const taggedPrompt = jobConfig.config.process[0].sample.samples[i].prompt;
+      const tagsObj = tagsToObj(taggedPrompt);
+      sampleArr.push(tagsObj);
+    }
+    return sampleArr;
+  }, [modelArch, jobConfig.config.process[0].sample.samples]);
 
   const numTopCards = useMemo(() => {
     let count = 4; // job settings, model config, target config, save config
@@ -1229,23 +1242,78 @@ export default function SimpleJob({
                   <div className="flex-1">
                     <div className="flex">
                       <div className="flex-1">
-                        {modelArch?.hasMultiLinePrompts ? (
-                          <TextAreaInput
-                            label={`Prompt`}
-                            value={sample.prompt}
-                            onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
-                            placeholder="Enter prompt"
-                            required
-                          />
+                        {modelArch?.sampleTags && taggedSampleArr ? (
+                          <>
+                            {Object.entries(modelArch.sampleTags).map(([tagKey, tag]) => (
+                              <div key={tagKey} className="mb-2">
+                                {tag.type === 'text' && (
+                                  <TextInput
+                                    label={tag.title}
+                                    value={taggedSampleArr[i][tagKey] ?? ''}
+                                    onChange={value => {
+                                      let taggedSample = { ...taggedSampleArr[i] };
+                                      taggedSample[tagKey] = value;
+                                      setJobConfig(
+                                        objToTags(taggedSample),
+                                        `config.process[0].sample.samples[${i}].prompt`,
+                                      );
+                                    }}
+                                    placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                  />
+                                )}
+                                {tag.type === 'multiline' && (
+                                  <TextAreaInput
+                                    label={tag.title}
+                                    value={taggedSampleArr[i][tagKey] ?? ''}
+                                    onChange={value => {
+                                      let taggedSample = { ...taggedSampleArr[i] };
+                                      taggedSample[tagKey] = value;
+                                      setJobConfig(
+                                        objToTags(taggedSample),
+                                        `config.process[0].sample.samples[${i}].prompt`,
+                                      );
+                                    }}
+                                    placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                  />
+                                )}
+                                {tag.type === 'number' && (
+                                  <NumberInput
+                                    label={tag.title}
+                                    value={taggedSampleArr[i][tagKey] ?? ''}
+                                    onChange={value => {
+                                      let taggedSample = { ...taggedSampleArr[i] };
+                                      taggedSample[tagKey] = value;
+                                      setJobConfig(
+                                        objToTags(taggedSample),
+                                        `config.process[0].sample.samples[${i}].prompt`,
+                                      );
+                                    }}
+                                    placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                  />
+                                )}
+                              </div>
+                            ))}
+                          </>
                         ) : (
-                            
-                        <TextInput
-                          label={`Prompt`}
-                          value={sample.prompt}
-                          onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
-                          placeholder="Enter prompt"
-                          required
-                        />
+                          <>
+                            {modelArch?.hasMultiLinePrompts ? (
+                              <TextAreaInput
+                                label={`Prompt`}
+                                value={sample.prompt}
+                                onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                                placeholder="Enter prompt"
+                                required
+                              />
+                            ) : (
+                              <TextInput
+                                label={`Prompt`}
+                                value={sample.prompt}
+                                onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                                placeholder="Enter prompt"
+                                required
+                              />
+                            )}
+                          </>
                         )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
