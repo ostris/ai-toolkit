@@ -760,6 +760,24 @@ export const modelArchs: ModelArch[] = [
       'model.qie.match_target_res',
     ],
   },
+  {
+    name: 'fibo',
+    label: 'Bria-FIBO',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['briaai/FIBO', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'model.low_vram',
+    ],
+  },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });

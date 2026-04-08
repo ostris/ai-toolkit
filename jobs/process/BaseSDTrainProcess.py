@@ -1175,9 +1175,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.timestep_type == 'one_step',
                     ])
                     
-                    timestep_type = 'linear' if linear_timesteps else None
-                    if timestep_type is None:
-                        timestep_type = self.train_config.timestep_type
+                    timestep_type = 'linear' if linear_timesteps else self.train_config.timestep_type
                     
                     if self.train_config.timestep_type == 'next_sample':
                         # simulate a sample
