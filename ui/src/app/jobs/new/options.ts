@@ -31,7 +31,7 @@ type AdditionalSections =
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path';
 
-type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental';
+type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
 export interface ModelArch {
   name: string;
@@ -39,6 +39,7 @@ export interface ModelArch {
   group: ModelGroup;
   controls?: Control[];
   isVideoModel?: boolean;
+  hasMultiLinePrompts?: boolean;
   defaults?: { [key: string]: any };
   disableSections?: DisableableSections[];
   additionalSections?: AdditionalSections[];
@@ -758,6 +759,30 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+    ],
+  },
+  {
+    name: 'ace_step_15_xl',
+    label: 'ACE-Step 1.5 XL',
+    group: 'audio',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_xl_base_aio.safetensors', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    hasMultiLinePrompts: true,
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
     ],
   },
 ].sort((a, b) => {

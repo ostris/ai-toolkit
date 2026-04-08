@@ -67,6 +67,49 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
 // 👇 Helpful for debugging
 TextInput.displayName = 'TextInput';
 
+export interface TextAreaInputProps extends InputProps {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  rows?: number;
+}
+
+export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextAreaInputProps>((props: TextAreaInputProps, ref) => {
+  const { label, value, onChange, placeholder, required, disabled, rows = 4, className, docKey = null } = props;
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
+  return (
+    <div className={classNames(className)}>
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={e => {
+          if (!disabled) onChange(e.target.value);
+        }}
+        className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
+        placeholder={placeholder}
+        required={required}
+        disabled={disabled}
+        rows={rows}
+      />
+    </div>
+  );
+});
+
+TextAreaInput.displayName = 'TextAreaInput';
+
 export interface NumberInputProps extends InputProps {
   value: number | null;
   onChange: (value: number | null) => void;

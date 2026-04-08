@@ -11,7 +11,15 @@ import {
 import { defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy } from '@/utils/basic';
-import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
+import { 
+  TextInput, 
+  TextAreaInput, 
+  SelectInput, 
+  Checkbox, 
+  FormGroup,
+  NumberInput, 
+  SliderInput
+} from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X, Copy } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
@@ -68,6 +76,7 @@ export default function SimpleJob({
   }, [modelArch, jobType]);
 
   const isVideoModel = !!(modelArch?.group === 'video');
+  const isAudioModel = !!(modelArch?.group === 'audio');
 
   const numTopCards = useMemo(() => {
     let count = 4; // job settings, model config, target config, save config
@@ -149,6 +158,26 @@ export default function SimpleJob({
 
   const showGPUSelect = !isMac();
 
+  let numDatasetCols = 4;
+  let numSampleTopCols = 4;
+  let datasetStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
+  let sampleTopStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
+  if (isVideoModel) {
+    numSampleTopCols += 1;
+  }
+  if (isAudioModel) {
+    numDatasetCols -= 1;
+    numSampleTopCols -= 1;
+  }
+  if (numDatasetCols == 3) {
+    datasetStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
+  }
+  if (numSampleTopCols == 5) {
+    sampleTopStyleClass = 'grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6';
+  }
+  if (numSampleTopCols == 3) {
+    sampleTopStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
+  }
   return (
     <>
       <form
@@ -790,7 +819,7 @@ export default function SimpleJob({
                     </button>
                   </div>
                   <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <div className={datasetStyleClass}>
                     <div>
                       <SelectInput
                         label="Target Dataset"
@@ -971,53 +1000,57 @@ export default function SimpleJob({
                           />
                         )}
                       </FormGroup>
-                      <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
-                        <Checkbox
-                          label={
-                            <>
-                              Flip X <FlipHorizontal2 className="inline-block w-4 h-4 ml-1" />
-                            </>
-                          }
-                          checked={dataset.flip_x || false}
-                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_x`)}
-                        />
-                        <Checkbox
-                          label={
-                            <>
-                              Flip Y <FlipVertical2 className="inline-block w-4 h-4 ml-1" />
-                            </>
-                          }
-                          checked={dataset.flip_y || false}
-                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_y`)}
-                        />
-                      </FormGroup>
+                      {!isAudioModel && (
+                        <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
+                          <Checkbox
+                            label={
+                              <>
+                                Flip X <FlipHorizontal2 className="inline-block w-4 h-4 ml-1" />
+                              </>
+                            }
+                            checked={dataset.flip_x || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_x`)}
+                          />
+                          <Checkbox
+                            label={
+                              <>
+                                Flip Y <FlipVertical2 className="inline-block w-4 h-4 ml-1" />
+                              </>
+                            }
+                            checked={dataset.flip_y || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_y`)}
+                          />
+                        </FormGroup>
+                      )}
                     </div>
-                    <div>
-                      <FormGroup label="Resolutions" className="pt-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          {[
-                            [256, 512, 768, 1024],
-                            [1280, 1328, 1536],
-                          ].map(resGroup => (
-                            <div key={resGroup[0]} className="space-y-2">
-                              {resGroup.map(res => (
-                                <Checkbox
-                                  key={res}
-                                  label={res.toString()}
-                                  checked={dataset.resolution.includes(res)}
-                                  onChange={value => {
-                                    const resolutions = dataset.resolution.includes(res)
-                                      ? dataset.resolution.filter(r => r !== res)
-                                      : [...dataset.resolution, res];
-                                    setJobConfig(resolutions, `config.process[0].datasets[${i}].resolution`);
-                                  }}
-                                />
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      </FormGroup>
-                    </div>
+                    {!isAudioModel && (
+                      <div>
+                        <FormGroup label="Resolutions" className="pt-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              [256, 512, 768, 1024],
+                              [1280, 1328, 1536],
+                            ].map(resGroup => (
+                              <div key={resGroup[0]} className="space-y-2">
+                                {resGroup.map(res => (
+                                  <Checkbox
+                                    key={res}
+                                    label={res.toString()}
+                                    checked={dataset.resolution.includes(res)}
+                                    onChange={value => {
+                                      const resolutions = dataset.resolution.includes(res)
+                                        ? dataset.resolution.filter(r => r !== res)
+                                        : [...dataset.resolution, res];
+                                      setJobConfig(resolutions, `config.process[0].datasets[${i}].resolution`);
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </FormGroup>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1039,13 +1072,7 @@ export default function SimpleJob({
         </div>
         <div>
           <Card title="Sample">
-            <div
-              className={
-                isVideoModel
-                  ? 'grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6'
-                  : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
-              }
-            >
+            <div className={sampleTopStyleClass}>
               <div>
                 <NumberInput
                   label="Sample Every"
@@ -1084,47 +1111,50 @@ export default function SimpleJob({
                   required
                 />
               </div>
-              <div>
-                <NumberInput
-                  label="Width"
-                  value={jobConfig.config.process[0].sample.width}
-                  onChange={value => setJobConfig(value, 'config.process[0].sample.width')}
-                  placeholder="eg. 1024"
-                  min={0}
-                  required
-                />
-                <NumberInput
-                  label="Height"
-                  value={jobConfig.config.process[0].sample.height}
-                  onChange={value => setJobConfig(value, 'config.process[0].sample.height')}
-                  placeholder="eg. 1024"
-                  className="pt-2"
-                  min={0}
-                  required
-                />
-                {isVideoModel && (
-                  <div>
-                    <NumberInput
-                      label="Num Frames"
-                      value={jobConfig.config.process[0].sample.num_frames}
-                      onChange={value => setJobConfig(value, 'config.process[0].sample.num_frames')}
-                      placeholder="eg. 0"
-                      className="pt-2"
-                      min={0}
-                      required
-                    />
-                    <NumberInput
-                      label="FPS"
-                      value={jobConfig.config.process[0].sample.fps}
-                      onChange={value => setJobConfig(value, 'config.process[0].sample.fps')}
-                      placeholder="eg. 0"
-                      className="pt-2"
-                      min={0}
-                      required
-                    />
-                  </div>
-                )}
-              </div>
+
+              {!isAudioModel && (
+                <div>
+                  <NumberInput
+                    label="Width"
+                    value={jobConfig.config.process[0].sample.width}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.width')}
+                    placeholder="eg. 1024"
+                    min={0}
+                    required
+                  />
+                  <NumberInput
+                    label="Height"
+                    value={jobConfig.config.process[0].sample.height}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.height')}
+                    placeholder="eg. 1024"
+                    className="pt-2"
+                    min={0}
+                    required
+                  />
+                  {isVideoModel && (
+                    <div>
+                      <NumberInput
+                        label="Num Frames"
+                        value={jobConfig.config.process[0].sample.num_frames}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.num_frames')}
+                        placeholder="eg. 0"
+                        className="pt-2"
+                        min={0}
+                        required
+                      />
+                      <NumberInput
+                        label="FPS"
+                        value={jobConfig.config.process[0].sample.fps}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.fps')}
+                        placeholder="eg. 0"
+                        className="pt-2"
+                        min={0}
+                        required
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <NumberInput
@@ -1199,6 +1229,16 @@ export default function SimpleJob({
                   <div className="flex-1">
                     <div className="flex">
                       <div className="flex-1">
+                        {modelArch?.hasMultiLinePrompts ? (
+                          <TextAreaInput
+                            label={`Prompt`}
+                            value={sample.prompt}
+                            onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                            placeholder="Enter prompt"
+                            required
+                          />
+                        ) : (
+                            
                         <TextInput
                           label={`Prompt`}
                           value={sample.prompt}
@@ -1206,6 +1246,8 @@ export default function SimpleJob({
                           placeholder="Enter prompt"
                           required
                         />
+                        )}
+
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
                           <TextInput
                             label={`Width`}
