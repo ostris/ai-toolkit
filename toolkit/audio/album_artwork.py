@@ -105,7 +105,6 @@ def add_album_artwork(song_path: str) -> None:
         )
     )
     tags.save(song_path, v2_version=3)
-    print(f"Album artwork added to {song_path}")
 
 
 if __name__ == "__main__":
