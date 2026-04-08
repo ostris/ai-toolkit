@@ -1346,60 +1346,64 @@ export default function SimpleJob({
                         )}
 
                         <div className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
-                          <TextInput
-                            label={`Width`}
-                            value={sample.width ? `${sample.width}` : ''}
-                            onChange={value => {
-                              // remove any non-numeric characters
-                              value = value.replace(/\D/g, '');
-                              if (value === '') {
-                                // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
-                                if (newConfig.config.process[0].sample.samples[i]) {
-                                  delete newConfig.config.process[0].sample.samples[i].width;
-                                  setJobConfig(
-                                    newConfig.config.process[0].sample.samples,
-                                    'config.process[0].sample.samples',
-                                  );
-                                }
-                              } else {
-                                const intValue = parseInt(value);
-                                if (!isNaN(intValue)) {
-                                  setJobConfig(intValue, `config.process[0].sample.samples[${i}].width`);
+                          {!isAudioModel && (
+                            <TextInput
+                              label={`Width`}
+                              value={sample.width ? `${sample.width}` : ''}
+                              onChange={value => {
+                                // remove any non-numeric characters
+                                value = value.replace(/\D/g, '');
+                                if (value === '') {
+                                  // remove the key from the config if empty
+                                  let newConfig = objectCopy(jobConfig);
+                                  if (newConfig.config.process[0].sample.samples[i]) {
+                                    delete newConfig.config.process[0].sample.samples[i].width;
+                                    setJobConfig(
+                                      newConfig.config.process[0].sample.samples,
+                                      'config.process[0].sample.samples',
+                                    );
+                                  }
                                 } else {
-                                  console.warn('Invalid width value:', value);
+                                  const intValue = parseInt(value);
+                                  if (!isNaN(intValue)) {
+                                    setJobConfig(intValue, `config.process[0].sample.samples[${i}].width`);
+                                  } else {
+                                    console.warn('Invalid width value:', value);
+                                  }
                                 }
-                              }
-                            }}
-                            placeholder={`${jobConfig.config.process[0].sample.width} (default)`}
-                          />
-                          <TextInput
-                            label={`Height`}
-                            value={sample.height ? `${sample.height}` : ''}
-                            onChange={value => {
-                              // remove any non-numeric characters
-                              value = value.replace(/\D/g, '');
-                              if (value === '') {
-                                // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
-                                if (newConfig.config.process[0].sample.samples[i]) {
-                                  delete newConfig.config.process[0].sample.samples[i].height;
-                                  setJobConfig(
-                                    newConfig.config.process[0].sample.samples,
-                                    'config.process[0].sample.samples',
-                                  );
-                                }
-                              } else {
-                                const intValue = parseInt(value);
-                                if (!isNaN(intValue)) {
-                                  setJobConfig(intValue, `config.process[0].sample.samples[${i}].height`);
+                              }}
+                              placeholder={`${jobConfig.config.process[0].sample.width} (default)`}
+                            />
+                          )}
+                          {!isAudioModel && (
+                            <TextInput
+                              label={`Height`}
+                              value={sample.height ? `${sample.height}` : ''}
+                              onChange={value => {
+                                // remove any non-numeric characters
+                                value = value.replace(/\D/g, '');
+                                if (value === '') {
+                                  // remove the key from the config if empty
+                                  let newConfig = objectCopy(jobConfig);
+                                  if (newConfig.config.process[0].sample.samples[i]) {
+                                    delete newConfig.config.process[0].sample.samples[i].height;
+                                    setJobConfig(
+                                      newConfig.config.process[0].sample.samples,
+                                      'config.process[0].sample.samples',
+                                    );
+                                  }
                                 } else {
-                                  console.warn('Invalid height value:', value);
+                                  const intValue = parseInt(value);
+                                  if (!isNaN(intValue)) {
+                                    setJobConfig(intValue, `config.process[0].sample.samples[${i}].height`);
+                                  } else {
+                                    console.warn('Invalid height value:', value);
+                                  }
                                 }
-                              }
-                            }}
-                            placeholder={`${jobConfig.config.process[0].sample.height} (default)`}
-                          />
+                              }}
+                              placeholder={`${jobConfig.config.process[0].sample.height} (default)`}
+                            />
+                          )}
                           <TextInput
                             label={`Seed`}
                             value={sample.seed ? `${sample.seed}` : ''}

@@ -1,5 +1,6 @@
 import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
 import { defaultSliderConfig } from './jobConfig';
+import { defaultAudioSampleConfig, defaultSampleConfig } from '@/helpers/defaultSamples';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
@@ -783,10 +784,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
       'config.process[0].train.unload_text_encoder': [false, false],
-      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
     },
     sampleTags: {
       "CAPTION": {
