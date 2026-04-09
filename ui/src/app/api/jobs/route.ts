@@ -38,6 +38,15 @@ export async function POST(request: Request) {
       gpu_ids = "mps";
     }
 
+    const extra: any = {};
+    if ("job_ref" in body) {
+      extra["job_ref"] = body.job_ref;
+    }
+
+    if ("job_type" in body) {
+      extra["job_type"] = body.job_type;
+    }
+
     if (id) {
       // Update existing training
       const training = await prisma.job.update({
@@ -46,6 +55,7 @@ export async function POST(request: Request) {
           name,
           gpu_ids,
           job_config: JSON.stringify(job_config),
+          ...extra,
         },
       });
       return NextResponse.json(training);
@@ -65,6 +75,7 @@ export async function POST(request: Request) {
           gpu_ids,
           job_config: JSON.stringify(job_config),
           queue_position: newQueuePosition,
+          ...extra,
         },
       });
       return NextResponse.json(training);

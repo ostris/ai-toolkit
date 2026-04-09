@@ -19,7 +19,7 @@ export default function Dashboard() {
         </div>
       </TopBar>
       <MainContent>
-        <JobsTable job_type={'train'} />
+        <JobsTable />
       </MainContent>
     </>
   );

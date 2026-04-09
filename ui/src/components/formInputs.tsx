@@ -243,6 +243,115 @@ export const SelectInput = (props: SelectInputProps) => {
   );
 };
 
+export interface CreatableSelectInputProps extends InputProps {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  options: GroupedSelectOption[] | SelectOption[];
+}
+
+const CUSTOM_SELECT_VALUE = '__custom__';
+
+export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
+  const { label, value, onChange, options, docKey = null } = props;
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
+
+  // Check if current value matches any predefined option
+  let isInOptions = false;
+  if (options && options.length > 0) {
+    if ('options' in options[0]) {
+      isInOptions = (options as GroupedSelectOption[]).flatMap(g => g.options).some(opt => opt.value === value);
+    } else {
+      isInOptions = (options as SelectOption[]).some(opt => opt.value === value);
+    }
+  }
+
+  const [isCustom, setIsCustom] = React.useState(!isInOptions && !!value);
+
+  // Build select options with "Custom" at the top
+  const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: 'Custom' };
+  const selectOptions = React.useMemo(() => {
+    if (options && options.length > 0 && 'options' in options[0]) {
+      return [{ label: '', options: [customOption] }, ...(options as GroupedSelectOption[])];
+    }
+    return [customOption, ...(options as SelectOption[])];
+  }, [options]);
+
+  const selectedOption = isCustom
+    ? customOption
+    : (() => {
+        if (!options || options.length === 0) return undefined;
+        if ('options' in options[0]) {
+          return (options as GroupedSelectOption[]).flatMap(g => g.options).find(opt => opt.value === value);
+        }
+        return (options as SelectOption[]).find(opt => opt.value === value);
+      })();
+
+  return (
+    <div
+      className={classNames(props.className, {
+        'opacity-30 cursor-not-allowed': props.disabled,
+      })}
+    >
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
+      <div className="flex gap-2">
+        <div className={isCustom ? 'w-1/3' : 'w-full'}>
+          <Select
+            value={selectedOption}
+            options={selectOptions}
+            isDisabled={props.disabled}
+            className="aitk-react-select-container"
+            classNamePrefix="aitk-react-select"
+            formatOptionLabel={(option: unknown) => {
+              const opt = option as SelectOption;
+              return opt.value === CUSTOM_SELECT_VALUE ? (
+                <span className="opacity-50 italic">~ Custom ~</span>
+              ) : (
+                opt.label
+              );
+            }}
+            onChange={selected => {
+              if (selected) {
+                const val = (selected as { value: string }).value;
+                if (val === CUSTOM_SELECT_VALUE) {
+                  setIsCustom(true);
+                  onChange('');
+                } else {
+                  setIsCustom(false);
+                  onChange(val);
+                }
+              }
+            }}
+          />
+        </div>
+        {isCustom && (
+          <input
+            type="text"
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            className={`${inputClasses} w-2/3`}
+            placeholder={props.placeholder ?? 'Enter custom value'}
+            disabled={props.disabled}
+            autoFocus
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
 export interface CheckboxProps {
   label?: string | React.ReactNode;
   checked: boolean;

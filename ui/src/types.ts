@@ -266,6 +266,7 @@ export interface CaptionProcessConfig {
     extensions: string[];
     path_to_caption: string;
     recaption: boolean;
+    caption_prompt?: string;
   }
 }
 

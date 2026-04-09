@@ -45,7 +45,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       key: 'steps',
       render: row => {
         const jobConfig: JobConfig = JSON.parse(row.job_config);
-        const totalSteps = jobConfig.config.process[0].train.steps;
+        const totalSteps = jobConfig.config.process[0].train?.steps;
 
         return (
           <div>

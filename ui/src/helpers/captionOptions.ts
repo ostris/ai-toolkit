@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music';
-type AdditionalSections = 'caption.model_name_or_path2';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt';
 
 export interface CaptionOption {
     name: string;
@@ -10,6 +10,8 @@ export interface CaptionOption {
     hasMultiLinePrompts?: boolean;
     defaults?: { [key: string]: any };
     additionalSections?: AdditionalSections[];
+    name_or_path_options?: SelectOption[];
+    name_or_path2_options?: SelectOption[];
 }
 
 const defaultNameOrPath = '';
@@ -18,6 +20,8 @@ const extensionsAudio = ['mp3', 'wav'];
 const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
 
 const defaultExtensions = [...extensionsImage];
+
+const defaultImageCaptionPrompt = "You are a helpful assistant that generates detailed captions for images. Describe the content of the image in detail, including objects, their attributes, relationships, and the overall scene. Be specific and thorough in your description.";
 
 export const captionerTypes: CaptionOption[] = [
     {
@@ -29,7 +33,15 @@ export const captionerTypes: CaptionOption[] = [
             'config.process[0].caption.model_name_or_path2': ['ACE-Step/acestep-captioner', undefined],
             'config.process[0].caption.extensions': [extensionsAudio, defaultExtensions],
         },
-        additionalSections: [],
+        name_or_path_options: [
+            { value: 'ACE-Step/acestep-transcriber', label: 'ACE-Step/acestep-transcriber' },
+        ],
+        name_or_path2_options: [
+            { value: 'ACE-Step/acestep-captioner', label: 'ACE-Step/acestep-captioner' },
+        ],
+        additionalSections: [
+            'caption.model_name_or_path2',
+        ],
     },
     {
         name: 'Qwen3VLCaptioner',
@@ -38,8 +50,17 @@ export const captionerTypes: CaptionOption[] = [
         defaults: {
             'config.process[0].caption.model_name_or_path': ['Qwen/Qwen3-VL-8B-Instruct', defaultNameOrPath],
             'config.process[0].caption.extensions': [extensionsImage, defaultExtensions],
+            'config.process[0].caption.caption_prompt': [defaultImageCaptionPrompt, undefined],
         },
-        additionalSections: [],
+        name_or_path_options: [
+            { value: 'Qwen/Qwen3-VL-2B-Instruct', label: 'Qwen/Qwen3-VL-2B-Instruct' },
+            { value: 'Qwen/Qwen3-VL-4B-Instruct', label: 'Qwen/Qwen3-VL-4B-Instruct' },
+            { value: 'Qwen/Qwen3-VL-8B-Instruct', label: 'Qwen/Qwen3-VL-8B-Instruct' },
+            { value: 'Qwen/Qwen3-VL-30B-A3B-Instruct', label: 'Qwen/Qwen3-VL-30B-A3B-Instruct' },
+        ],
+        additionalSections: [
+            'caption.caption_prompt',
+        ],
     },
 
 ].sort((a, b) => {
@@ -62,7 +83,7 @@ export const groupedCaptionerTypes: GroupedSelectOption[] = captionerTypes.reduc
 
 export const quantizationOptions: SelectOption[] = [
     { value: '', label: '- NONE -' },
-    { value: 'qfloat8', label: 'float8 (default)' },
+    { value: 'float8', label: 'float8 (default)' },
     { value: 'uint7', label: '7 bit' },
     { value: 'uint6', label: '6 bit' },
     { value: 'uint5', label: '5 bit' },
@@ -71,4 +92,4 @@ export const quantizationOptions: SelectOption[] = [
     { value: 'uint2', label: '2 bit' },
 ];
 
-export const defaultQtype = 'qfloat8';
+export const defaultQtype = 'float8';
