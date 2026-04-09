@@ -95,7 +95,7 @@ export const CaptionDatasetModal: React.FC = () => {
       })
       .catch(error => {
         if (error.response?.status === 409) {
-          alert('Training name already exists. Please choose a different name.');
+          alert('A caption job for this dataset already exists. Please check your jobs list.');
         } else {
           alert('Failed to save job. Please try again.');
         }

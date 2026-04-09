@@ -82,6 +82,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
     }
   };
 
+  const jobType = job?.job_type || 'unknown';
+
   let status = job.status;
   if (isStopping) {
     status = 'stopping';
@@ -164,9 +166,11 @@ export default function JobOverview({ job }: JobOverviewProps) {
       <div className="col-span-1">
         <div>{isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}</div>
         <div className="mt-4">{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
-        <div className="mt-4">
-          <FilesWidget jobID={job.id} />
-        </div>
+        {jobType === 'train' && (
+          <div className="mt-4">
+            <FilesWidget jobID={job.id} />
+          </div>
+        )}
       </div>
     </div>
   );

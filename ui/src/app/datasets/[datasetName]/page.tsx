@@ -10,6 +10,7 @@ import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import useSettings from '@/hooks/useSettings';
+import { pathJoin } from '@/utils/basic';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -110,7 +111,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         <div>
           <Button
             className="text-white bg-blue-600 px-3 py-1 rounded-md mr-2"
-            onClick={() => openCaptionDatasetModal(`${settings.DATASETS_FOLDER}/${datasetName}`, () => {})}
+            onClick={() => openCaptionDatasetModal(`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`, () => {})}
           >
             Auto Caption
           </Button>

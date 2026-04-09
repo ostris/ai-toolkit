@@ -35,3 +35,19 @@ export const objToTags = (obj: Record<string, any>): string => {
     })
     .join('\n');
 };
+
+export const pathJoin = (...parts: string[]) => {
+  const sep = parts.length > 0 && parts[0].includes('\\') ? '\\' : '/';
+  const leadingTrailing = sep === '\\' ? /^\\+|\\+$/g : /^\/+|\/+$/g;
+  const trailing = sep === '\\' ? /\\+$/ : /\/+$/;
+  return parts
+    .map((part, index) => {
+      if (index === 0) {
+        return part.replace(trailing, '');
+      } else {
+        return part.replace(leadingTrailing, '');
+      }
+    })
+    .filter(part => part.length > 0)
+    .join(sep);
+}

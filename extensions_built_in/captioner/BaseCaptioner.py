@@ -54,8 +54,7 @@ class BaseCaptioner(BaseExtensionProcess):
             self.is_ui_captioner = False
         else:
             print(f'Job ID: "{self.job_id}"')
-        
-        
+
         self.is_stopping = False
 
         if self.is_ui_captioner:
@@ -88,6 +87,11 @@ class BaseCaptioner(BaseExtensionProcess):
         self.update_status("running", f"Captioning {len(self.file_paths)} files")
         self.run_caption_loop()
         self.update_status("completed", "Captioning completed")
+        print("")
+
+        print("****************************************************")
+        print("Captioning complete")
+        print("****************************************************")
 
     def run_caption_loop(self):
         for file_path in tqdm.tqdm(
