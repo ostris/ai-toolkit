@@ -95,9 +95,9 @@ def analyze_audio(audio_path):
     }
 
 
-class MusicCaptioner(BaseCaptioner):
+class AceStepCaptioner(BaseCaptioner):
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
-        super(MusicCaptioner, self).__init__(process_id, job, config, **kwargs)
+        super(AceStepCaptioner, self).__init__(process_id, job, config, **kwargs)
 
     def load_model(self):
         self.print_and_status_update("Loading transcriber model")

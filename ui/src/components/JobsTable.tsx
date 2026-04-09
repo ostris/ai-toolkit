@@ -14,10 +14,11 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 interface JobsTableProps {
   autoStartQueue?: boolean;
   onlyActive?: boolean;
+  job_type?: string | null;
 }
 
-export default function JobsTable({ onlyActive = false }: JobsTableProps) {
-  const { jobs, status, refreshJobs } = useJobsList(onlyActive, 5000);
+export default function JobsTable({ onlyActive = false, job_type = null }: JobsTableProps) {
+  const { jobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
 

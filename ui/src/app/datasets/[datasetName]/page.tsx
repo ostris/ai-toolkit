@@ -8,12 +8,15 @@ import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
+import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import useSettings from '@/hooks/useSettings';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
   const usableParams = use(params as any) as { datasetName: string };
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const { settings, isSettingsLoaded } = useSettings();
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
@@ -106,6 +109,12 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         <div className="flex-1"></div>
         <div>
           <Button
+            className="text-white bg-blue-600 px-3 py-1 rounded-md mr-2"
+            onClick={() => openCaptionDatasetModal(`${settings.DATASETS_FOLDER}/${datasetName}`, () => {})}
+          >
+            Auto Caption
+          </Button>
+          <Button
             className="text-white bg-slate-600 px-3 py-1 rounded-md"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
           >
@@ -129,6 +138,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         )}
       </MainContent>
       <AddImagesModal />
+      <CaptionDatasetModal />
     </>
   );
 }

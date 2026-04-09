@@ -36,7 +36,9 @@ model Job {
   speed_string    String   @default("")
   queue_position  Int      @default(0)
   pid             Int?
+  job_type        String   @default("train") // 'train', 'caption'
 
   @@index([status])
   @@index([gpu_ids])
+  @@index([job_type])
 }
