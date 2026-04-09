@@ -31,20 +31,36 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     {
       title: 'Name',
       key: 'name',
-      render: row => (
-        <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
-          {['running', 'stopping'].includes(row.status) ? (
-            <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
-          ) : null}
-          {row.name}
-        </Link>
-      ),
+      render: row => {
+        let title = row.name;
+        // if (row.job_type === 'train') title = `Train: ${title}`;
+        if (row.job_type === 'caption') {
+          let splits = row.job_ref.split(/[/\\]/);
+          const datasetPath = `${splits[splits.length - 1]}`;
+          title = (
+            <>
+              <small className="opacity-50">CAPTION: </small> {datasetPath}
+            </>
+          );
+        }
+        return (
+          <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+            {['running', 'stopping'].includes(row.status) ? (
+              <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
+            ) : null}
+            {title}
+          </Link>
+        );
+      },
     },
     {
       title: 'Steps',
       key: 'steps',
       render: row => {
         const jobConfig: JobConfig = JSON.parse(row.job_config);
+        if (row.job_type !== 'train') {
+          return <></>;
+        }
         const totalSteps = jobConfig.config.process[0].train?.steps;
 
         return (
