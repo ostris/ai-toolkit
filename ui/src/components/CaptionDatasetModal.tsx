@@ -14,7 +14,14 @@ import { CaptionJobConfig } from '@/types';
 import { defaultCaptionJobConfig, handleCaptionerTypeChange } from '@/helpers/captionJobConfig';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
-import { captionerTypes, defaultQtype, groupedCaptionerTypes, quantizationOptions } from '@/helpers/captionOptions';
+import {
+  captionerTypes,
+  defaultQtype,
+  groupedCaptionerTypes,
+  maxNewTokensOptions,
+  maxResOptions,
+  quantizationOptions,
+} from '@/helpers/captionOptions';
 import { isMac } from '@/helpers/basic';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { apiClient } from '@/utils/api';
@@ -184,6 +191,36 @@ export const CaptionDatasetModal: React.FC = () => {
                   }}
                   options={quantizationOptions}
                 />
+                {selectedCaptionOption?.additionalSections?.includes('caption.max_res') && (
+                  <div className="mt-4">
+                    <SelectInput
+                      label="Max Resolution"
+                      value={`${jobConfig.config.process[0].caption.max_res || ''}`}
+                      onChange={value => {
+                        const intVal = parseInt(value);
+                        if (!isNaN(intVal)) {
+                          setJobConfig(intVal, 'config.process[0].caption.max_res');
+                        }
+                      }}
+                      options={maxResOptions}
+                    />
+                  </div>
+                )}
+                {selectedCaptionOption?.additionalSections?.includes('caption.max_new_tokens') && (
+                  <div className="mt-4">
+                    <SelectInput
+                      label="Max New Tokens"
+                      value={`${jobConfig.config.process[0].caption.max_new_tokens || ''}`}
+                      onChange={value => {
+                        const intVal = parseInt(value);
+                        if (!isNaN(intVal)) {
+                          setJobConfig(intVal, 'config.process[0].caption.max_new_tokens');
+                        }
+                      }}
+                      options={maxNewTokensOptions}
+                    />
+                  </div>
+                )}
               </div>
               <div>
                 <FormGroup label="Options">

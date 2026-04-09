@@ -8,6 +8,7 @@ import threading
 import time
 import signal
 import concurrent.futures
+from PIL import Image
 
 import torch
 from jobs.process import BaseExtensionProcess
@@ -37,6 +38,11 @@ class CaptionConfig:
         self.low_vram = kwargs.get("low_vram", False)
         self.caption_extension = kwargs.get("caption_extension", "txt")
         self.recaption = kwargs.get("recaption", False)
+        self.max_res = kwargs.get("max_res", 512)
+        self.max_new_tokens = kwargs.get("max_new_tokens", 128)
+        self.caption_prompt = kwargs.get(
+            "caption_prompt", "Describe this image in detail."
+        )
 
 
 class BaseCaptioner(BaseExtensionProcess):
@@ -109,10 +115,22 @@ class BaseCaptioner(BaseExtensionProcess):
                 print(f"Error captioning file {file_path}: {e}")
                 continue
 
+    def load_pil_image(self, file_path: str, max_res: Optional[int] = None) -> Image:
+        image = Image.open(file_path).convert("RGB")
+        if max_res is not None:
+            max_pixels = max_res * max_res
+            image_pixels = image.width * image.height
+            if image_pixels > max_pixels:
+                scale_factor = (max_pixels / image_pixels) ** 0.5
+                new_width = int(image.width * scale_factor)
+                new_height = int(image.height * scale_factor)
+                image = image.resize((new_width, new_height), resample=Image.BICUBIC)
+        return image
+
     def save_caption_for_file(self, file_path: str, caption: str):
         filename_no_ext = os.path.splitext(file_path)[0]
         caption_file_path = f"{filename_no_ext}.{self.caption_config.caption_extension}"
-        # depete it if it already exists
+        # delete it if it already exists
         if os.path.exists(caption_file_path):
             os.remove(caption_file_path)
         with open(caption_file_path, "w") as f:

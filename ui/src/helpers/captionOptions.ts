@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens';
 
 export interface CaptionOption {
     name: string;
@@ -51,6 +51,9 @@ export const captionerTypes: CaptionOption[] = [
             'config.process[0].caption.model_name_or_path': ['Qwen/Qwen3-VL-8B-Instruct', defaultNameOrPath],
             'config.process[0].caption.extensions': [extensionsImage, defaultExtensions],
             'config.process[0].caption.caption_prompt': [defaultImageCaptionPrompt, undefined],
+            'config.process[0].caption.max_res': [512, undefined],
+            'config.process[0].caption.max_new_tokens': [128, undefined],
+
         },
         name_or_path_options: [
             { value: 'Qwen/Qwen3-VL-2B-Instruct', label: 'Qwen/Qwen3-VL-2B-Instruct' },
@@ -60,6 +63,8 @@ export const captionerTypes: CaptionOption[] = [
         ],
         additionalSections: [
             'caption.caption_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
         ],
     },
 
@@ -90,6 +95,20 @@ export const quantizationOptions: SelectOption[] = [
     { value: 'uint4', label: '4 bit' },
     { value: 'uint3', label: '3 bit' },
     { value: 'uint2', label: '2 bit' },
+];
+
+export const maxResOptions: SelectOption[] = [
+    { value: '256', label: '256' },
+    { value: '512', label: '512 (default)' },
+    { value: '768', label: '768' },
+    { value: '1024', label: '1024' },
+];
+export const maxNewTokensOptions: SelectOption[] = [
+    { value: '64', label: '64' },
+    { value: '128', label: '128 (default)' },
+    { value: '256', label: '256' },
+    { value: '512', label: '512' },
+    { value: '1024', label: '1024' },
 ];
 
 export const defaultQtype = 'float8';
