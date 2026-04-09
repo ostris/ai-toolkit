@@ -73,6 +73,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   let title = `Job: ${job?.name || 'Loading...'}`;
   if (jobType === 'caption') {
     title = `Captioning: ${job?.job_ref || 'Loading...'}`;
+  }
 
   return (
     <>

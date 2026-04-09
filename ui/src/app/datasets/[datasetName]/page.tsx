@@ -15,6 +15,7 @@ import AutoCaptionButton from '@/components/AutoCaptionButton';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
+  const [isAutoCaptioning, setIsAutoCaptioning] = useState(false);
   const usableParams = use(params as any) as { datasetName: string };
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -110,7 +111,10 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
         <div className="flex-1"></div>
         <div>
-          <AutoCaptionButton datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`} />
+          <AutoCaptionButton
+            datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
+            setIsAutoCaptioning={setIsAutoCaptioning}
+          />
           <Button
             className="text-white bg-slate-600 px-3 py-1 rounded-md"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
@@ -127,6 +131,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
               <DatasetImageCard
                 key={img.img_path}
                 alt="image"
+                isAutoCaptioning={isAutoCaptioning}
                 imageUrl={img.img_path}
                 onDelete={() => refreshImageList(datasetName)}
               />

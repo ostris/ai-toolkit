@@ -9,6 +9,7 @@ import { isVideo, isAudio } from '@/utils/basic';
 interface DatasetImageCardProps {
   imageUrl: string;
   alt: string;
+  isAutoCaptioning: boolean;
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
@@ -17,6 +18,7 @@ interface DatasetImageCardProps {
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   imageUrl,
   alt,
+  isAutoCaptioning,
   children,
   className = '',
   onDelete = () => {},
@@ -79,6 +81,16 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       fetchCaption();
     }
   }, [inViewport, isVisible]);
+
+  // Poll for caption updates every 5 seconds while auto-captioning
+  useEffect(() => {
+    if (!isAutoCaptioning || !inViewport || !isVisible) return;
+    const interval = setInterval(() => {
+      // Reset so fetchCaption will re-fetch
+      setIsCaptionLoaded(false);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isAutoCaptioning, inViewport, isVisible]);
 
   useEffect(() => {
     // Create intersection observer to check viewport visibility
@@ -238,9 +250,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             onBlur={saveCaption}
           >
             <textarea
-              className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
+              className={classNames("w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none", {
+                'opacity-50 cursor-not-allowed': isAutoCaptioning,
+              })}
               value={caption}
               rows={3}
+              readOnly={isAutoCaptioning}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
             />

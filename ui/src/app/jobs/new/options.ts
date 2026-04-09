@@ -828,6 +828,61 @@ export const modelArchs: ModelArch[] = [
       'model.layer_offloading',
     ],
   },
+  {
+    name: 'ace_step_15',
+    label: 'ACE-Step 1.5',
+    group: 'audio',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
+    },
+    sampleTags: {
+      "CAPTION": {
+        title: "Audio Prompt",
+        type: "text",
+        full: true,
+      },
+      "LYRICS": {
+        title: "Lyrics",
+        type: "multiline",
+        full: true,
+      },
+      "BPM": {
+        title: "BPM",
+        type: "number",
+      },
+      "KEYSCALE": {
+        title: "Key Scale",
+        type: "text",
+      },
+      "TIMESIGNATURE": {
+        title: "Time Signature",
+        type: "text",
+      },
+      "DURATION": {
+        title: "Duration (sec)",
+        type: "number",
+      },
+      "LANGUAGE": {
+        title: "Language",
+        type: "text",
+      },
+    },
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });

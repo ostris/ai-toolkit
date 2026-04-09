@@ -102,17 +102,19 @@ export default function JobOverview({ job }: JobOverviewProps) {
 
         <div className="p-4 space-y-6 flex flex-col flex-grow">
           {/* Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-400">Progress</span>
-              <span className="text-gray-200">
-                Step {job.step} of {totalSteps}
-              </span>
+          {job.job_type === 'train' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">Progress</span>
+                <span className="text-gray-200">
+                  Step {job.step} of {totalSteps}
+                </span>
+              </div>
+              <div className="w-full bg-gray-800 rounded-full h-2">
+                <div className="h-2 rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
+              </div>
             </div>
-            <div className="w-full bg-gray-800 rounded-full h-2">
-              <div className="h-2 rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
-            </div>
-          </div>
+          )}
 
           {/* Job Info Grid */}
           <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
