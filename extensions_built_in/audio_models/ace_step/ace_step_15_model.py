@@ -301,13 +301,13 @@ class AceStep15Model(BaseAudioModel):
             context = torch.cat([src, chunk_masks], dim=-1)  # [1, T, 128]
 
         pred = model.decoder(
-            x=latent_model_input,
-            timestep=tt,
-            timestep_r=tt,
-            attention_mask=attn,
-            enc_h=text_embeddings.text_embeds.to(self.device_torch, dtype=self.torch_dtype),
-            enc_m=text_embeddings.attention_mask.to(self.device_torch, dtype=torch.bool),
-            context=context,
+            x=latent_model_input.detach(),
+            timestep=tt.detach(),
+            timestep_r=tt.detach(),
+            attention_mask=attn.detach(),
+            enc_h=text_embeddings.text_embeds.to(self.device_torch, dtype=self.torch_dtype).detach(),
+            enc_m=text_embeddings.attention_mask.to(self.device_torch, dtype=torch.bool).detach(),
+            context=context.detach(),
         )
         return pred
     
