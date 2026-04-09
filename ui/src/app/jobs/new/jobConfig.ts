@@ -1,6 +1,7 @@
 'use client';
 import { isMac } from '@/helpers/basic';
-import { JobConfig, DatasetConfig, SliderConfig } from '@/types';
+import { defaultSampleConfig } from '@/helpers/defaultSamples';
+import { JobConfig, SampleConfig, DatasetConfig, SliderConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
@@ -108,54 +109,7 @@ export const defaultJobConfig: JobConfig = {
           low_vram: false,
           model_kwargs: {},
         },
-        sample: {
-          sampler: 'flowmatch',
-          sample_every: 250,
-          width: 1024,
-          height: 1024,
-          samples: [
-            {
-              prompt: 'woman with red hair, playing chess at the park, bomb going off in the background',
-            },
-            {
-              prompt: 'a woman holding a coffee cup, in a beanie, sitting at a cafe',
-            },
-            {
-              prompt: 'a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini',
-            },
-            {
-              prompt:
-                'a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background',
-            },
-            {
-              prompt: 'a bear building a log cabin in the snow covered mountains',
-            },
-            {
-              prompt: 'woman playing the guitar, on stage, singing a song, laser lights, punk rocker',
-            },
-            {
-              prompt: 'hipster man with a beard, building a chair, in a wood shop',
-            },
-            {
-              prompt:
-                'photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop',
-            },
-            {
-              prompt: "a man holding a sign that says, 'this is a sign'",
-            },
-            {
-              prompt:
-                'a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle',
-            },
-          ],
-          neg: '',
-          seed: 42,
-          walk_seed: true,
-          guidance_scale: 4,
-          sample_steps: 25,
-          num_frames: 1,
-          fps: 1,
-        },
+        sample: defaultSampleConfig,
       },
     ],
   },

@@ -231,6 +231,12 @@ class BucketsMixin:
         # for file_item in enumerate(file_list):
         for idx, file_item in enumerate(file_list):
             file_item: 'FileItemDTO' = file_item
+            if self.is_audio_model:
+                bucket_key = f"{file_item.width}ms"
+                if bucket_key not in self.buckets:
+                    self.buckets[bucket_key] = Bucket(file_item.width, 1)
+                self.buckets[bucket_key].file_list_idx.append(idx)
+                continue
             width = int(file_item.width * file_item.dataset_config.scale)
             height = int(file_item.height * file_item.dataset_config.scale)
 
@@ -465,6 +471,27 @@ class CaptionProcessingDTOMixin:
             pass
         return caption
 
+class AudioProcessingDTOMixin:
+    def load_and_process_audio(self: 'FileItemDTO'):
+        # Default to "no audio" unless we successfully extract it
+        self.audio_data = None
+        self.audio_tensor = None
+        self.tensor = None
+        try:
+            import torchaudio
+
+            waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+            waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
+            if sample_rate != self.sample_rate:
+                waveform = torchaudio.functional.resample(waveform, sample_rate, self.sample_rate)
+            self.tensor = waveform
+            self.audio_tensor = waveform
+            self.audio_data = {"waveform": waveform, "sample_rate": int(self.sample_rate)}
+
+        except Exception as e:
+            # if issue with libtorchcodec "Could not load libtorchcodec"
+            raise Exception(f"** WARNING ** - Error Processing audio for {self.path}. Error: {e}")
+        
 
 class ImageProcessingDTOMixin:
     def load_and_process_video(
@@ -771,6 +798,9 @@ class ImageProcessingDTOMixin:
                 self.load_mask_image()
             if self.has_unconditional:
                 self.load_unconditional_image()
+            return
+        if self.is_audio_model:
+            self.load_and_process_audio()
             return
         if self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count:
             self.load_and_process_video(transform, only_load_latents)
@@ -1852,6 +1882,8 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
+        if self.is_audio_model:
+            raise Exception("Audio models are not supported for latent caching yet")
         with accelerator.main_process_first():
             print_acc(f"Caching latents for {self.dataset_path}")
             # cache all latents to disk

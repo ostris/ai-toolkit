@@ -7,7 +7,8 @@ import { Cog } from 'lucide-react';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
-import { isVideo } from '@/utils/basic';
+import { isVideo, isAudio } from '@/utils/basic';
+import AudioPlayer from './AudioPlayer';
 
 interface Props {
   imgPath: string | null; // current image path
@@ -214,7 +215,15 @@ export default function SampleImageViewer({
           >
             <div className="overflow-hidden flex items-center justify-center">
               {displayedImgPath &&
-                (isVideo(displayedImgPath) ? (
+                (isAudio(displayedImgPath) ? (
+                  <div className="w-[500px] h-[500px] max-w-[95vw] max-h-[82vh]">
+                    <AudioPlayer
+                      src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
+                      title={displayedImgPath.replace(/^.*[\\/]/, '')}
+                      autoPlay
+                    />
+                  </div>
+                ) : isVideo(displayedImgPath) ? (
                   <video
                     src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                     className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
@@ -282,7 +291,7 @@ export default function SampleImageViewer({
                 </div>
               </div>
             </div>
-            <div className="absolute top-2 right-2 bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100">
+            <div className="absolute top-2 right-2 bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100 z-20">
               <Menu>
                 <MenuButton>
                   <Cog />

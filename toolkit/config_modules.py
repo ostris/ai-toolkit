@@ -6,6 +6,7 @@ import random
 import torch
 import torchaudio
 
+from toolkit.audio.album_artwork import add_album_artwork
 from toolkit.prompt_utils import PromptEmbeds
 from torchao.quantization.quant_primitives import _DTYPE_TO_BIT_WIDTH
 
@@ -1201,13 +1202,16 @@ class GenerateImageConfig:
                 raise ValueError(f"Unsupported video format {self.output_ext}")
         elif self.output_ext in ['wav', 'mp3']:
             # save audio file
+            audio_path = self.get_image_path(count, max_count)
             torchaudio.save(
-                self.get_image_path(count, max_count), 
+                audio_path, 
                 image[0].to('cpu'),
                 sample_rate=48000, 
                 format=None, 
                 backend=None
             )
+            if self.output_ext == 'mp3':
+                add_album_artwork(audio_path)
         else:
             # TODO save image gen header info for A1111 and us, our seeds probably wont match
             image.save(self.get_image_path(count, max_count))
