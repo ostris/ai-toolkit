@@ -79,6 +79,7 @@ export interface SaveConfig {
   max_step_saves_to_keep: number;
   save_format: string;
   push_to_hub: boolean;
+  push_to_hub_every_save: boolean;
 }
 
 export interface DatasetConfig {

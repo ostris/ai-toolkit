@@ -61,6 +61,7 @@ export const defaultJobConfig: JobConfig = {
           max_step_saves_to_keep: 4,
           save_format: 'diffusers',
           push_to_hub: false,
+          push_to_hub_every_save: false,
         },
         datasets: [defaultDatasetConfig],
         train: {
@@ -146,6 +147,10 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     jobConfig.config.process[0].model.layer_offloading = (jobConfig.config.process[0].model.auto_memory ||
       false) as boolean;
     delete jobConfig.config.process[0].model.auto_memory;
+  }
+
+  if (jobConfig.config.process[0]?.save && !('push_to_hub_every_save' in jobConfig.config.process[0].save)) {
+    jobConfig.config.process[0].save.push_to_hub_every_save = false;
   }
 
   if (!('logging' in jobConfig.config.process[0])) {

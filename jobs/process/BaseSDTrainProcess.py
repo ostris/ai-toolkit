@@ -19,8 +19,8 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
-from huggingface_hub import HfApi, Repository, interpreter_login
-from huggingface_hub.utils import HfFolder
+from huggingface_hub import HfApi, get_token, interpreter_login
+from huggingface_hub.utils import HfHubHTTPError
 from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
@@ -479,8 +479,66 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return latest_item
 
     def post_save_hook(self, save_path):
-        # override in subclass
-        pass
+        if self.save_config.push_to_hub and self.save_config.push_to_hub_every_save:
+            # Unlike the end-of-training push (which can prompt interactively via
+            # interpreter_login), intermediate pushes must not block the training
+            # loop, so we silently check for an existing token and bail out if
+            # none is found. The result is cached to avoid repeated checks.
+            if getattr(self, "_hub_push_disabled", False):
+                return
+            if "HF_TOKEN" not in os.environ and get_token() is None:
+                print_acc("No HF token available, skipping intermediate Hub pushes")
+                self._hub_push_disabled = True
+                return
+            if not os.path.exists(save_path):
+                print_acc(f"Checkpoint not found, skipping Hub push: {save_path}")
+                return
+            repo_id = self.save_config.hf_repo_id
+            api = HfApi()
+            if not getattr(self, "_hub_repo_created", False):
+                try:
+                    api.create_repo(repo_id, private=self.save_config.hf_private, exist_ok=True)
+                    self._hub_repo_created = True
+                except HfHubHTTPError as e:
+                    print_acc(f"Failed to create Hub repo '{repo_id}': {e}")
+                    print_acc(traceback.format_exc())
+                    status = getattr(e.response, "status_code", None)
+                    if status in (401, 403):
+                        print_acc("Disabling intermediate Hub pushes for this run (auth/permission error)")
+                        self._hub_push_disabled = True
+                    return
+                except Exception as e:
+                    print_acc(f"Failed to create Hub repo '{repo_id}': {e}")
+                    print_acc(traceback.format_exc())
+                    return
+            try:
+                # Upload only the new checkpoint, not the entire save_root.
+                # The full folder (with README) is pushed at end of training.
+                if os.path.isdir(save_path):
+                    api.upload_folder(
+                        repo_id=repo_id,
+                        folder_path=save_path,
+                        path_in_repo=os.path.basename(save_path),
+                        repo_type="model",
+                    )
+                else:
+                    api.upload_file(
+                        repo_id=repo_id,
+                        path_or_fileobj=save_path,
+                        path_in_repo=os.path.basename(save_path),
+                        repo_type="model",
+                    )
+                print_acc(f"Pushed checkpoint to Hub: {os.path.basename(save_path)}")
+            except HfHubHTTPError as e:
+                print_acc(f"Failed to upload checkpoint to Hub: {e}")
+                print_acc(traceback.format_exc())
+                status = getattr(e.response, "status_code", None)
+                if status in (401, 403):
+                    print_acc("Disabling intermediate Hub pushes for this run (auth/permission error)")
+                    self._hub_push_disabled = True
+            except Exception as e:
+                print_acc(f"Failed to upload checkpoint to Hub: {e}")
+                print_acc(traceback.format_exc())
     
     def done_hook(self):
         pass
@@ -597,6 +655,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 elif self.adapter_config.type == 'control_net':
                     # save in diffusers format
                     name_or_path = file_path.replace('.safetensors', '')
+                    file_path = name_or_path
                     # move it to the new dtype and cpu
                     orig_device = self.adapter.device
                     orig_dtype = self.adapter.dtype
@@ -662,6 +721,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     get_torch_dtype(self.save_config.dtype)
                 )
 
+        # Capture checkpoint path; file_path is reassigned below for SNR/optimizer saves
+        checkpoint_path = file_path
+
         # save learnable params as json if we have thim
         if self.snr_gos:
             json_data = {
@@ -692,7 +754,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc("Could not save optimizer")
 
         self.clean_up_saves()
-        self.post_save_hook(file_path)
+        self.post_save_hook(checkpoint_path)
 
         if self.ema is not None:
             self.ema.train()
@@ -2405,10 +2467,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.save_config.push_to_hub:
                 if("HF_TOKEN" not in os.environ):
                     interpreter_login(new_session=False, write_permission=True)
-                self.push_to_hub(
-                    repo_id=self.save_config.hf_repo_id,
-                    private=self.save_config.hf_private
-                )
+                try:
+                    self.push_to_hub(
+                        repo_id=self.save_config.hf_repo_id,
+                        private=self.save_config.hf_private
+                    )
+                except Exception as e:
+                    print_acc("=" * 60)
+                    print_acc(f"Failed to push final model to Hub: {e}")
+                    print_acc(traceback.format_exc())
+                    print_acc(f"Model saved locally at: {self.save_root}")
+                    print_acc("=" * 60)
         del (
             self.sd,
             unet,
