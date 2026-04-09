@@ -11,6 +11,7 @@ import { apiClient } from '@/utils/api';
 import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
+import AutoCaptionButton from '@/components/AutoCaptionButton';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -109,12 +110,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
         <div className="flex-1"></div>
         <div>
-          <Button
-            className="text-white bg-blue-600 px-3 py-1 rounded-md mr-2"
-            onClick={() => openCaptionDatasetModal(`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`, () => {})}
-          >
-            Auto Caption
-          </Button>
+          <AutoCaptionButton datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`} />
           <Button
             className="text-white bg-slate-600 px-3 py-1 rounded-md"
             onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}

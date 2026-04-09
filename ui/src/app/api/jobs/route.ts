@@ -7,12 +7,20 @@ const prisma = new PrismaClient();
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
+  const job_ref = searchParams.get('job_ref');
   const job_type = searchParams.get('job_type');
 
   try {
     if (id) {
       const job = await prisma.job.findUnique({
         where: { id },
+      });
+      return NextResponse.json(job);
+    }
+    if (job_ref) {
+      const job = await prisma.job.findFirst({
+        where: { job_ref },
+        orderBy: { updated_at: 'desc' },
       });
       return NextResponse.json(job);
     }

@@ -129,7 +129,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
-  const [showAudioPlayer, setShowAudioPlayer] = useState(false);
+  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
 
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);

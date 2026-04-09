@@ -70,6 +70,10 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
 
   const jobType = job?.job_type || 'unknown';
 
+  let title = `Job: ${job?.name || 'Loading...'}`;
+  if (jobType === 'caption') {
+    title = `Captioning: ${job?.job_ref || 'Loading...'}`;
+
   return (
     <>
       {/* Fixed top bar */}
@@ -80,7 +84,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           </Button>
         </div>
         <div>
-          <h1 className="text-lg">Job: {job?.name}</h1>
+          <h1 className="text-lg">{title}</h1>
         </div>
         <div className="flex-1"></div>
         {job && (

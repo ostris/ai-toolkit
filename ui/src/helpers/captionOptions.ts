@@ -21,7 +21,7 @@ const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
 
 const defaultExtensions = [...extensionsImage];
 
-const defaultImageCaptionPrompt = "You are a helpful assistant that generates detailed captions for images. Describe the content of the image in detail, including objects, their attributes, relationships, and the overall scene. Be specific and thorough in your description.";
+const defaultImageCaptionPrompt = "Caption this image as if you were going to try to generate it with an image generator. Be thurough and describe everything in the image. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". Start out with things like \"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.";
 
 export const captionerTypes: CaptionOption[] = [
     {
