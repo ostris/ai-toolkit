@@ -80,7 +80,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     if (inViewport && isVisible) {
       fetchCaption();
     }
-  }, [inViewport, isVisible]);
+  }, [inViewport, isVisible, isCaptionLoaded]);
 
   // Poll for caption updates every 5 seconds while auto-captioning
   useEffect(() => {
@@ -241,7 +241,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'border-transparent border-2': isCaptionCurrent,
         })}
       >
-        {inViewport && isVisible && isCaptionLoaded && (
+        {inViewport && isVisible && (isCaptionLoaded || caption) && (
           <form
             onSubmit={e => {
               e.preventDefault();
@@ -266,7 +266,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             {isVisible ? 'Scroll into view to edit caption' : 'Show content to edit caption'}
           </div>
         )}
-        {!isCaptionLoaded && (
+        {!isCaptionLoaded && !caption && (
           <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>
         )}
       </div>
