@@ -16,7 +16,7 @@ export interface CaptionOption {
 
 const defaultNameOrPath = '';
 
-const extensionsAudio = ['mp3', 'wav'];
+const extensionsAudio = ['mp3', 'wav', 'flac', 'ogg'];
 const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
 
 const defaultExtensions = [...extensionsImage];

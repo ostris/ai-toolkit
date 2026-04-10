@@ -210,7 +210,7 @@ export default function AddImagesModal() {
     () => ({
       'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'],
       'video/*': ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'],
-      'audio/*': ['.mp3', '.wav'],
+      'audio/*': ['.mp3', '.wav', '.flac', '.ogg'],
       'text/*': ['.txt'],
     }),
     [],
