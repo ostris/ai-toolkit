@@ -743,6 +743,34 @@ export const modelArchs: ModelArch[] = [
     ],
   },
   {
+    name: 'ernie_image',
+    label: 'ERNIE-Image',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['baidu/ERNIE-Image', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].model.model_kwargs': [
+        {
+          match_target_res: false,
+        },
+        {},
+      ],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
     name: 'flux2_klein_9b',
     label: 'FLUX.2-klein-base-9B',
     group: 'image',

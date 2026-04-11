@@ -1,7 +1,8 @@
 torchao==0.10.0
 safetensors
-git+https://github.com/huggingface/diffusers@072d15ee4289ffdc3aa9d65f8b94bc9271319d21
-transformers==4.57.3
+git+https://github.com/huggingface/diffusers.git@dc8d9032171c83741fd37ed2b12bc9d8274464f3
+#pip install git+https://github.com/huggingface/diffusers.git@refs/pull/13432/head
+transformers==5.5.3
 lycoris-lora==1.8.3
 flatten_json
 pyyaml
@@ -28,7 +29,7 @@ lpips
 pytorch_fid
 optimum-quanto==0.2.4
 sentencepiece
-huggingface_hub
+huggingface_hub==1.10.1
 peft
 gradio
 python-slugify
