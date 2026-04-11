@@ -7,11 +7,20 @@ import {
   quantizationOptions,
   defaultQtype,
   jobTypeOptions,
+  SampleTags,
 } from './options';
 import { defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
-import { objectCopy } from '@/utils/basic';
-import { TextInput, SelectInput, Checkbox, FormGroup, NumberInput, SliderInput } from '@/components/formInputs';
+import { objectCopy, tagsToObj, objToTags } from '@/utils/basic';
+import {
+  TextInput,
+  TextAreaInput,
+  SelectInput,
+  Checkbox,
+  FormGroup,
+  NumberInput,
+  SliderInput,
+} from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X, Copy } from 'lucide-react';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
@@ -68,6 +77,44 @@ export default function SimpleJob({
   }, [modelArch, jobType]);
 
   const isVideoModel = !!(modelArch?.group === 'video');
+  const isAudioModel = !!(modelArch?.group === 'audio');
+
+  const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
+    if (!modelArch) return null;
+    if (!modelArch.sampleTags) return null;
+    if (!jobConfig.config.process[0].sample.samples) return null;
+    let sampleArr: any[] = [];
+    for (let i = 0; i < jobConfig.config.process[0].sample.samples.length; i++) {
+      const taggedPrompt = jobConfig.config.process[0].sample.samples[i].prompt;
+      const tagsObj = tagsToObj(taggedPrompt);
+      sampleArr.push(tagsObj);
+    }
+    return sampleArr;
+  }, [modelArch, jobConfig.config.process[0].sample.samples]);
+
+  const modelArchTagSections: SampleTags[] | null = useMemo(() => {
+    if (!modelArch?.sampleTags) return null;
+    const maxPerGroup = 5;
+    let sections: SampleTags[] = [];
+    let subSection: SampleTags = {};
+    for (const [tagKey, tag] of Object.entries(modelArch.sampleTags)) {
+      if ((tag.full && Object.keys(subSection).length > 0) || Object.keys(subSection).length >= maxPerGroup) {
+        // reset the sub section build if the next tag is full or max per group is reached
+        sections.push(subSection);
+        subSection = {};
+      }
+      subSection[tagKey] = tag;
+      if (tag.full) {
+        // if the tag is full, push the section immediately and reset the sub section build
+        sections.push(subSection);
+        subSection = {};
+      }
+    }
+    if (Object.keys(subSection).length > 0) {
+      sections.push(subSection);
+    }
+    return sections.length > 0 ? sections : null;
+  }, [modelArch]);
 
   const numTopCards = useMemo(() => {
     let count = 4; // job settings, model config, target config, save config
@@ -149,6 +196,26 @@ export default function SimpleJob({
 
   const showGPUSelect = !isMac();
 
+  let numDatasetCols = 4;
+  let numSampleTopCols = 4;
+  let datasetStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
+  let sampleTopStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
+  if (isVideoModel) {
+    numSampleTopCols += 1;
+  }
+  if (isAudioModel) {
+    numDatasetCols -= 1;
+    numSampleTopCols -= 1;
+  }
+  if (numDatasetCols == 3) {
+    datasetStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
+  }
+  if (numSampleTopCols == 5) {
+    sampleTopStyleClass = 'grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6';
+  }
+  if (numSampleTopCols == 3) {
+    sampleTopStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6';
+  }
   return (
     <>
       <form
@@ -790,7 +857,7 @@ export default function SimpleJob({
                     </button>
                   </div>
                   <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <div className={datasetStyleClass}>
                     <div>
                       <SelectInput
                         label="Target Dataset"
@@ -971,53 +1038,57 @@ export default function SimpleJob({
                           />
                         )}
                       </FormGroup>
-                      <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
-                        <Checkbox
-                          label={
-                            <>
-                              Flip X <FlipHorizontal2 className="inline-block w-4 h-4 ml-1" />
-                            </>
-                          }
-                          checked={dataset.flip_x || false}
-                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_x`)}
-                        />
-                        <Checkbox
-                          label={
-                            <>
-                              Flip Y <FlipVertical2 className="inline-block w-4 h-4 ml-1" />
-                            </>
-                          }
-                          checked={dataset.flip_y || false}
-                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_y`)}
-                        />
-                      </FormGroup>
+                      {!isAudioModel && (
+                        <FormGroup label="Flipping" docKey={'datasets.flip'} className="mt-2">
+                          <Checkbox
+                            label={
+                              <>
+                                Flip X <FlipHorizontal2 className="inline-block w-4 h-4 ml-1" />
+                              </>
+                            }
+                            checked={dataset.flip_x || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_x`)}
+                          />
+                          <Checkbox
+                            label={
+                              <>
+                                Flip Y <FlipVertical2 className="inline-block w-4 h-4 ml-1" />
+                              </>
+                            }
+                            checked={dataset.flip_y || false}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].flip_y`)}
+                          />
+                        </FormGroup>
+                      )}
                     </div>
-                    <div>
-                      <FormGroup label="Resolutions" className="pt-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          {[
-                            [256, 512, 768, 1024],
-                            [1280, 1328, 1536],
-                          ].map(resGroup => (
-                            <div key={resGroup[0]} className="space-y-2">
-                              {resGroup.map(res => (
-                                <Checkbox
-                                  key={res}
-                                  label={res.toString()}
-                                  checked={dataset.resolution.includes(res)}
-                                  onChange={value => {
-                                    const resolutions = dataset.resolution.includes(res)
-                                      ? dataset.resolution.filter(r => r !== res)
-                                      : [...dataset.resolution, res];
-                                    setJobConfig(resolutions, `config.process[0].datasets[${i}].resolution`);
-                                  }}
-                                />
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      </FormGroup>
-                    </div>
+                    {!isAudioModel && (
+                      <div>
+                        <FormGroup label="Resolutions" className="pt-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            {[
+                              [256, 512, 768, 1024],
+                              [1280, 1328, 1536],
+                            ].map(resGroup => (
+                              <div key={resGroup[0]} className="space-y-2">
+                                {resGroup.map(res => (
+                                  <Checkbox
+                                    key={res}
+                                    label={res.toString()}
+                                    checked={dataset.resolution.includes(res)}
+                                    onChange={value => {
+                                      const resolutions = dataset.resolution.includes(res)
+                                        ? dataset.resolution.filter(r => r !== res)
+                                        : [...dataset.resolution, res];
+                                      setJobConfig(resolutions, `config.process[0].datasets[${i}].resolution`);
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </FormGroup>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1039,13 +1110,7 @@ export default function SimpleJob({
         </div>
         <div>
           <Card title="Sample">
-            <div
-              className={
-                isVideoModel
-                  ? 'grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6'
-                  : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6'
-              }
-            >
+            <div className={sampleTopStyleClass}>
               <div>
                 <NumberInput
                   label="Sample Every"
@@ -1084,47 +1149,50 @@ export default function SimpleJob({
                   required
                 />
               </div>
-              <div>
-                <NumberInput
-                  label="Width"
-                  value={jobConfig.config.process[0].sample.width}
-                  onChange={value => setJobConfig(value, 'config.process[0].sample.width')}
-                  placeholder="eg. 1024"
-                  min={0}
-                  required
-                />
-                <NumberInput
-                  label="Height"
-                  value={jobConfig.config.process[0].sample.height}
-                  onChange={value => setJobConfig(value, 'config.process[0].sample.height')}
-                  placeholder="eg. 1024"
-                  className="pt-2"
-                  min={0}
-                  required
-                />
-                {isVideoModel && (
-                  <div>
-                    <NumberInput
-                      label="Num Frames"
-                      value={jobConfig.config.process[0].sample.num_frames}
-                      onChange={value => setJobConfig(value, 'config.process[0].sample.num_frames')}
-                      placeholder="eg. 0"
-                      className="pt-2"
-                      min={0}
-                      required
-                    />
-                    <NumberInput
-                      label="FPS"
-                      value={jobConfig.config.process[0].sample.fps}
-                      onChange={value => setJobConfig(value, 'config.process[0].sample.fps')}
-                      placeholder="eg. 0"
-                      className="pt-2"
-                      min={0}
-                      required
-                    />
-                  </div>
-                )}
-              </div>
+
+              {!isAudioModel && (
+                <div>
+                  <NumberInput
+                    label="Width"
+                    value={jobConfig.config.process[0].sample.width}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.width')}
+                    placeholder="eg. 1024"
+                    min={0}
+                    required
+                  />
+                  <NumberInput
+                    label="Height"
+                    value={jobConfig.config.process[0].sample.height}
+                    onChange={value => setJobConfig(value, 'config.process[0].sample.height')}
+                    placeholder="eg. 1024"
+                    className="pt-2"
+                    min={0}
+                    required
+                  />
+                  {isVideoModel && (
+                    <div>
+                      <NumberInput
+                        label="Num Frames"
+                        value={jobConfig.config.process[0].sample.num_frames}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.num_frames')}
+                        placeholder="eg. 0"
+                        className="pt-2"
+                        min={0}
+                        required
+                      />
+                      <NumberInput
+                        label="FPS"
+                        value={jobConfig.config.process[0].sample.fps}
+                        onChange={value => setJobConfig(value, 'config.process[0].sample.fps')}
+                        placeholder="eg. 0"
+                        className="pt-2"
+                        min={0}
+                        required
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <NumberInput
@@ -1199,68 +1267,143 @@ export default function SimpleJob({
                   <div className="flex-1">
                     <div className="flex">
                       <div className="flex-1">
-                        <TextInput
-                          label={`Prompt`}
-                          value={sample.prompt}
-                          onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
-                          placeholder="Enter prompt"
-                          required
-                        />
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
-                          <TextInput
-                            label={`Width`}
-                            value={sample.width ? `${sample.width}` : ''}
-                            onChange={value => {
-                              // remove any non-numeric characters
-                              value = value.replace(/\D/g, '');
-                              if (value === '') {
-                                // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
-                                if (newConfig.config.process[0].sample.samples[i]) {
-                                  delete newConfig.config.process[0].sample.samples[i].width;
-                                  setJobConfig(
-                                    newConfig.config.process[0].sample.samples,
-                                    'config.process[0].sample.samples',
-                                  );
-                                }
-                              } else {
-                                const intValue = parseInt(value);
-                                if (!isNaN(intValue)) {
-                                  setJobConfig(intValue, `config.process[0].sample.samples[${i}].width`);
+                        {modelArch?.sampleTags && taggedSampleArr && modelArchTagSections ? (
+                          <>
+                            {modelArchTagSections.map((sampleTagSection, sti) => (
+                              <div key={sti} className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
+                                {Object.entries(sampleTagSection).map(([tagKey, tag]) => (
+                                  <div key={tagKey} className="mb-2">
+                                    {tag.type === 'text' && (
+                                      <TextInput
+                                        label={tag.title}
+                                        value={taggedSampleArr[i][tagKey] ?? ''}
+                                        onChange={value => {
+                                          let taggedSample = { ...taggedSampleArr[i] };
+                                          taggedSample[tagKey] = value;
+                                          setJobConfig(
+                                            objToTags(taggedSample),
+                                            `config.process[0].sample.samples[${i}].prompt`,
+                                          );
+                                        }}
+                                        placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                      />
+                                    )}
+                                    {tag.type === 'multiline' && (
+                                      <TextAreaInput
+                                        label={tag.title}
+                                        value={taggedSampleArr[i][tagKey] ?? ''}
+                                        onChange={value => {
+                                          let taggedSample = { ...taggedSampleArr[i] };
+                                          taggedSample[tagKey] = value;
+                                          setJobConfig(
+                                            objToTags(taggedSample),
+                                            `config.process[0].sample.samples[${i}].prompt`,
+                                          );
+                                        }}
+                                        placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                      />
+                                    )}
+                                    {tag.type === 'number' && (
+                                      <NumberInput
+                                        label={tag.title}
+                                        value={taggedSampleArr[i][tagKey] ?? ''}
+                                        onChange={value => {
+                                          let taggedSample = { ...taggedSampleArr[i] };
+                                          taggedSample[tagKey] = value;
+                                          setJobConfig(
+                                            objToTags(taggedSample),
+                                            `config.process[0].sample.samples[${i}].prompt`,
+                                          );
+                                        }}
+                                        placeholder={`Enter ${tag.title.toLowerCase()}`}
+                                      />
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ))}
+                          </>
+                        ) : (
+                          <>
+                            {modelArch?.hasMultiLinePrompts ? (
+                              <TextAreaInput
+                                label={`Prompt`}
+                                value={sample.prompt}
+                                onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                                placeholder="Enter prompt"
+                                required
+                              />
+                            ) : (
+                              <TextInput
+                                label={`Prompt`}
+                                value={sample.prompt}
+                                onChange={value => setJobConfig(value, `config.process[0].sample.samples[${i}].prompt`)}
+                                placeholder="Enter prompt"
+                                required
+                              />
+                            )}
+                          </>
+                        )}
+
+                        <div className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
+                          {!isAudioModel && (
+                            <TextInput
+                              label={`Width`}
+                              value={sample.width ? `${sample.width}` : ''}
+                              onChange={value => {
+                                // remove any non-numeric characters
+                                value = value.replace(/\D/g, '');
+                                if (value === '') {
+                                  // remove the key from the config if empty
+                                  let newConfig = objectCopy(jobConfig);
+                                  if (newConfig.config.process[0].sample.samples[i]) {
+                                    delete newConfig.config.process[0].sample.samples[i].width;
+                                    setJobConfig(
+                                      newConfig.config.process[0].sample.samples,
+                                      'config.process[0].sample.samples',
+                                    );
+                                  }
                                 } else {
-                                  console.warn('Invalid width value:', value);
+                                  const intValue = parseInt(value);
+                                  if (!isNaN(intValue)) {
+                                    setJobConfig(intValue, `config.process[0].sample.samples[${i}].width`);
+                                  } else {
+                                    console.warn('Invalid width value:', value);
+                                  }
                                 }
-                              }
-                            }}
-                            placeholder={`${jobConfig.config.process[0].sample.width} (default)`}
-                          />
-                          <TextInput
-                            label={`Height`}
-                            value={sample.height ? `${sample.height}` : ''}
-                            onChange={value => {
-                              // remove any non-numeric characters
-                              value = value.replace(/\D/g, '');
-                              if (value === '') {
-                                // remove the key from the config if empty
-                                let newConfig = objectCopy(jobConfig);
-                                if (newConfig.config.process[0].sample.samples[i]) {
-                                  delete newConfig.config.process[0].sample.samples[i].height;
-                                  setJobConfig(
-                                    newConfig.config.process[0].sample.samples,
-                                    'config.process[0].sample.samples',
-                                  );
-                                }
-                              } else {
-                                const intValue = parseInt(value);
-                                if (!isNaN(intValue)) {
-                                  setJobConfig(intValue, `config.process[0].sample.samples[${i}].height`);
+                              }}
+                              placeholder={`${jobConfig.config.process[0].sample.width} (default)`}
+                            />
+                          )}
+                          {!isAudioModel && (
+                            <TextInput
+                              label={`Height`}
+                              value={sample.height ? `${sample.height}` : ''}
+                              onChange={value => {
+                                // remove any non-numeric characters
+                                value = value.replace(/\D/g, '');
+                                if (value === '') {
+                                  // remove the key from the config if empty
+                                  let newConfig = objectCopy(jobConfig);
+                                  if (newConfig.config.process[0].sample.samples[i]) {
+                                    delete newConfig.config.process[0].sample.samples[i].height;
+                                    setJobConfig(
+                                      newConfig.config.process[0].sample.samples,
+                                      'config.process[0].sample.samples',
+                                    );
+                                  }
                                 } else {
-                                  console.warn('Invalid height value:', value);
+                                  const intValue = parseInt(value);
+                                  if (!isNaN(intValue)) {
+                                    setJobConfig(intValue, `config.process[0].sample.samples[${i}].height`);
+                                  } else {
+                                    console.warn('Invalid height value:', value);
+                                  }
                                 }
-                              }
-                            }}
-                            placeholder={`${jobConfig.config.process[0].sample.height} (default)`}
-                          />
+                              }}
+                              placeholder={`${jobConfig.config.process[0].sample.height} (default)`}
+                            />
+                          )}
                           <TextInput
                             label={`Seed`}
                             value={sample.seed ? `${sample.seed}` : ''}

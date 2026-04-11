@@ -38,3 +38,5 @@ matplotlib==3.10.1
 setuptools==69.5.1
 av==16.0.1
 torchcodec==0.9.1
+librosa==0.11.0
+mutagen==1.47.0

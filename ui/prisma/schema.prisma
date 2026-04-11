@@ -36,7 +36,12 @@ model Job {
   speed_string    String   @default("")
   queue_position  Int      @default(0)
   pid             Int?
+  job_type        String   @default("train") // 'train', 'caption'
+  job_ref         String? // can be used for anything for special jobs, like dataset path for caption jobs
 
   @@index([status])
   @@index([gpu_ids])
+  @@index([job_type])
+  @@index([job_ref])
+
 }

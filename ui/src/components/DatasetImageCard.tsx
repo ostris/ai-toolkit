@@ -9,6 +9,7 @@ import { isVideo, isAudio } from '@/utils/basic';
 interface DatasetImageCardProps {
   imageUrl: string;
   alt: string;
+  isAutoCaptioning: boolean;
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
@@ -17,6 +18,7 @@ interface DatasetImageCardProps {
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   imageUrl,
   alt,
+  isAutoCaptioning,
   children,
   className = '',
   onDelete = () => {},
@@ -78,7 +80,17 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     if (inViewport && isVisible) {
       fetchCaption();
     }
-  }, [inViewport, isVisible]);
+  }, [inViewport, isVisible, isCaptionLoaded]);
+
+  // Poll for caption updates every 5 seconds while auto-captioning
+  useEffect(() => {
+    if (!isAutoCaptioning || !inViewport || !isVisible) return;
+    const interval = setInterval(() => {
+      // Reset so fetchCaption will re-fetch
+      setIsCaptionLoaded(false);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [isAutoCaptioning, inViewport, isVisible]);
 
   useEffect(() => {
     // Create intersection observer to check viewport visibility
@@ -129,6 +141,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
+  const [showAudioPlayer, setShowAudioPlayer] = useState(true);
+
   const isItAVideo = isVideo(imageUrl);
   const isItAudio = isAudio(imageUrl);
   const isItImage = !isItAVideo && !isItAudio;
@@ -154,7 +168,22 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   controls
                 />
               )}
-              {isItAudio && (
+              {isItAudio && !showAudioPlayer && (
+                <div
+                  className="w-full h-full cursor-pointer flex items-center justify-center bg-gray-900"
+                  onClick={() => setShowAudioPlayer(true)}
+                >
+                  <img
+                    src={`/api/audio/art/${encodeURIComponent(imageUrl)}`}
+                    alt={alt}
+                    className="w-full h-full object-contain"
+                    onError={e => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              )}
+              {isItAudio && showAudioPlayer && (
                 <AudioPlayer
                   src={`/api/img/${encodeURIComponent(imageUrl)}`}
                   title={imageUrl.replace(/^.*[\\/]/, '')}
@@ -212,7 +241,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           'border-transparent border-2': isCaptionCurrent,
         })}
       >
-        {inViewport && isVisible && isCaptionLoaded && (
+        {inViewport && isVisible && (isCaptionLoaded || caption) && (
           <form
             onSubmit={e => {
               e.preventDefault();
@@ -221,9 +250,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             onBlur={saveCaption}
           >
             <textarea
-              className="w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none"
+              className={classNames("w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none", {
+                'opacity-50 cursor-not-allowed': isAutoCaptioning,
+              })}
               value={caption}
               rows={3}
+              readOnly={isAutoCaptioning}
               onChange={e => setCaption(e.target.value)}
               onKeyDown={handleKeyDown}
             />
@@ -234,7 +266,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             {isVisible ? 'Scroll into view to edit caption' : 'Show content to edit caption'}
           </div>
         )}
-        {!isCaptionLoaded && (
+        {!isCaptionLoaded && !caption && (
           <div className="w-full h-full flex items-center justify-center text-gray-400">Loading caption...</div>
         )}
       </div>
