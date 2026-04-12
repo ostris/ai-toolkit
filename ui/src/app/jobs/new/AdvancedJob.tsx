@@ -35,23 +35,38 @@ const yamlConfig: YAML.DocumentOptions &
   directives: true,
 };
 
+function toYaml(obj: any): string {
+  const doc = new YAML.Document(obj, yamlConfig);
+  YAML.visit(doc, {
+    Scalar(_key, node) {
+      if (typeof node.value === 'string' && node.value.includes('\n')) {
+        node.type = YAML.Scalar.BLOCK_LITERAL;
+      }
+    },
+  });
+  return doc.toString(yamlConfig);
+}
+
 export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props) {
   const { theme } = useTheme();
   const [editorValue, setEditorValue] = useState<string>('');
+  const [hasError, setHasError] = useState(false);
   const lastJobConfigUpdateStringRef = useRef('');
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<any>(null);
 
   // Track if the editor has been mounted
   const isEditorMounted = useRef(false);
 
   // Handler for editor mounting
-  const handleEditorDidMount: OnMount = editor => {
+  const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
     isEditorMounted.current = true;
 
     // Initial content setup
     try {
-      const yamlContent = YAML.stringify(jobConfig, yamlConfig);
+      const yamlContent = toYaml(jobConfig);
       setEditorValue(yamlContent);
       lastJobConfigUpdateStringRef.current = JSON.stringify(jobConfig);
     } catch (e) {
@@ -78,7 +93,7 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
         const scrollTop = editor.getScrollTop();
 
         // Update content
-        const yamlContent = YAML.stringify(jobConfig, yamlConfig);
+        const yamlContent = toYaml(jobConfig);
 
         // Only update if the content is actually different
         if (yamlContent !== editor.getValue()) {
@@ -98,11 +113,29 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
     }
   }, [jobConfig]);
 
+  const setMarkers = (errors: { message: string; line: number }[]) => {
+    const monaco = monacoRef.current;
+    const model = editorRef.current?.getModel();
+    if (!monaco || !model) return;
+    const markers = errors.map(err => ({
+      severity: monaco.MarkerSeverity.Error,
+      message: err.message,
+      startLineNumber: err.line,
+      startColumn: 1,
+      endLineNumber: err.line,
+      endColumn: model.getLineMaxColumn(err.line),
+    }));
+    monaco.editor.setModelMarkers(model, 'yaml', markers);
+  };
+
   const handleChange = (value: string | undefined) => {
     if (value === undefined) return;
 
     try {
       const parsed = YAML.parse(value);
+      setHasError(false);
+      setMarkers([]);
+
       // Don't update jobConfig if the change came from the editor itself
       // to avoid a circular update loop
       if (JSON.stringify(parsed) !== lastJobConfigUpdateStringRef.current) {
@@ -121,14 +154,21 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
         migrateJobConfig(parsed);
         setJobConfig(parsed);
       }
-    } catch (e) {
-      // Don't update on parsing errors
-      console.warn(e);
+    } catch (e: any) {
+      setHasError(true);
+      const line = e?.linePos?.[0]?.line ?? e?.linePos?.line ?? 1;
+      setMarkers([{ message: e?.message ?? 'Invalid YAML', line }]);
     }
   };
 
   return (
-    <>
+    <div className="relative h-full w-full">
+      {hasError && (
+        <div
+          className="absolute inset-0 z-10 pointer-events-none rounded-sm"
+          style={{ boxShadow: 'inset 0 0 12px 2px rgba(239, 68, 68, 0.5)' }}
+        />
+      )}
       <Editor
         height="100%"
         width="100%"
@@ -143,6 +183,6 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
           automaticLayout: true,
         }}
       />
-    </>
+    </div>
   );
 }

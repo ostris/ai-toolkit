@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { apiClient } from '@/utils/api';
 
 type AudioPlayerProps = {
   src: string;
@@ -38,214 +39,17 @@ function broadcastExclusivePlay(token: string) {
 }
 
 /**
- * ID3 helpers (v2.2/v2.3/v2.4):
- * - robust album art extraction: APIC (v2.3/2.4) + PIC (v2.2)
- * - basic text frames: title/artist/album
- * - handles tag-level unsynchronisation
- *
- * Requires fetch() byte access; if CORS blocks, it will fall back gracefully.
+ * Build the server-side album-art URL from the audio src.
+ * The audio src is `/api/img/{encodedPath}` — we extract the path
+ * and point to `/api/audio/art/{encodedPath}` instead.
  */
-type Id3Meta = {
-  title?: string;
-  artist?: string;
-  album?: string;
-  pictureUrl?: string; // object URL
-};
-
-function synchsafeToInt(b0: number, b1: number, b2: number, b3: number) {
-  return ((b0 & 0x7f) << 21) | ((b1 & 0x7f) << 14) | ((b2 & 0x7f) << 7) | (b3 & 0x7f);
-}
-
-function deUnsync(bytes: Uint8Array) {
-  const out: number[] = [];
-  for (let i = 0; i < bytes.length; i++) {
-    const cur = bytes[i];
-    out.push(cur);
-    if (cur === 0xff && i + 1 < bytes.length && bytes[i + 1] === 0x00) i += 1;
+function albumArtUrlFromSrc(src: string): string {
+  const prefix = '/api/img/';
+  if (src.startsWith(prefix)) {
+    return `/api/audio/art/${src.slice(prefix.length)}`;
   }
-  return new Uint8Array(out);
-}
-
-function decodeText(encoding: number, bytes: Uint8Array) {
-  let end = bytes.length;
-  while (end > 0 && bytes[end - 1] === 0) end--;
-  const b = bytes.slice(0, end);
-
-  try {
-    if (encoding === 0) return new TextDecoder('latin1').decode(b);
-    if (encoding === 1) return new TextDecoder('utf-16').decode(b);
-    if (encoding === 2) return new TextDecoder('utf-16be').decode(b);
-    if (encoding === 3) return new TextDecoder('utf-8').decode(b);
-  } catch {
-    // ignore
-  }
-  return new TextDecoder('latin1').decode(b);
-}
-
-function readNullTerminated(bytes: Uint8Array, start: number, encoding: number) {
-  if (encoding === 1 || encoding === 2) {
-    let i = start;
-    while (i + 1 < bytes.length && !(bytes[i] === 0 && bytes[i + 1] === 0)) i += 2;
-    const textBytes = bytes.slice(start, i);
-    return { text: decodeText(encoding, textBytes), next: i + 2 };
-  } else {
-    let i = start;
-    while (i < bytes.length && bytes[i] !== 0) i++;
-    const textBytes = bytes.slice(start, i);
-    return { text: decodeText(encoding, textBytes), next: i + 1 };
-  }
-}
-
-async function fetchBytes(src: string, start: number, endInclusive: number) {
-  const wantLen = endInclusive - start + 1;
-
-  try {
-    const r = await fetch(src, { headers: { Range: `bytes=${start}-${endInclusive}` } });
-    if (!r.ok) throw new Error('range not ok');
-    const buf = await r.arrayBuffer();
-    return new Uint8Array(buf);
-  } catch {
-    const r = await fetch(src);
-    if (!r.ok) throw new Error('fetch not ok');
-    const buf = await r.arrayBuffer();
-    const u8 = new Uint8Array(buf);
-    if (start === 0 && u8.length >= wantLen) return u8.slice(0, wantLen);
-    return u8.slice(start, Math.min(u8.length, endInclusive + 1));
-  }
-}
-
-async function extractId3MetaAndArt(src: string, maxTagBytes = 4_000_000): Promise<Id3Meta> {
-  const head = await fetchBytes(src, 0, 64 * 1024 - 1).catch(() => null);
-  if (!head || head.length < 10) return {};
-  if (head[0] !== 0x49 || head[1] !== 0x44 || head[2] !== 0x33) return {};
-
-  const verMajor = head[3]; // 2,3,4
-  const flags = head[5];
-  const tagSize = synchsafeToInt(head[6], head[7], head[8], head[9]);
-  const tagEnd = 10 + tagSize;
-
-  const need = Math.min(tagEnd, maxTagBytes);
-  let tagBytes = head;
-  if (head.length < need) {
-    const more = await fetchBytes(src, 0, need - 1).catch(() => null);
-    if (!more) return {};
-    tagBytes = more;
-  } else {
-    tagBytes = head.slice(0, need);
-  }
-
-  const tagUnsync = (flags & 0x80) !== 0;
-  const tagDataRaw = tagBytes.slice(10, Math.min(tagBytes.length, tagEnd));
-  const tagData = tagUnsync ? deUnsync(tagDataRaw) : tagDataRaw;
-
-  let offset = 0;
-
-  // Extended header (v2.3/v2.4)
-  if (verMajor === 3 || verMajor === 4) {
-    const hasExt = (flags & 0x40) !== 0;
-    if (hasExt && tagData.length >= 4) {
-      let extSize = 0;
-      if (verMajor === 4) extSize = synchsafeToInt(tagData[0], tagData[1], tagData[2], tagData[3]);
-      else extSize = (tagData[0] << 24) | (tagData[1] << 16) | (tagData[2] << 8) | tagData[3];
-      offset += 4 + Math.max(0, extSize);
-    }
-  }
-
-  const meta: Id3Meta = {};
-  const setIfEmpty = (k: keyof Id3Meta, v?: string) => {
-    if (!v) return;
-    if (!meta[k]) meta[k] = v;
-  };
-
-  while (offset < tagData.length) {
-    if (tagData[offset] === 0x00) break;
-
-    if (verMajor === 2) {
-      if (offset + 6 > tagData.length) break;
-      const id = new TextDecoder('latin1').decode(tagData.slice(offset, offset + 3));
-      const size = (tagData[offset + 3] << 16) | (tagData[offset + 4] << 8) | tagData[offset + 5];
-      offset += 6;
-      if (!id.trim() || size <= 0 || offset + size > tagData.length) break;
-
-      const frame = tagData.slice(offset, offset + size);
-
-      if (id === 'TT2' || id === 'TP1' || id === 'TAL') {
-        const enc = frame[0];
-        const txt = decodeText(enc, frame.slice(1));
-        if (id === 'TT2') setIfEmpty('title', txt);
-        if (id === 'TP1') setIfEmpty('artist', txt);
-        if (id === 'TAL') setIfEmpty('album', txt);
-      }
-
-      if (id === 'PIC' && frame.length > 6) {
-        const enc = frame[0];
-        const fmt = new TextDecoder('latin1').decode(frame.slice(1, 4)).toLowerCase();
-        const imgType = fmt === 'png' ? 'image/png' : 'image/jpeg';
-        let p = 5;
-        const desc = readNullTerminated(frame, p, enc);
-        p = desc.next;
-        if (p < frame.length) {
-          const img = frame.slice(p);
-          if (img.length > 64) {
-            const blob = new Blob([img], { type: imgType });
-            meta.pictureUrl = URL.createObjectURL(blob);
-          }
-        }
-      }
-
-      offset += size;
-    } else {
-      if (offset + 10 > tagData.length) break;
-
-      const id = new TextDecoder('latin1').decode(tagData.slice(offset, offset + 4));
-      let size = 0;
-      if (verMajor === 4)
-        size = synchsafeToInt(tagData[offset + 4], tagData[offset + 5], tagData[offset + 6], tagData[offset + 7]);
-      else
-        size =
-          (tagData[offset + 4] << 24) | (tagData[offset + 5] << 16) | (tagData[offset + 6] << 8) | tagData[offset + 7];
-
-      const flag2 = tagData[offset + 9];
-      offset += 10;
-
-      if (!id.trim() || size <= 0 || offset + size > tagData.length) break;
-
-      let frame = tagData.slice(offset, offset + size);
-
-      const frameUnsync = verMajor === 4 && (flag2 & 0x02) !== 0;
-      if (frameUnsync) frame = deUnsync(frame);
-
-      if (id === 'TIT2' || id === 'TPE1' || id === 'TALB') {
-        const enc = frame[0];
-        const txt = decodeText(enc, frame.slice(1));
-        if (id === 'TIT2') setIfEmpty('title', txt);
-        if (id === 'TPE1') setIfEmpty('artist', txt);
-        if (id === 'TALB') setIfEmpty('album', txt);
-      }
-
-      if (id === 'APIC' && frame.length > 10) {
-        const enc = frame[0];
-        const mimeZ = readNullTerminated(frame, 1, 0);
-        const mime = mimeZ.text || 'image/jpeg';
-        let p = mimeZ.next;
-        if (p < frame.length) p += 1; // pictureType
-        const desc = readNullTerminated(frame, p, enc);
-        p = desc.next;
-
-        if (p < frame.length) {
-          const img = frame.slice(p);
-          if (img.length > 64) {
-            const blob = new Blob([img], { type: mime });
-            if (!meta.pictureUrl) meta.pictureUrl = URL.createObjectURL(blob);
-          }
-        }
-      }
-
-      offset += size;
-    }
-  }
-
-  return meta;
+  // Fallback: assume src is already an encoded path
+  return `/api/audio/art/${encodeURIComponent(src)}`;
 }
 
 export default function AudioPlayer({
@@ -278,12 +82,8 @@ export default function AudioPlayer({
   const [dragging, setDragging] = useState(false);
   const [dragValue, setDragValue] = useState(0);
 
-  // Meta + artwork
-  const [metaTitle, setMetaTitle] = useState<string | null>(null);
-  const [metaArtist, setMetaArtist] = useState<string | null>(null);
-  const [metaAlbum, setMetaAlbum] = useState<string | null>(null);
+  // Album art: served by /api/audio/art endpoint (fast, server-side extraction)
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
-  const albumArtBlobUrlRef = useRef<string | null>(null);
 
   // WebAudio analyser
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -318,56 +118,22 @@ export default function AudioPlayer({
     c.height = Math.max(1, Math.floor(cssH * dpr));
   }, [size]);
 
-  // Extract meta + art
+  // Set album art URL from server endpoint
   useEffect(() => {
+    const artUrl = albumArtUrlFromSrc(src);
     let cancelled = false;
-
-    (async () => {
-      if (albumArtBlobUrlRef.current) {
-        URL.revokeObjectURL(albumArtBlobUrlRef.current);
-        albumArtBlobUrlRef.current = null;
-      }
-      setAlbumArtUrl(null);
-      setMetaTitle(null);
-      setMetaArtist(null);
-      setMetaAlbum(null);
-
-      try {
-        const meta = await extractId3MetaAndArt(src);
-        if (cancelled) return;
-
-        if (meta.title) setMetaTitle(meta.title);
-        if (meta.artist) setMetaArtist(meta.artist);
-        if (meta.album) setMetaAlbum(meta.album);
-
-        if (meta.pictureUrl) {
-          albumArtBlobUrlRef.current = meta.pictureUrl;
-          setAlbumArtUrl(meta.pictureUrl);
-        } else if (defaultAlbumArtUrl) {
-          setAlbumArtUrl(defaultAlbumArtUrl);
-        }
-      } catch {
-        if (!cancelled && defaultAlbumArtUrl) setAlbumArtUrl(defaultAlbumArtUrl);
-      }
-    })();
-
+    apiClient
+      .head(artUrl)
+      .then(() => {
+        if (!cancelled) setAlbumArtUrl(artUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setAlbumArtUrl(defaultAlbumArtUrl ?? null);
+      });
     return () => {
       cancelled = true;
     };
   }, [src, defaultAlbumArtUrl]);
-
-  // Cleanup artwork blob URL on unmount
-  useEffect(() => {
-    return () => {
-      if (albumArtBlobUrlRef.current) {
-        URL.revokeObjectURL(albumArtBlobUrlRef.current);
-        albumArtBlobUrlRef.current = null;
-      }
-    };
-  }, []);
-
-  const effectiveTitle = metaTitle || title;
-  const effectiveSubtitle = metaArtist || subtitle || metaAlbum || '';
 
   const progress = useMemo(() => {
     const cur = dragging ? dragValue : t;
@@ -677,11 +443,11 @@ export default function AudioPlayer({
             className="truncate text-gray-200"
             style={{ fontSize: titleSize, lineHeight: 1.1, letterSpacing: '0.01em' }}
           >
-            {effectiveTitle}
+            {title}
           </div>
-          {effectiveSubtitle ? (
+          {subtitle ? (
             <div className="mt-1 truncate text-gray-400" style={{ fontSize: subSize, lineHeight: 1.15 }}>
-              {effectiveSubtitle}
+              {subtitle}
             </div>
           ) : null}
           {err ? (

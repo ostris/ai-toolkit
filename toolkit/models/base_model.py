@@ -427,7 +427,7 @@ class BaseModel:
                 if network is not None:
                     assert network.is_active
 
-                for i in tqdm(range(len(image_configs)), desc=f"Generating Images", leave=False):
+                for i in tqdm(range(len(image_configs)), desc=f"Generating Samples", leave=False):
                     gen_config = image_configs[i]
 
                     extra = {}
@@ -1590,7 +1590,7 @@ class BaseModel:
     
     def get_base_model_version(self) -> str:
         # override in child classes to get the base model version
-        return "unknown"
+        return self.arch if self.arch is not None else 'unknown'
 
     def get_model_to_train(self):
         # called to get model to attach LoRAs to. Can be overridden in child classes

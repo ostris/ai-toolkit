@@ -82,6 +82,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
     }
   };
 
+  const jobType = job?.job_type || 'unknown';
+
   let status = job.status;
   if (isStopping) {
     status = 'stopping';
@@ -100,17 +102,19 @@ export default function JobOverview({ job }: JobOverviewProps) {
 
         <div className="p-4 space-y-6 flex flex-col flex-grow">
           {/* Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-400">Progress</span>
-              <span className="text-gray-200">
-                Step {job.step} of {totalSteps}
-              </span>
+          {job.job_type === 'train' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">Progress</span>
+                <span className="text-gray-200">
+                  Step {job.step} of {totalSteps}
+                </span>
+              </div>
+              <div className="w-full bg-gray-800 rounded-full h-2">
+                <div className="h-2 rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
+              </div>
             </div>
-            <div className="w-full bg-gray-800 rounded-full h-2">
-              <div className="h-2 rounded-full bg-blue-500 transition-all" style={{ width: `${progress}%` }} />
-            </div>
-          </div>
+          )}
 
           {/* Job Info Grid */}
           <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
@@ -164,9 +168,11 @@ export default function JobOverview({ job }: JobOverviewProps) {
       <div className="col-span-1">
         <div>{isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}</div>
         <div className="mt-4">{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
-        <div className="mt-4">
-          <FilesWidget jobID={job.id} />
-        </div>
+        {jobType === 'train' && (
+          <div className="mt-4">
+            <FilesWidget jobID={job.id} />
+          </div>
+        )}
       </div>
     </div>
   );

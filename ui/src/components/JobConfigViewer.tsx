@@ -21,11 +21,23 @@ const yamlConfig: YAML.DocumentOptions &
   directives: true,
 };
 
+function toYaml(obj: any): string {
+  const doc = new YAML.Document(obj, yamlConfig);
+  YAML.visit(doc, {
+    Scalar(_key, node) {
+      if (typeof node.value === 'string' && node.value.includes('\n')) {
+        node.type = YAML.Scalar.BLOCK_LITERAL;
+      }
+    },
+  });
+  return doc.toString(yamlConfig);
+}
+
 export default function JobConfigViewer({ job }: Props) {
   const [editorValue, setEditorValue] = useState<string>('');
   useEffect(() => {
     if (job?.job_config) {
-      const yamlContent = YAML.stringify(JSON.parse(job.job_config), yamlConfig);
+      const yamlContent = toYaml(JSON.parse(job.job_config));
       setEditorValue(yamlContent);
     }
   }, [job]);

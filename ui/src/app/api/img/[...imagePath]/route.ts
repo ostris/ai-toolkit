@@ -24,6 +24,8 @@ const contentTypeMap: { [key: string]: string } = {
   // Audio
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
 };
 
 export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
