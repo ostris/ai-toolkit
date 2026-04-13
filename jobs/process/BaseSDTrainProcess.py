@@ -1171,7 +1171,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.linear_timesteps,
                         self.train_config.linear_timesteps2,
                         self.train_config.timestep_type == 'linear',
-                        self.train_config.timestep_type == 'one_step',
+                        self.train_config.timestep_type in ['one_step', 'two_step', 'four_step', 'eight_step'],
                     ])
                     
                     timestep_type = 'linear' if linear_timesteps else None
@@ -1225,8 +1225,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if is_reg:
                     content_or_style = self.train_config.content_or_style_reg
 
-                # if self.train_config.timestep_sampling == 'style' or self.train_config.timestep_sampling == 'content':
-                if self.train_config.timestep_type == 'next_sample':
+                if self.train_config.timestep_type in ['two_step', 'four_step', 'eight_step']:
+                    if self.train_config.timestep_type == 'two_step':
+                        indice_choices = [0, 499]
+                    elif self.train_config.timestep_type == 'four_step':
+                        indice_choices = [0, 250, 500, 750]
+                    elif self.train_config.timestep_type == 'eight_step':
+                        indice_choices = [0, 125, 250, 375, 500, 625, 750, 875]
+                    timestep_indices = torch.tensor(random.choices(indice_choices, k=batch_size), device=self.device_torch)
+                    timestep_indices = timestep_indices.long()
+                elif self.train_config.timestep_type == 'next_sample':
                     timestep_indices = torch.randint(
                             0,
                             num_train_timesteps - 2, # -1 for 0 idx, -1 so we can step
