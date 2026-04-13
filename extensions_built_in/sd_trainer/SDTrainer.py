@@ -355,7 +355,11 @@ class SDTrainer(BaseSDTrainProcess):
             vae = self.sd.vae
             # if not (self.model_config.arch in ["flux"]) or self.sd.vae.__class__.__name__ == "AutoencoderPixelMixer":
             #     vae = self.sd.vae
-            self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path, vae=vae)
+            self.dfe = load_dfe(
+                self.train_config.diffusion_feature_extractor_path, 
+                vae=vae,
+                sd=self.sd
+            )
             self.dfe.to(self.device_torch)
             if hasattr(self.dfe, 'vision_encoder') and self.train_config.gradient_checkpointing:
                 # must be set to train for gradient checkpointing to work
@@ -660,7 +664,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version in [3, 4, 5, 6]:
+            elif self.dfe.version in [3, 4, 5, 6, 7]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,

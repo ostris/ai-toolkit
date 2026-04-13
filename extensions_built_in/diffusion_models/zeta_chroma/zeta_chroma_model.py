@@ -241,6 +241,8 @@ class ZetaChromaModel(BaseModel):
     ):
         self.model.to(self.device_torch, dtype=self.torch_dtype)
         self.model.to(self.device_torch)
+        
+        do_low_step_schedule = gen_config.num_inference_steps <= 8 and gen_config.guidance_scale <= 1.0
 
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
@@ -256,6 +258,7 @@ class ZetaChromaModel(BaseModel):
             guidance_scale=gen_config.guidance_scale,
             latents=gen_config.latents,
             generator=generator,
+            low_step_schedule=do_low_step_schedule,
             **extra,
         ).images[0]
         return img
