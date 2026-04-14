@@ -124,12 +124,6 @@ class AdvancedPromptEmbeds:
         else:
             raise ValueError("Must provide a path")
 
-        metadata = loaded.metadata()
-        if metadata.get("class_name") != cls.__name__:
-            raise ValueError(
-                f"Metadata class_name {metadata.get('class_name')!r} does not match expected {cls.__name__!r}"
-            )
-
         data = {}
         for key in loaded.keys():
             data[key] = loaded[key]
