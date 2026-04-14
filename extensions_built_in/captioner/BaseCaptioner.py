@@ -133,7 +133,7 @@ class BaseCaptioner(BaseExtensionProcess):
         # delete it if it already exists
         if os.path.exists(caption_file_path):
             os.remove(caption_file_path)
-        with open(caption_file_path, "w") as f:
+        with open(caption_file_path, "w", encoding="utf-8") as f:
             f.write(caption)
 
     def get_caption_for_file(self, file_path: str) -> str:
