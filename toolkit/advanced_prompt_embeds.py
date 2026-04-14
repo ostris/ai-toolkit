@@ -139,7 +139,7 @@ class AdvancedPromptEmbeds:
             for key in pe.keys():
                 if key not in embeds:
                     embeds[key] = []
-                embeds[key].append(pe[key])
+                embeds[key].extend(pe[key])
         return cls(**embeds)
 
     @classmethod
@@ -155,4 +155,4 @@ class AdvancedPromptEmbeds:
                     f"Cannot split key {key!r}: expected list of length {num_parts}, got {len(values)}"
                 )
             for i in range(num_parts):
-                split_embeds[i]._store[key] = values[i]
+                split_embeds[i]._store[key] = [values[i]]
