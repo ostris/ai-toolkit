@@ -322,12 +322,23 @@ class LTX2Model(BaseModel):
         flush()
 
         self.print_and_status_update("Loading text encoder")
+        te_path = self.model_config.resolve_te_path(self.ltx_te_path)
+        tokenizer_path = te_path
+        text_encoder_path = te_path
+        if te_path is not None and os.path.isdir(te_path):
+            nested_tokenizer_path = os.path.join(te_path, "tokenizer")
+            nested_text_encoder_path = os.path.join(te_path, "text_encoder")
+            if os.path.isdir(nested_tokenizer_path):
+                tokenizer_path = nested_tokenizer_path
+            if os.path.isdir(nested_text_encoder_path):
+                text_encoder_path = nested_text_encoder_path
+
         if (
             self.model_config.te_name_or_path is not None
             and self.model_config.te_name_or_path.endswith(".safetensors")
         ):
             # load from comfyui gemma3 checkpoint
-            tokenizer = GemmaTokenizerFast.from_pretrained(base_te_path)
+            tokenizer = GemmaTokenizerFast.from_pretrained(tokenizer_path)
 
             with init_empty_weights():
                 text_encoder = Gemma3ForConditionalGeneration(
@@ -398,19 +409,12 @@ class LTX2Model(BaseModel):
             text_encoder.load_state_dict(te_state_dict, assign=True, strict=True)
             del te_state_dict
             flush()
-        elif self.model_config.te_name_or_path is not None:
-            # a repo or folder
-            tokenizer = GemmaTokenizerFast.from_pretrained(
-                self.model_config.te_name_or_path
-            )
+        elif te_path is not None:
+            # a repo or folder. Some local bundles keep tokenizer/ and text_encoder/
+            # in separate nested directories instead of a single HF repo root.
+            tokenizer = GemmaTokenizerFast.from_pretrained(tokenizer_path)
             text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.model_config.te_name_or_path, dtype=dtype
-            )
-        elif self.ltx_te_path is not None:
-            # pull from model specific te
-            tokenizer = GemmaTokenizerFast.from_pretrained(self.ltx_te_path)
-            text_encoder = Gemma3ForConditionalGeneration.from_pretrained(
-                self.ltx_te_path, dtype=dtype
+                text_encoder_path, dtype=dtype
             )
         else:
             # using combo hf repo
