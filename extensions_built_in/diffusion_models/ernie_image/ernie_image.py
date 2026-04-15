@@ -110,8 +110,7 @@ class ErnieImageModel(BaseModel):
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
                 ignore_modules=[
-                    transformer.x_pad_token,
-                    transformer.cap_pad_token,
+                    transformer.x_embedder,
                 ],
             )
 

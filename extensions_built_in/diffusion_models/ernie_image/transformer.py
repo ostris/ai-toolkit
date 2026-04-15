@@ -338,6 +338,12 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
         nn.init.zeros_(self.final_linear.weight)
         nn.init.zeros_(self.final_linear.bias)
         self.gradient_checkpointing = False
+        self.onload_device = None
+    
+    @property
+    def device(self):
+        # use self.x_embeddersince we ignore it in memory management
+        return next(self.x_embedder.parameters()).device
 
     def forward(
         self,
