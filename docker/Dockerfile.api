@@ -62,19 +62,19 @@ RUN pip install --no-cache-dir --break-system-packages -r requirements.txt && \
 # IMPORTANT: diffusers' from_single_file() uses DIFFUSERS_DEFAULT_PIPELINE_PATHS which maps
 # SD v1 to "stable-diffusion-v1-5/stable-diffusion-v1-5" (community org, NOT runwayml).
 # kohya_model_util.py still references "runwayml/stable-diffusion-v1-5" so we cache both.
-RUN HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+RUN HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache hf download \
         stable-diffusion-v1-5/stable-diffusion-v1-5 --include "*.json" "*.txt" "*.model" && \
-    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache hf download \
         runwayml/stable-diffusion-v1-5 --include "*.json" "*.txt" "*.model" && \
-    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache hf download \
         stabilityai/stable-diffusion-xl-base-1.0 --include "*.json" "*.txt" "*.model" && \
-    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+    HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache hf download \
         openai/clip-vit-large-patch14 --include "*.json" "*.txt" "*.model"
 # SD2 is gated on HuggingFace — download only if an HF token is provided
 RUN --mount=type=secret,id=hf-token,required=false \
     if [ -f /run/secrets/hf-token ]; then \
         HF_TOKEN=$(cat /run/secrets/hf-token) \
-        HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache huggingface-cli download \
+        HF_ENDPOINT=https://hf-mirror.com HF_HOME=/opt/hf-cache hf download \
             stabilityai/stable-diffusion-2-1 --include "*.json" "*.txt" "*.model"; \
     fi
 
