@@ -1,14 +1,12 @@
 import os
 from typing import List, Optional
 
-import huggingface_hub
 import torch
 import yaml
-from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
-from toolkit.lora_special import LoRASpecialNetwork
+from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
-from toolkit.prompt_utils import PromptEmbeds
+from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -16,29 +14,40 @@ from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
-from safetensors.torch import load_file
-from optimum.quanto import QTensor
-from toolkit.metadata import get_meta_for_safetensors
-from safetensors.torch import load_file, save_file
-from transformers import AutoTokenizer, Qwen3ForCausalLM
-from diffusers import AutoencoderKL
-from toolkit.models.FakeVAE import FakeVAE
-from .zeta_chroma_transformer import ZImageDCT, ZImageDCTParams, vae_flatten, vae_unflatten, prepare_latent_image_ids, make_text_position_ids
-from .zeta_chroma_pipeline import ZetaChromaPipeline
+
+from transformers import AutoTokenizer, AutoModel
+
+try:
+    from diffusers import ErnieImagePipeline, AutoencoderKLFlux2
+    from .transformer import ErnieImageTransformer2DModel
+except ImportError:
+    raise ImportError(
+        "Diffusers is out of date. Update diffusers to the latest version by doing pip uninstall diffusers and then pip install -r requirements.txt"
+    )
+
 
 
 
 scheduler_config = {
+    "base_image_seq_len": 256,
+    "base_shift": 0.5,
+    "invert_sigmas": False,
+    "max_image_seq_len": 4096,
+    "max_shift": 1.15,
     "num_train_timesteps": 1000,
-    "use_dynamic_shifting": False,
     "shift": 3.0,
+    "shift_terminal": None,
+    "stochastic_sampling": False,
+    "time_shift_type": "exponential",
+    "use_beta_sigmas": False,
+    "use_dynamic_shifting": False,
+    "use_exponential_sigmas": False,
+    "use_karras_sigmas": False,
 }
 
-ZETA_CHROMA_TRANSFORMER_FILENAME = "zeta-chroma-base-x0-pixel-dino-distance.safetensors"
 
-
-class ZetaChromaModel(BaseModel):
-    arch = "zeta_chroma"
+class ErnieImageModel(BaseModel):
+    arch = "ernie_image"
 
     def __init__(
         self,
@@ -54,9 +63,7 @@ class ZetaChromaModel(BaseModel):
         )
         self.is_flow_matching = True
         self.is_transformer = True
-        self.target_lora_modules = ["ZImageDCT"]
-        self.patch_size = 32
-        self.max_sequence_length = 512
+        self.target_lora_modules = ["ErnieImageTransformer2DModel"]
 
     # static method to get the noise scheduler
     @staticmethod
@@ -64,58 +71,30 @@ class ZetaChromaModel(BaseModel):
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
     def get_bucket_divisibility(self):
-        return self.patch_size
+        return 16 * 2  # 16 for the VAE, 2 for patch size
 
     def load_model(self):
         dtype = self.torch_dtype
-        self.print_and_status_update("Loading ZImage model")
+        self.print_and_status_update("Loading ErnieImage model")
         model_path = self.model_config.name_or_path
         base_model_path = self.model_config.extras_name_or_path
 
         self.print_and_status_update("Loading transformer")
 
-
         transformer_path = model_path
-        if not os.path.exists(transformer_path):
-            transformer_name = ZETA_CHROMA_TRANSFORMER_FILENAME
-            # if path ends with .safetensors, assume last part is filename
-            # this allows users to target different file names in the repo like
-            # lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors
+        transformer_subfolder = "transformer"
+        if os.path.exists(transformer_path):
+            transformer_subfolder = None
+            transformer_path = os.path.join(transformer_path, "transformer")
+            # check if the path is a full checkpoint.
+            te_folder_path = os.path.join(model_path, "text_encoder")
+            # if we have the te, this folder is a full checkpoint, use it as the base
+            if os.path.exists(te_folder_path):
+                base_model_path = model_path
 
-            if transformer_path.endswith(".safetensors"):
-                splits = transformer_path.split("/")
-                transformer_name = splits[-1]
-                transformer_path = "/".join(splits[:-1])
-            # assume it is from the hub
-            transformer_path = huggingface_hub.hf_hub_download(
-                repo_id=transformer_path,
-                filename=transformer_name,
-            )
-
-        transformer_state_dict = load_file(transformer_path, device="cpu")
-
-        # cast to dtype
-        for key in transformer_state_dict:
-            transformer_state_dict[key] = transformer_state_dict[key].to(dtype)
-        
-        # Auto-detect use_x0 from checkpoint
-        use_x0 = "__x0__" in transformer_state_dict
-
-        # Build model params
-        in_channels = self.patch_size * self.patch_size * 3  # RGB patches
-        model_params = ZImageDCTParams(
-            patch_size=1,
-            in_channels=in_channels,
-            use_x0=use_x0,
+        transformer = ErnieImageTransformer2DModel.from_pretrained(
+            transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
         )
-
-        with torch.device("meta"):
-            transformer = ZImageDCT(model_params)
-            
-        transformer.load_state_dict(transformer_state_dict, assign=True)
-        del transformer_state_dict
-
-        transformer.to(self.quantize_device, dtype=dtype)
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
@@ -131,8 +110,7 @@ class ZetaChromaModel(BaseModel):
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
                 ignore_modules=[
-                    transformer.x_pad_token,
-                    transformer.cap_pad_token,
+                    transformer.x_embedder,
                 ],
             )
 
@@ -146,7 +124,7 @@ class ZetaChromaModel(BaseModel):
         tokenizer = AutoTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype
         )
-        text_encoder = Qwen3ForCausalLM.from_pretrained(
+        text_encoder = AutoModel.from_pretrained(
             base_model_path, subfolder="text_encoder", torch_dtype=dtype
         )
 
@@ -170,16 +148,17 @@ class ZetaChromaModel(BaseModel):
             flush()
 
         self.print_and_status_update("Loading VAE")
-        vae = FakeVAE(scaling_factor=1.0)
-        vae.to(self.device_torch, dtype=dtype)
+        vae = AutoencoderKLFlux2.from_pretrained(
+            base_model_path, subfolder="vae", torch_dtype=dtype
+        ).to(self.device_torch, dtype=dtype)
 
-        self.noise_scheduler = ZetaChromaModel.get_train_scheduler()
+        self.noise_scheduler = ErnieImageModel.get_train_scheduler()
 
         self.print_and_status_update("Making pipe")
 
         kwargs = {}
 
-        pipe: ZetaChromaPipeline = ZetaChromaPipeline(
+        pipe: ErnieImagePipeline = ErnieImagePipeline(
             scheduler=self.noise_scheduler,
             text_encoder=None,
             tokenizer=tokenizer,
@@ -216,9 +195,9 @@ class ZetaChromaModel(BaseModel):
         self.print_and_status_update("Model Loaded")
 
     def get_generation_pipeline(self):
-        scheduler = ZetaChromaModel.get_train_scheduler()
+        scheduler = ErnieImageModel.get_train_scheduler()
 
-        pipeline: ZetaChromaPipeline = ZetaChromaPipeline(
+        pipeline: ErnieImagePipeline = ErnieImagePipeline(
             scheduler=scheduler,
             text_encoder=unwrap_model(self.text_encoder[0]),
             tokenizer=self.tokenizer[0],
@@ -230,35 +209,61 @@ class ZetaChromaModel(BaseModel):
 
         return pipeline
 
+    def encode_images(self, image_list: List[torch.Tensor], device=None, dtype=None):
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(self.device_torch)
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+        self.vae.eval()
+        self.vae.requires_grad_(False)
+
+        image = image_list
+        if isinstance(image, list):
+            image = torch.stack(image, dim=0)
+
+        image = image.to(device, dtype=dtype)
+
+        latents = self.vae.encode(image).latent_dist.sample()
+
+        latents = self.pipeline._patchify_latents(latents)
+
+        bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(
+            device=latents.device, dtype=latents.dtype
+        )
+        bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + 1e-5).to(
+            device=latents.device, dtype=latents.dtype
+        )
+        latents = (latents - bn_mean) / bn_std
+
+        return latents
+
     def generate_single_image(
         self,
-        pipeline: ZetaChromaPipeline,
+        pipeline: ErnieImagePipeline,
         gen_config: GenerateImageConfig,
-        conditional_embeds: PromptEmbeds,
-        unconditional_embeds: PromptEmbeds,
+        conditional_embeds: AdvancedPromptEmbeds,
+        unconditional_embeds: AdvancedPromptEmbeds,
         generator: torch.Generator,
         extra: dict,
     ):
-        self.model.to(self.device_torch, dtype=self.torch_dtype)
-        self.model.to(self.device_torch)
-        
-        do_low_step_schedule = gen_config.num_inference_steps <= 8 and gen_config.guidance_scale <= 1.0
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
 
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
+
         img = pipeline(
             prompt_embeds=conditional_embeds.text_embeds,
-            prompt_embeds_mask=conditional_embeds.attention_mask,
             negative_prompt_embeds=unconditional_embeds.text_embeds,
-            negative_prompt_embeds_mask=unconditional_embeds.attention_mask,
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
             guidance_scale=gen_config.guidance_scale,
             latents=gen_config.latents,
             generator=generator,
-            low_step_schedule=do_low_step_schedule,
             **extra,
         ).images[0]
         return img
@@ -267,73 +272,63 @@ class ZetaChromaModel(BaseModel):
         self,
         latent_model_input: torch.Tensor,
         timestep: torch.Tensor,  # 0 to 1000 scale
-        text_embeddings: PromptEmbeds,
+        text_embeddings: AdvancedPromptEmbeds,
         **kwargs,
     ):
         if self.model.device == torch.device("cpu"):
             self.model.to(self.device_torch)
-        
-        with torch.no_grad():
-            
-            pixel_shape = latent_model_input.shape
-            # todo: do we invert like this?
-            # t_vec = (1000 - timestep) / 1000
-            t_vec = timestep / 1000
-            
-            height = latent_model_input.shape[2]
-            h_patches = height // self.patch_size
-            width = latent_model_input.shape[3]
-            w_patches = width // self.patch_size
-            batch_size = latent_model_input.shape[0]
-            
-            img, _ = vae_flatten(latent_model_input, patch_size=self.patch_size)
-            
-            num_patches = img.shape[1]
-            
-            # --- Build position IDs ---
-            pos_lengths = text_embeddings.attention_mask.sum(1)
-            offset = pos_lengths
 
-            image_pos_ids = prepare_latent_image_ids(
-                offset, h_patches, w_patches, patch_size=1
-            ).to(self.device_torch)
-            pos_text_ids = make_text_position_ids(pos_lengths, self.max_sequence_length).to(
-                self.device_torch
-            )
-            img_mask = torch.ones(
-                (batch_size, num_patches), device=self.device_torch, dtype=torch.bool
-            )
-            
-            
-
-        # model_out_list = self.transformer(
-        #     latent_model_input_list,
-        #     t_vec,
-        #     text_embeddings.text_embeds,
-        # )[0]
-        pred = self.transformer(
-            img=img, #(1, 1024, 3072)
-            img_ids=image_pos_ids, # (1, 1024, 3)
-            img_mask=img_mask, # (1, 1024)
-            txt=text_embeddings.text_embeds, # (1, 512, 2560)
-            txt_ids=pos_text_ids, # (1, 512, 3)
-            txt_mask=text_embeddings.attention_mask, # (1, 512)
-            timesteps=t_vec, # (1,)
+        text_bth, text_lens = self.pipeline._pad_text(
+            text_hiddens=text_embeddings.text_embeds,
+            device=self.device_torch,
+            dtype=self.vae.dtype,
+            text_in_dim=self.pipeline.transformer.config.text_in_dim,
         )
-        
-        pred = vae_unflatten(pred.float(), pixel_shape, patch_size=self.patch_size)
+
+        pred = self.transformer(
+            hidden_states=latent_model_input,
+            timestep=timestep,
+            text_bth=text_bth,
+            text_lens=text_lens,
+            return_dict=False,
+        )[0]
 
         return pred
 
-    def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
-        if self.pipeline.text_encoder.device != self.device_torch:
+    def get_prompt_embeds(self, prompt: str) -> AdvancedPromptEmbeds:
+        if self.pipeline.text_encoder.device == torch.device("cpu"):
             self.pipeline.text_encoder.to(self.device_torch)
 
-        prompt_embeds, mask = self.pipeline._encode_prompts(
-            prompt,
-        )
-        pe = PromptEmbeds([prompt_embeds, None], attention_mask=mask)
-        
+        if isinstance(prompt, str):
+            prompt = [prompt]
+
+        text_hiddens = []
+
+        for p in prompt:
+            ids = self.pipeline.tokenizer(
+                p,
+                add_special_tokens=True,
+                truncation=True,
+                padding=False,
+            )["input_ids"]
+
+            if len(ids) == 0:
+                if self.pipeline.tokenizer.bos_token_id is not None:
+                    ids = [self.pipeline.tokenizer.bos_token_id]
+                else:
+                    ids = [0]
+
+            input_ids = torch.tensor([ids], device=self.device_torch)
+            outputs = self.pipeline.text_encoder(
+                input_ids=input_ids,
+                output_hidden_states=True,
+            )
+            # Use second to last hidden state (matches training)
+            hidden = outputs.hidden_states[-2][0]  # [T, H]
+
+            text_hiddens.append(hidden)
+
+        pe = AdvancedPromptEmbeds(text_embeds=text_hiddens)
         return pe
 
     def get_model_has_grad(self):
@@ -343,19 +338,15 @@ class ZetaChromaModel(BaseModel):
         return False
 
     def save_model(self, output_path, meta, save_dtype):
-        if not output_path.endswith(".safetensors"):
-            output_path = output_path + ".safetensors"
-        # only save the unet
-        transformer: ZImageDCT = unwrap_model(self.model)
-        state_dict = transformer.state_dict()
-        save_dict = {}
-        for k, v in state_dict.items():
-            if isinstance(v, QTensor):
-                v = v.dequantize()
-            save_dict[k] = v.clone().to("cpu", dtype=save_dtype)
+        transformer: ErnieImageTransformer2DModel = unwrap_model(self.model)
+        transformer.save_pretrained(
+            save_directory=os.path.join(output_path, "transformer"),
+            safe_serialization=True,
+        )
 
-        meta = get_meta_for_safetensors(meta, name="zeta_chroma")
-        save_file(save_dict, output_path, metadata=meta)
+        meta_path = os.path.join(output_path, "aitk_meta.yaml")
+        with open(meta_path, "w") as f:
+            yaml.dump(meta, f)
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")
@@ -363,7 +354,7 @@ class ZetaChromaModel(BaseModel):
         return (noise - batch.latents).detach()
 
     def get_base_model_version(self):
-        return "zeta_chroma"
+        return self.arch
 
     def get_transformer_block_names(self) -> Optional[List[str]]:
         return ["layers"]
