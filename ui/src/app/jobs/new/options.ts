@@ -59,6 +59,7 @@ export interface ModelArch {
 }
 
 const defaultNameOrPath = '';
+const defaultLinearRank = 32
 
 export const modelArchs: ModelArch[] = [
   {
@@ -904,6 +905,22 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
     ],
+  },
+  {
+    name: 'nucleus_image',
+    label: 'Nucleus-Image',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['NucleusAI/Nucleus-Image', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['img_mlp.experts', 'img_mlp.gate'], []],
+      'config.process[0].network.linear': [128, defaultLinearRank],
+      'config.process[0].network.linear_alpha': [128, defaultLinearRank],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram'],
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
