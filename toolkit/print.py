@@ -21,6 +21,9 @@ class Logger:
     def flush(self):
         self.terminal.flush()
         self.log.flush()
+    
+    def isatty(self):
+        return self.terminal.isatty()
 
 
 def setup_log_to_file(filename):
