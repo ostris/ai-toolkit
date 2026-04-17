@@ -248,11 +248,25 @@ class AIToolkitOxenLogger:
                             self._add_checkpoint_file_with_rename(file_path, dst, experiment_name, step)
                             if remove_files: os.remove(file_path)
 
+            self._write_oxen_toml_for_dst(checkpoint_dst)
+
             print(f"Main process: Checkpoint saved successfully")
 
         except Exception as e:
             print(f"Main process: Error saving checkpoint to Oxen: {e}")
     
+    def _write_oxen_toml_for_dst(self, dst_path: str):
+        """Write an oxen.toml deploy manifest into the given workspace dst path."""
+        source = getattr(self.experiment, "base_model_name", None)
+        if not source:
+            return
+
+        local_path = os.path.join(str(self.experiment.dir), "oxen.toml")
+        with open(local_path, "w") as f:
+            f.write(f'[model]\nsource = "{source}"\ntype = "lora"\n')
+        self.workspace.add(local_path, dst=dst_path)
+        print(f"Main process: Wrote oxen.toml -> {dst_path}")
+
     def _add_checkpoint_file_with_rename(self, file_path: str, dst_path: str, experiment_name: str, step: int):
         """Add checkpoint file to workspace, renaming {experiment_name}_{step:09d}.safetensors to model.safetensors."""
         expected_name = f"{experiment_name}_{step:09d}.safetensors"
@@ -355,6 +369,8 @@ class AIToolkitOxenLogger:
                     rel_path = os.path.relpath(file_path, final_model_path)
                     file_dst = os.path.join(dst_path, os.path.dirname(rel_path))
                     self._add_file_with_rename(file_path, file_dst, name)
+
+        self._write_oxen_toml_for_dst(dst_path)
 
     def _add_file_with_rename(self, file_path: str, dst_path: str, experiment_name: str):
         """Add file to workspace, renaming {experiment_name}.safetensors to model.safetensors."""
