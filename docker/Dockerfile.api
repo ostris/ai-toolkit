@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS runtime
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS base
 
 LABEL authors="jaret"
 
@@ -79,6 +79,15 @@ RUN chmod +x /entrypoint.sh
 EXPOSE 8000
 
 WORKDIR /app/ai-toolkit
+
+# Artifact-only stage for extracting the baked HF cache:
+#   docker build --target hf-cache-export --output type=local,dest=./hf-cache .
+FROM scratch AS hf-cache-export
+COPY --from=base /opt/hf-cache /opt/hf-cache
+
+# Default target (must be last stage). Inherits everything from base and
+# adds the API server entrypoint.
+FROM base AS runtime
 
 # Start the API server via entrypoint (seeds HF cache before starting uvicorn)
 ENTRYPOINT ["/entrypoint.sh"]
