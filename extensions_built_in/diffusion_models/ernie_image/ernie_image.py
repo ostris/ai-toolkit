@@ -26,8 +26,6 @@ except ImportError:
     )
 
 
-
-
 scheduler_config = {
     "base_image_seq_len": 256,
     "base_shift": 0.5,
@@ -238,6 +236,26 @@ class ErnieImageModel(BaseModel):
         latents = (latents - bn_mean) / bn_std
 
         return latents
+
+    def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(self.device_torch)
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        latents = latents.to(device, dtype=dtype)
+        bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(device)
+        bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + 1e-5).to(device)
+        latents = latents * bn_std + bn_mean
+
+        # Unpatchify
+        latents = self._unpatchify_latents(latents)
+
+        # Decode
+        images = self.vae.decode(latents, return_dict=False)[0]
+        return images
 
     def generate_single_image(
         self,
