@@ -48,6 +48,7 @@ class AIToolkitOxenExperiment:
         self.repo: Optional[RemoteRepo] = None
         self.output_dir_base = output_dir_base
         self.is_main_process = is_main_process
+        self.base_model_name = base_model_name
         self.name: Optional[str] = None
         self.dir: Optional[Path] = None
         self.experiment_number = 0
@@ -102,7 +103,8 @@ class AIToolkitOxenExperiment:
             'name': self.name,
             'dir': str(self.dir) if self.dir else None,
             'experiment_number': self.experiment_number,
-            'repo_url': self.repo_url
+            'repo_url': self.repo_url,
+            'base_model_name': self.base_model_name,
         }
 
     def update_from_broadcast(self, details: dict):
@@ -114,5 +116,6 @@ class AIToolkitOxenExperiment:
         dir_str = details.get('dir')
         self.dir = Path(dir_str) if dir_str else None
         self.experiment_number = details.get('experiment_number', 0)
+        self.base_model_name = details.get('base_model_name', self.base_model_name)
         # Don't initialize repo on non-main processes
         self.repo = None
