@@ -251,7 +251,7 @@ class ErnieImageModel(BaseModel):
         latents = latents * bn_std + bn_mean
 
         # Unpatchify
-        latents = self._unpatchify_latents(latents)
+        latents = self.pipeline._unpatchify_latents(latents)
 
         # Decode
         images = self.vae.decode(latents, return_dict=False)[0]
