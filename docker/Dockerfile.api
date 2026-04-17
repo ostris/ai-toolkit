@@ -83,6 +83,3 @@ WORKDIR /app/ai-toolkit
 # Start the API server via entrypoint (seeds HF cache before starting uvicorn)
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "api_server.app:app", "--host", "0.0.0.0", "--port", "8000"]
-
-FROM scratch AS hf-cache-export
-COPY --from=runtime /opt/hf-cache /opt/hf-cache
