@@ -806,6 +806,13 @@ class DiffusionFeatureExtractor6(nn.Module):
         
         return dino_loss
     
+class ModelOutputWrapper:
+    def __init__(self, head, depth, normals, segmentation):
+        self.head = head
+        self.depth = depth
+        self.normals = normals
+        self.segmentation = segmentation
+    
 
 class DiffusionFeatureExtractor7(nn.Module):
     def __init__(
@@ -833,7 +840,7 @@ class DiffusionFeatureExtractor7(nn.Module):
         self.step = 0
         self.do_partial_step = partial_step
     
-    def prepare_inputs(self, tensor_0_1: torch.Tensor):
+    def get_pred(self, tensor_0_1: torch.Tensor):
         """
         tensor_0_1: (bs, 3, h, w), float, values in [0, 1]
         returns: {"pixel_values": (bs, 3, H, W)} ready for the vision transformer
@@ -858,8 +865,21 @@ class DiffusionFeatureExtractor7(nn.Module):
             target_h = (target_h // p) * p
             target_w = (target_w // p) * p
             x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
-
-        return x
+        
+        # do inference. us standard dpy but also the head
+        pixel_values = x.to(self.model.device, dtype=self.model.dtype)
+        h, w = pixel_values.shape[2:]
+        dpt_inputs = self.model._extract_intermediate(pixel_values)
+        # head is a list of 4
+        # each of the 4 is a tuple of (embeds, hidden_state)
+        # concat the hidden states from the 4 layers on dim 1
+        head = torch.cat([h[1] for h in dpt_inputs], dim=1)
+        return ModelOutputWrapper(
+            head=head,
+            depth=self.model.depth_head(dpt_inputs, image_size=(h, w)),
+            normals=self.model.normals_head(dpt_inputs, image_size=(h, w)),
+            segmentation=self.model.segmentation_head(dpt_inputs, image_size=(h, w)),
+        )
     
     def forward(
         self,
@@ -930,13 +950,14 @@ class DiffusionFeatureExtractor7(nn.Module):
         dtype = self.model.dtype
 
         with torch.no_grad():
-            target = self.prepare_inputs(target_0_1)
-            target = self.model(target)
+            target = self.get_pred(target_0_1)
         
         pred_images = pred_images.to(device, dtype=dtype)
-        pred = self.prepare_inputs(pred_images)
-        pred = self.model(pred)
+        pred = self.get_pred(pred_images)
         
+        head_loss = torch.nn.functional.mse_loss(
+            pred.head.float(), target.head.float()
+        )
         
         depth_loss = torch.nn.functional.l1_loss(
             pred.depth.float(), target.depth.float()
@@ -950,7 +971,7 @@ class DiffusionFeatureExtractor7(nn.Module):
             pred.segmentation.float(), target.segmentation.float()
         )
         
-        total_loss = (depth_loss + normals_loss + segmentation_loss) / 3.0
+        total_loss = (head_loss + depth_loss + normals_loss + segmentation_loss) / 4.0
         
         if self.do_partial_step:
             total_loss = total_loss * 10.0
@@ -959,6 +980,11 @@ class DiffusionFeatureExtractor7(nn.Module):
             self.losses['total'] = total_loss.item()
         else:
             self.losses['total'] += total_loss.item()
+            
+        if 'head' not in self.losses:
+            self.losses['head'] = head_loss.item()
+        else:
+            self.losses['head'] += head_loss.item()
             
         if 'depth' not in self.losses:
             self.losses['depth'] = depth_loss.item()
