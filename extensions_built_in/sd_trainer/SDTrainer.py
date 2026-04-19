@@ -781,7 +781,10 @@ class SDTrainer(BaseSDTrainProcess):
                 t0 = noisy_latents - tv * noise_pred
                 target = batch.latents.detach()
                 pred = t0
-
+            if self.train_config.loss_type == "pseudo_huber":
+                diff = pred - target
+                c=0.0
+                loss =(torch.sqrt(diff.pow(2) + c ** 2) - c)
             if self.train_config.loss_type == "mae":
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
             elif self.train_config.loss_type == "wavelet":
