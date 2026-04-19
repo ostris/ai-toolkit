@@ -783,7 +783,7 @@ class SDTrainer(BaseSDTrainProcess):
                 pred = t0
             if self.train_config.loss_type == "pseudo_huber":
                 diff = pred.float() - target.float()
-                c=0.0
+                c=0.01
                 loss =(torch.sqrt(diff.pow(2) + c ** 2) - c)
             elif self.train_config.loss_type == "mae":
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
