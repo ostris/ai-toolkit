@@ -124,6 +124,13 @@ def waveform_to_stereo(waveform):
     return waveform.mean(0, keepdim=True).expand(2, -1)
 
 
+def video_has_audio_stream(video_path: str) -> bool:
+    import torchaudio
+
+    stream_reader = torchaudio.io.StreamReader(video_path)
+    return stream_reader.default_audio_stream is not None
+
+
 class CaptionMixin:
     def get_caption_item(self: 'AiToolkitDataset', index):
         if not hasattr(self, 'caption_type'):
@@ -689,11 +696,18 @@ class ImageProcessingDTOMixin:
                     else:
                         target_duration = source_duration
 
-                    waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+                    if video_has_audio_stream(self.path):
+                        waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+                    else:
+                        waveform = None
+                        sample_rate = None
+                        if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
+                            print_acc(f"No audio stream found, skipping audio extraction: {self.path}")
+
+                    if waveform is not None:
+                        waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
                     
-                    waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
-                    
-                    if self.dataset_config.audio_normalize:
+                    if waveform is not None and self.dataset_config.audio_normalize:
                         peak = waveform.abs().amax()  # global peak across channels
                         eps = 1e-9
                         target_peak = 0.999  # ~ -0.01 dBFS
@@ -701,7 +715,7 @@ class ImageProcessingDTOMixin:
                         waveform = waveform * gain
 
                     # Slice to the selected clip region (when we have a meaningful time range)
-                    if source_duration > 0.0:
+                    if waveform is not None and source_duration > 0.0:
                         start_sample = int(round(clip_start_time * sample_rate))
                         end_sample = int(round(clip_end_time * sample_rate))
                         start_sample = max(0, min(start_sample, waveform.shape[-1]))

@@ -200,11 +200,20 @@ class DataLoaderBatchDTO:
                 if len(self.file_items[0].extra_values) > 0
                 else None
             )
-            self.audio_data: Union[List, None] = (
-                [x.audio_data for x in self.file_items]
-                if self.file_items[0].audio_data is not None
-                else None
-            )
+            self.audio_data: Union[List, None] = None
+            if any([x.audio_data is not None for x in self.file_items]):
+                base_audio_data = next(
+                    x.audio_data for x in self.file_items if x.audio_data is not None
+                )
+                self.audio_data = [
+                    x.audio_data
+                    if x.audio_data is not None
+                    else {
+                        "waveform": torch.zeros_like(base_audio_data["waveform"]),
+                        "sample_rate": int(base_audio_data["sample_rate"]),
+                    }
+                    for x in self.file_items
+                ]
             self.audio_tensor: Union[torch.Tensor, None] = None
             self.first_frame_latents: Union[torch.Tensor, None] = None
             self.audio_latents: Union[torch.Tensor, None] = None
@@ -241,12 +250,17 @@ class DataLoaderBatchDTO:
                         ]
                     )
                 if any([x._cached_audio_latent is not None for x in self.file_items]):
+                    base_audio_latent = next(
+                        x._cached_audio_latent
+                        for x in self.file_items
+                        if x._cached_audio_latent is not None
+                    )
                     self.audio_latents = torch.cat(
                         [
                             x._cached_audio_latent.unsqueeze(0)
                             if x._cached_audio_latent is not None
                             else torch.zeros_like(
-                                self.file_items[0]._cached_audio_latent
+                                base_audio_latent
                             ).unsqueeze(0)
                             for x in self.file_items
                         ]
