@@ -49,9 +49,15 @@ class GRPOConfig:
 @dataclass
 class LoRAConfigSpec:
     enabled: bool = True
+    network_type: Literal["lora", "lokr"] = "lora"
     rank: int = 32
     alpha: int = 64
+    conv_rank: int | None = None
+    conv_alpha: int | None = None
     dropout: float = 0.0
+    lokr_full_rank: bool = True
+    lokr_factor: int = -1
+    network_kwargs: dict[str, Any] = field(default_factory=dict)
     lora_path: str | None = None
 
 
@@ -71,6 +77,8 @@ class SessionConfig:
     seed: int = 0
     checkpoint_root: str = "./output/aitk_flow_grpo"
     checkpoint_interval_steps: int = 25
+    checkpoint_dtype: Literal["fp16", "bf16", "fp32"] | None = None
+    max_checkpoints: int = 4
     resume: bool = True
     lora: LoRAConfigSpec = field(default_factory=LoRAConfigSpec)
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
@@ -82,13 +90,19 @@ class SessionConfig:
         if override_arch:
             if ":" in override_arch:
                 override_arch = override_arch.split(":", 1)[0]
+            if override_arch == "sd15":
+                return "sd1"
             return override_arch
         arch = (self.model_arch or "").strip().lower()
         if arch:
             if ":" in arch:
                 arch = arch.split(":", 1)[0]
+            if arch == "sd15":
+                return "sd1"
             return arch
         family = (self.model_family or "").strip().lower()
+        if family == "sd15":
+            return "sd1"
         if family in {"sd3", "flux"}:
             return family
         return "sd1"
@@ -413,6 +427,10 @@ class OnlineFlowGRPOSession:
     def checkpoint_optimizer_path(self) -> Path:
         return self.checkpoint_dir / "optimizer.pt"
 
+    @property
+    def checkpoint_history_dir(self) -> Path:
+        return self.checkpoint_dir / "history"
+
     @staticmethod
     def _sampler_arch_for_model(arch: str) -> str:
         lowered = arch.strip().lower()
@@ -481,11 +499,23 @@ class OnlineFlowGRPOSession:
         model = self.model
         model_to_train = model.get_model_to_train()
         network_config = self._NetworkConfig(
-            type="lora",
+            type=str(self.config.lora.network_type or "lora"),
             linear=int(self.config.lora.rank),
             linear_alpha=float(self.config.lora.alpha),
+            conv=(
+                int(self.config.lora.conv_rank)
+                if self.config.lora.conv_rank is not None
+                else None
+            ),
+            conv_alpha=(
+                float(self.config.lora.conv_alpha)
+                if self.config.lora.conv_alpha is not None
+                else None
+            ),
             dropout=float(self.config.lora.dropout),
-            network_kwargs={},
+            lokr_full_rank=bool(self.config.lora.lokr_full_rank),
+            lokr_factor=int(self.config.lora.lokr_factor),
+            network_kwargs=dict(self.config.lora.network_kwargs or {}),
             transformer_only=False,
         )
         network_kwargs: dict[str, Any] = {}
@@ -560,6 +590,7 @@ class OnlineFlowGRPOSession:
             self.model = model
             self.network = self._make_lora_network()
             self.model.network = self.network
+            self.network.is_active = True
 
             if self.config.lora.lora_path:
                 load_path = Path(self.config.lora.lora_path)
@@ -675,6 +706,11 @@ class OnlineFlowGRPOSession:
             )
         sigma_current = sigmas[: timesteps.numel()]
         sigma_next = sigmas[1 : timesteps.numel() + 1]
+        if sigma_current.numel() > 0 and sigma_current[0] >= 1.0:
+            # The SDE update becomes unstable at the closed sigma == 1 boundary.
+            # Use the midpoint of the first interval instead of the endpoint.
+            sigma_current = sigma_current.clone()
+            sigma_current[0] = (sigma_current[0] + sigma_next[0]) * 0.5
         return timesteps, sigma_current, sigma_next
 
     def _prepare_initial_latents(
@@ -755,6 +791,8 @@ class OnlineFlowGRPOSession:
         with self._lock:
             if self.model is None:
                 raise SessionError("Session is not initialized.")
+            if self.network is not None:
+                self.network.is_active = True
 
             _set_global_seed(seed)
 
@@ -941,6 +979,7 @@ class OnlineFlowGRPOSession:
             reward = reward_map[vote]
 
             self.network.train()
+            self.network.is_active = True
             self.optimizer.zero_grad(set_to_none=True)
 
             total_steps = sample.log_probs.shape[1]
@@ -1053,7 +1092,8 @@ class OnlineFlowGRPOSession:
                 raise SessionError("Session is not initialized.")
 
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-            self.network.save_weights(str(self.checkpoint_lora_path), dtype=torch.float16)
+            checkpoint_dtype = _dtype_from_name(self.config.checkpoint_dtype or self.config.dtype)
+            self.network.save_weights(str(self.checkpoint_lora_path), dtype=checkpoint_dtype)
             torch.save(self.optimizer.state_dict(), self.checkpoint_optimizer_path)
 
             state = {
@@ -1070,6 +1110,24 @@ class OnlineFlowGRPOSession:
             }
             with self.checkpoint_state_path.open("w", encoding="utf-8") as handle:
                 json.dump(state, handle, indent=2)
+
+            history_dir = self.checkpoint_history_dir / f"step_{self.step_count:06d}"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            self.network.save_weights(str(history_dir / "lora.safetensors"), dtype=checkpoint_dtype)
+            torch.save(self.optimizer.state_dict(), history_dir / "optimizer.pt")
+            with (history_dir / "state.json").open("w", encoding="utf-8") as handle:
+                json.dump(state, handle, indent=2)
+
+            max_keep = max(1, int(self.config.max_checkpoints))
+            history_entries = sorted(
+                [entry for entry in self.checkpoint_history_dir.iterdir() if entry.is_dir()],
+                key=lambda entry: entry.name,
+            )
+            if len(history_entries) > max_keep:
+                for old_entry in history_entries[: len(history_entries) - max_keep]:
+                    for child in old_entry.iterdir():
+                        child.unlink(missing_ok=True)
+                    old_entry.rmdir()
             return state
 
     def close(self) -> None:
