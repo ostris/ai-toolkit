@@ -1,0 +1,10 @@
+--- flux_train_ui.py
++++ flux_train_ui.py
+@@
+-                show_share_button=False,
+                 show_download_button=False,
+@@
+-if __name__ == "__main__":
+-    demo.launch(share=True, show_error=True)
++if __name__ == "__main__":
++    demo.launch(show_error=True)
