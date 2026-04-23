@@ -1,0 +1,93 @@
+job: extension
+config:
+  name: "my_first_lora_v1"
+  process:
+    - type: "flow_grpo_trainer"
+      training_folder: "output"
+      sqlite_db_path: "./aitk_db.db"
+      device: "cuda"
+      performance_log_every: 10
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+        conv: 16
+        conv_alpha: 16
+        lokr_full_rank: true
+        lokr_factor: -1
+        network_kwargs:
+          ignore_if_contains: []
+      save:
+        dtype: "bf16"
+        save_every: 25
+        max_step_saves_to_keep: 4
+        save_format: "diffusers"
+        push_to_hub: false
+      datasets: []
+      train:
+        batch_size: 1
+        bypass_guidance_embedding: true
+        steps: 500
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw"
+        timestep_type: "shift"
+        content_or_style: "balanced"
+        optimizer_params:
+          weight_decay: 0.0001
+        unload_text_encoder: false
+        cache_text_embeddings: false
+        lr: 0.0001
+        ema_config:
+          use_ema: false
+          ema_decay: 0.99
+        skip_first_sample: false
+        force_first_sample: false
+        disable_sampling: true
+        dtype: "bf16"
+        diff_output_preservation: false
+        diff_output_preservation_multiplier: 1.0
+        diff_output_preservation_class: "person"
+        switch_boundary_every: 1
+        loss_type: "mse"
+      logging:
+        log_every: 1
+        use_ui_logger: true
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        quantize: true
+        qtype: "qfloat8"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        arch: "flux"
+        low_vram: false
+        model_kwargs: {}
+      grpo:
+        clip_range: 0.0001
+        adv_clip_max: 5.0
+        beta: 0.0
+        noise_level: 0.7
+        sde_type: "sde"
+        timestep_fraction: 1.0
+        candidates_per_task: 4
+        max_pending_tasks: 1
+        poll_interval_sec: 2.0
+      sample:
+        sampler: "flowmatch"
+        sample_every: 0
+        width: 1024
+        height: 1024
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 30
+        num_frames: 1
+        fps: 1
+        samples: []
+meta:
+  name: "[name]"
+  version: "1.0"
