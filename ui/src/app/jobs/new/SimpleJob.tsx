@@ -78,6 +78,7 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
   const isAudioModel = !!(modelArch?.group === 'audio');
+  const isFlowGRPO = jobConfig.config.process[0].type === 'flow_grpo_trainer';
 
   const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
     if (!modelArch) return null;
@@ -127,8 +128,11 @@ export default function SimpleJob({
     if (!disableSections.includes('slider')) {
       count += 1; // add slider card
     }
+    if (isFlowGRPO) {
+      count += 1;
+    }
     return count;
-  }, [modelArch, disableSections]);
+  }, [modelArch, disableSections, isFlowGRPO]);
 
   let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
 
@@ -509,6 +513,79 @@ export default function SimpleJob({
               />
             </Card>
           )}
+          {isFlowGRPO && (
+            <Card title="Flow-GRPO">
+              <NumberInput
+                label="Max Pending Tasks"
+                value={jobConfig.config.process[0].grpo?.max_pending_tasks || 1}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.max_pending_tasks')}
+                min={1}
+                required
+              />
+              <NumberInput
+                label="Poll Interval (sec)"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.poll_interval_sec || 2}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.poll_interval_sec')}
+                min={0.25}
+                required
+              />
+              <SelectInput
+                label="Transition Mode"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.sde_type || 'sde'}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.sde_type')}
+                options={[
+                  { value: 'sde', label: 'SDE' },
+                  { value: 'cps', label: 'CPS' },
+                ]}
+              />
+              <NumberInput
+                label="Clip Range"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.clip_range || 0.0001}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.clip_range')}
+                min={0}
+                required
+              />
+              <NumberInput
+                label="Advantage Clip Max"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.adv_clip_max || 5}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.adv_clip_max')}
+                min={0}
+                required
+              />
+              <NumberInput
+                label="KL Beta"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.beta || 0}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.beta')}
+                min={0}
+                required
+              />
+              <NumberInput
+                label="Noise Level"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.noise_level || 0.7}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.noise_level')}
+                min={0}
+                required
+              />
+              <NumberInput
+                label="Timestep Fraction"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.timestep_fraction || 1}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.timestep_fraction')}
+                min={0}
+                max={1}
+                required
+              />
+              <div className="pt-4 text-sm text-gray-400">
+                Prompts and sampling requests are created live from the Flow-GRPO voting view after the job starts.
+              </div>
+            </Card>
+          )}
           <Card title="Save">
             <SelectInput
               label="Data Type"
@@ -823,8 +900,9 @@ export default function SimpleJob({
             </div>
           </Card>
         </div>
-        <div>
-          <Card title="Datasets">
+        {!disableSections.includes('datasets') && (
+          <div>
+            <Card title="Datasets">
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (
                 <div key={i} className="p-4 rounded-lg bg-gray-800 relative">
@@ -1106,10 +1184,12 @@ export default function SimpleJob({
                 Add Dataset
               </button>
             </>
-          </Card>
-        </div>
-        <div>
-          <Card title="Sample">
+            </Card>
+          </div>
+        )}
+        {!isFlowGRPO && (
+          <div>
+            <Card title="Sample">
             <div className={sampleTopStyleClass}>
               <div>
                 <NumberInput
@@ -1527,8 +1607,9 @@ export default function SimpleJob({
             >
               Add Prompt
             </button>
-          </Card>
-        </div>
+            </Card>
+          </div>
+        )}
 
         {status === 'success' && <p className="text-green-500 text-center">Training saved successfully!</p>}
         {status === 'error' && <p className="text-red-500 text-center">Error saving training. Please try again.</p>}

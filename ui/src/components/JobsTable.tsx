@@ -10,6 +10,7 @@ import classNames from 'classnames';
 import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
+import { isFlowGRPOJob } from '@/utils/jobs';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -40,6 +41,13 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
           title = (
             <>
               <small className="opacity-50">CAPTION: </small> {datasetPath}
+            </>
+          );
+        }
+        if (row.job_type === 'train' && isFlowGRPOJob(row)) {
+          title = (
+            <>
+              <small className="opacity-50">FLOW-GRPO: </small> {row.name}
             </>
           );
         }

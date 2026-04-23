@@ -1,7 +1,7 @@
 'use client';
 import { isMac } from '@/helpers/basic';
 import { defaultSampleConfig } from '@/helpers/defaultSamples';
-import { JobConfig, SampleConfig, DatasetConfig, SliderConfig } from '@/types';
+import { JobConfig, SampleConfig, DatasetConfig, SliderConfig, FlowGRPOConfig } from '@/types';
 
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
@@ -29,6 +29,18 @@ export const defaultSliderConfig: SliderConfig = {
   negative_prompt: 'person who is sad',
   target_class: 'person',
   anchor_class: '',
+};
+
+export const defaultFlowGRPOConfig: FlowGRPOConfig = {
+  clip_range: 0.0001,
+  adv_clip_max: 5.0,
+  beta: 0.0,
+  noise_level: 0.7,
+  sde_type: 'sde',
+  timestep_fraction: 1.0,
+  candidates_per_task: 4,
+  max_pending_tasks: 1,
+  poll_interval_sec: 2.0,
 };
 
 export const defaultJobConfig: JobConfig = {
@@ -157,6 +169,18 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
   }
   if (isMac()) {
     jobConfig.config.process[0].device = 'mps';
+  }
+
+  if (jobConfig?.config?.process?.[0]?.type === 'flow_grpo_trainer') {
+    if (!jobConfig.config.process[0].grpo) {
+      jobConfig.config.process[0].grpo = { ...defaultFlowGRPOConfig };
+    }
+    jobConfig.config.process[0].datasets = [];
+    jobConfig.config.process[0].train.disable_sampling = true;
+    jobConfig.config.process[0].sample.samples = [];
+    if (!jobConfig.config.process[0].sample.sample_every) {
+      jobConfig.config.process[0].sample.sample_every = 0;
+    }
   }
 
   return jobConfig;

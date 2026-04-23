@@ -1,6 +1,7 @@
 'use client';
 
 import JobsTable from '@/components/JobsTable';
+import FlowGRPOQueueSection from '@/components/FlowGRPOQueueSection';
 import { TopBar, MainContent } from '@/components/layout';
 import Link from 'next/link';
 
@@ -20,6 +21,7 @@ export default function Dashboard() {
       </TopBar>
       <MainContent>
         <JobsTable />
+        <FlowGRPOQueueSection />
       </MainContent>
     </>
   );

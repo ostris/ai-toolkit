@@ -1,5 +1,5 @@
 import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
-import { defaultSliderConfig } from './jobConfig';
+import { defaultFlowGRPOConfig, defaultSliderConfig, defaultDatasetConfig } from './jobConfig';
 import { defaultAudioSampleConfig, defaultSampleConfig } from '@/helpers/defaultSamples';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
@@ -12,7 +12,8 @@ type DisableableSections =
   | 'train.diff_output_preservation'
   | 'train.blank_prompt_preservation'
   | 'train.unload_text_encoder'
-  | 'slider';
+  | 'slider'
+  | 'datasets';
 
 type AdditionalSections =
   | 'datasets.control_path'
@@ -978,6 +979,36 @@ export const jobTypeOptions: JobTypeOption[] = [
     onDeactivate: (config: JobConfig) => {
       // remove slider config
       delete config.config.process[0].slider;
+      return config;
+    },
+  },
+  {
+    value: 'flow_grpo_trainer',
+    label: 'Flow-GRPO',
+    disableSections: ['slider', 'datasets'],
+    onActivate: (config: JobConfig) => {
+      config.config.process[0].grpo = { ...defaultFlowGRPOConfig };
+      config.config.process[0].datasets = [];
+      config.config.process[0].train.disable_sampling = true;
+      config.config.process[0].train.optimizer = 'adamw';
+      config.config.process[0].train.batch_size = 1;
+      config.config.process[0].train.gradient_accumulation = 1;
+      config.config.process[0].sample.sample_every = 0;
+      config.config.process[0].sample.samples = [];
+      return config;
+    },
+    onDeactivate: (config: JobConfig) => {
+      delete config.config.process[0].grpo;
+      if (config.config.process[0].datasets.length === 0) {
+        config.config.process[0].datasets = [{ ...defaultDatasetConfig }];
+      }
+      config.config.process[0].train.disable_sampling = false;
+      if (!config.config.process[0].sample.sample_every) {
+        config.config.process[0].sample.sample_every = 250;
+      }
+      if (config.config.process[0].sample.samples.length === 0) {
+        config.config.process[0].sample.samples = [{ prompt: '' }];
+      }
       return config;
     },
   },
