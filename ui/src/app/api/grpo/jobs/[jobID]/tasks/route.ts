@@ -2,6 +2,22 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
+const SUPPORTED_FLOW_GRPO_SAMPLERS = new Set(['flowmatch']);
+const SUPPORTED_FLOW_GRPO_SCHEDULERS = new Set(['flowmatch']);
+
+const parseIntegerField = (value: unknown, fallback: number, min: number) => {
+  const raw = `${value ?? ''}`.trim();
+  if (raw === '') return fallback;
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) ? Math.max(min, parsed) : fallback;
+};
+
+const parseFloatField = (value: unknown, fallback: number, min: number) => {
+  const raw = `${value ?? ''}`.trim();
+  if (raw === '') return fallback;
+  const parsed = parseFloat(raw);
+  return Number.isFinite(parsed) ? Math.max(min, parsed) : fallback;
+};
 
 export async function GET(request: Request, { params }: { params: { jobID: string } }) {
   const { searchParams } = new URL(request.url);
@@ -57,11 +73,11 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
     const body = await request.json();
     const prompt = `${body.prompt || ''}`.trim();
     const negativePrompt = `${body.negative_prompt || ''}`.trim();
-    const requestedCandidates = Math.max(2, parseInt(`${body.requested_candidates || '4'}`, 10) || 4);
-    const width = Math.max(64, parseInt(`${body.width || '1024'}`, 10) || 1024);
-    const height = Math.max(64, parseInt(`${body.height || '1024'}`, 10) || 1024);
-    const guidanceScale = Math.max(0, parseFloat(`${body.guidance_scale || '4'}`) || 4);
-    const numInferenceSteps = Math.max(1, parseInt(`${body.num_inference_steps || '30'}`, 10) || 30);
+    const requestedCandidates = parseIntegerField(body.requested_candidates, 4, 2);
+    const width = parseIntegerField(body.width, 1024, 64);
+    const height = parseIntegerField(body.height, 1024, 64);
+    const guidanceScale = parseFloatField(body.guidance_scale, 4, 0);
+    const numInferenceSteps = parseIntegerField(body.num_inference_steps, 30, 1);
     const sampler = `${body.sampler || 'flowmatch'}`.trim() || 'flowmatch';
     const scheduler = `${body.scheduler || 'flowmatch'}`.trim() || 'flowmatch';
     const seedValue = `${body.seed ?? ''}`.trim();
@@ -69,6 +85,12 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
 
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+    }
+    if (!SUPPORTED_FLOW_GRPO_SAMPLERS.has(sampler)) {
+      return NextResponse.json({ error: `Unsupported Flow-GRPO sampler '${sampler}'. Supported values: flowmatch` }, { status: 400 });
+    }
+    if (!SUPPORTED_FLOW_GRPO_SCHEDULERS.has(scheduler)) {
+      return NextResponse.json({ error: `Unsupported Flow-GRPO scheduler '${scheduler}'. Supported values: flowmatch` }, { status: 400 });
     }
 
     const job = await prisma.job.findUnique({

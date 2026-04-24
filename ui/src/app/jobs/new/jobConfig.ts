@@ -175,8 +175,15 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     if (!jobConfig.config.process[0].grpo) {
       jobConfig.config.process[0].grpo = { ...defaultFlowGRPOConfig };
     }
-    jobConfig.config.process[0].datasets = [];
+    delete jobConfig.config.process[0].datasets;
     jobConfig.config.process[0].train.disable_sampling = true;
+    jobConfig.config.process[0].train.cache_text_embeddings = false;
+    if (!jobConfig.config.process[0].train.noise_scheduler) {
+      jobConfig.config.process[0].train.noise_scheduler = 'flowmatch';
+    }
+    if (!jobConfig.config.process[0].sample.sampler) {
+      jobConfig.config.process[0].sample.sampler = 'flowmatch';
+    }
     jobConfig.config.process[0].sample.samples = [];
     if (!jobConfig.config.process[0].sample.sample_every) {
       jobConfig.config.process[0].sample.sample_every = 0;

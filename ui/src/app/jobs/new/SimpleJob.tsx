@@ -79,6 +79,7 @@ export default function SimpleJob({
   const isVideoModel = !!(modelArch?.group === 'video');
   const isAudioModel = !!(modelArch?.group === 'audio');
   const isFlowGRPO = jobConfig.config.process[0].type === 'flow_grpo_trainer';
+  const datasets = jobConfig.config.process[0].datasets || [];
 
   const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
     if (!modelArch) return null;
@@ -904,16 +905,16 @@ export default function SimpleJob({
           <div>
             <Card title="Datasets">
             <>
-              {jobConfig.config.process[0].datasets.map((dataset, i) => (
+              {datasets.map((dataset, i) => (
                 <div key={i} className="p-4 rounded-lg bg-gray-800 relative">
                   <div className="absolute top-2 right-2 flex gap-1">
                     <button
                       type="button"
                       onClick={() => {
                         const duplicated = objectCopy(dataset);
-                        const datasets = [...jobConfig.config.process[0].datasets];
-                        datasets.splice(i + 1, 0, duplicated);
-                        setJobConfig(datasets, 'config.process[0].datasets');
+                        const nextDatasets = [...datasets];
+                        nextDatasets.splice(i + 1, 0, duplicated);
+                        setJobConfig(nextDatasets, 'config.process[0].datasets');
                       }}
                       className="bg-gray-700 hover:bg-gray-600 rounded-full p-2 text-sm transition-colors"
                       title="Duplicate Dataset"
@@ -924,7 +925,7 @@ export default function SimpleJob({
                       type="button"
                       onClick={() =>
                         setJobConfig(
-                          jobConfig.config.process[0].datasets.filter((_, index) => index !== i),
+                          datasets.filter((_, index) => index !== i),
                           'config.process[0].datasets',
                         )
                       }
@@ -1177,7 +1178,7 @@ export default function SimpleJob({
                   // automaticallt add the controls for a new dataset
                   const controls = modelArch?.controls ?? [];
                   newDataset.controls = controls;
-                  setJobConfig([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
+                  setJobConfig([...datasets, newDataset], 'config.process[0].datasets');
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
               >

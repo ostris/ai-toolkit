@@ -988,18 +988,21 @@ export const jobTypeOptions: JobTypeOption[] = [
     disableSections: ['slider', 'datasets'],
     onActivate: (config: JobConfig) => {
       config.config.process[0].grpo = { ...defaultFlowGRPOConfig };
-      config.config.process[0].datasets = [];
+      delete config.config.process[0].datasets;
       config.config.process[0].train.disable_sampling = true;
+      config.config.process[0].train.noise_scheduler = 'flowmatch';
+      config.config.process[0].train.cache_text_embeddings = false;
       config.config.process[0].train.optimizer = 'adamw';
       config.config.process[0].train.batch_size = 1;
       config.config.process[0].train.gradient_accumulation = 1;
+      config.config.process[0].sample.sampler = 'flowmatch';
       config.config.process[0].sample.sample_every = 0;
       config.config.process[0].sample.samples = [];
       return config;
     },
     onDeactivate: (config: JobConfig) => {
       delete config.config.process[0].grpo;
-      if (config.config.process[0].datasets.length === 0) {
+      if (!config.config.process[0].datasets || config.config.process[0].datasets.length === 0) {
         config.config.process[0].datasets = [{ ...defaultDatasetConfig }];
       }
       config.config.process[0].train.disable_sampling = false;
