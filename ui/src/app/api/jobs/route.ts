@@ -4,6 +4,34 @@ import { isMac } from '@/helpers/basic';
 
 const prisma = new PrismaClient();
 
+function normalizeFlowGRPOJobConfig(jobConfig: any) {
+  const process = jobConfig?.config?.process?.[0];
+  if (process?.type !== 'flow_grpo_trainer') {
+    return jobConfig;
+  }
+  delete process.datasets;
+  process.grpo = process.grpo || {};
+  process.train = process.train || {};
+  process.sample = process.sample || {};
+  process.train.disable_sampling = true;
+  process.train.cache_text_embeddings = false;
+  if (!process.train.noise_scheduler) {
+    process.train.noise_scheduler = 'flowmatch';
+  }
+  if (!process.sample.sampler) {
+    process.sample.sampler = 'flowmatch';
+  }
+  if (process.train.noise_scheduler !== 'flowmatch') {
+    throw new Error(`Unsupported Flow-GRPO scheduler '${process.train.noise_scheduler}'. Supported values: flowmatch`);
+  }
+  if (process.sample.sampler !== 'flowmatch') {
+    throw new Error(`Unsupported Flow-GRPO sampler '${process.sample.sampler}'. Supported values: flowmatch`);
+  }
+  process.sample.sample_every = 0;
+  process.sample.samples = [];
+  return jobConfig;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
@@ -39,7 +67,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { id, name, job_config } = body;
+    const { id, name } = body;
+    const job_config = normalizeFlowGRPOJobConfig(body.job_config);
     let gpu_ids: string = body.gpu_ids;
 
     if (isMac()) {
@@ -89,6 +118,9 @@ export async function POST(request: Request) {
       return NextResponse.json(training);
     }
   } catch (error: any) {
+    if (typeof error?.message === 'string' && error.message.startsWith('Unsupported Flow-GRPO')) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     if (error.code === 'P2002') {
       // Handle unique constraint violation, 409=Conflict
       return NextResponse.json({ error: 'Job name already exists' }, { status: 409 });

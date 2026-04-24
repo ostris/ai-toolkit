@@ -16,7 +16,11 @@ import torch
 from PIL import Image
 
 from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
+from toolkit.sampler import get_sampler
 from toolkit.prompt_utils import PromptEmbeds
+
+SUPPORTED_FLOW_GRPO_SAMPLERS = {"flowmatch"}
+SUPPORTED_FLOW_GRPO_SCHEDULERS = {"flowmatch"}
 
 
 @dataclass
@@ -155,16 +159,71 @@ def _flowmatch_step_with_logprob(
 
 class FlowGRPOTrainer(DiffusionTrainer):
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
+        if "datasets" in config:
+            raise ValueError("Flow-GRPO config must not include `datasets`; prompts are supplied by vote tasks.")
+        train_config = config.setdefault("train", {})
+        train_config["disable_sampling"] = True
+        train_config["cache_text_embeddings"] = False
+        if not train_config.get("noise_scheduler"):
+            train_config["noise_scheduler"] = "flowmatch"
+        sample_config = config.setdefault("sample", {})
+        sample_config["sample_every"] = 0
+        sample_config["samples"] = []
+        if not sample_config.get("sampler"):
+            sample_config["sampler"] = "flowmatch"
         super().__init__(process_id, job, config, **kwargs)
         if not self.is_ui_trainer:
             raise ValueError("flow_grpo_trainer requires the UI SQLite runtime.")
-        self.train_config.disable_sampling = True
         self.flow_grpo_config = FlowGRPOTrainerConfig(**self.config.get("grpo", {}))
         self._prompt_index = 0
         self._task_counter = 0
         self._flow_grpo_root = Path(self.save_root) / "flow_grpo"
         self._candidate_root = self._flow_grpo_root / "candidates"
         self._candidate_root.mkdir(parents=True, exist_ok=True)
+        self._validate_flow_grpo_runtime_config()
+
+    def _normalize_control_value(self, value: Optional[str], default: str) -> str:
+        normalized = (value or default).strip().lower()
+        return normalized or default
+
+    def _validate_flow_grpo_runtime_config(self) -> None:
+        train_scheduler = self._normalize_control_value(self.train_config.noise_scheduler, "flowmatch")
+        sample_sampler = self._normalize_control_value(self.sample_config.sampler, "flowmatch")
+        self._validate_sampler(sample_sampler)
+        self._validate_scheduler(train_scheduler)
+
+    def _validate_sampler(self, sampler: str) -> str:
+        sampler = self._normalize_control_value(sampler, "flowmatch")
+        if sampler not in SUPPORTED_FLOW_GRPO_SAMPLERS:
+            supported = ", ".join(sorted(SUPPORTED_FLOW_GRPO_SAMPLERS))
+            raise ValueError(f"Unsupported Flow-GRPO sampler '{sampler}'. Supported values: {supported}")
+        return sampler
+
+    def _validate_scheduler(self, scheduler: str) -> str:
+        scheduler = self._normalize_control_value(scheduler, "flowmatch")
+        if scheduler not in SUPPORTED_FLOW_GRPO_SCHEDULERS:
+            supported = ", ".join(sorted(SUPPORTED_FLOW_GRPO_SCHEDULERS))
+            raise ValueError(f"Unsupported Flow-GRPO scheduler '{scheduler}'. Supported values: {supported}")
+        return scheduler
+
+    def _sampler_arch(self) -> str:
+        if self.model_config.is_flux:
+            return "flux"
+        if self.model_config.is_pixart:
+            return "pixart"
+        if self.model_config.is_lumina2:
+            return "lumina2"
+        return "sd"
+
+    def _build_task_scheduler(self, scheduler: str):
+        scheduler = self._validate_scheduler(scheduler)
+        return get_sampler(
+            scheduler,
+            {
+                "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
+            },
+            arch=self._sampler_arch(),
+        )
 
     def _db_execute(self, query: str, params: tuple = ()) -> list[sqlite3.Row]:
         def _op():
@@ -224,10 +283,13 @@ class FlowGRPOTrainer(DiffusionTrainer):
     def _prepare_scheduler_run(
         self,
         *,
+        sampler: str,
+        scheduler_name: str,
         num_inference_steps: int,
         latents: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        scheduler = self.sd.noise_scheduler
+        self._validate_sampler(sampler)
+        scheduler = self._build_task_scheduler(scheduler_name)
         if hasattr(scheduler, "set_train_timesteps"):
             signature = inspect.signature(scheduler.set_train_timesteps)
             kwargs: dict[str, Any] = {
@@ -271,7 +333,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         return (decoded / 2.0 + 0.5).clamp(0.0, 1.0)
 
     def _save_preview_image(self, image_tensor: torch.Tensor, image_path: Path) -> None:
-        image = image_tensor[0].detach().cpu().permute(1, 2, 0).numpy()
+        image = image_tensor[0].detach().float().cpu().permute(1, 2, 0).numpy()
         image = (image * 255.0).clip(0, 255).astype(np.uint8)
         Image.fromarray(image).save(image_path)
 
@@ -338,6 +400,8 @@ class FlowGRPOTrainer(DiffusionTrainer):
             self.device_torch, dtype=self.sd.torch_dtype
         )
         timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
+            sampler=sampler,
+            scheduler_name=scheduler,
             num_inference_steps=num_inference_steps,
             latents=latents,
         )
@@ -358,13 +422,23 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     guidance_scale=float(guidance_scale),
                 )
 
-            next_latents, log_prob, _, _ = _flowmatch_step_with_logprob(
+            next_latents, _, _, _ = _flowmatch_step_with_logprob(
                 model_output=noise_pred,
                 sample=latents,
                 sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
                 sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
                 noise_level=self.flow_grpo_config.noise_level,
                 sde_type=self.flow_grpo_config.sde_type,
+            )
+            next_latents = next_latents.to(self.device_torch, dtype=self.sd.torch_dtype)
+            _, log_prob, _, _ = _flowmatch_step_with_logprob(
+                model_output=noise_pred,
+                sample=latents,
+                sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
+                sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
+                noise_level=self.flow_grpo_config.noise_level,
+                sde_type=self.flow_grpo_config.sde_type,
+                prev_sample=next_latents,
             )
             latents_before.append(_clone_tensor(latents))
             latents_after.append(_clone_tensor(next_latents))
@@ -416,8 +490,8 @@ class FlowGRPOTrainer(DiffusionTrainer):
         height = int(task_row["height"] or self.sample_config.height)
         guidance_scale = float(task_row["guidance_scale"] or self.sample_config.guidance_scale)
         num_inference_steps = int(task_row["num_inference_steps"] or self.sample_config.sample_steps)
-        sampler = task_row["sampler"] or self.sample_config.sampler or "flowmatch"
-        scheduler = task_row["scheduler"] or self.train_config.noise_scheduler or "flowmatch"
+        sampler = self._validate_sampler(task_row["sampler"] or self.sample_config.sampler or "flowmatch")
+        scheduler = self._validate_scheduler(task_row["scheduler"] or self.train_config.noise_scheduler or "flowmatch")
         task_dir = self._task_dir(task_id)
 
         self._db_execute_write(
@@ -474,8 +548,9 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 """
                 INSERT INTO FlowGRPOCandidate (
                     id, job_id, vote_task_id, order_index, prompt, negative_prompt, seed,
-                    guidance_scale, num_inference_steps, sampler, scheduler, image_path, state_path, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    guidance_scale, num_inference_steps, sampler, scheduler, image_path, state_path, status,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 candidate_rows,
             )
@@ -484,10 +559,10 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 (task_id, self.job_id),
             )
             self._task_counter += 1
-        except Exception:
+        except Exception as exc:
             self._db_execute_write(
-                "UPDATE FlowGRPOVoteTask SET status = 'failed' WHERE id = ? AND job_id = ?",
-                (task_id, self.job_id),
+                "UPDATE FlowGRPOVoteTask SET status = 'failed', error = ? WHERE id = ? AND job_id = ?",
+                (str(exc), task_id, self.job_id),
             )
             self._db_execute_write(
                 "UPDATE FlowGRPOCandidate SET status = 'failed' WHERE vote_task_id = ?",

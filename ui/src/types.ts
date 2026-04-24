@@ -264,7 +264,7 @@ export interface ProcessConfig {
   slider?: SliderConfig;
   grpo?: FlowGRPOConfig;
   save: SaveConfig;
-  datasets: DatasetConfig[];
+  datasets?: DatasetConfig[];
   train: TrainConfig;
   logging: LoggingConfig;
   model: ModelConfig;

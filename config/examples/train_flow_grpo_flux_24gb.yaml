@@ -23,7 +23,6 @@ config:
         max_step_saves_to_keep: 4
         save_format: "diffusers"
         push_to_hub: false
-      datasets: []
       train:
         batch_size: 1
         bypass_guidance_embedding: true
