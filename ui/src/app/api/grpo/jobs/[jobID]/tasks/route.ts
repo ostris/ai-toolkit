@@ -2,8 +2,6 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
-const SUPPORTED_FLOW_GRPO_SAMPLERS = new Set(['flowmatch']);
-const SUPPORTED_FLOW_GRPO_SCHEDULERS = new Set(['flowmatch']);
 
 const parseIntegerField = (value: unknown, fallback: number, min: number) => {
   const raw = `${value ?? ''}`.trim();
@@ -22,8 +20,6 @@ const parseFloatField = (value: unknown, fallback: number, min: number) => {
 export async function GET(request: Request, { params }: { params: { jobID: string } }) {
   const { searchParams } = new URL(request.url);
   const statusParam = searchParams.get('status') || 'requested,generating,open,voted';
-  const requestedLimit = parseInt(searchParams.get('limit') || '10', 10);
-  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 20)) : 10;
   const statuses = statusParam
     .split(',')
     .map(value => value.trim())
@@ -48,9 +44,8 @@ export async function GET(request: Request, { params }: { params: { jobID: strin
         },
       },
       orderBy: {
-        created_at: 'asc',
+        created_at: 'desc',
       },
-      take: limit,
     });
 
     return NextResponse.json({
@@ -73,7 +68,6 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
     const body = await request.json();
     const prompt = `${body.prompt || ''}`.trim();
     const negativePrompt = `${body.negative_prompt || ''}`.trim();
-    const requestedCandidates = parseIntegerField(body.requested_candidates, 4, 2);
     const width = parseIntegerField(body.width, 1024, 64);
     const height = parseIntegerField(body.height, 1024, 64);
     const guidanceScale = parseFloatField(body.guidance_scale, 4, 0);
@@ -85,12 +79,6 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
 
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
-    }
-    if (!SUPPORTED_FLOW_GRPO_SAMPLERS.has(sampler)) {
-      return NextResponse.json({ error: `Unsupported Flow-GRPO sampler '${sampler}'. Supported values: flowmatch` }, { status: 400 });
-    }
-    if (!SUPPORTED_FLOW_GRPO_SCHEDULERS.has(scheduler)) {
-      return NextResponse.json({ error: `Unsupported Flow-GRPO scheduler '${scheduler}'. Supported values: flowmatch` }, { status: 400 });
     }
 
     const job = await prisma.job.findUnique({
@@ -105,7 +93,6 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
         job_id: params.jobID,
         prompt,
         negative_prompt: negativePrompt,
-        requested_candidates: requestedCandidates,
         width,
         height,
         seed: Number.isNaN(seed as number) ? null : seed,

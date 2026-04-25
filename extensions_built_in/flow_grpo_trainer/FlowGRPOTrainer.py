@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import inspect
 import os
 import sqlite3
@@ -13,10 +14,9 @@ from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
-from PIL import Image
 
 from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
-from toolkit.sampler import get_sampler
+from toolkit.config_modules import GenerateImageConfig
 from toolkit.prompt_utils import PromptEmbeds
 
 SUPPORTED_FLOW_GRPO_SAMPLERS = {"flowmatch"}
@@ -27,11 +27,13 @@ SUPPORTED_FLOW_GRPO_SCHEDULERS = {"flowmatch"}
 class FlowGRPOTrainerConfig:
     clip_range: float = 1e-4
     adv_clip_max: float = 5.0
-    beta: float = 0.0
+    beta: float = 0.04
     noise_level: float = 0.7
     sde_type: Literal["sde", "cps"] = "sde"
     timestep_fraction: float = 1.0
-    candidates_per_task: int = 4
+    group_size: int = 4
+    rollout_steps: int = 10
+    max_rollout_lag_steps: int = 0
     max_pending_tasks: int = 1
     poll_interval_sec: float = 2.0
 
@@ -42,7 +44,9 @@ class FlowGRPOTrainerConfig:
         self.noise_level = float(kwargs.get("noise_level", self.noise_level))
         self.sde_type = kwargs.get("sde_type", self.sde_type)
         self.timestep_fraction = float(kwargs.get("timestep_fraction", self.timestep_fraction))
-        self.candidates_per_task = max(2, int(kwargs.get("candidates_per_task", self.candidates_per_task)))
+        self.group_size = max(1, int(kwargs.get("group_size", self.group_size)))
+        self.rollout_steps = max(1, int(kwargs.get("rollout_steps", self.rollout_steps)))
+        self.max_rollout_lag_steps = max(0, int(kwargs.get("max_rollout_lag_steps", self.max_rollout_lag_steps)))
         self.max_pending_tasks = max(1, int(kwargs.get("max_pending_tasks", self.max_pending_tasks)))
         self.poll_interval_sec = max(0.25, float(kwargs.get("poll_interval_sec", self.poll_interval_sec)))
 
@@ -58,6 +62,7 @@ class CandidateState:
     num_inference_steps: int
     sampler: str
     scheduler: str
+    rollout_step: int
     conditional_embeds: PromptEmbeds
     unconditional_embeds: Optional[PromptEmbeds]
     timesteps: torch.Tensor
@@ -67,6 +72,11 @@ class CandidateState:
     next_latents: torch.Tensor
     log_probs: torch.Tensor
     reference_images: Optional[torch.Tensor]
+
+
+class _EmptyRolloutBatch:
+    control_tensor = None
+    control_tensor_list = None
 
 
 def _clone_tensor(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -153,14 +163,13 @@ def _flowmatch_step_with_logprob(
         raise ValueError(f"Unsupported Flow-GRPO sde_type '{sde_type}'.")
 
     reduce_dims = tuple(range(1, log_prob.ndim))
-    log_prob = log_prob.mean(dim=reduce_dims)
-    return prev_sample, log_prob, prev_sample_mean, std_dev_t
+    # Joint Gaussian log-probability must sum over action dimensions.
+    log_prob = log_prob.sum(dim=reduce_dims)
+    return prev_sample, log_prob, prev_sample_mean, transition_std
 
 
 class FlowGRPOTrainer(DiffusionTrainer):
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
-        if "datasets" in config:
-            raise ValueError("Flow-GRPO config must not include `datasets`; prompts are supplied by vote tasks.")
         train_config = config.setdefault("train", {})
         train_config["disable_sampling"] = True
         train_config["cache_text_embeddings"] = False
@@ -206,24 +215,39 @@ class FlowGRPOTrainer(DiffusionTrainer):
             raise ValueError(f"Unsupported Flow-GRPO scheduler '{scheduler}'. Supported values: {supported}")
         return scheduler
 
-    def _sampler_arch(self) -> str:
-        if self.model_config.is_flux:
-            return "flux"
-        if self.model_config.is_pixart:
-            return "pixart"
-        if self.model_config.is_lumina2:
-            return "lumina2"
-        return "sd"
-
     def _build_task_scheduler(self, scheduler: str):
         scheduler = self._validate_scheduler(scheduler)
-        return get_sampler(
-            scheduler,
-            {
-                "prediction_type": "v_prediction" if self.model_config.is_v_pred else "epsilon",
-            },
-            arch=self._sampler_arch(),
-        )
+        source_scheduler = getattr(self.sd, "noise_scheduler", None)
+        if source_scheduler is None and hasattr(self.sd, "get_train_scheduler"):
+            source_scheduler = self.sd.get_train_scheduler()
+        if source_scheduler is None:
+            raise ValueError("Flow-GRPO requires the active AITK model to provide a train scheduler.")
+
+        config = copy.deepcopy(dict(getattr(source_scheduler, "config", {})))
+        if config and hasattr(source_scheduler.__class__, "from_config"):
+            return source_scheduler.__class__.from_config(config)
+        return copy.deepcopy(source_scheduler)
+
+    @contextlib.contextmanager
+    def _model_device_state_preset(self, preset: str):
+        self.sd.set_device_state_preset(preset)
+        try:
+            yield
+        finally:
+            self.sd.restore_device_state()
+
+    def _rollout_patch_size(self) -> int:
+        for module_name in ("transformer", "unet", "model"):
+            module = getattr(self.sd, module_name, None)
+            config = getattr(module, "config", None)
+            patch_size = getattr(config, "patch_size", None)
+            if patch_size is None and isinstance(config, dict):
+                patch_size = config.get("patch_size")
+            if patch_size is not None:
+                if isinstance(patch_size, (tuple, list)):
+                    patch_size = patch_size[0]
+                return max(1, int(patch_size))
+        return 1
 
     def _db_execute(self, query: str, params: tuple = ()) -> list[sqlite3.Row]:
         def _op():
@@ -277,7 +301,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
     def _candidate_seed(self, task_row: sqlite3.Row, order_index: int) -> int:
         task_seed = task_row["seed"]
         if task_seed is not None:
-            return int(task_seed) + order_index + (self._task_counter * 1000)
+            return int(task_seed)
         return int(self.sample_config.seed) + order_index + self.step_num + (self._task_counter * 1000)
 
     def _prepare_scheduler_run(
@@ -301,7 +325,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             if "latents" in signature.parameters:
                 kwargs["latents"] = latents
             if "patch_size" in signature.parameters:
-                kwargs["patch_size"] = 2 if self.model_config.is_flux else 1
+                kwargs["patch_size"] = self._rollout_patch_size()
             timesteps = scheduler.set_train_timesteps(**kwargs)
         else:
             scheduler.set_timesteps(int(num_inference_steps), device=self.device_torch)
@@ -322,20 +346,38 @@ class FlowGRPOTrainer(DiffusionTrainer):
             sigma_current[0] = (sigma_current[0] + sigma_next[0]) * 0.5
         return timesteps, sigma_current, sigma_next
 
-    def _decode_preview_image(self, latents: torch.Tensor) -> torch.Tensor:
-        decoded = self.sd.decode_latents(latents, device=self.device_torch, dtype=self.sd.torch_dtype)
-        if decoded.ndim == 5:
-            decoded = decoded[:, :, 0, :, :]
-        if decoded.shape[1] == 1:
-            decoded = decoded.repeat(1, 3, 1, 1)
-        if decoded.shape[1] > 3:
-            decoded = decoded[:, :3, :, :]
-        return (decoded / 2.0 + 0.5).clamp(0.0, 1.0)
-
-    def _save_preview_image(self, image_tensor: torch.Tensor, image_path: Path) -> None:
-        image = image_tensor[0].detach().float().cpu().permute(1, 2, 0).numpy()
-        image = (image * 255.0).clip(0, 255).astype(np.uint8)
-        Image.fromarray(image).save(image_path)
+    def _generate_preview_image(
+        self,
+        *,
+        prompt: str,
+        negative_prompt: str,
+        width: int,
+        height: int,
+        seed: int,
+        guidance_scale: float,
+        num_inference_steps: int,
+        sampler: str,
+        image_path: Path,
+    ) -> None:
+        gen_config = GenerateImageConfig(
+            prompt=prompt,
+            width=width,
+            height=height,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            output_path=str(image_path),
+            output_ext=image_path.suffix.lstrip("."),
+            logger=self.logger,
+            num_frames=getattr(self.sample_config, "num_frames", 1),
+            fps=getattr(self.sample_config, "fps", 1),
+            guidance_rescale=getattr(self.sample_config, "guidance_rescale", 0.0),
+            adapter_conditioning_scale=getattr(self.sample_config, "adapter_conditioning_scale", 1.0),
+            refiner_start_at=getattr(self.sample_config, "refiner_start_at", 0.5),
+            do_cfg_norm=getattr(self.sample_config, "do_cfg_norm", False),
+        )
+        self.sd.generate_images([gen_config], sampler=sampler)
 
     def _save_candidate_state(self, state: CandidateState, state_path: Path) -> None:
         torch.save(
@@ -349,6 +391,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 "num_inference_steps": state.num_inference_steps,
                 "sampler": state.sampler,
                 "scheduler": state.scheduler,
+                "rollout_step": state.rollout_step,
                 "conditional_embeds": _clone_prompt_embeds(state.conditional_embeds),
                 "unconditional_embeds": _clone_prompt_embeds(state.unconditional_embeds),
                 "timesteps": _clone_tensor(state.timesteps),
@@ -364,6 +407,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
     def _load_candidate_state(self, state_path: str) -> CandidateState:
         payload = torch.load(state_path, map_location="cpu", weights_only=False)
+        payload.setdefault("rollout_step", -1)
         return CandidateState(**payload)
 
     def _generate_candidate_state(
@@ -380,93 +424,106 @@ class FlowGRPOTrainer(DiffusionTrainer):
         num_inference_steps: int,
         sampler: str,
         scheduler: str,
-    ) -> tuple[CandidateState, torch.Tensor]:
-        if self.network is not None:
-            self.network.is_active = True
-            self.network.eval()
+        rollout_step: int,
+    ) -> CandidateState:
+        network_was_active = bool(getattr(self.network, "is_active", True)) if self.network is not None else None
+        network_was_training = bool(self.network.training) if self.network is not None else None
+        try:
+            with self._model_device_state_preset("generate"):
+                if self.network is not None:
+                    self.network.is_active = True
+                    self.network.eval()
 
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(seed)
+                torch.manual_seed(seed)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed(seed)
 
-        conditional_embeds = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=self.sd.torch_dtype)
-        unconditional_embeds = None
-        if guidance_scale > 1.0:
-            unconditional_embeds = self.sd.encode_prompt(negative_prompt or "").to(
-                self.device_torch, dtype=self.sd.torch_dtype
-            )
+                conditional_embeds = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=self.sd.torch_dtype)
+                unconditional_embeds = None
+                if guidance_scale > 1.0:
+                    unconditional_embeds = self.sd.encode_prompt(negative_prompt or "").to(
+                        self.device_torch, dtype=self.sd.torch_dtype
+                    )
 
-        latents = self.sd.get_latent_noise(pixel_height=height, pixel_width=width, batch_size=1).to(
-            self.device_torch, dtype=self.sd.torch_dtype
-        )
-        timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
-            sampler=sampler,
-            scheduler_name=scheduler,
-            num_inference_steps=num_inference_steps,
-            latents=latents,
-        )
-
-        latents_before: list[torch.Tensor] = []
-        latents_after: list[torch.Tensor] = []
-        log_probs: list[torch.Tensor] = []
-
-        for idx in range(timesteps.numel()):
-            self.maybe_stop()
-            timestep = timesteps[idx].reshape(1).repeat(latents.shape[0]).to(self.device_torch, dtype=torch.float32)
-            with torch.no_grad():
-                noise_pred = self.sd.predict_noise(
+                latents = self.sd.get_latent_noise(pixel_height=height, pixel_width=width, batch_size=1).to(
+                    self.device_torch, dtype=self.sd.torch_dtype
+                )
+                timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
+                    sampler=sampler,
+                    scheduler_name=scheduler,
+                    num_inference_steps=num_inference_steps,
                     latents=latents,
-                    conditional_embeddings=conditional_embeds,
-                    unconditional_embeddings=unconditional_embeds,
-                    timestep=timestep,
-                    guidance_scale=float(guidance_scale),
                 )
 
-            next_latents, _, _, _ = _flowmatch_step_with_logprob(
-                model_output=noise_pred,
-                sample=latents,
-                sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
-                sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
-                noise_level=self.flow_grpo_config.noise_level,
-                sde_type=self.flow_grpo_config.sde_type,
-            )
-            next_latents = next_latents.to(self.device_torch, dtype=self.sd.torch_dtype)
-            _, log_prob, _, _ = _flowmatch_step_with_logprob(
-                model_output=noise_pred,
-                sample=latents,
-                sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
-                sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
-                noise_level=self.flow_grpo_config.noise_level,
-                sde_type=self.flow_grpo_config.sde_type,
-                prev_sample=next_latents,
-            )
-            latents_before.append(_clone_tensor(latents))
-            latents_after.append(_clone_tensor(next_latents))
-            log_probs.append(_clone_tensor(log_prob))
-            latents = next_latents
+                latents_before: list[torch.Tensor] = []
+                latents_after: list[torch.Tensor] = []
+                log_probs: list[torch.Tensor] = []
 
-        preview = self._decode_preview_image(latents).detach().cpu()
-        state = CandidateState(
-            task_id=task_id,
-            candidate_id=candidate_id,
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            seed=int(seed),
-            guidance_scale=float(guidance_scale),
-            num_inference_steps=int(num_inference_steps),
-            sampler=sampler,
-            scheduler=scheduler,
-            conditional_embeds=_clone_prompt_embeds(conditional_embeds),
-            unconditional_embeds=_clone_prompt_embeds(unconditional_embeds),
-            timesteps=_clone_tensor(timesteps),
-            sigma_current=_clone_tensor(sigma_current),
-            sigma_next=_clone_tensor(sigma_next),
-            latents=torch.stack(latents_before, dim=1),
-            next_latents=torch.stack(latents_after, dim=1),
-            log_probs=torch.stack(log_probs, dim=1),
-            reference_images=None,
-        )
-        return state, preview
+                for idx in range(timesteps.numel()):
+                    self.maybe_stop()
+                    timestep = timesteps[idx].reshape(1).repeat(latents.shape[0]).to(self.device_torch, dtype=torch.float32)
+                    with torch.no_grad():
+                        noise_pred = self.sd.predict_noise(
+                            latents=latents,
+                            conditional_embeddings=conditional_embeds,
+                            unconditional_embeddings=unconditional_embeds,
+                            timestep=timestep,
+                            guidance_scale=float(guidance_scale),
+                            batch=_EmptyRolloutBatch(),
+                        )
+
+                    next_latents, _, _, _ = _flowmatch_step_with_logprob(
+                        model_output=noise_pred,
+                        sample=latents,
+                        sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
+                        sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
+                        noise_level=self.flow_grpo_config.noise_level,
+                        sde_type=self.flow_grpo_config.sde_type,
+                    )
+                    next_latents = next_latents.to(self.device_torch, dtype=self.sd.torch_dtype)
+                    _, log_prob, _, _ = _flowmatch_step_with_logprob(
+                        model_output=noise_pred,
+                        sample=latents,
+                        sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
+                        sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
+                        noise_level=self.flow_grpo_config.noise_level,
+                        sde_type=self.flow_grpo_config.sde_type,
+                        prev_sample=next_latents,
+                    )
+                    latents_before.append(_clone_tensor(latents))
+                    latents_after.append(_clone_tensor(next_latents))
+                    log_probs.append(_clone_tensor(log_prob))
+                    latents = next_latents
+
+                state = CandidateState(
+                    task_id=task_id,
+                    candidate_id=candidate_id,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    seed=int(seed),
+                    guidance_scale=float(guidance_scale),
+                    num_inference_steps=int(num_inference_steps),
+                    sampler=sampler,
+                    scheduler=scheduler,
+                    rollout_step=int(rollout_step),
+                    conditional_embeds=_clone_prompt_embeds(conditional_embeds),
+                    unconditional_embeds=_clone_prompt_embeds(unconditional_embeds),
+                    timesteps=_clone_tensor(timesteps),
+                    sigma_current=_clone_tensor(sigma_current),
+                    sigma_next=_clone_tensor(sigma_next),
+                    latents=torch.stack(latents_before, dim=1),
+                    next_latents=torch.stack(latents_after, dim=1),
+                    log_probs=torch.stack(log_probs, dim=1),
+                    reference_images=None,
+                )
+                return state
+        finally:
+            if self.network is not None:
+                self.network.is_active = bool(network_was_active)
+                if network_was_training:
+                    self.network.train()
+                else:
+                    self.network.eval()
 
     def _next_requested_task(self) -> Optional[sqlite3.Row]:
         rows = self._db_execute(
@@ -485,7 +542,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
         task_id = task_row["id"]
         prompt = task_row["prompt"] or ""
         negative_prompt = task_row["negative_prompt"] or ""
-        requested_candidates = max(2, int(task_row["requested_candidates"] or self.flow_grpo_config.candidates_per_task))
         width = int(task_row["width"] or self.sample_config.width)
         height = int(task_row["height"] or self.sample_config.height)
         guidance_scale = float(task_row["guidance_scale"] or self.sample_config.guidance_scale)
@@ -501,48 +557,56 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
         candidate_rows: list[tuple] = []
         try:
-            for order_index in range(requested_candidates):
-                self.update_status(
-                    "running",
-                    f"Generating Flow-GRPO candidates {order_index + 1}/{requested_candidates}",
+            order_index = 0
+            self.update_status("running", "Generating Flow-GRPO rollout")
+            candidate_id = str(uuid.uuid4())
+            seed = self._candidate_seed(task_row, order_index)
+            state = self._generate_candidate_state(
+                task_id=task_id,
+                candidate_id=candidate_id,
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                seed=seed,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                sampler=sampler,
+                scheduler=scheduler,
+                rollout_step=self.step_num,
+            )
+            image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
+            state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
+            self._generate_preview_image(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                width=width,
+                height=height,
+                seed=seed,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                sampler=sampler,
+                image_path=image_path,
+            )
+            self._save_candidate_state(state, state_path)
+            candidate_rows.append(
+                (
+                    candidate_id,
+                    self.job_id,
+                    task_id,
+                    order_index,
+                    prompt,
+                    negative_prompt,
+                    seed,
+                    guidance_scale,
+                    num_inference_steps,
+                    sampler,
+                    scheduler,
+                    str(image_path),
+                    str(state_path),
+                    "open",
                 )
-                candidate_id = str(uuid.uuid4())
-                seed = self._candidate_seed(task_row, order_index)
-                state, preview = self._generate_candidate_state(
-                    task_id=task_id,
-                    candidate_id=candidate_id,
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    width=width,
-                    height=height,
-                    seed=seed,
-                    guidance_scale=guidance_scale,
-                    num_inference_steps=num_inference_steps,
-                    sampler=sampler,
-                    scheduler=scheduler,
-                )
-                image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
-                state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
-                self._save_preview_image(preview, image_path)
-                self._save_candidate_state(state, state_path)
-                candidate_rows.append(
-                    (
-                        candidate_id,
-                        self.job_id,
-                        task_id,
-                        order_index,
-                        prompt,
-                        negative_prompt,
-                        seed,
-                        guidance_scale,
-                        num_inference_steps,
-                        sampler,
-                        scheduler,
-                        str(image_path),
-                        str(state_path),
-                        "open",
-                    )
-                )
+            )
 
             self._db_execute_many(
                 """
@@ -579,18 +643,21 @@ class FlowGRPOTrainer(DiffusionTrainer):
             self._generate_requested_task(task_row)
             active_count += 1
 
-    def _next_voted_task_id(self) -> Optional[str]:
+    def _next_voted_task_group(self) -> Optional[list[str]]:
+        group_size = int(self.flow_grpo_config.group_size)
         rows = self._db_execute(
             """
-            SELECT id
+            SELECT *
             FROM FlowGRPOVoteTask
             WHERE job_id = ? AND status = 'voted'
             ORDER BY created_at ASC
-            LIMIT 1
+            LIMIT ?
             """,
-            (self.job_id,),
+            (self.job_id, group_size),
         )
-        return rows[0]["id"] if rows else None
+        if not rows:
+            return None
+        return [row["id"] for row in rows]
 
     def _load_task_rows(self, task_id: str) -> tuple[sqlite3.Row, list[sqlite3.Row], list[sqlite3.Row]]:
         task_rows = self._db_execute(
@@ -650,18 +717,31 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
         context = self._lora_disabled() if disable_lora else contextlib.nullcontext()
         with context:
-            noise_pred = self.sd.predict_noise(
-                latents=latents,
-                conditional_embeddings=candidate_state.conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype),
-                unconditional_embeddings=(
+            predict_kwargs: dict[str, Any] = {
+                "latents": latents,
+                "conditional_embeddings": candidate_state.conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype),
+                "unconditional_embeddings": (
                     candidate_state.unconditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
                     if candidate_state.unconditional_embeds is not None
                     else None
                 ),
-                timestep=timestep,
-                guidance_scale=float(candidate_state.guidance_scale),
+                "timestep": timestep,
+                "guidance_scale": float(candidate_state.guidance_scale),
+                "batch": _EmptyRolloutBatch(),
+            }
+            predict_signature = inspect.signature(self.sd.predict_noise)
+            if "requires_grad" in predict_signature.parameters:
+                predict_kwargs["requires_grad"] = (not disable_lora)
+
+            noise_pred = self.sd.predict_noise(
+                **predict_kwargs,
             )
-            _, log_prob, prev_mean, std_dev_t = _flowmatch_step_with_logprob(
+            if not disable_lora and not noise_pred.requires_grad:
+                raise RuntimeError(
+                    "Flow-GRPO policy recomputation produced a detached prediction. "
+                    "This model's predict_noise/get_noise_prediction path must run the denoiser with gradients enabled."
+                )
+            _, log_prob, prev_mean, transition_std = _flowmatch_step_with_logprob(
                 model_output=noise_pred,
                 sample=latents,
                 sigma=candidate_state.sigma_current[step_index].reshape(1).repeat(latents.shape[0]).to(self.device_torch),
@@ -670,7 +750,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 sde_type=self.flow_grpo_config.sde_type,
                 prev_sample=candidate_state.next_latents[:, step_index].to(self.device_torch, dtype=self.sd.torch_dtype),
             )
-        return log_prob, prev_mean, std_dev_t
+        return log_prob, prev_mean, transition_std
 
     def _compute_candidate_loss(
         self,
@@ -690,7 +770,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         clipfracs: list[float] = []
 
         for step_index in train_indices:
-            log_prob, prev_mean, std_dev_t = self._compute_step_logprob(candidate_state, step_index)
+            log_prob, prev_mean, transition_std = self._compute_step_logprob(candidate_state, step_index)
             old_log_prob = candidate_state.log_probs[:, step_index].to(self.device_torch, dtype=log_prob.dtype)
 
             advantages = torch.full_like(log_prob, float(advantage))
@@ -713,8 +793,9 @@ class FlowGRPOTrainer(DiffusionTrainer):
             if self.flow_grpo_config.beta > 0.0:
                 with torch.no_grad():
                     _, ref_prev_mean, _ = self._compute_step_logprob(candidate_state, step_index, disable_lora=True)
-                std_safe = torch.clamp(std_dev_t, min=1e-6)
-                kl_loss = (((prev_mean - ref_prev_mean) ** 2) / (2.0 * (std_safe**2))).mean()
+                std_safe = torch.clamp(transition_std, min=1e-6)
+                kl_tensor = ((prev_mean - ref_prev_mean) ** 2) / (2.0 * (std_safe**2))
+                kl_loss = kl_tensor.flatten(start_dim=1).sum(dim=1).mean()
                 loss = loss + self.flow_grpo_config.beta * kl_loss
                 kl_losses.append(float(kl_loss.detach().cpu().item()))
 
@@ -769,7 +850,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         reward_mean = float(np.mean(ordered_rewards))
         reward_std = float(np.std(ordered_rewards))
         if reward_std <= 1e-6:
-            normalized = ordered_rewards - reward_mean
+            normalized = ordered_rewards
         else:
             normalized = (ordered_rewards - reward_mean) / reward_std
 
@@ -778,19 +859,41 @@ class FlowGRPOTrainer(DiffusionTrainer):
             for idx, candidate_row in enumerate(candidate_rows)
         }
 
-    def _process_voted_task(self, task_id: str) -> Optional[dict[str, float]]:
-        _, candidate_rows, vote_rows = self._load_task_rows(task_id)
-        if not vote_rows:
-            return None
+    def _process_voted_task_group(self, task_ids: list[str]) -> Optional[dict[str, float]]:
+        candidate_rows: list[sqlite3.Row] = []
+        vote_rows: list[sqlite3.Row] = []
+        for task_id in task_ids:
+            _, task_candidate_rows, task_vote_rows = self._load_task_rows(task_id)
+            candidate_rows.extend(task_candidate_rows)
+            vote_rows.extend(task_vote_rows)
 
-        if any(vote_row["value"] == "skip" for vote_row in vote_rows):
-            self._mark_task_processed(task_id, "skipped", "skipped")
+        if not vote_rows:
             return None
 
         candidate_row_by_id = {row["id"]: row for row in candidate_rows}
         train_votes = [vote_row for vote_row in vote_rows if vote_row["candidate_id"] in candidate_row_by_id]
         if not train_votes:
-            self._mark_task_processed(task_id, "processed", "processed")
+            for task_id in task_ids:
+                self._mark_task_processed(task_id, "processed", "processed")
+            return None
+
+        rollout_steps = []
+        for candidate_row in candidate_rows:
+            candidate_state = self._load_candidate_state(candidate_row["state_path"])
+            rollout_steps.append(int(candidate_state.rollout_step))
+        if not rollout_steps:
+            for task_id in task_ids:
+                self._mark_task_processed(task_id, "processed", "processed")
+            return None
+        oldest_rollout = min(rollout_steps)
+        newest_rollout = max(rollout_steps)
+        if (
+            oldest_rollout < 0
+            or newest_rollout != oldest_rollout
+            or (self.step_num - newest_rollout) > self.flow_grpo_config.max_rollout_lag_steps
+        ):
+            for task_id in task_ids:
+                self._mark_task_processed(task_id, "stale", "stale")
             return None
 
         if self.network is None:
@@ -827,24 +930,29 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 metric_accumulator[key].append(value)
 
         if total_loss is None:
-            self._mark_task_processed(task_id, "processed", "processed")
+            for task_id in task_ids:
+                self._mark_task_processed(task_id, "processed", "processed")
             return None
 
-        total_loss.backward()
+        self.accelerator.backward(total_loss)
         loss_value = float(total_loss.detach().cpu().item())
-        params_to_clip = []
-        for group in self.optimizer.param_groups:
-            for param in group["params"]:
-                if isinstance(param, torch.Tensor) and param.requires_grad:
-                    params_to_clip.append(param)
-        if params_to_clip:
-            torch.nn.utils.clip_grad_norm_(params_to_clip, 1.0)
+        if self.params and self.train_config.optimizer != "adafactor":
+            if isinstance(self.params[0], dict):
+                for param_group in self.params:
+                    self.accelerator.clip_grad_norm_(param_group["params"], self.train_config.max_grad_norm)
+            else:
+                self.accelerator.clip_grad_norm_(self.params, self.train_config.max_grad_norm)
         self.optimizer.step()
+        if self.adapter is not None and hasattr(self.adapter, "post_weight_update"):
+            self.adapter.post_weight_update()
+        if self.ema is not None:
+            self.ema.update()
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
         self.optimizer.zero_grad(set_to_none=True)
 
-        self._mark_task_processed(task_id, "processed", "processed")
+        for task_id in task_ids:
+            self._mark_task_processed(task_id, "processed", "processed")
         metrics = {
             key: float(np.mean(values)) if values else 0.0
             for key, values in metric_accumulator.items()
@@ -860,14 +968,15 @@ class FlowGRPOTrainer(DiffusionTrainer):
         while True:
             self.maybe_stop()
             self._promote_requested_vote_tasks()
-            task_id = self._next_voted_task_id()
-            if task_id is None:
+            task_ids = self._next_voted_task_group()
+            if task_ids is None:
                 self.update_status("running", "Waiting for Flow-GRPO votes")
-                time.sleep(self.flow_grpo_config.poll_interval_sec)
+                with self._model_device_state_preset("unload"):
+                    time.sleep(self.flow_grpo_config.poll_interval_sec)
                 continue
 
-            self.update_status("running", "Applying Flow-GRPO vote")
-            metrics = self._process_voted_task(task_id)
+            self.update_status("running", "Applying Flow-GRPO vote group")
+            metrics = self._process_voted_task_group(task_ids)
             if metrics is None:
                 continue
             self.update_status("running", "Waiting for Flow-GRPO votes")
