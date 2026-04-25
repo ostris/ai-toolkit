@@ -6,6 +6,7 @@ import inspect
 import os
 import sqlite3
 import time
+import types
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -221,11 +222,68 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
     @contextlib.contextmanager
     def _model_device_state_preset(self, preset: str):
-        self.sd.set_device_state_preset(preset)
+        with self._quantized_text_encoder_noop_to_guard():
+            self.sd.set_device_state_preset(preset)
+            try:
+                yield
+            finally:
+                self.sd.restore_device_state()
+
+    @staticmethod
+    def _is_traceable_tensor_subclass(tensor: torch.Tensor) -> bool:
+        return (
+            isinstance(tensor, torch.Tensor)
+            and type(tensor) is not torch.Tensor
+            and hasattr(tensor, "__tensor_flatten__")
+            and hasattr(tensor, "__tensor_unflatten__")
+        )
+
+    @classmethod
+    def _has_traceable_tensor_subclass_param(cls, module: torch.nn.Module) -> bool:
+        return any(cls._is_traceable_tensor_subclass(param) for param in module.parameters())
+
+    @staticmethod
+    def _module_device(module: torch.nn.Module) -> Optional[torch.device]:
+        device = getattr(module, "device", None)
+        if device is not None:
+            return torch.device(device)
+        for tensor in list(module.parameters()) + list(module.buffers()):
+            return tensor.device
+        return None
+
+    @staticmethod
+    def _same_device(current: torch.device, target: torch.device) -> bool:
+        return current.type == target.type and (target.index is None or current.index == target.index)
+
+    @contextlib.contextmanager
+    def _quantized_text_encoder_noop_to_guard(self):
+        text_encoder = getattr(self.sd, "text_encoder", None)
+        if text_encoder is None:
+            yield
+            return
+
+        encoders = text_encoder if isinstance(text_encoder, list) else [text_encoder]
+        patched: list[tuple[torch.nn.Module, Any]] = []
         try:
+            for encoder in encoders:
+                if not self._has_traceable_tensor_subclass_param(encoder):
+                    continue
+                original_to = encoder.to
+
+                def guarded_to(module, *args, _original_to=original_to, **kwargs):
+                    device, dtype, _, _ = torch._C._nn._parse_to(*args, **kwargs)
+                    current_device = self._module_device(module)
+                    if dtype is None and device is not None and current_device is not None:
+                        if self._same_device(current_device, torch.device(device)):
+                            return module
+                    return _original_to(*args, **kwargs)
+
+                patched.append((encoder, original_to))
+                encoder.to = types.MethodType(guarded_to, encoder)
             yield
         finally:
-            self.sd.restore_device_state()
+            for encoder, original_to in patched:
+                encoder.to = original_to
 
     def _rollout_patch_size(self) -> int:
         for module_name in ("transformer", "unet", "model"):
@@ -958,8 +1016,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             task_ids = self._next_voted_task_group()
             if task_ids is None:
                 self.update_status("running", "Waiting for Flow-GRPO votes")
-                with self._model_device_state_preset("unload"):
-                    time.sleep(2.0)
+                time.sleep(2.0)
                 continue
 
             self.update_status("running", "Applying Flow-GRPO vote group")
