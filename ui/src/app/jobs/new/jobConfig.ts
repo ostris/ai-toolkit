@@ -32,17 +32,13 @@ export const defaultSliderConfig: SliderConfig = {
 };
 
 export const defaultFlowGRPOConfig: FlowGRPOConfig = {
-  clip_range: 0.0001,
+  clip_range: 0.2,
   adv_clip_max: 5.0,
   beta: 0.04,
   noise_level: 0.7,
   sde_type: 'sde',
   timestep_fraction: 1.0,
   group_size: 4,
-  rollout_steps: 10,
-  max_rollout_lag_steps: 0,
-  max_pending_tasks: 1,
-  poll_interval_sec: 2.0,
 };
 
 export const defaultJobConfig: JobConfig = {

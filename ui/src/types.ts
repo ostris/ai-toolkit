@@ -227,10 +227,6 @@ export interface FlowGRPOConfig {
   sde_type: 'sde' | 'cps';
   timestep_fraction: number;
   group_size: number;
-  rollout_steps: number;
-  max_rollout_lag_steps: number;
-  max_pending_tasks: number;
-  poll_interval_sec: number;
 }
 
 export interface FlowGRPOLiveTaskConfig {

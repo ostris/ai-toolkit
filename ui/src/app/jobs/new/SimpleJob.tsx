@@ -516,98 +516,59 @@ export default function SimpleJob({
           )}
           {isFlowGRPO && (
             <Card title="Flow-GRPO">
-              <NumberInput
-                label="Group Size"
-                value={jobConfig.config.process[0].grpo?.group_size || 4}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.group_size')}
-                min={1}
-                required
-              />
-              <NumberInput
-                label="Rollout Steps"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.rollout_steps || 10}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.rollout_steps')}
-                min={1}
-                required
-              />
-              <NumberInput
-                label="Max Rollout Lag (steps)"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.max_rollout_lag_steps || 0}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.max_rollout_lag_steps')}
-                min={0}
-                required
-              />
-              <NumberInput
-                label="Max Pending Tasks"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.max_pending_tasks || 1}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.max_pending_tasks')}
-                min={1}
-                required
-              />
-              <NumberInput
-                label="Poll Interval (sec)"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.poll_interval_sec || 2}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.poll_interval_sec')}
-                min={0.25}
-                required
-              />
-              <SelectInput
-                label="Transition Mode"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.sde_type || 'sde'}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.sde_type')}
-                options={[
-                  { value: 'sde', label: 'SDE' },
-                  { value: 'cps', label: 'CPS' },
-                ]}
-              />
-              <NumberInput
-                label="Clip Range"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.clip_range || 0.0001}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.clip_range')}
-                min={0}
-                required
-              />
-              <NumberInput
-                label="Advantage Clip Max"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.adv_clip_max || 5}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.adv_clip_max')}
-                min={0}
-                required
-              />
-              <NumberInput
-                label="KL Beta"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.beta ?? 0.04}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.beta')}
-                min={0}
-                required
-              />
-              <NumberInput
-                label="Noise Level"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.noise_level || 0.7}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.noise_level')}
-                min={0}
-                required
-              />
-              <NumberInput
-                label="Timestep Fraction"
-                className="pt-2"
-                value={jobConfig.config.process[0].grpo?.timestep_fraction || 1}
-                onChange={value => setJobConfig(value, 'config.process[0].grpo.timestep_fraction')}
-                min={0}
-                max={1}
-                required
-              />
-              <div className="pt-4 text-sm text-gray-400">
-                Prompts are created live from the Flow-GRPO panel after the job starts.
+              <div className="grid gap-x-4 gap-y-2 md:grid-cols-2">
+                <NumberInput
+                  label="Group Size"
+                  value={jobConfig.config.process[0].grpo?.group_size || 4}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.group_size')}
+                  min={2}
+                  required
+                />
+                <SelectInput
+                  label="Transition Mode"
+                  value={jobConfig.config.process[0].grpo?.sde_type || 'sde'}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.sde_type')}
+                  options={[
+                    { value: 'sde', label: 'SDE' },
+                    { value: 'cps', label: 'CPS' },
+                  ]}
+                />
+                <NumberInput
+                  label="Clip Range"
+                  value={jobConfig.config.process[0].grpo?.clip_range ?? 0.2}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.clip_range')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Advantage Clip Max"
+                  value={jobConfig.config.process[0].grpo?.adv_clip_max || 5}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.adv_clip_max')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Regularizer Beta"
+                  value={jobConfig.config.process[0].grpo?.beta ?? 0.04}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.beta')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Noise Level"
+                  value={jobConfig.config.process[0].grpo?.noise_level || 0.7}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.noise_level')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Timestep Fraction"
+                  value={jobConfig.config.process[0].grpo?.timestep_fraction || 1}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.timestep_fraction')}
+                  min={0}
+                  max={1}
+                  required
+                />
               </div>
             </Card>
           )}

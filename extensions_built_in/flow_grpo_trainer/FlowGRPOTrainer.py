@@ -25,17 +25,13 @@ SUPPORTED_FLOW_GRPO_SCHEDULERS = {"flowmatch"}
 
 @dataclass
 class FlowGRPOTrainerConfig:
-    clip_range: float = 1e-4
+    clip_range: float = 0.2
     adv_clip_max: float = 5.0
     beta: float = 0.04
     noise_level: float = 0.7
     sde_type: Literal["sde", "cps"] = "sde"
     timestep_fraction: float = 1.0
     group_size: int = 4
-    rollout_steps: int = 10
-    max_rollout_lag_steps: int = 0
-    max_pending_tasks: int = 1
-    poll_interval_sec: float = 2.0
 
     def __init__(self, **kwargs):
         self.clip_range = float(kwargs.get("clip_range", self.clip_range))
@@ -44,11 +40,7 @@ class FlowGRPOTrainerConfig:
         self.noise_level = float(kwargs.get("noise_level", self.noise_level))
         self.sde_type = kwargs.get("sde_type", self.sde_type)
         self.timestep_fraction = float(kwargs.get("timestep_fraction", self.timestep_fraction))
-        self.group_size = max(1, int(kwargs.get("group_size", self.group_size)))
-        self.rollout_steps = max(1, int(kwargs.get("rollout_steps", self.rollout_steps)))
-        self.max_rollout_lag_steps = max(0, int(kwargs.get("max_rollout_lag_steps", self.max_rollout_lag_steps)))
-        self.max_pending_tasks = max(1, int(kwargs.get("max_pending_tasks", self.max_pending_tasks)))
-        self.poll_interval_sec = max(0.25, float(kwargs.get("poll_interval_sec", self.poll_interval_sec)))
+        self.group_size = max(2, int(kwargs.get("group_size", self.group_size)))
 
 
 @dataclass
@@ -62,7 +54,6 @@ class CandidateState:
     num_inference_steps: int
     sampler: str
     scheduler: str
-    rollout_step: int
     conditional_embeds: PromptEmbeds
     unconditional_embeds: Optional[PromptEmbeds]
     timesteps: torch.Tensor
@@ -301,7 +292,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
     def _candidate_seed(self, task_row: sqlite3.Row, order_index: int) -> int:
         task_seed = task_row["seed"]
         if task_seed is not None:
-            return int(task_seed)
+            return int(task_seed) + order_index
         return int(self.sample_config.seed) + order_index + self.step_num + (self._task_counter * 1000)
 
     def _prepare_scheduler_run(
@@ -346,7 +337,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             sigma_current[0] = (sigma_current[0] + sigma_next[0]) * 0.5
         return timesteps, sigma_current, sigma_next
 
-    def _generate_preview_image(
+    def _build_preview_image_config(
         self,
         *,
         prompt: str,
@@ -356,10 +347,9 @@ class FlowGRPOTrainer(DiffusionTrainer):
         seed: int,
         guidance_scale: float,
         num_inference_steps: int,
-        sampler: str,
         image_path: Path,
-    ) -> None:
-        gen_config = GenerateImageConfig(
+    ) -> GenerateImageConfig:
+        return GenerateImageConfig(
             prompt=prompt,
             width=width,
             height=height,
@@ -377,7 +367,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
             refiner_start_at=getattr(self.sample_config, "refiner_start_at", 0.5),
             do_cfg_norm=getattr(self.sample_config, "do_cfg_norm", False),
         )
-        self.sd.generate_images([gen_config], sampler=sampler)
 
     def _save_candidate_state(self, state: CandidateState, state_path: Path) -> None:
         torch.save(
@@ -391,7 +380,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 "num_inference_steps": state.num_inference_steps,
                 "sampler": state.sampler,
                 "scheduler": state.scheduler,
-                "rollout_step": state.rollout_step,
                 "conditional_embeds": _clone_prompt_embeds(state.conditional_embeds),
                 "unconditional_embeds": _clone_prompt_embeds(state.unconditional_embeds),
                 "timesteps": _clone_tensor(state.timesteps),
@@ -407,7 +395,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
     def _load_candidate_state(self, state_path: str) -> CandidateState:
         payload = torch.load(state_path, map_location="cpu", weights_only=False)
-        payload.setdefault("rollout_step", -1)
         return CandidateState(**payload)
 
     def _generate_candidate_state(
@@ -424,7 +411,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
         num_inference_steps: int,
         sampler: str,
         scheduler: str,
-        rollout_step: int,
     ) -> CandidateState:
         network_was_active = bool(getattr(self.network, "is_active", True)) if self.network is not None else None
         network_was_training = bool(self.network.training) if self.network is not None else None
@@ -505,7 +491,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     num_inference_steps=int(num_inference_steps),
                     sampler=sampler,
                     scheduler=scheduler,
-                    rollout_step=int(rollout_step),
                     conditional_embeds=_clone_prompt_embeds(conditional_embeds),
                     unconditional_embeds=_clone_prompt_embeds(unconditional_embeds),
                     timesteps=_clone_tensor(timesteps),
@@ -556,57 +541,61 @@ class FlowGRPOTrainer(DiffusionTrainer):
         )
 
         candidate_rows: list[tuple] = []
+        preview_configs: list[GenerateImageConfig] = []
         try:
-            order_index = 0
-            self.update_status("running", "Generating Flow-GRPO rollout")
-            candidate_id = str(uuid.uuid4())
-            seed = self._candidate_seed(task_row, order_index)
-            state = self._generate_candidate_state(
-                task_id=task_id,
-                candidate_id=candidate_id,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                seed=seed,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
-                sampler=sampler,
-                scheduler=scheduler,
-                rollout_step=self.step_num,
-            )
-            image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
-            state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
-            self._generate_preview_image(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                width=width,
-                height=height,
-                seed=seed,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
-                sampler=sampler,
-                image_path=image_path,
-            )
-            self._save_candidate_state(state, state_path)
-            candidate_rows.append(
-                (
-                    candidate_id,
-                    self.job_id,
-                    task_id,
-                    order_index,
-                    prompt,
-                    negative_prompt,
-                    seed,
-                    guidance_scale,
-                    num_inference_steps,
-                    sampler,
-                    scheduler,
-                    str(image_path),
-                    str(state_path),
-                    "open",
+            self.update_status("running", "Generating Flow-GRPO rollout group")
+            for order_index in range(self.flow_grpo_config.group_size):
+                self.maybe_stop()
+                candidate_id = str(uuid.uuid4())
+                seed = self._candidate_seed(task_row, order_index)
+                state = self._generate_candidate_state(
+                    task_id=task_id,
+                    candidate_id=candidate_id,
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    width=width,
+                    height=height,
+                    seed=seed,
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=num_inference_steps,
+                    sampler=sampler,
+                    scheduler=scheduler,
                 )
-            )
+                image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
+                state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
+                preview_configs.append(
+                    self._build_preview_image_config(
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        width=width,
+                        height=height,
+                        seed=seed,
+                        guidance_scale=guidance_scale,
+                        num_inference_steps=num_inference_steps,
+                        image_path=image_path,
+                    )
+                )
+                self._save_candidate_state(state, state_path)
+                candidate_rows.append(
+                    (
+                        candidate_id,
+                        self.job_id,
+                        task_id,
+                        order_index,
+                        prompt,
+                        negative_prompt,
+                        seed,
+                        guidance_scale,
+                        num_inference_steps,
+                        sampler,
+                        scheduler,
+                        str(image_path),
+                        str(state_path),
+                        "open",
+                    )
+                )
+
+            self.sd.generate_images(preview_configs, sampler=sampler)
 
             self._db_execute_many(
                 """
@@ -636,7 +625,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
     def _promote_requested_vote_tasks(self) -> None:
         active_count = self._count_active_vote_tasks()
-        while active_count < self.flow_grpo_config.max_pending_tasks:
+        while active_count < 1:
             task_row = self._next_requested_task()
             if task_row is None:
                 return
@@ -644,16 +633,33 @@ class FlowGRPOTrainer(DiffusionTrainer):
             active_count += 1
 
     def _next_voted_task_group(self) -> Optional[list[str]]:
-        group_size = int(self.flow_grpo_config.group_size)
         rows = self._db_execute(
             """
-            SELECT *
-            FROM FlowGRPOVoteTask
-            WHERE job_id = ? AND status = 'voted'
-            ORDER BY created_at ASC
+            SELECT task.*
+            FROM FlowGRPOVoteTask task
+            WHERE task.job_id = ?
+              AND task.status = 'voted'
+              AND (
+                SELECT COUNT(*)
+                FROM FlowGRPOCandidate candidate
+                WHERE candidate.vote_task_id = task.id
+              ) >= 2
+              AND NOT EXISTS (
+                SELECT 1
+                FROM FlowGRPOCandidate candidate
+                WHERE candidate.vote_task_id = task.id
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM FlowGRPOVote vote
+                    WHERE vote.vote_task_id = task.id
+                      AND vote.candidate_id = candidate.id
+                      AND vote.processed = 0
+                  )
+              )
+            ORDER BY task.created_at ASC
             LIMIT ?
             """,
-            (self.job_id, group_size),
+            (self.job_id, 1),
         )
         if not rows:
             return None
@@ -850,7 +856,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         reward_mean = float(np.mean(ordered_rewards))
         reward_std = float(np.std(ordered_rewards))
         if reward_std <= 1e-6:
-            normalized = ordered_rewards
+            normalized = np.zeros_like(ordered_rewards)
         else:
             normalized = (ordered_rewards - reward_mean) / reward_std
 
@@ -875,25 +881,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
         if not train_votes:
             for task_id in task_ids:
                 self._mark_task_processed(task_id, "processed", "processed")
-            return None
-
-        rollout_steps = []
-        for candidate_row in candidate_rows:
-            candidate_state = self._load_candidate_state(candidate_row["state_path"])
-            rollout_steps.append(int(candidate_state.rollout_step))
-        if not rollout_steps:
-            for task_id in task_ids:
-                self._mark_task_processed(task_id, "processed", "processed")
-            return None
-        oldest_rollout = min(rollout_steps)
-        newest_rollout = max(rollout_steps)
-        if (
-            oldest_rollout < 0
-            or newest_rollout != oldest_rollout
-            or (self.step_num - newest_rollout) > self.flow_grpo_config.max_rollout_lag_steps
-        ):
-            for task_id in task_ids:
-                self._mark_task_processed(task_id, "stale", "stale")
             return None
 
         if self.network is None:
@@ -972,7 +959,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             if task_ids is None:
                 self.update_status("running", "Waiting for Flow-GRPO votes")
                 with self._model_device_state_preset("unload"):
-                    time.sleep(self.flow_grpo_config.poll_interval_sec)
+                    time.sleep(2.0)
                 continue
 
             self.update_status("running", "Applying Flow-GRPO vote group")

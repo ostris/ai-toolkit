@@ -81,7 +81,8 @@ const parseFloatField = (value: string, fallback: number, min: number) => {
 const getTaskStatusMessage = (task: { status: string; error?: string | null }) => {
   if (task.status === 'requested') return 'Waiting for the trainer to pick up this task.';
   if (task.status === 'generating') return 'The trainer is generating a rollout for this task.';
-  if (task.status === 'voted') return 'Vote received. The trainer will apply it with the next matching Flow-GRPO group.';
+  if (task.status === 'open') return 'Waiting for a complete Flow-GRPO candidate group.';
+  if (task.status === 'voted') return 'Vote received. The trainer will apply this Flow-GRPO group.';
   if (task.status === 'processed') return 'Vote processed.';
   if (task.status === 'stale') return 'Task skipped because rollout trajectories became stale.';
   if (task.status === 'failed') return task.error ? `Task failed: ${task.error}` : 'Task failed.';
@@ -92,6 +93,7 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
   const { tasks, status, refreshTasks } = useFlowGRPOVoteTasks(job.id, 3000);
   const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [candidateVotes, setCandidateVotes] = useState<Record<string, Record<string, string>>>({});
   const [taskDraft, setTaskDraft] = useState<FlowGRPOLiveTaskDraft>(() => getTaskDraftDefaults(job));
   const taskDraftJobId = useRef(job.id);
 
@@ -106,11 +108,33 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
     setTaskDraft(current => ({ ...current, [key]: value }));
   };
 
-  const submitVote = async (taskID: string, candidateID: string, value: string) => {
+  const setCandidateVote = (taskID: string, candidateID: string, value: string) => {
+    setCandidateVotes(current => ({
+      ...current,
+      [taskID]: {
+        ...(current[taskID] || {}),
+        [candidateID]: value,
+      },
+    }));
+  };
+
+  const submitVote = async (taskID: string, candidateIDs: string[]) => {
     if (submittingTaskId) return;
+    const taskVotes = candidateVotes[taskID] || {};
+    if (candidateIDs.some(candidateID => !taskVotes[candidateID])) return;
     setSubmittingTaskId(taskID);
     try {
-      await apiClient.post(`/api/grpo/jobs/${job.id}/tasks/${taskID}/vote`, { candidate_id: candidateID, value });
+      await apiClient.post(`/api/grpo/jobs/${job.id}/tasks/${taskID}/vote`, {
+        rewards: candidateIDs.map(candidateID => ({
+          candidate_id: candidateID,
+          value: taskVotes[candidateID],
+        })),
+      });
+      setCandidateVotes(current => {
+        const next = { ...current };
+        delete next[taskID];
+        return next;
+      });
       refreshTasks();
     } catch (error) {
       console.error('Error submitting Flow-GRPO vote:', error);
@@ -314,8 +338,10 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
 
           <div className="space-y-4">
             {tasks.map(task => {
-              const canVote = task.status === 'open' && task.candidates.length === 1;
-              const candidate = task.candidates[0];
+              const canVote = task.status === 'open' && task.candidates.length > 1;
+              const taskVotes = candidateVotes[task.id] || {};
+              const candidateIDs = task.candidates.map(candidate => candidate.id);
+              const allCandidatesVoted = canVote && candidateIDs.every(candidateID => taskVotes[candidateID]);
               return (
                 <div key={task.id} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
                   <div className={classNames('grid gap-4', !compact && 'sm:grid-cols-12')}>
@@ -352,23 +378,19 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
                         <div>Scheduler: {task.scheduler || 'default'}</div>
                       </div>
 
-                      {canVote && candidate && (
-                        <div className="grid grid-cols-3 gap-2">
-                          {voteOptions.map(option => (
-                            <Button
-                              key={option.value}
-                              onClick={() => submitVote(task.id, candidate.id, option.value)}
-                              disabled={submittingTaskId === task.id}
-                              title={`${option.label}: ${option.reward}`}
-                              className={classNames(
-                                'rounded-md px-3 py-2 text-sm font-medium',
-                                submittingTaskId === task.id ? 'cursor-not-allowed bg-gray-800 text-gray-500' : option.className,
-                              )}
-                            >
-                              {option.label}
-                            </Button>
-                          ))}
-                        </div>
+                      {canVote && (
+                        <Button
+                          onClick={() => submitVote(task.id, candidateIDs)}
+                          disabled={!allCandidatesVoted || submittingTaskId === task.id}
+                          className={classNames(
+                            'w-full rounded-md px-3 py-2 text-sm font-medium',
+                            !allCandidatesVoted || submittingTaskId === task.id
+                              ? 'cursor-not-allowed bg-gray-800 text-gray-500'
+                              : 'bg-blue-600 text-white hover:bg-blue-500',
+                          )}
+                        >
+                          Submit Group Vote
+                        </Button>
                       )}
                     </div>
 
@@ -380,9 +402,9 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
                       )}
 
                       {canVote && (
-                        <div className="grid gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                           {task.candidates.map(candidate => (
-                            <div key={candidate.id} className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+                            <div key={candidate.id} className="overflow-hidden rounded-lg border border-gray-800 bg-gray-900">
                               <img src={candidate.image_url} alt={candidate.prompt} className="aspect-square w-full bg-black object-cover" />
                               <div className="space-y-3 p-3">
                                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-400">
@@ -390,6 +412,29 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
                                   <div>CFG: {candidate.guidance_scale}</div>
                                   <div>Steps: {candidate.num_inference_steps}</div>
                                   <div>Sampler: {candidate.sampler}</div>
+                                </div>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                  {voteOptions.map(option => {
+                                    const isSelected = taskVotes[candidate.id] === option.value;
+                                    return (
+                                      <Button
+                                        key={option.value}
+                                        onClick={() => setCandidateVote(task.id, candidate.id, option.value)}
+                                        disabled={submittingTaskId === task.id}
+                                        title={`${option.label}: ${option.reward}`}
+                                        className={classNames(
+                                          'rounded-md px-2 py-1.5 text-xs font-medium',
+                                          submittingTaskId === task.id
+                                            ? 'cursor-not-allowed bg-gray-800 text-gray-500'
+                                            : isSelected
+                                              ? option.className
+                                              : 'bg-gray-800 text-gray-300 hover:bg-gray-700',
+                                        )}
+                                      >
+                                        {option.label}
+                                      </Button>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </div>
