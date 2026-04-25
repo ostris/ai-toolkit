@@ -38,8 +38,8 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
     if (task.votes.length > 0) {
       return NextResponse.json({ error: 'Task already has a vote' }, { status: 409 });
     }
-    if (task.candidates.length !== 1) {
-      return NextResponse.json({ error: 'Flow-GRPO live tasks must contain exactly one generated rollout' }, { status: 409 });
+    if (task.candidates.length < 2) {
+      return NextResponse.json({ error: 'Flow-GRPO live tasks must contain a generated rollout group' }, { status: 409 });
     }
 
     const candidateById = new Map(task.candidates.map(candidate => [candidate.id, candidate]));
@@ -70,8 +70,8 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
         reward: rewardValue,
       });
     }
-    if (normalizedRewards.length !== 1) {
-      return NextResponse.json({ error: 'A vote must be provided for the generated rollout' }, { status: 400 });
+    if (normalizedRewards.length !== task.candidates.length) {
+      return NextResponse.json({ error: 'A vote must be provided for every generated candidate' }, { status: 400 });
     }
     const votes = await prisma.$transaction(async tx => {
       const createdVotes = await Promise.all(normalizedRewards.map(item => tx.flowGRPOVote.create({
