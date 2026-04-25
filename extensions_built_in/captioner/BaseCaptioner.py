@@ -148,7 +148,7 @@ class BaseCaptioner(BaseExtensionProcess):
         for root, dirs, files in os.walk(self.caption_config.path_to_caption):
             for file in files:
                 if any(
-                    file.lower().endswith(f".{ext}")
+                    file.lower().endswith(f".{ext}") and not file.startswith(".")
                     for ext in self.caption_config.extensions
                 ):
                     full_path = os.path.join(root, file)
