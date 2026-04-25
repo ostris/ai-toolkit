@@ -517,7 +517,31 @@ export default function SimpleJob({
           {isFlowGRPO && (
             <Card title="Flow-GRPO">
               <NumberInput
+                label="Group Size"
+                value={jobConfig.config.process[0].grpo?.group_size || 4}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.group_size')}
+                min={1}
+                required
+              />
+              <NumberInput
+                label="Rollout Steps"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.rollout_steps || 10}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.rollout_steps')}
+                min={1}
+                required
+              />
+              <NumberInput
+                label="Max Rollout Lag (steps)"
+                className="pt-2"
+                value={jobConfig.config.process[0].grpo?.max_rollout_lag_steps || 0}
+                onChange={value => setJobConfig(value, 'config.process[0].grpo.max_rollout_lag_steps')}
+                min={0}
+                required
+              />
+              <NumberInput
                 label="Max Pending Tasks"
+                className="pt-2"
                 value={jobConfig.config.process[0].grpo?.max_pending_tasks || 1}
                 onChange={value => setJobConfig(value, 'config.process[0].grpo.max_pending_tasks')}
                 min={1}
@@ -560,7 +584,7 @@ export default function SimpleJob({
               <NumberInput
                 label="KL Beta"
                 className="pt-2"
-                value={jobConfig.config.process[0].grpo?.beta || 0}
+                value={jobConfig.config.process[0].grpo?.beta ?? 0.04}
                 onChange={value => setJobConfig(value, 'config.process[0].grpo.beta')}
                 min={0}
                 required
@@ -583,7 +607,7 @@ export default function SimpleJob({
                 required
               />
               <div className="pt-4 text-sm text-gray-400">
-                Prompts and sampling requests are created live from the Flow-GRPO voting view after the job starts.
+                Prompts are created live from the Flow-GRPO panel after the job starts.
               </div>
             </Card>
           )}

@@ -19,7 +19,7 @@ export default function FlowGRPOQueueSection() {
         <p className="text-sm text-gray-400">Open vote tasks from active Flow-GRPO jobs can be resolved directly from the queue.</p>
       </div>
       {flowJobs.map(job => (
-        <FlowGRPOVotingPanel key={job.id} job={job} compact limit={1} />
+        <FlowGRPOVotingPanel key={job.id} job={job} compact />
       ))}
     </div>
   );

@@ -9,7 +9,6 @@ function normalizeFlowGRPOJobConfig(jobConfig: any) {
   if (process?.type !== 'flow_grpo_trainer') {
     return jobConfig;
   }
-  delete process.datasets;
   process.grpo = process.grpo || {};
   process.train = process.train || {};
   process.sample = process.sample || {};

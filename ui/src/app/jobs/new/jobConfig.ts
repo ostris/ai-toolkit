@@ -34,11 +34,13 @@ export const defaultSliderConfig: SliderConfig = {
 export const defaultFlowGRPOConfig: FlowGRPOConfig = {
   clip_range: 0.0001,
   adv_clip_max: 5.0,
-  beta: 0.0,
+  beta: 0.04,
   noise_level: 0.7,
   sde_type: 'sde',
   timestep_fraction: 1.0,
-  candidates_per_task: 4,
+  group_size: 4,
+  rollout_steps: 10,
+  max_rollout_lag_steps: 0,
   max_pending_tasks: 1,
   poll_interval_sec: 2.0,
 };
@@ -175,7 +177,6 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     if (!jobConfig.config.process[0].grpo) {
       jobConfig.config.process[0].grpo = { ...defaultFlowGRPOConfig };
     }
-    delete jobConfig.config.process[0].datasets;
     jobConfig.config.process[0].train.disable_sampling = true;
     jobConfig.config.process[0].train.cache_text_embeddings = false;
     if (!jobConfig.config.process[0].train.noise_scheduler) {

@@ -7,13 +7,6 @@ import { TOOLKIT_ROOT, getTrainingFolder, getHFToken } from '../paths';
 const isWindows = process.platform === 'win32';
 
 function validateFlowGRPOJobConfig(jobConfig: any) {
-  const process = jobConfig?.config?.process?.[0];
-  if (process?.type !== 'flow_grpo_trainer') {
-    return jobConfig;
-  }
-  if ('datasets' in process) {
-    throw new Error('Flow-GRPO config must not include `datasets`; edit and resave the job to migrate it.');
-  }
   return jobConfig;
 }
 

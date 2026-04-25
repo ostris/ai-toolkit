@@ -54,7 +54,6 @@ model FlowGRPOVoteTask {
   job_id          String
   prompt          String
   negative_prompt String   @default("")
-  requested_candidates Int  @default(4)
   width           Int?
   height          Int?
   seed            Int?

@@ -22,7 +22,6 @@ export interface FlowGRPOVoteTaskView {
   id: string;
   prompt: string;
   negative_prompt: string;
-  requested_candidates: number;
   width: number | null;
   height: number | null;
   seed: number | null;
@@ -39,7 +38,6 @@ export interface FlowGRPOVoteTaskView {
 export default function useFlowGRPOVoteTasks(
   jobID: string,
   reloadInterval: number | null = 3000,
-  limit = 5,
   taskStatus = 'requested,generating,open,voted',
 ) {
   const [tasks, setTasks] = useState<FlowGRPOVoteTaskView[]>([]);
@@ -48,7 +46,7 @@ export default function useFlowGRPOVoteTasks(
   const refreshTasks = () => {
     setRequestStatus('loading');
     apiClient
-      .get(`/api/grpo/jobs/${jobID}/tasks`, { params: { status: taskStatus, limit } })
+      .get(`/api/grpo/jobs/${jobID}/tasks`, { params: { status: taskStatus } })
       .then(res => res.data)
       .then(data => {
         setTasks(data.tasks || []);
@@ -66,7 +64,7 @@ export default function useFlowGRPOVoteTasks(
       const interval = setInterval(refreshTasks, reloadInterval);
       return () => clearInterval(interval);
     }
-  }, [jobID, reloadInterval, limit, taskStatus]);
+  }, [jobID, reloadInterval, taskStatus]);
 
   return { tasks, status: requestStatus, refreshTasks };
 }

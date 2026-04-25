@@ -1,6 +1,6 @@
 'use client';
 
-import { type CSSProperties, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Job } from '@prisma/client';
 import { Button } from '@headlessui/react';
 import classNames from 'classnames';
@@ -11,7 +11,6 @@ import { FlowGRPOLiveTaskConfig, JobConfig } from '@/types';
 type Props = {
   job: Job;
   compact?: boolean;
-  limit?: number;
 };
 
 const getTaskDefaults = (job: Job): FlowGRPOLiveTaskConfig => {
@@ -20,7 +19,6 @@ const getTaskDefaults = (job: Job): FlowGRPOLiveTaskConfig => {
   return {
     prompt: '',
     negative_prompt: process.sample?.neg || '',
-    requested_candidates: Math.max(2, process.grpo?.candidates_per_task || 4),
     width: process.sample?.width || 1024,
     height: process.sample?.height || 1024,
     seed: process.sample?.seed ?? null,
@@ -37,15 +35,20 @@ const statusLabels: Record<string, string> = {
   open: 'Ready For Vote',
   voted: 'Applying Vote',
   processed: 'Processed',
-  skipped: 'Skipped',
+  stale: 'Stale',
   failed: 'Failed',
 };
 
+const voteOptions = [
+  { value: 'up', label: 'Up', reward: 1, className: 'bg-emerald-600 text-white hover:bg-emerald-500' },
+  { value: 'down', label: 'Down', reward: -1, className: 'bg-red-600 text-white hover:bg-red-500' },
+  { value: 'skip', label: 'Skip', reward: 0, className: 'bg-gray-800 text-gray-200 hover:bg-gray-700' },
+];
+
 type FlowGRPOLiveTaskDraft = Omit<
   FlowGRPOLiveTaskConfig,
-  'requested_candidates' | 'width' | 'height' | 'seed' | 'guidance_scale' | 'num_inference_steps'
+  'width' | 'height' | 'seed' | 'guidance_scale' | 'num_inference_steps'
 > & {
-  requested_candidates: string;
   width: string;
   height: string;
   seed: string;
@@ -57,7 +60,6 @@ const getTaskDraftDefaults = (job: Job): FlowGRPOLiveTaskDraft => {
   const defaults = getTaskDefaults(job);
   return {
     ...defaults,
-    requested_candidates: `${defaults.requested_candidates}`,
     width: `${defaults.width}`,
     height: `${defaults.height}`,
     seed: defaults.seed == null ? '' : `${defaults.seed}`,
@@ -78,16 +80,16 @@ const parseFloatField = (value: string, fallback: number, min: number) => {
 
 const getTaskStatusMessage = (task: { status: string; error?: string | null }) => {
   if (task.status === 'requested') return 'Waiting for the trainer to pick up this task.';
-  if (task.status === 'generating') return 'The trainer is generating candidates for this task.';
-  if (task.status === 'voted') return 'Vote received. The trainer is applying the Flow-GRPO update.';
+  if (task.status === 'generating') return 'The trainer is generating a rollout for this task.';
+  if (task.status === 'voted') return 'Vote received. The trainer will apply it with the next matching Flow-GRPO group.';
   if (task.status === 'processed') return 'Vote processed.';
-  if (task.status === 'skipped') return 'Task skipped.';
+  if (task.status === 'stale') return 'Task skipped because rollout trajectories became stale.';
   if (task.status === 'failed') return task.error ? `Task failed: ${task.error}` : 'Task failed.';
   return statusLabels[task.status] || task.status;
 };
 
-export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }: Props) {
-  const { tasks, status, refreshTasks } = useFlowGRPOVoteTasks(job.id, 3000, limit);
+export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
+  const { tasks, status, refreshTasks } = useFlowGRPOVoteTasks(job.id, 3000);
   const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [taskDraft, setTaskDraft] = useState<FlowGRPOLiveTaskDraft>(() => getTaskDraftDefaults(job));
@@ -104,11 +106,11 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
     setTaskDraft(current => ({ ...current, [key]: value }));
   };
 
-  const submitVote = async (taskID: string, payload: { action: 'select' | 'skip'; selectedCandidateId?: string }) => {
+  const submitVote = async (taskID: string, candidateID: string, value: string) => {
     if (submittingTaskId) return;
     setSubmittingTaskId(taskID);
     try {
-      await apiClient.post(`/api/grpo/jobs/${job.id}/tasks/${taskID}/vote`, payload);
+      await apiClient.post(`/api/grpo/jobs/${job.id}/tasks/${taskID}/vote`, { candidate_id: candidateID, value });
       refreshTasks();
     } catch (error) {
       console.error('Error submitting Flow-GRPO vote:', error);
@@ -125,7 +127,6 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
     const payload: FlowGRPOLiveTaskConfig = {
       prompt: taskDraft.prompt,
       negative_prompt: taskDraft.negative_prompt || '',
-      requested_candidates: parseIntegerField(taskDraft.requested_candidates, defaults.requested_candidates, 2),
       width: parseIntegerField(taskDraft.width, defaults.width, 64),
       height: parseIntegerField(taskDraft.height, defaults.height, 64),
       seed: Number.isFinite(parsedSeed) ? parsedSeed : null,
@@ -147,11 +148,6 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
   };
 
   const title = compact ? `Flow-GRPO: ${job.name}` : 'Live Voting';
-  const candidateGridStyle: CSSProperties = {
-    gridTemplateColumns: compact
-      ? 'repeat(auto-fill, minmax(180px, 1fr))'
-      : 'repeat(auto-fill, minmax(220px, 1fr))',
-  };
 
   return (
     <div className="space-y-4">
@@ -180,7 +176,7 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
                 <div>
                   <h3 className="text-sm font-semibold text-gray-100">Create Live Task</h3>
                   <p className="mt-1 text-xs text-gray-400">
-                    Prompts and sampling parameters are entered at vote time, not in the saved job config.
+                    Prompts and generation settings are entered live; group size remains a job-level training setting.
                   </p>
                 </div>
 
@@ -210,16 +206,6 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
 
                 <div className="grid gap-3 grid-cols-2">
                   <div>
-                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-400">Candidates</label>
-                    <input
-                      type="number"
-                      min={2}
-                      value={taskDraft.requested_candidates}
-                      onChange={event => updateDraft('requested_candidates', event.target.value)}
-                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
                     <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-400">Seed</label>
                     <input
                       type="number"
@@ -227,6 +213,17 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
                       onChange={event => updateDraft('seed', event.target.value)}
                       className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                       placeholder="Optional"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-400">Guidance Scale</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.1"
+                      value={taskDraft.guidance_scale}
+                      onChange={event => updateDraft('guidance_scale', event.target.value)}
+                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                     />
                   </div>
                   <div>
@@ -246,17 +243,6 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
                       min={64}
                       value={taskDraft.height}
                       onChange={event => updateDraft('height', event.target.value)}
-                      className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium uppercase tracking-wide text-gray-400">Guidance Scale</label>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.1"
-                      value={taskDraft.guidance_scale}
-                      onChange={event => updateDraft('guidance_scale', event.target.value)}
                       className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                     />
                   </div>
@@ -315,116 +301,106 @@ export default function FlowGRPOVotingPanel({ job, compact = false, limit = 5 }:
               Loading Flow-GRPO tasks...
             </div>
           )}
-
           {status === 'error' && tasks.length === 0 && (
             <div className="rounded-xl border border-dashed border-red-900 bg-red-950/20 p-6 text-sm text-red-300">
               Failed to load Flow-GRPO tasks.
             </div>
           )}
-
           {status !== 'error' && tasks.length === 0 && (
             <div className="rounded-xl border border-dashed border-gray-700 bg-gray-900/60 p-6 text-sm text-gray-400">
-              No live tasks yet. Queue one from the job detail page to start a Flow-GRPO round.
+              No live tasks yet. Queue one from the job detail page to start a Flow-GRPO rollout.
             </div>
           )}
 
           <div className="space-y-4">
-        {tasks.map(task => {
-          const canVote = task.status === 'open' && task.candidates.length > 0;
-          return (
-            <div key={task.id} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
-              <div className={classNames('grid gap-4', !compact && 'sm:grid-cols-12')}>
-                <div className={classNames('space-y-4', !compact && 'sm:col-span-4 lg:col-span-3')}>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs uppercase tracking-wide text-gray-500">Prompt</div>
-                      <div className="mt-1 text-sm text-gray-100">{task.prompt}</div>
-                      {task.negative_prompt && (
-                        <div className="mt-2 text-xs text-gray-500">Negative: {task.negative_prompt}</div>
-                      )}
-                    </div>
-                    <div
-                      className={classNames(
-                        'rounded-full px-3 py-1 text-xs font-medium',
-                        task.status === 'open' && 'bg-blue-950 text-blue-200',
-                        task.status === 'generating' && 'bg-amber-950 text-amber-200',
-                        task.status === 'requested' && 'bg-gray-800 text-gray-200',
-                        task.status === 'voted' && 'bg-emerald-950 text-emerald-200',
-                        task.status === 'failed' && 'bg-red-950 text-red-200',
-                      )}
-                    >
-                      {statusLabels[task.status] || task.status}
-                    </div>
-                  </div>
+            {tasks.map(task => {
+              const canVote = task.status === 'open' && task.candidates.length === 1;
+              const candidate = task.candidates[0];
+              return (
+                <div key={task.id} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
+                  <div className={classNames('grid gap-4', !compact && 'sm:grid-cols-12')}>
+                    <div className={classNames('space-y-4', !compact && 'sm:col-span-4 lg:col-span-3')}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs uppercase tracking-wide text-gray-500">Prompt</div>
+                          <div className="mt-1 text-sm text-gray-100">{task.prompt}</div>
+                          {task.negative_prompt && (
+                            <div className="mt-2 text-xs text-gray-500">Negative: {task.negative_prompt}</div>
+                          )}
+                        </div>
+                        <div
+                          className={classNames(
+                            'rounded-full px-3 py-1 text-xs font-medium',
+                            task.status === 'open' && 'bg-blue-950 text-blue-200',
+                            task.status === 'generating' && 'bg-amber-950 text-amber-200',
+                            task.status === 'requested' && 'bg-gray-800 text-gray-200',
+                            task.status === 'voted' && 'bg-emerald-950 text-emerald-200',
+                            task.status === 'stale' && 'bg-orange-950 text-orange-200',
+                            task.status === 'failed' && 'bg-red-950 text-red-200',
+                          )}
+                        >
+                          {statusLabels[task.status] || task.status}
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-400">
-                    <div>Candidates: {task.requested_candidates}</div>
-                    <div>Size: {task.width && task.height ? `${task.width}x${task.height}` : 'default'}</div>
-                    <div>Seed: {task.seed ?? 'auto'}</div>
-                    <div>CFG: {task.guidance_scale ?? 'default'}</div>
-                    <div>Steps: {task.num_inference_steps ?? 'default'}</div>
-                    <div>Sampler: {task.sampler || 'default'}</div>
-                    <div>Scheduler: {task.scheduler || 'default'}</div>
-                    <div>Status: {statusLabels[task.status] || task.status}</div>
-                  </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-gray-400">
+                        <div>Size: {task.width && task.height ? `${task.width}x${task.height}` : 'default'}</div>
+                        <div>Seed: {task.seed ?? 'auto'}</div>
+                        <div>CFG: {task.guidance_scale ?? 'default'}</div>
+                        <div>Steps: {task.num_inference_steps ?? 'default'}</div>
+                        <div>Sampler: {task.sampler || 'default'}</div>
+                        <div>Scheduler: {task.scheduler || 'default'}</div>
+                      </div>
 
-                  {canVote && (
-                    <Button
-                      onClick={() => submitVote(task.id, { action: 'skip' })}
-                      disabled={submittingTaskId === task.id}
-                      className={classNames(
-                        'w-full rounded-md px-3 py-2 text-sm',
-                        submittingTaskId === task.id
-                          ? 'cursor-not-allowed bg-gray-800 text-gray-500'
-                          : 'bg-gray-800 text-gray-200 hover:bg-gray-700',
-                      )}
-                    >
-                      Skip Task
-                    </Button>
-                  )}
-                </div>
-
-                <div className={classNames(!compact && 'sm:col-span-8 lg:col-span-9')}>
-                  {!canVote && (
-                    <div className="rounded-lg border border-dashed border-gray-800 bg-gray-900/60 p-4 text-sm text-gray-400">
-                      {getTaskStatusMessage(task)}
-                    </div>
-                  )}
-
-                  {canVote && (
-                    <div className="grid gap-3" style={candidateGridStyle}>
-                      {task.candidates.map(candidate => (
-                        <div key={candidate.id} className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-                          <img src={candidate.image_url} alt={candidate.prompt} className="aspect-square w-full bg-black object-cover" />
-                          <div className="space-y-3 p-3">
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-400">
-                              <div>Seed: {candidate.seed}</div>
-                              <div>CFG: {candidate.guidance_scale}</div>
-                              <div>Steps: {candidate.num_inference_steps}</div>
-                              <div>Sampler: {candidate.sampler}</div>
-                            </div>
+                      {canVote && candidate && (
+                        <div className="grid grid-cols-3 gap-2">
+                          {voteOptions.map(option => (
                             <Button
-                              onClick={() => submitVote(task.id, { action: 'select', selectedCandidateId: candidate.id })}
+                              key={option.value}
+                              onClick={() => submitVote(task.id, candidate.id, option.value)}
                               disabled={submittingTaskId === task.id}
+                              title={`${option.label}: ${option.reward}`}
                               className={classNames(
-                                'w-full rounded-md px-3 py-2 text-sm font-medium',
-                                submittingTaskId === task.id
-                                  ? 'cursor-not-allowed bg-gray-800 text-gray-500'
-                                  : 'bg-blue-600 text-white hover:bg-blue-500',
+                                'rounded-md px-3 py-2 text-sm font-medium',
+                                submittingTaskId === task.id ? 'cursor-not-allowed bg-gray-800 text-gray-500' : option.className,
                               )}
                             >
-                              Prefer This Candidate
+                              {option.label}
                             </Button>
-                          </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
+
+                    <div className={classNames(!compact && 'sm:col-span-8 lg:col-span-9')}>
+                      {!canVote && (
+                        <div className="rounded-lg border border-dashed border-gray-800 bg-gray-900/60 p-4 text-sm text-gray-400">
+                          {getTaskStatusMessage(task)}
+                        </div>
+                      )}
+
+                      {canVote && (
+                        <div className="grid gap-3">
+                          {task.candidates.map(candidate => (
+                            <div key={candidate.id} className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+                              <img src={candidate.image_url} alt={candidate.prompt} className="aspect-square w-full bg-black object-cover" />
+                              <div className="space-y-3 p-3">
+                                <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-400">
+                                  <div>Seed: {candidate.seed}</div>
+                                  <div>CFG: {candidate.guidance_scale}</div>
+                                  <div>Steps: {candidate.num_inference_steps}</div>
+                                  <div>Sampler: {candidate.sampler}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-          );
-        })}
+              );
+            })}
           </div>
         </div>
       </div>

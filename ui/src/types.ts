@@ -226,7 +226,9 @@ export interface FlowGRPOConfig {
   noise_level: number;
   sde_type: 'sde' | 'cps';
   timestep_fraction: number;
-  candidates_per_task: number;
+  group_size: number;
+  rollout_steps: number;
+  max_rollout_lag_steps: number;
   max_pending_tasks: number;
   poll_interval_sec: number;
 }
@@ -234,7 +236,6 @@ export interface FlowGRPOConfig {
 export interface FlowGRPOLiveTaskConfig {
   prompt: string;
   negative_prompt?: string;
-  requested_candidates: number;
   width: number;
   height: number;
   seed?: number | null;
