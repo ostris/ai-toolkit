@@ -133,6 +133,18 @@ export default function JobActionBar({
               </Link>
             </MenuItem>
           )}
+          {job.job_type === 'train' && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
+                onClick={() => {
+                  window.location.href = `/api/jobs/${job.id}/export`;
+                }}
+              >
+                Export Job
+              </div>
+            </MenuItem>
+          )}
           <MenuItem>
             <div
               className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
