@@ -1,3 +1,4 @@
+import os
 from safetensors.torch import load_file, save_file
 
 
@@ -115,6 +116,7 @@ class AdvancedPromptEmbeds:
                     f"Cannot save key {key!r}: expected list of length 1, got {len(value)}"
                 )
             data[key] = value[0]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         save_file(data, path, metadata=metadata)
 
     @classmethod

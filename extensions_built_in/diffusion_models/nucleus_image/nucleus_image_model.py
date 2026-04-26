@@ -1,3 +1,4 @@
+import itertools
 import os
 from typing import List, Optional
 
@@ -15,11 +16,12 @@ from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
 
-from transformers import AutoTokenizer, AutoModel
+from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+import torch.nn.functional as F
 
 try:
-    from diffusers import ErnieImagePipeline, AutoencoderKLFlux2
-    from .transformer import ErnieImageTransformer2DModel
+    from diffusers import NucleusMoEImagePipeline, NucleusMoEImageTransformer2DModel, AutoencoderKLQwenImage
+    from diffusers.models.transformers.transformer_nucleusmoe_image import SwiGLUExperts
 except ImportError:
     raise ImportError(
         "Diffusers is out of date. Update diffusers to the latest version by doing pip uninstall diffusers and then pip install -r requirements.txt"
@@ -27,25 +29,25 @@ except ImportError:
 
 
 scheduler_config = {
-    "base_image_seq_len": 256,
-    "base_shift": 0.5,
-    "invert_sigmas": False,
-    "max_image_seq_len": 4096,
-    "max_shift": 1.15,
-    "num_train_timesteps": 1000,
-    "shift": 3.0,
-    "shift_terminal": None,
-    "stochastic_sampling": False,
-    "time_shift_type": "exponential",
-    "use_beta_sigmas": False,
-    "use_dynamic_shifting": False,
-    "use_exponential_sigmas": False,
-    "use_karras_sigmas": False,
+  "base_image_seq_len": 256,
+  "base_shift": 0.5,
+  "invert_sigmas": False,
+  "max_image_seq_len": 4096,
+  "max_shift": 1.15,
+  "num_train_timesteps": 1000,
+  "shift": 1.0,
+  "shift_terminal": None,
+  "stochastic_sampling": False,
+  "time_shift_type": "exponential",
+  "use_beta_sigmas": False,
+  "use_dynamic_shifting": False,
+  "use_exponential_sigmas": False,
+  "use_karras_sigmas": False
 }
 
 
-class ErnieImageModel(BaseModel):
-    arch = "ernie_image"
+class NucleusImageModel(BaseModel):
+    arch = "nucleus_image"
 
     def __init__(
         self,
@@ -61,7 +63,7 @@ class ErnieImageModel(BaseModel):
         )
         self.is_flow_matching = True
         self.is_transformer = True
-        self.target_lora_modules = ["ErnieImageTransformer2DModel"]
+        self.target_lora_modules = ["NucleusMoEImageTransformer2DModel"]
 
     # static method to get the noise scheduler
     @staticmethod
@@ -73,7 +75,7 @@ class ErnieImageModel(BaseModel):
 
     def load_model(self):
         dtype = self.torch_dtype
-        self.print_and_status_update("Loading ErnieImage model")
+        self.print_and_status_update("Loading Nucleus model")
         model_path = self.model_config.name_or_path
         base_model_path = self.model_config.extras_name_or_path
 
@@ -90,9 +92,15 @@ class ErnieImageModel(BaseModel):
             if os.path.exists(te_folder_path):
                 base_model_path = model_path
 
-        transformer = ErnieImageTransformer2DModel.from_pretrained(
+        transformer = NucleusMoEImageTransformer2DModel.from_pretrained(
             transformer_path, subfolder=transformer_subfolder, torch_dtype=dtype
         )
+        
+        # handle versions of pytorch that don't have grouped mm, by disabling it in the SwiGLUExperts
+        if not hasattr(torch.nn.functional, "grouped_mm"):
+            for m in transformer.modules():
+                if isinstance(m, SwiGLUExperts):
+                    m.use_grouped_mm = False
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
@@ -108,7 +116,6 @@ class ErnieImageModel(BaseModel):
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
                 ignore_modules=[
-                    transformer.x_embedder,
                 ],
             )
 
@@ -119,10 +126,10 @@ class ErnieImageModel(BaseModel):
         flush()
 
         self.print_and_status_update("Text Encoder")
-        tokenizer = AutoTokenizer.from_pretrained(
-            base_model_path, subfolder="tokenizer", torch_dtype=dtype
+        tokenizer = Qwen3VLProcessor.from_pretrained(
+            base_model_path, subfolder="processor", torch_dtype=dtype
         )
-        text_encoder = AutoModel.from_pretrained(
+        text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
             base_model_path, subfolder="text_encoder", torch_dtype=dtype
         )
 
@@ -146,20 +153,20 @@ class ErnieImageModel(BaseModel):
             flush()
 
         self.print_and_status_update("Loading VAE")
-        vae = AutoencoderKLFlux2.from_pretrained(
+        vae = AutoencoderKLQwenImage.from_pretrained(
             base_model_path, subfolder="vae", torch_dtype=dtype
         ).to(self.device_torch, dtype=dtype)
 
-        self.noise_scheduler = ErnieImageModel.get_train_scheduler()
+        self.noise_scheduler = NucleusImageModel.get_train_scheduler()
 
         self.print_and_status_update("Making pipe")
 
         kwargs = {}
 
-        pipe: ErnieImagePipeline = ErnieImagePipeline(
+        pipe: NucleusMoEImagePipeline = NucleusMoEImagePipeline(
             scheduler=self.noise_scheduler,
             text_encoder=None,
-            tokenizer=tokenizer,
+            processor=tokenizer,
             vae=vae,
             transformer=None,
             **kwargs,
@@ -171,7 +178,7 @@ class ErnieImageModel(BaseModel):
         self.print_and_status_update("Preparing Model")
 
         text_encoder = [pipe.text_encoder]
-        tokenizer = [pipe.tokenizer]
+        tokenizer = [pipe.processor]
 
         # leave it on cpu for now
         if not self.low_vram:
@@ -193,12 +200,12 @@ class ErnieImageModel(BaseModel):
         self.print_and_status_update("Model Loaded")
 
     def get_generation_pipeline(self):
-        scheduler = ErnieImageModel.get_train_scheduler()
+        scheduler = NucleusImageModel.get_train_scheduler()
 
-        pipeline: ErnieImagePipeline = ErnieImagePipeline(
+        pipeline: NucleusMoEImagePipeline = NucleusMoEImagePipeline(
             scheduler=scheduler,
             text_encoder=unwrap_model(self.text_encoder[0]),
-            tokenizer=self.tokenizer[0],
+            processor=self.tokenizer[0],
             vae=unwrap_model(self.vae),
             transformer=unwrap_model(self.transformer),
         )
@@ -208,58 +215,43 @@ class ErnieImageModel(BaseModel):
         return pipeline
 
     def encode_images(self, image_list: List[torch.Tensor], device=None, dtype=None):
-        if self.vae.device == torch.device("cpu"):
-            self.vae.to(self.device_torch)
         if device is None:
             device = self.vae_device_torch
         if dtype is None:
             dtype = self.vae_torch_dtype
+
+        # Move to vae to device if on cpu
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
+        # move to device and dtype
+        image_list = [image.to(device, dtype=dtype) for image in image_list]
+        images = torch.stack(image_list).to(device, dtype=dtype)
+        # it uses wan vae, so add dim for frame count
 
-        image = image_list
-        if isinstance(image, list):
-            image = torch.stack(image, dim=0)
+        images = images.unsqueeze(2)
+        latents = self.vae.encode(images).latent_dist.sample()
 
-        image = image.to(device, dtype=dtype)
-
-        latents = self.vae.encode(image).latent_dist.sample()
-
-        latents = self.pipeline._patchify_latents(latents)
-
-        bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(
-            device=latents.device, dtype=latents.dtype
+        latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
         )
-        bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + 1e-5).to(
-            device=latents.device, dtype=latents.dtype
-        )
-        latents = (latents - bn_mean) / bn_std
+        latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
+            1, self.vae.config.z_dim, 1, 1, 1
+        ).to(latents.device, latents.dtype)
+
+        latents = (latents - latents_mean) * latents_std
+        latents = latents.to(device, dtype=dtype)
+
+        latents = latents.squeeze(2)  # remove the frame count dimension
 
         return latents
 
-    def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
-        if self.vae.device == torch.device("cpu"):
-            self.vae.to(self.device_torch)
-        if device is None:
-            device = self.vae_device_torch
-        if dtype is None:
-            dtype = self.vae_torch_dtype
-
-        latents = latents.to(device, dtype=dtype)
-        bn_mean = self.vae.bn.running_mean.view(1, -1, 1, 1).to(device)
-        bn_std = torch.sqrt(self.vae.bn.running_var.view(1, -1, 1, 1) + 1e-5).to(device)
-        latents = latents * bn_std + bn_mean
-
-        # Unpatchify
-        latents = self.pipeline._unpatchify_latents(latents)
-
-        # Decode
-        images = self.vae.decode(latents, return_dict=False)[0]
-        return images
-
     def generate_single_image(
         self,
-        pipeline: ErnieImagePipeline,
+        pipeline: NucleusMoEImagePipeline,
         gen_config: GenerateImageConfig,
         conditional_embeds: AdvancedPromptEmbeds,
         unconditional_embeds: AdvancedPromptEmbeds,
@@ -268,14 +260,20 @@ class ErnieImageModel(BaseModel):
     ):
         if self.model.device == torch.device("cpu"):
             self.model.to(self.device_torch)
+            if self.model_config.layer_offloading:
+                parameters_and_buffers = itertools.chain(self.model.parameters(), self.model.buffers())
+                next(parameters_and_buffers).to(self.device_torch)
+                
 
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
         img = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds,
-            negative_prompt_embeds=unconditional_embeds.text_embeds,
+            prompt_embeds=conditional_embeds.text_embeds[0].unsqueeze(0),
+            prompt_embeds_mask=conditional_embeds.attention_mask[0].unsqueeze(0),
+            negative_prompt_embeds=unconditional_embeds.text_embeds[0].unsqueeze(0),
+            negative_prompt_embeds_mask=unconditional_embeds.attention_mask[0].unsqueeze(0),
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
@@ -295,21 +293,53 @@ class ErnieImageModel(BaseModel):
     ):
         if self.model.device == torch.device("cpu"):
             self.model.to(self.device_torch)
-
-        text_bth, text_lens = self.pipeline._pad_text(
-            text_hiddens=text_embeddings.text_embeds,
-            device=self.device_torch,
-            dtype=self.vae.dtype,
-            text_in_dim=self.pipeline.transformer.config.text_in_dim,
+            if self.model_config.layer_offloading:
+                parameters_and_buffers = itertools.chain(self.model.parameters(), self.model.buffers())
+                next(parameters_and_buffers).to(self.device_torch)
+        
+        with torch.no_grad():
+            patch_size = self.pipeline.transformer.config.patch_size
+            
+            img_shape = (1, latent_model_input.shape[2] // patch_size, latent_model_input.shape[3] // patch_size)
+            img_shapes = [
+                img_shape for _ in range(latent_model_input.shape[0])
+            ]
+            latent_height = latent_model_input.shape[2]
+            latent_width = latent_model_input.shape[3]
+            
+            pixel_height = latent_model_input.shape[2] * self.pipeline.vae_scale_factor
+            pixel_width = latent_model_input.shape[3] * self.pipeline.vae_scale_factor
+        
+        latent_model_input = self.pipeline._pack_latents(
+            latents=latent_model_input, 
+            batch_size=latent_model_input.shape[0],
+            num_channels_latents=self.pipeline.transformer.config.in_channels // 4,
+            height=latent_height, 
+            width=latent_width, 
+            patch_size=patch_size,
         )
 
         pred = self.transformer(
             hidden_states=latent_model_input,
-            timestep=timestep,
-            text_bth=text_bth,
-            text_lens=text_lens,
+            timestep=timestep / 1000,
+            encoder_hidden_states=torch.stack(text_embeddings.text_embeds, dim=0),
+            encoder_hidden_states_mask=torch.stack(text_embeddings.attention_mask, dim=0),
+            img_shapes=img_shapes,
             return_dict=False,
         )[0]
+        
+        # invert it
+        pred = -pred
+        
+        pred = self.pipeline._unpack_latents(
+            latents=pred,
+            height=pixel_height,
+            width=pixel_width,
+            patch_size=patch_size,
+            vae_scale_factor=self.pipeline.vae_scale_factor
+        )
+
+        pred = pred.squeeze(2)  # remove frame dimension [B, C, 1, H, W] -> [B, C, H, W]
 
         return pred
 
@@ -319,34 +349,32 @@ class ErnieImageModel(BaseModel):
 
         if isinstance(prompt, str):
             prompt = [prompt]
+        
+        return_index = self.pipeline.default_return_index
+        device = self.device_torch
 
-        text_hiddens = []
+        formatted = [self.pipeline._format_prompt(p) for p in prompt]
 
-        for p in prompt:
-            ids = self.pipeline.tokenizer(
-                p,
-                add_special_tokens=True,
-                truncation=True,
-                padding=False,
-            )["input_ids"]
+        inputs = self.pipeline.processor(
+            text=formatted,
+            padding="longest",
+            pad_to_multiple_of=8,
+            max_length=1024,
+            truncation=True,
+            return_attention_mask=True,
+            return_tensors="pt",
+        ).to(device=device)
 
-            if len(ids) == 0:
-                if self.pipeline.tokenizer.bos_token_id is not None:
-                    ids = [self.pipeline.tokenizer.bos_token_id]
-                else:
-                    ids = [0]
+        prompt_embeds_mask = inputs.attention_mask
 
-            input_ids = torch.tensor([ids], device=self.device_torch)
-            outputs = self.pipeline.text_encoder(
-                input_ids=input_ids,
-                output_hidden_states=True,
-            )
-            # Use second to last hidden state (matches training)
-            hidden = outputs.hidden_states[-2][0]  # [T, H]
+        outputs = self.pipeline.text_encoder(**inputs, use_cache=False, return_dict=True, output_hidden_states=True)
+        prompt_embeds = outputs.hidden_states[return_index]
+        prompt_embeds = prompt_embeds.to(dtype=self.pipeline.text_encoder.dtype, device=device)
 
-            text_hiddens.append(hidden)
-
-        pe = AdvancedPromptEmbeds(text_embeds=text_hiddens)
+        pe = AdvancedPromptEmbeds(
+            text_embeds=[x for x in prompt_embeds],
+            attention_mask=[x for x in prompt_embeds_mask],
+        )
         return pe
 
     def get_model_has_grad(self):
@@ -356,7 +384,7 @@ class ErnieImageModel(BaseModel):
         return False
 
     def save_model(self, output_path, meta, save_dtype):
-        transformer: ErnieImageTransformer2DModel = unwrap_model(self.model)
+        transformer: NucleusMoEImageTransformer2DModel = unwrap_model(self.model)
         transformer.save_pretrained(
             save_directory=os.path.join(output_path, "transformer"),
             safe_serialization=True,
@@ -375,7 +403,7 @@ class ErnieImageModel(BaseModel):
         return self.arch
 
     def get_transformer_block_names(self) -> Optional[List[str]]:
-        return ["layers"]
+        return ["transformer_blocks"]
 
     def convert_lora_weights_before_save(self, state_dict):
         new_sd = {}
