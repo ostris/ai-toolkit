@@ -1,7 +1,9 @@
 import math
-from typing import Union
+from dataclasses import dataclass
+from typing import Optional, Tuple, Union
 from torch.distributions import LogNormal
 from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers.utils import BaseOutput
 import torch
 import numpy as np
 from toolkit.timestep_weighing.default_weighing_scheme import default_weighing_scheme
@@ -217,3 +219,169 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             return timesteps
         else:
             raise ValueError(f"Invalid timestep type: {timestep_type}")
+
+
+@dataclass
+class FlowMatchStepWithLogProbSchedulerOutput(BaseOutput):
+    prev_sample: torch.FloatTensor
+    log_prob: Optional[torch.FloatTensor] = None
+    transition_mean: Optional[torch.FloatTensor] = None
+    transition_std: Optional[torch.FloatTensor] = None
+
+
+class FlowMatchStepWithLogProbScheduler(CustomFlowMatchEulerDiscreteScheduler):
+    @staticmethod
+    def _expand_like(value: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
+        out = value
+        while out.ndim < ref.ndim:
+            out = out.unsqueeze(-1)
+        return out
+
+    def step(
+        self,
+        model_output: torch.FloatTensor,
+        timestep: Union[float, torch.FloatTensor],
+        sample: torch.FloatTensor,
+        s_churn: float = 0.0,
+        s_tmin: float = 0.0,
+        s_tmax: float = float("inf"),
+        s_noise: float = 1.0,
+        generator: Optional[torch.Generator] = None,
+        per_token_timesteps: Optional[torch.Tensor] = None,
+        return_dict: bool = True,
+        noise_level: float = 0.7,
+        sde_type: str = "sde",
+        prev_sample: Optional[torch.FloatTensor] = None,
+        return_log_prob: bool = False,
+        return_transition: bool = False,
+    ) -> Union[FlowMatchStepWithLogProbSchedulerOutput, Tuple]:
+        if per_token_timesteps is not None:
+            if return_log_prob or return_transition or prev_sample is not None:
+                raise ValueError(
+                    "FlowMatchStepWithLogProbScheduler does not support GRPO transition outputs with per_token_timesteps."
+                )
+            return super().step(
+                model_output=model_output,
+                timestep=timestep,
+                sample=sample,
+                s_churn=s_churn,
+                s_tmin=s_tmin,
+                s_tmax=s_tmax,
+                s_noise=s_noise,
+                generator=generator,
+                per_token_timesteps=per_token_timesteps,
+                return_dict=return_dict,
+            )
+
+        # Default behavior remains the parent FlowMatch step.
+        if not return_log_prob and not return_transition and prev_sample is None:
+            return super().step(
+                model_output=model_output,
+                timestep=timestep,
+                sample=sample,
+                s_churn=s_churn,
+                s_tmin=s_tmin,
+                s_tmax=s_tmax,
+                s_noise=s_noise,
+                generator=generator,
+                per_token_timesteps=per_token_timesteps,
+                return_dict=return_dict,
+            )
+
+        if (
+            isinstance(timestep, int)
+            or isinstance(timestep, torch.IntTensor)
+            or isinstance(timestep, torch.LongTensor)
+        ):
+            raise ValueError(
+                "Passing integer timestep indices to FlowMatchStepWithLogProbScheduler.step() is not supported."
+            )
+
+        if self.step_index is None:
+            self._init_step_index(timestep)
+
+        sample_f = sample.to(torch.float32)
+        model_output_f = model_output.to(torch.float32)
+        if prev_sample is not None:
+            prev_sample = prev_sample.to(torch.float32)
+
+        sigma = self.sigmas[self.step_index].to(device=sample_f.device, dtype=sample_f.dtype).flatten()
+        sigma_next = self.sigmas[self.step_index + 1].to(device=sample_f.device, dtype=sample_f.dtype).flatten()
+        sigma_e = self._expand_like(sigma, sample_f)
+        sigma_next_e = self._expand_like(sigma_next, sample_f)
+        dt = sigma_next_e - sigma_e
+
+        eps = 1e-8
+        sqrt_2pi = torch.sqrt(torch.as_tensor(2.0 * np.pi, device=sample_f.device, dtype=torch.float32))
+
+        if sde_type == "sde":
+            sigma_safe = torch.clamp(sigma_e, min=eps)
+            one_minus_sigma = torch.clamp(1.0 - sigma_e, min=eps)
+            std_dev_t = torch.sqrt(sigma_safe / one_minus_sigma) * float(noise_level)
+            dt_safe = torch.clamp(-dt, min=eps)
+            step_scale = torch.sqrt(dt_safe)
+            prev_sample_mean = (
+                sample_f * (1.0 + ((std_dev_t**2) / (2.0 * sigma_safe)) * dt)
+                + model_output_f * (1.0 + ((std_dev_t**2) * (1.0 - sigma_e) / (2.0 * sigma_safe))) * dt
+            )
+            if prev_sample is None:
+                noise = torch.randn(
+                    model_output_f.shape,
+                    generator=generator,
+                    device=model_output_f.device,
+                    dtype=model_output_f.dtype,
+                )
+                prev_sample = prev_sample_mean + std_dev_t * step_scale * noise
+
+            transition_std = torch.clamp(std_dev_t * step_scale, min=eps)
+        elif sde_type == "cps":
+            std_dev_t = torch.clamp(
+                sigma_next_e * np.sin(float(noise_level) * np.pi / 2.0),
+                min=eps,
+            )
+            pred_original_sample = sample_f - sigma_e * model_output_f
+            noise_estimate = sample_f + model_output_f * (1.0 - sigma_e)
+            sqrt_term = torch.sqrt(torch.clamp((sigma_next_e**2) - (std_dev_t**2), min=eps))
+            prev_sample_mean = pred_original_sample * (1.0 - sigma_next_e) + noise_estimate * sqrt_term
+            if prev_sample is None:
+                noise = torch.randn(
+                    model_output_f.shape,
+                    generator=generator,
+                    device=model_output_f.device,
+                    dtype=model_output_f.dtype,
+                )
+                prev_sample = prev_sample_mean + std_dev_t * noise
+            transition_std = std_dev_t
+        else:
+            raise ValueError(f"Unsupported Flow-GRPO sde_type '{sde_type}'.")
+
+        log_prob = None
+        if return_log_prob:
+            log_prob_tensor = (
+                -((prev_sample.detach() - prev_sample_mean) ** 2) / (2.0 * (transition_std**2))
+                - torch.log(transition_std)
+                - torch.log(sqrt_2pi)
+            )
+            reduce_dims = tuple(range(1, log_prob_tensor.ndim))
+            log_prob = log_prob_tensor.sum(dim=reduce_dims)
+
+        self._step_index += 1
+        prev_sample = prev_sample.to(model_output.dtype)
+
+        transition_mean = prev_sample_mean if return_transition else None
+        transition_std_out = transition_std if return_transition else None
+        if not return_dict:
+            output: list[torch.Tensor] = [prev_sample]
+            if return_log_prob:
+                output.append(log_prob)
+            if return_transition:
+                output.append(transition_mean)
+                output.append(transition_std_out)
+            return tuple(output)
+
+        return FlowMatchStepWithLogProbSchedulerOutput(
+            prev_sample=prev_sample,
+            log_prob=log_prob,
+            transition_mean=transition_mean,
+            transition_std=transition_std_out,
+        )

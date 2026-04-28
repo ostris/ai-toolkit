@@ -24,8 +24,8 @@ const getTaskDefaults = (job: Job): FlowGRPOLiveTaskConfig => {
     seed: process.sample?.seed ?? null,
     guidance_scale: process.sample?.guidance_scale || 4,
     num_inference_steps: process.sample?.sample_steps || 30,
-    sampler: process.sample?.sampler || 'flowmatch',
-    scheduler: process.train?.noise_scheduler || 'flowmatch',
+    sampler: process.sample?.sampler || 'flowmatch_step_with_logprob',
+    scheduler: process.train?.noise_scheduler || 'flowmatch_step_with_logprob',
   };
 };
 
@@ -287,7 +287,7 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
                       onChange={event => updateDraft('sampler', event.target.value)}
                       className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                     >
-                      <option value="flowmatch">FlowMatch</option>
+                      <option value="flowmatch_step_with_logprob">FlowMatch Step With LogProb</option>
                     </select>
                   </div>
                   <div>
@@ -297,7 +297,7 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
                       onChange={event => updateDraft('scheduler', event.target.value)}
                       className="w-full rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none focus:border-blue-500"
                     >
-                      <option value="flowmatch">FlowMatch</option>
+                      <option value="flowmatch_step_with_logprob">FlowMatch Step With LogProb</option>
                     </select>
                   </div>
                 </div>
