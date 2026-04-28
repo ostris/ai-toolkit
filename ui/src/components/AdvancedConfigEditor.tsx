@@ -1,27 +1,15 @@
 'use client';
 import { useEffect, useState, useRef } from 'react';
-import { JobConfig } from '@/types';
 import YAML from 'yaml';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
-import { Settings } from '@/hooks/useSettings';
-import { migrateJobConfig } from './jobConfig';
 import { useTheme } from '@/components/ThemeProvider';
 
-type Props = {
-  jobConfig: JobConfig;
-  setJobConfig: (value: any, key?: string) => void;
-  status: 'idle' | 'saving' | 'success' | 'error';
-  handleSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
-  runId: string | null;
-  gpuIDs: string | null;
-  setGpuIDs: (value: string | null) => void;
-  gpuList: any;
-  datasetOptions: any;
-  settings: Settings;
+type Props<T> = {
+  config: T;
+  setConfig: (value: any, key?: string) => void;
+  transformOnParse?: (parsed: any) => any;
 };
-
-const isDev = process.env.NODE_ENV === 'development';
 
 const yamlConfig: YAML.DocumentOptions &
   YAML.SchemaOptions &
@@ -47,11 +35,11 @@ function toYaml(obj: any): string {
   return doc.toString(yamlConfig);
 }
 
-export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props) {
+export default function AdvancedConfigEditor<T>({ config, setConfig, transformOnParse }: Props<T>) {
   const { theme } = useTheme();
   const [editorValue, setEditorValue] = useState<string>('');
   const [hasError, setHasError] = useState(false);
-  const lastJobConfigUpdateStringRef = useRef('');
+  const lastConfigUpdateStringRef = useRef('');
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<any>(null);
 
@@ -66,17 +54,17 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
 
     // Initial content setup
     try {
-      const yamlContent = toYaml(jobConfig);
+      const yamlContent = toYaml(config);
       setEditorValue(yamlContent);
-      lastJobConfigUpdateStringRef.current = JSON.stringify(jobConfig);
+      lastConfigUpdateStringRef.current = JSON.stringify(config);
     } catch (e) {
       console.warn(e);
     }
   };
 
   useEffect(() => {
-    const lastUpdate = lastJobConfigUpdateStringRef.current;
-    const currentUpdate = JSON.stringify(jobConfig);
+    const lastUpdate = lastConfigUpdateStringRef.current;
+    const currentUpdate = JSON.stringify(config);
 
     // Skip if no changes or editor not yet mounted
     if (lastUpdate === currentUpdate || !isEditorMounted.current) {
@@ -93,7 +81,7 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
         const scrollTop = editor.getScrollTop();
 
         // Update content
-        const yamlContent = toYaml(jobConfig);
+        const yamlContent = toYaml(config);
 
         // Only update if the content is actually different
         if (yamlContent !== editor.getValue()) {
@@ -106,12 +94,12 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
           editor.setScrollTop(scrollTop);
         }
 
-        lastJobConfigUpdateStringRef.current = currentUpdate;
+        lastConfigUpdateStringRef.current = currentUpdate;
       }
     } catch (e) {
       console.warn(e);
     }
-  }, [jobConfig]);
+  }, [config]);
 
   const setMarkers = (errors: { message: string; line: number }[]) => {
     const monaco = monacoRef.current;
@@ -132,27 +120,18 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
     if (value === undefined) return;
 
     try {
-      const parsed = YAML.parse(value);
+      let parsed = YAML.parse(value);
       setHasError(false);
       setMarkers([]);
 
-      // Don't update jobConfig if the change came from the editor itself
+      // Don't update config if the change came from the editor itself
       // to avoid a circular update loop
-      if (JSON.stringify(parsed) !== lastJobConfigUpdateStringRef.current) {
-        lastJobConfigUpdateStringRef.current = JSON.stringify(parsed);
-
-        // We have to ensure certain things are always set
-        try {
-          // parsed.config.process[0].type = 'ui_trainer';
-          parsed.config.process[0].sqlite_db_path = './aitk_db.db';
-          parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
-          parsed.config.process[0].device = 'cuda';
-          parsed.config.process[0].performance_log_every = 10;
-        } catch (e) {
-          console.warn(e);
+      if (JSON.stringify(parsed) !== lastConfigUpdateStringRef.current) {
+        if (transformOnParse) {
+          parsed = transformOnParse(parsed);
         }
-        migrateJobConfig(parsed);
-        setJobConfig(parsed);
+        lastConfigUpdateStringRef.current = JSON.stringify(parsed);
+        setConfig(parsed);
       }
     } catch (e: any) {
       setHasError(true);
@@ -175,6 +154,7 @@ export default function AdvancedJob({ jobConfig, setJobConfig, settings }: Props
         defaultLanguage="yaml"
         value={editorValue}
         theme={theme === 'dark' ? 'vs-dark' : 'light'}
+        className="z-0"
         onChange={handleChange}
         onMount={handleEditorDidMount}
         options={{
