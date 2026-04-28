@@ -19,9 +19,11 @@ import torch
 from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
 from toolkit.config_modules import GenerateImageConfig
 from toolkit.prompt_utils import PromptEmbeds
+from toolkit.samplers.custom_flowmatch_sampler import FlowMatchStepWithLogProbScheduler
 
-SUPPORTED_FLOW_GRPO_SAMPLERS = {"flowmatch"}
-SUPPORTED_FLOW_GRPO_SCHEDULERS = {"flowmatch"}
+FLOW_GRPO_NATIVE_SCHEDULER = "flowmatch_step_with_logprob"
+SUPPORTED_FLOW_GRPO_SAMPLERS = {FLOW_GRPO_NATIVE_SCHEDULER}
+SUPPORTED_FLOW_GRPO_SCHEDULERS = {FLOW_GRPO_NATIVE_SCHEDULER}
 
 
 @dataclass
@@ -83,95 +85,18 @@ def _clone_prompt_embeds(prompt_embeds: Optional[PromptEmbeds]) -> Optional[Prom
     return prompt_embeds.detach().clone().to("cpu")
 
 
-def _expand_like(value: torch.Tensor, ref: torch.Tensor) -> torch.Tensor:
-    out = value
-    while out.ndim < ref.ndim:
-        out = out.unsqueeze(-1)
-    return out
-
-
-def _flowmatch_step_with_logprob(
-    *,
-    model_output: torch.Tensor,
-    sample: torch.Tensor,
-    sigma: torch.Tensor,
-    sigma_next: torch.Tensor,
-    noise_level: float,
-    sde_type: str,
-    prev_sample: Optional[torch.Tensor] = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    model_output = model_output.float()
-    sample = sample.float()
-    sigma = sigma.float().flatten()
-    sigma_next = sigma_next.float().flatten()
-    if prev_sample is not None:
-        prev_sample = prev_sample.float()
-
-    sigma_e = _expand_like(sigma, sample)
-    sigma_next_e = _expand_like(sigma_next, sample)
-    dt = sigma_next_e - sigma_e
-
-    eps = 1e-8
-    sqrt_2pi = torch.sqrt(torch.as_tensor(2.0 * np.pi, device=sample.device, dtype=torch.float32))
-
-    if sde_type == "sde":
-        sigma_safe = torch.clamp(sigma_e, min=eps)
-        one_minus_sigma = torch.clamp(1.0 - sigma_e, min=eps)
-        std_dev_t = torch.sqrt(sigma_safe / one_minus_sigma) * float(noise_level)
-        dt_safe = torch.clamp(-dt, min=eps)
-        step_scale = torch.sqrt(dt_safe)
-
-        prev_sample_mean = (
-            sample * (1.0 + ((std_dev_t**2) / (2.0 * sigma_safe)) * dt)
-            + model_output * (1.0 + ((std_dev_t**2) * (1.0 - sigma_e) / (2.0 * sigma_safe))) * dt
-        )
-        if prev_sample is None:
-            prev_sample = prev_sample_mean + std_dev_t * step_scale * torch.randn_like(model_output)
-
-        transition_std = torch.clamp(std_dev_t * step_scale, min=eps)
-        log_prob = (
-            -((prev_sample.detach() - prev_sample_mean) ** 2) / (2.0 * (transition_std**2))
-            - torch.log(transition_std)
-            - torch.log(sqrt_2pi)
-        )
-    elif sde_type == "cps":
-        std_dev_t = torch.clamp(
-            sigma_next_e * np.sin(float(noise_level) * np.pi / 2.0),
-            min=eps,
-        )
-        pred_original_sample = sample - sigma_e * model_output
-        noise_estimate = sample + model_output * (1.0 - sigma_e)
-        sqrt_term = torch.sqrt(torch.clamp((sigma_next_e**2) - (std_dev_t**2), min=eps))
-        prev_sample_mean = pred_original_sample * (1.0 - sigma_next_e) + noise_estimate * sqrt_term
-        if prev_sample is None:
-            prev_sample = prev_sample_mean + std_dev_t * torch.randn_like(model_output)
-        transition_std = std_dev_t
-        log_prob = (
-            -((prev_sample.detach() - prev_sample_mean) ** 2) / (2.0 * (transition_std**2))
-            - torch.log(transition_std)
-            - torch.log(sqrt_2pi)
-        )
-    else:
-        raise ValueError(f"Unsupported Flow-GRPO sde_type '{sde_type}'.")
-
-    reduce_dims = tuple(range(1, log_prob.ndim))
-    # Joint Gaussian log-probability must sum over action dimensions.
-    log_prob = log_prob.sum(dim=reduce_dims)
-    return prev_sample, log_prob, prev_sample_mean, transition_std
-
-
 class FlowGRPOTrainer(DiffusionTrainer):
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         train_config = config.setdefault("train", {})
         train_config["disable_sampling"] = True
         train_config["cache_text_embeddings"] = False
         if not train_config.get("noise_scheduler"):
-            train_config["noise_scheduler"] = "flowmatch"
+            train_config["noise_scheduler"] = FLOW_GRPO_NATIVE_SCHEDULER
         sample_config = config.setdefault("sample", {})
         sample_config["sample_every"] = 0
         sample_config["samples"] = []
         if not sample_config.get("sampler"):
-            sample_config["sampler"] = "flowmatch"
+            sample_config["sampler"] = FLOW_GRPO_NATIVE_SCHEDULER
         super().__init__(process_id, job, config, **kwargs)
         if not self.is_ui_trainer:
             raise ValueError("flow_grpo_trainer requires the UI SQLite runtime.")
@@ -188,20 +113,20 @@ class FlowGRPOTrainer(DiffusionTrainer):
         return normalized or default
 
     def _validate_flow_grpo_runtime_config(self) -> None:
-        train_scheduler = self._normalize_control_value(self.train_config.noise_scheduler, "flowmatch")
-        sample_sampler = self._normalize_control_value(self.sample_config.sampler, "flowmatch")
+        train_scheduler = self._normalize_control_value(self.train_config.noise_scheduler, FLOW_GRPO_NATIVE_SCHEDULER)
+        sample_sampler = self._normalize_control_value(self.sample_config.sampler, FLOW_GRPO_NATIVE_SCHEDULER)
         self._validate_sampler(sample_sampler)
         self._validate_scheduler(train_scheduler)
 
     def _validate_sampler(self, sampler: str) -> str:
-        sampler = self._normalize_control_value(sampler, "flowmatch")
+        sampler = self._normalize_control_value(sampler, FLOW_GRPO_NATIVE_SCHEDULER)
         if sampler not in SUPPORTED_FLOW_GRPO_SAMPLERS:
             supported = ", ".join(sorted(SUPPORTED_FLOW_GRPO_SAMPLERS))
             raise ValueError(f"Unsupported Flow-GRPO sampler '{sampler}'. Supported values: {supported}")
         return sampler
 
     def _validate_scheduler(self, scheduler: str) -> str:
-        scheduler = self._normalize_control_value(scheduler, "flowmatch")
+        scheduler = self._normalize_control_value(scheduler, FLOW_GRPO_NATIVE_SCHEDULER)
         if scheduler not in SUPPORTED_FLOW_GRPO_SCHEDULERS:
             supported = ", ".join(sorted(SUPPORTED_FLOW_GRPO_SCHEDULERS))
             raise ValueError(f"Unsupported Flow-GRPO scheduler '{scheduler}'. Supported values: {supported}")
@@ -216,6 +141,10 @@ class FlowGRPOTrainer(DiffusionTrainer):
             raise ValueError("Flow-GRPO requires the active AITK model to provide a train scheduler.")
 
         config = copy.deepcopy(dict(getattr(source_scheduler, "config", {})))
+        if scheduler == FLOW_GRPO_NATIVE_SCHEDULER:
+            if config:
+                return FlowMatchStepWithLogProbScheduler.from_config(config)
+            return FlowMatchStepWithLogProbScheduler()
         if config and hasattr(source_scheduler.__class__, "from_config"):
             return source_scheduler.__class__.from_config(config)
         return copy.deepcopy(source_scheduler)
@@ -360,7 +289,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         scheduler_name: str,
         num_inference_steps: int,
         latents: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[Any, torch.Tensor, torch.Tensor, torch.Tensor]:
         self._validate_sampler(sampler)
         scheduler = self._build_task_scheduler(scheduler_name)
         if hasattr(scheduler, "set_train_timesteps"):
@@ -392,8 +321,12 @@ class FlowGRPOTrainer(DiffusionTrainer):
         sigma_next = sigmas[1 : timesteps.numel() + 1]
         if sigma_current.numel() > 0 and sigma_current[0] >= 1.0:
             sigma_current = sigma_current.clone()
-            sigma_current[0] = (sigma_current[0] + sigma_next[0]) * 0.5
-        return timesteps, sigma_current, sigma_next
+            adjusted_sigma0 = (sigma_current[0] + sigma_next[0]) * 0.5
+            sigma_current[0] = adjusted_sigma0
+            scheduler.sigmas = scheduler.sigmas.clone()
+            scheduler.sigmas[0] = adjusted_sigma0.to(device=scheduler.sigmas.device, dtype=scheduler.sigmas.dtype)
+        scheduler._step_index = None
+        return scheduler, timesteps, sigma_current, sigma_next
 
     def _build_preview_image_config(
         self,
@@ -492,7 +425,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 latents = self.sd.get_latent_noise(pixel_height=height, pixel_width=width, batch_size=1).to(
                     self.device_torch, dtype=self.sd.torch_dtype
                 )
-                timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
+                rollout_scheduler, timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
                     sampler=sampler,
                     scheduler_name=scheduler,
                     num_inference_steps=num_inference_steps,
@@ -516,24 +449,19 @@ class FlowGRPOTrainer(DiffusionTrainer):
                             batch=_EmptyRolloutBatch(),
                         )
 
-                    next_latents, _, _, _ = _flowmatch_step_with_logprob(
+                    step_output = rollout_scheduler.step(
                         model_output=noise_pred,
+                        timestep=timesteps[idx],
                         sample=latents,
-                        sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
-                        sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
                         noise_level=self.flow_grpo_config.noise_level,
                         sde_type=self.flow_grpo_config.sde_type,
+                        return_log_prob=True,
+                        return_transition=False,
                     )
-                    next_latents = next_latents.to(self.device_torch, dtype=self.sd.torch_dtype)
-                    _, log_prob, _, _ = _flowmatch_step_with_logprob(
-                        model_output=noise_pred,
-                        sample=latents,
-                        sigma=sigma_current[idx].reshape(1).repeat(latents.shape[0]),
-                        sigma_next=sigma_next[idx].reshape(1).repeat(latents.shape[0]),
-                        noise_level=self.flow_grpo_config.noise_level,
-                        sde_type=self.flow_grpo_config.sde_type,
-                        prev_sample=next_latents,
-                    )
+                    next_latents = step_output.prev_sample.to(self.device_torch, dtype=self.sd.torch_dtype)
+                    log_prob = step_output.log_prob
+                    if log_prob is None:
+                        raise RuntimeError("Flow-GRPO scheduler did not return rollout log-probability.")
                     latents_before.append(_clone_tensor(latents))
                     latents_after.append(_clone_tensor(next_latents))
                     log_probs.append(_clone_tensor(log_prob))
@@ -589,8 +517,10 @@ class FlowGRPOTrainer(DiffusionTrainer):
         height = int(task_row["height"] or self.sample_config.height)
         guidance_scale = float(task_row["guidance_scale"] or self.sample_config.guidance_scale)
         num_inference_steps = int(task_row["num_inference_steps"] or self.sample_config.sample_steps)
-        sampler = self._validate_sampler(task_row["sampler"] or self.sample_config.sampler or "flowmatch")
-        scheduler = self._validate_scheduler(task_row["scheduler"] or self.train_config.noise_scheduler or "flowmatch")
+        sampler = self._validate_sampler(task_row["sampler"] or self.sample_config.sampler or FLOW_GRPO_NATIVE_SCHEDULER)
+        scheduler = self._validate_scheduler(
+            task_row["scheduler"] or self.train_config.noise_scheduler or FLOW_GRPO_NATIVE_SCHEDULER
+        )
         task_dir = self._task_dir(task_id)
 
         self._db_execute_write(
@@ -768,6 +698,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
     def _compute_step_logprob(
         self,
+        rollout_scheduler: Any,
         candidate_state: CandidateState,
         step_index: int,
         *,
@@ -805,15 +736,21 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     "Flow-GRPO policy recomputation produced a detached prediction. "
                     "This model's predict_noise/get_noise_prediction path must run the denoiser with gradients enabled."
                 )
-            _, log_prob, prev_mean, transition_std = _flowmatch_step_with_logprob(
+            step_output = rollout_scheduler.step(
                 model_output=noise_pred,
+                timestep=candidate_state.timesteps[step_index].to(self.device_torch, dtype=torch.float32),
                 sample=latents,
-                sigma=candidate_state.sigma_current[step_index].reshape(1).repeat(latents.shape[0]).to(self.device_torch),
-                sigma_next=candidate_state.sigma_next[step_index].reshape(1).repeat(latents.shape[0]).to(self.device_torch),
                 noise_level=self.flow_grpo_config.noise_level,
                 sde_type=self.flow_grpo_config.sde_type,
                 prev_sample=candidate_state.next_latents[:, step_index].to(self.device_torch, dtype=self.sd.torch_dtype),
+                return_log_prob=True,
+                return_transition=True,
             )
+            log_prob = step_output.log_prob
+            prev_mean = step_output.transition_mean
+            transition_std = step_output.transition_std
+            if log_prob is None or prev_mean is None or transition_std is None:
+                raise RuntimeError("Flow-GRPO scheduler did not return required transition outputs.")
         return log_prob, prev_mean, transition_std
 
     def _compute_candidate_loss(
@@ -832,9 +769,28 @@ class FlowGRPOTrainer(DiffusionTrainer):
         kl_losses: list[float] = []
         approx_kls: list[float] = []
         clipfracs: list[float] = []
+        rollout_seed_latents = candidate_state.latents[:, 0].to(self.device_torch, dtype=self.sd.torch_dtype)
+        policy_scheduler, _, _, _ = self._prepare_scheduler_run(
+            sampler=candidate_state.sampler,
+            scheduler_name=candidate_state.scheduler,
+            num_inference_steps=candidate_state.num_inference_steps,
+            latents=rollout_seed_latents,
+        )
+        reference_scheduler = None
+        if self.flow_grpo_config.beta > 0.0:
+            reference_scheduler, _, _, _ = self._prepare_scheduler_run(
+                sampler=candidate_state.sampler,
+                scheduler_name=candidate_state.scheduler,
+                num_inference_steps=candidate_state.num_inference_steps,
+                latents=rollout_seed_latents,
+            )
 
         for step_index in train_indices:
-            log_prob, prev_mean, transition_std = self._compute_step_logprob(candidate_state, step_index)
+            log_prob, prev_mean, transition_std = self._compute_step_logprob(
+                policy_scheduler,
+                candidate_state,
+                step_index,
+            )
             old_log_prob = candidate_state.log_probs[:, step_index].to(self.device_torch, dtype=log_prob.dtype)
 
             advantages = torch.full_like(log_prob, float(advantage))
@@ -855,8 +811,15 @@ class FlowGRPOTrainer(DiffusionTrainer):
             loss = policy_loss
 
             if self.flow_grpo_config.beta > 0.0:
+                if reference_scheduler is None:
+                    raise RuntimeError("Flow-GRPO reference scheduler was not initialized.")
                 with torch.no_grad():
-                    _, ref_prev_mean, _ = self._compute_step_logprob(candidate_state, step_index, disable_lora=True)
+                    _, ref_prev_mean, _ = self._compute_step_logprob(
+                        reference_scheduler,
+                        candidate_state,
+                        step_index,
+                        disable_lora=True,
+                    )
                 std_safe = torch.clamp(transition_std, min=1e-6)
                 kl_tensor = ((prev_mean - ref_prev_mean) ** 2) / (2.0 * (std_safe**2))
                 kl_loss = kl_tensor.flatten(start_dim=1).sum(dim=1).mean()

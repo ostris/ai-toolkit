@@ -18,7 +18,10 @@ from diffusers import (
 )
 from toolkit.samplers.mean_flow_scheduler import MeanFlowScheduler
 
-from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
+from toolkit.samplers.custom_flowmatch_sampler import (
+    CustomFlowMatchEulerDiscreteScheduler,
+    FlowMatchStepWithLogProbScheduler,
+)
 
 from k_diffusion.external import CompVisDenoiser
 
@@ -164,6 +167,19 @@ def get_sampler(
         scheduler_cls = MeanFlowScheduler
     elif sampler == "flowmatch":
         scheduler_cls = CustomFlowMatchEulerDiscreteScheduler
+        config_to_use = copy.deepcopy(flux_config)
+        if arch == "sd":
+            config_to_use = copy.deepcopy(sd_flow_config)
+        elif arch == "flux":
+            config_to_use = copy.deepcopy(flux_config)
+        elif arch == "lumina2":
+            config_to_use = copy.deepcopy(lumina2_config)
+        else:
+            print(f"Unknown architecture {arch}, using default flux config")
+            # use flux by default
+            config_to_use = copy.deepcopy(flux_config)
+    elif sampler == "flowmatch_step_with_logprob":
+        scheduler_cls = FlowMatchStepWithLogProbScheduler
         config_to_use = copy.deepcopy(flux_config)
         if arch == "sd":
             config_to_use = copy.deepcopy(sd_flow_config)

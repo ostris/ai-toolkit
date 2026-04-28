@@ -15,16 +15,20 @@ function normalizeFlowGRPOJobConfig(jobConfig: any) {
   process.train.disable_sampling = true;
   process.train.cache_text_embeddings = false;
   if (!process.train.noise_scheduler) {
-    process.train.noise_scheduler = 'flowmatch';
+    process.train.noise_scheduler = 'flowmatch_step_with_logprob';
   }
   if (!process.sample.sampler) {
-    process.sample.sampler = 'flowmatch';
+    process.sample.sampler = 'flowmatch_step_with_logprob';
   }
-  if (process.train.noise_scheduler !== 'flowmatch') {
-    throw new Error(`Unsupported Flow-GRPO scheduler '${process.train.noise_scheduler}'. Supported values: flowmatch`);
+  if (process.train.noise_scheduler !== 'flowmatch_step_with_logprob') {
+    throw new Error(
+      `Unsupported Flow-GRPO scheduler '${process.train.noise_scheduler}'. Supported values: flowmatch_step_with_logprob`,
+    );
   }
-  if (process.sample.sampler !== 'flowmatch') {
-    throw new Error(`Unsupported Flow-GRPO sampler '${process.sample.sampler}'. Supported values: flowmatch`);
+  if (process.sample.sampler !== 'flowmatch_step_with_logprob') {
+    throw new Error(
+      `Unsupported Flow-GRPO sampler '${process.sample.sampler}'. Supported values: flowmatch_step_with_logprob`,
+    );
   }
   process.sample.sample_every = 0;
   process.sample.samples = [];

@@ -176,10 +176,10 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     jobConfig.config.process[0].train.disable_sampling = true;
     jobConfig.config.process[0].train.cache_text_embeddings = false;
     if (!jobConfig.config.process[0].train.noise_scheduler) {
-      jobConfig.config.process[0].train.noise_scheduler = 'flowmatch';
+      jobConfig.config.process[0].train.noise_scheduler = 'flowmatch_step_with_logprob';
     }
     if (!jobConfig.config.process[0].sample.sampler) {
-      jobConfig.config.process[0].sample.sampler = 'flowmatch';
+      jobConfig.config.process[0].sample.sampler = 'flowmatch_step_with_logprob';
     }
     jobConfig.config.process[0].sample.samples = [];
     if (!jobConfig.config.process[0].sample.sample_every) {

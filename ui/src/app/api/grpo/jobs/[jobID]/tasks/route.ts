@@ -72,13 +72,26 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
     const height = parseIntegerField(body.height, 1024, 64);
     const guidanceScale = parseFloatField(body.guidance_scale, 4, 0);
     const numInferenceSteps = parseIntegerField(body.num_inference_steps, 30, 1);
-    const sampler = `${body.sampler || 'flowmatch'}`.trim() || 'flowmatch';
-    const scheduler = `${body.scheduler || 'flowmatch'}`.trim() || 'flowmatch';
+    const sampler = `${body.sampler || 'flowmatch_step_with_logprob'}`.trim() || 'flowmatch_step_with_logprob';
+    const scheduler =
+      `${body.scheduler || 'flowmatch_step_with_logprob'}`.trim() || 'flowmatch_step_with_logprob';
     const seedValue = `${body.seed ?? ''}`.trim();
     const seed = seedValue === '' ? null : parseInt(seedValue, 10);
 
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+    }
+    if (sampler !== 'flowmatch_step_with_logprob') {
+      return NextResponse.json(
+        { error: `Unsupported Flow-GRPO sampler '${sampler}'. Supported values: flowmatch_step_with_logprob` },
+        { status: 400 },
+      );
+    }
+    if (scheduler !== 'flowmatch_step_with_logprob') {
+      return NextResponse.json(
+        { error: `Unsupported Flow-GRPO scheduler '${scheduler}'. Supported values: flowmatch_step_with_logprob` },
+        { status: 400 },
+      );
     }
 
     const job = await prisma.job.findUnique({
