@@ -357,13 +357,17 @@ class FlowMatchStepWithLogProbScheduler(CustomFlowMatchEulerDiscreteScheduler):
 
         log_prob = None
         if return_log_prob:
-            log_prob_tensor = (
-                -((prev_sample.detach() - prev_sample_mean) ** 2) / (2.0 * (transition_std**2))
-                - torch.log(transition_std)
-                - torch.log(sqrt_2pi)
-            )
-            reduce_dims = tuple(range(1, log_prob_tensor.ndim))
-            log_prob = log_prob_tensor.sum(dim=reduce_dims)
+            squared_error = (prev_sample.detach() - prev_sample_mean) ** 2
+            reduce_dims = tuple(range(1, squared_error.ndim))
+            if sde_type == "cps":
+                log_prob_tensor = -squared_error
+            else:
+                log_prob_tensor = (
+                    -(squared_error) / (2.0 * (transition_std**2))
+                    - torch.log(transition_std)
+                    - torch.log(sqrt_2pi)
+                )
+            log_prob = log_prob_tensor.mean(dim=reduce_dims)
 
         self._step_index += 1
         prev_sample = prev_sample.to(model_output.dtype)
