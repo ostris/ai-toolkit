@@ -62,6 +62,18 @@ export const handleModelArchChange = (
 
   let currentDefaults = expandDatasetDefaults(currentArch.defaults || {}, numDatasets);
   let newDefaults = expandDatasetDefaults(newArch?.defaults || {}, numDatasets);
+  const isFlowGRPO = jobConfig.config.process[0].type === 'flow_grpo_trainer';
+  const samplerKey = 'config.process[0].sample.sampler';
+  const schedulerKey = 'config.process[0].train.noise_scheduler';
+
+  // Flow-GRPO uses a dedicated native scheduler/sampler and must not be overwritten
+  // by architecture defaults while switching model arches.
+  if (isFlowGRPO) {
+    delete currentDefaults[samplerKey];
+    delete currentDefaults[schedulerKey];
+    delete newDefaults[samplerKey];
+    delete newDefaults[schedulerKey];
+  }
 
   // set new model
   setJobConfig(newArchName, 'config.process[0].model.arch');
@@ -142,5 +154,10 @@ export const handleModelArchChange = (
 
   for (const key in newDefaults) {
     setJobConfig(newDefaults[key][0], key);
+  }
+
+  if (isFlowGRPO) {
+    setJobConfig('flowmatch_step_with_logprob', schedulerKey);
+    setJobConfig('flowmatch_step_with_logprob', samplerKey);
   }
 };

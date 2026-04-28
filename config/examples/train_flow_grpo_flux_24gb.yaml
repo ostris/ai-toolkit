@@ -31,7 +31,7 @@ config:
         train_unet: true
         train_text_encoder: false
         gradient_checkpointing: true
-        noise_scheduler: "flowmatch"
+        noise_scheduler: "flowmatch_step_with_logprob"
         optimizer: "adamw"
         timestep_type: "shift"
         content_or_style: "balanced"
@@ -73,7 +73,7 @@ config:
         timestep_fraction: 1.0
         group_size: 4
       sample:
-        sampler: "flowmatch"
+        sampler: "flowmatch_step_with_logprob"
         sample_every: 0
         width: 1024
         height: 1024

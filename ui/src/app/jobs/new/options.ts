@@ -990,12 +990,12 @@ export const jobTypeOptions: JobTypeOption[] = [
       config.config.process[0].grpo = { ...defaultFlowGRPOConfig };
       delete config.config.process[0].datasets;
       config.config.process[0].train.disable_sampling = true;
-      config.config.process[0].train.noise_scheduler = 'flowmatch';
+      config.config.process[0].train.noise_scheduler = 'flowmatch_step_with_logprob';
       config.config.process[0].train.cache_text_embeddings = false;
       config.config.process[0].train.optimizer = 'adamw';
       config.config.process[0].train.batch_size = 1;
       config.config.process[0].train.gradient_accumulation = 1;
-      config.config.process[0].sample.sampler = 'flowmatch';
+      config.config.process[0].sample.sampler = 'flowmatch_step_with_logprob';
       config.config.process[0].sample.sample_every = 0;
       config.config.process[0].sample.samples = [];
       return config;
