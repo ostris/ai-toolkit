@@ -46,6 +46,8 @@ class CaptionConfig:
 
 
 class BaseCaptioner(BaseExtensionProcess):
+    caption_config_class = CaptionConfig
+
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         super(BaseCaptioner, self).__init__(process_id, job, config, **kwargs)
         self.sqlite_db_path = self.config.get("sqlite_db_path", "./aitk_db.db")
@@ -74,7 +76,7 @@ class BaseCaptioner(BaseExtensionProcess):
             self._stop_watcher_started = False
             # self.start_stop_watcher(interval_sec=2.0)
 
-        self.caption_config = CaptionConfig(**self.get_conf("caption", {}))
+        self.caption_config = self.caption_config_class(**self.get_conf("caption", {}))
         self.model = None
         self.processor = None
         self.model2 = None
@@ -85,19 +87,20 @@ class BaseCaptioner(BaseExtensionProcess):
 
     def run(self):
         super(BaseCaptioner, self).run()
-        self.start_stop_watcher()
-        self.update_status("running", "Loading Model")
-        self.load_model()
-        self.update_status("running", "Looking for files")
-        self.find_files()
-        self.update_status("running", f"Captioning {len(self.file_paths)} files")
-        self.run_caption_loop()
-        self.update_status("completed", "Captioning completed")
-        print("")
+        with torch.no_grad():
+            self.start_stop_watcher()
+            self.update_status("running", "Loading Model")
+            self.load_model()
+            self.update_status("running", "Looking for files")
+            self.find_files()
+            self.update_status("running", f"Captioning {len(self.file_paths)} files")
+            self.run_caption_loop()
+            self.update_status("completed", "Captioning completed")
+            print("")
 
-        print("****************************************************")
-        print("Captioning complete")
-        print("****************************************************")
+            print("****************************************************")
+            print("Captioning complete")
+            print("****************************************************")
 
     def run_caption_loop(self):
         for file_path in tqdm.tqdm(

@@ -111,6 +111,8 @@ export const CaptionDatasetModal: React.FC = () => {
       });
   };
 
+  const additionalSections = selectedCaptionOption?.additionalSections || [];
+
   return (
     <Modal isOpen={open} onClose={handleClose} title="Caption Dataset" size="lg">
       <div className="space-y-4 text-gray-200">
@@ -159,7 +161,7 @@ export const CaptionDatasetModal: React.FC = () => {
                 required
               />
             </div>
-            {selectedCaptionOption?.additionalSections?.includes('caption.model_name_or_path2') && (
+            {additionalSections.includes('caption.model_name_or_path2') && (
               <div className="mt-4">
                 <CreatableSelectInput
                   label="Name or Path 2"
@@ -172,6 +174,22 @@ export const CaptionDatasetModal: React.FC = () => {
                   }}
                   placeholder=""
                   options={selectedCaptionOption?.name_or_path2_options || []}
+                />
+              </div>
+            )}
+            {additionalSections.includes('caption.fixed_caption') && (
+              <div className="mt-4">
+                <TextInput
+                  label="Fixed Caption"
+                  value={jobConfig.config.process[0].caption.fixed_caption || ''}
+                  onChange={value => {
+                    if (value?.trim() === '') {
+                      //@ts-ignore
+                      value = undefined;
+                    }
+                    setJobConfig(value, 'config.process[0].caption.fixed_caption');
+                  }}
+                  placeholder="Enter fixed caption (if you want the same caption for all audio files)"
                 />
               </div>
             )}
@@ -191,7 +209,7 @@ export const CaptionDatasetModal: React.FC = () => {
                   }}
                   options={quantizationOptions}
                 />
-                {selectedCaptionOption?.additionalSections?.includes('caption.max_res') && (
+                {additionalSections.includes('caption.max_res') && (
                   <div className="mt-4">
                     <SelectInput
                       label="Max Resolution"
@@ -206,7 +224,7 @@ export const CaptionDatasetModal: React.FC = () => {
                     />
                   </div>
                 )}
-                {selectedCaptionOption?.additionalSections?.includes('caption.max_new_tokens') && (
+                {additionalSections.includes('caption.max_new_tokens') && (
                   <div className="mt-4">
                     <SelectInput
                       label="Max New Tokens"
@@ -237,7 +255,7 @@ export const CaptionDatasetModal: React.FC = () => {
                 </FormGroup>
               </div>
             </div>
-            {selectedCaptionOption?.additionalSections?.includes('caption.caption_prompt') && (
+            {additionalSections.includes('caption.caption_prompt') && (
               <div className="mt-4">
                 <TextAreaInput
                   label="Caption Prompt"
