@@ -71,7 +71,7 @@ body {
 
   /* options */
   .aitk-react-select-container .aitk-react-select__option {
-    @apply text-sm text-gray-200 bg-gray-950 dark:bg-gray-800 hover:bg-gray-700;
+    @apply text-sm text-gray-200 bg-gray-950 dark:bg-gray-800 hover:bg-gray-700 dark:hover:bg-gray-700 cursor-pointer;
   }
 
   /* indicator separator */
