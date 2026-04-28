@@ -1118,8 +1118,8 @@ class DiffusionFeatureExtractor9(nn.Module):
             # min 0.001
             tv = torch.clamp(tv, min=0.001)
         else:
-            # step is random 0.05 to 0.02
-            step = torch.rand_like(tv) * 0.03 + 0.02
+            # step is random 0.1 to 0.25
+            step = torch.rand_like(tv) * 0.15 + 0.1
             next_step = tv - step
             next_step = torch.clamp(next_step, min=0.0)
             stepped_latents = noisy_latents + (next_step - tv) * noise_pred
@@ -1147,17 +1147,19 @@ class DiffusionFeatureExtractor9(nn.Module):
         pred_images = pred_images.to(device, dtype=dtype)
         pred = self.get_pred(pred_images)
         
-        loss = torch.nn.functional.mse_loss(
-            pred.float(), target.float()
-        ) * 100.0
+        perceptual_loss = torch.nn.functional.mse_loss(
+            pred.float(), target.float(), reduction="none"
+        )
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.001) ** 2)
+        loss_perceptual = (perceptual_loss * velocity_equiv_weight).mean()
         
         if self.do_partial_step:
-            loss = loss * 10.0
+            loss_perceptual = loss_perceptual * 10.0
         
         if 'loss' not in self.losses:
-            self.losses['loss'] = loss.item()
+            self.losses['loss'] = loss_perceptual.item()
         else:
-            self.losses['loss'] += loss.item()
+            self.losses['loss'] += loss_perceptual.item()
         with torch.no_grad():
             if self.step % self.log_every == 0 and self.step > 0:
                 print(f"DFE losses:")
@@ -1170,7 +1172,7 @@ class DiffusionFeatureExtractor9(nn.Module):
             # total_loss += mse_loss
             self.step += 1
         
-        return loss
+        return loss_perceptual
 
 def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureExtractor:
     if model_path == "v3":
