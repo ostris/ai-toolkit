@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
 from toolkit.config_modules import GenerateImageConfig
-from toolkit.prompt_utils import PromptEmbeds
+from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 from toolkit.samplers.custom_flowmatch_sampler import FlowMatchStepWithLogProbScheduler
 
 FLOW_GRPO_NATIVE_SCHEDULER = "flowmatch_step_with_logprob"
@@ -717,32 +717,70 @@ class FlowGRPOTrainer(DiffusionTrainer):
         finally:
             self.network.is_active = was_active
 
-    def _compute_step_logprob(
+    def _candidate_train_steps(self, candidate_state: CandidateState) -> int:
+        total_steps = candidate_state.log_probs.shape[1]
+        return max(
+            1,
+            int(total_steps * max(0.0, min(self.flow_grpo_config.timestep_fraction, 1.0))),
+        )
+
+    def _candidate_batch_key(self, candidate_state: CandidateState) -> tuple[Any, ...]:
+        return (
+            candidate_state.sampler,
+            candidate_state.scheduler,
+            int(candidate_state.num_inference_steps),
+            float(candidate_state.guidance_scale),
+            tuple(candidate_state.latents.shape[1:]),
+            tuple(candidate_state.next_latents.shape[1:]),
+            tuple(candidate_state.timesteps.shape),
+            tuple(float(timestep) for timestep in candidate_state.timesteps.detach().cpu().tolist()),
+            tuple(candidate_state.log_probs.shape[1:]),
+            candidate_state.unconditional_embeds is not None,
+        )
+
+    def _compute_batched_step_logprob(
         self,
         rollout_scheduler: Any,
-        candidate_state: CandidateState,
+        candidate_states: list[CandidateState],
         step_index: int,
         *,
         disable_lora: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        latents = candidate_state.latents[:, step_index].to(self.device_torch, dtype=self.sd.torch_dtype)
-        timestep = candidate_state.timesteps[step_index].reshape(1).repeat(latents.shape[0]).to(
+        first_state = candidate_states[0]
+        latents = torch.cat(
+            [
+                candidate_state.latents[:, step_index].to(self.device_torch, dtype=self.sd.torch_dtype)
+                for candidate_state in candidate_states
+            ],
+            dim=0,
+        )
+        timestep = first_state.timesteps[step_index].reshape(1).repeat(latents.shape[0]).to(
             self.device_torch,
             dtype=torch.float32,
         )
+        conditional_embeds = concat_prompt_embeds(
+            [
+                candidate_state.conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
+                for candidate_state in candidate_states
+            ]
+        )
+        unconditional_embeds = None
+        if first_state.unconditional_embeds is not None:
+            unconditional_embeds = concat_prompt_embeds(
+                [
+                    candidate_state.unconditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
+                    for candidate_state in candidate_states
+                ]
+            )
 
         context = self._lora_disabled() if disable_lora else contextlib.nullcontext()
         with context:
             predict_kwargs: dict[str, Any] = {
                 "latents": latents,
-                "conditional_embeddings": candidate_state.conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype),
-                "unconditional_embeddings": (
-                    candidate_state.unconditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
-                    if candidate_state.unconditional_embeds is not None
-                    else None
-                ),
+                "conditional_embeddings": conditional_embeds,
+                "unconditional_embeddings": unconditional_embeds,
                 "timestep": timestep,
-                "guidance_scale": float(candidate_state.guidance_scale),
+                "guidance_scale": float(first_state.guidance_scale),
                 "batch": _EmptyRolloutBatch(),
             }
             predict_signature = inspect.signature(self.sd.predict_noise)
@@ -759,11 +797,17 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 )
             step_output = rollout_scheduler.step(
                 model_output=noise_pred,
-                timestep=candidate_state.timesteps[step_index].to(self.device_torch, dtype=torch.float32),
+                timestep=first_state.timesteps[step_index].to(self.device_torch, dtype=torch.float32),
                 sample=latents,
                 noise_level=self.flow_grpo_config.noise_level,
                 sde_type=self.flow_grpo_config.sde_type,
-                prev_sample=candidate_state.next_latents[:, step_index].to(self.device_torch, dtype=self.sd.torch_dtype),
+                prev_sample=torch.cat(
+                    [
+                        candidate_state.next_latents[:, step_index].to(self.device_torch, dtype=self.sd.torch_dtype)
+                        for candidate_state in candidate_states
+                    ],
+                    dim=0,
+                ),
                 return_log_prob=True,
                 return_transition=True,
             )
@@ -774,83 +818,92 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 raise RuntimeError("Flow-GRPO scheduler did not return required transition outputs.")
         return log_prob, prev_mean, transition_std
 
-    def _backward_candidate_loss(
+    def _backward_candidate_batch_loss(
         self,
-        candidate_state: CandidateState,
-        advantage: float,
-        loss_scale: float,
+        candidate_states: list[CandidateState],
+        advantages: list[float],
+        active_candidate_count: int,
         progress_bar: Optional[tqdm] = None,
         progress_label: str = "",
     ) -> tuple[Optional[float], dict[str, float]]:
-        total_steps = candidate_state.log_probs.shape[1]
-        train_steps = max(
-            1,
-            int(total_steps * max(0.0, min(self.flow_grpo_config.timestep_fraction, 1.0))),
-        )
+        train_steps = self._candidate_train_steps(candidate_states[0])
         train_indices = list(range(train_steps))
         total_loss_value: Optional[float] = None
         policy_losses: list[float] = []
         kl_losses: list[float] = []
         approx_kls: list[float] = []
         clipfracs: list[float] = []
-        rollout_seed_latents = candidate_state.latents[:, 0].to(self.device_torch, dtype=self.sd.torch_dtype)
+        rollout_seed_latents = torch.cat(
+            [
+                candidate_state.latents[:, 0].to(self.device_torch, dtype=self.sd.torch_dtype)
+                for candidate_state in candidate_states
+            ],
+            dim=0,
+        )
+        first_state = candidate_states[0]
         policy_scheduler, _, _, _ = self._prepare_scheduler_run(
-            sampler=candidate_state.sampler,
-            scheduler_name=candidate_state.scheduler,
-            num_inference_steps=candidate_state.num_inference_steps,
+            sampler=first_state.sampler,
+            scheduler_name=first_state.scheduler,
+            num_inference_steps=first_state.num_inference_steps,
             latents=rollout_seed_latents,
         )
         reference_scheduler = None
         if self.flow_grpo_config.beta > 0.0:
             reference_scheduler, _, _, _ = self._prepare_scheduler_run(
-                sampler=candidate_state.sampler,
-                scheduler_name=candidate_state.scheduler,
-                num_inference_steps=candidate_state.num_inference_steps,
+                sampler=first_state.sampler,
+                scheduler_name=first_state.scheduler,
+                num_inference_steps=first_state.num_inference_steps,
                 latents=rollout_seed_latents,
             )
 
         for step_index in train_indices:
-            log_prob, prev_mean, transition_std = self._compute_step_logprob(
+            log_prob, prev_mean, transition_std = self._compute_batched_step_logprob(
                 policy_scheduler,
-                candidate_state,
+                candidate_states,
                 step_index,
             )
-            old_log_prob = candidate_state.log_probs[:, step_index].to(self.device_torch, dtype=log_prob.dtype)
+            old_log_prob = torch.cat(
+                [
+                    candidate_state.log_probs[:, step_index].to(self.device_torch, dtype=log_prob.dtype)
+                    for candidate_state in candidate_states
+                ],
+                dim=0,
+            )
 
-            advantages = torch.full_like(log_prob, float(advantage))
-            advantages = torch.clamp(
-                advantages,
+            advantage_tensor = torch.as_tensor(advantages, device=self.device_torch, dtype=log_prob.dtype).reshape_as(log_prob)
+            advantage_tensor = torch.clamp(
+                advantage_tensor,
                 -self.flow_grpo_config.adv_clip_max,
                 self.flow_grpo_config.adv_clip_max,
             )
 
             ratio = torch.exp(torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0))
-            unclipped = -advantages * ratio
-            clipped = -advantages * torch.clamp(
+            unclipped = -advantage_tensor * ratio
+            clipped = -advantage_tensor * torch.clamp(
                 ratio,
                 1.0 - self.flow_grpo_config.clip_range,
                 1.0 + self.flow_grpo_config.clip_range,
             )
-            policy_loss = torch.mean(torch.maximum(unclipped, clipped))
-            loss = policy_loss
+            policy_loss_by_sample = torch.maximum(unclipped, clipped)
+            loss_by_sample = policy_loss_by_sample
 
             if self.flow_grpo_config.beta > 0.0:
                 if reference_scheduler is None:
                     raise RuntimeError("Flow-GRPO reference scheduler was not initialized.")
                 with torch.no_grad():
-                    _, ref_prev_mean, _ = self._compute_step_logprob(
+                    _, ref_prev_mean, _ = self._compute_batched_step_logprob(
                         reference_scheduler,
-                        candidate_state,
+                        candidate_states,
                         step_index,
                         disable_lora=True,
                     )
                 std_safe = torch.clamp(transition_std, min=1e-6)
                 kl_tensor = ((prev_mean - ref_prev_mean) ** 2) / (2.0 * (std_safe**2))
-                kl_loss = kl_tensor.flatten(start_dim=1).sum(dim=1).mean()
-                loss = loss + self.flow_grpo_config.beta * kl_loss
-                kl_losses.append(float(kl_loss.detach().cpu().item()))
+                kl_loss_by_sample = kl_tensor.flatten(start_dim=1).sum(dim=1)
+                loss_by_sample = loss_by_sample + self.flow_grpo_config.beta * kl_loss_by_sample
+                kl_losses.append(float(kl_loss_by_sample.detach().mean().cpu().item()))
 
-            scaled_loss = loss * (float(loss_scale) / float(len(train_indices)))
+            scaled_loss = loss_by_sample.sum() / float(active_candidate_count) / float(len(train_indices))
             step_loss_value = float(scaled_loss.detach().cpu().item())
             total_loss_value = (
                 step_loss_value
@@ -859,7 +912,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             )
             self.accelerator.backward(scaled_loss)
 
-            policy_losses.append(float(policy_loss.detach().cpu().item()))
+            policy_losses.append(float(policy_loss_by_sample.detach().mean().cpu().item()))
             approx_kls.append(float((0.5 * torch.mean((log_prob - old_log_prob) ** 2)).detach().cpu().item()))
             clipfracs.append(
                 float(
@@ -874,16 +927,16 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 prev_mean,
                 transition_std,
                 old_log_prob,
-                advantages,
+                advantage_tensor,
                 ratio,
                 unclipped,
                 clipped,
-                policy_loss,
-                loss,
+                policy_loss_by_sample,
+                loss_by_sample,
                 scaled_loss,
             )
             if self.flow_grpo_config.beta > 0.0:
-                del ref_prev_mean, std_safe, kl_tensor, kl_loss
+                del ref_prev_mean, std_safe, kl_tensor, kl_loss_by_sample
             if progress_bar is not None:
                 if progress_label:
                     progress_bar.set_postfix_str(f"{progress_label} step {step_index + 1}/{len(train_indices)}")
@@ -976,15 +1029,46 @@ class FlowGRPOTrainer(DiffusionTrainer):
             if abs(advantage) > 1e-8
         ]
 
-        total_train_timesteps = sum(
-            max(
-                1,
-                int(
-                    int(candidate_row_by_id[candidate_id]["num_inference_steps"])
-                    * max(0.0, min(self.flow_grpo_config.timestep_fraction, 1.0))
-                ),
+        train_batch_size = max(1, int(getattr(self.train_config, "batch_size", 1) or 1))
+        candidate_batches: list[tuple[int, int, list[CandidateState], list[float]]] = []
+        current_batch: list[CandidateState] = []
+        current_advantages: list[float] = []
+        current_start_index = 1
+        current_key: Optional[tuple[Any, ...]] = None
+
+        def flush_candidate_batch(end_index: int) -> None:
+            nonlocal current_batch, current_advantages, current_start_index, current_key
+            if not current_batch:
+                return
+            candidate_batches.append(
+                (
+                    current_start_index,
+                    end_index,
+                    current_batch,
+                    current_advantages,
+                )
             )
-            for candidate_id, _ in active_advantages
+            current_batch = []
+            current_advantages = []
+            current_start_index = end_index + 1
+            current_key = None
+
+        for candidate_index, (candidate_id, advantage) in enumerate(active_advantages, start=1):
+            candidate_state = self._load_candidate_state(candidate_row_by_id[candidate_id]["state_path"])
+            candidate_key = self._candidate_batch_key(candidate_state)
+            if current_batch and (candidate_key != current_key or len(current_batch) >= train_batch_size):
+                flush_candidate_batch(candidate_index - 1)
+                current_start_index = candidate_index
+            if not current_batch:
+                current_start_index = candidate_index
+                current_key = candidate_key
+            current_batch.append(candidate_state)
+            current_advantages.append(advantage)
+        flush_candidate_batch(len(active_advantages))
+
+        total_train_timesteps = sum(
+            self._candidate_train_steps(candidate_states[0])
+            for _, _, candidate_states, _ in candidate_batches
         )
 
         with tqdm(
@@ -992,14 +1076,14 @@ class FlowGRPOTrainer(DiffusionTrainer):
             desc="Flow-GRPO train timesteps",
             leave=True,
         ) as progress_bar:
-            for candidate_index, (candidate_id, advantage) in enumerate(active_advantages, start=1):
-                candidate_state = self._load_candidate_state(candidate_row_by_id[candidate_id]["state_path"])
-                candidate_loss_value, metrics = self._backward_candidate_loss(
-                    candidate_state,
-                    advantage,
-                    loss_scale=1.0 / float(max(1, len(active_advantages))),
+            for batch_start, batch_end, candidate_states, advantages in candidate_batches:
+                batch_candidate_count = len(candidate_states)
+                candidate_loss_value, metrics = self._backward_candidate_batch_loss(
+                    candidate_states,
+                    advantages,
+                    active_candidate_count=len(active_advantages),
                     progress_bar=progress_bar,
-                    progress_label=f"candidate {candidate_index}/{len(active_advantages)}",
+                    progress_label=f"candidates {batch_start}-{batch_end}/{len(active_advantages)}",
                 )
                 if candidate_loss_value is None:
                     continue
@@ -1009,8 +1093,9 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     else total_loss_value + candidate_loss_value
                 )
                 for key, value in metrics.items():
-                    metric_accumulator[key].append(value)
-                del candidate_state
+                    metric_accumulator[key].extend([value] * batch_candidate_count)
+                candidate_states.clear()
+        candidate_batches.clear()
 
         if total_loss_value is None:
             for task_id in task_ids:
