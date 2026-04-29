@@ -15,6 +15,7 @@ from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
 from toolkit.config_modules import GenerateImageConfig
@@ -778,6 +779,8 @@ class FlowGRPOTrainer(DiffusionTrainer):
         candidate_state: CandidateState,
         advantage: float,
         loss_scale: float,
+        progress_bar: Optional[tqdm] = None,
+        progress_label: str = "",
     ) -> tuple[Optional[float], dict[str, float]]:
         total_steps = candidate_state.log_probs.shape[1]
         train_steps = max(
@@ -881,6 +884,10 @@ class FlowGRPOTrainer(DiffusionTrainer):
             )
             if self.flow_grpo_config.beta > 0.0:
                 del ref_prev_mean, std_safe, kl_tensor, kl_loss
+            if progress_bar is not None:
+                if progress_label:
+                    progress_bar.set_postfix_str(f"{progress_label} step {step_index + 1}/{len(train_indices)}")
+                progress_bar.update(1)
 
         metrics = {
             "policy_loss": float(np.mean(policy_losses)) if policy_losses else 0.0,
@@ -969,23 +976,41 @@ class FlowGRPOTrainer(DiffusionTrainer):
             if abs(advantage) > 1e-8
         ]
 
-        for candidate_id, advantage in active_advantages:
-            candidate_state = self._load_candidate_state(candidate_row_by_id[candidate_id]["state_path"])
-            candidate_loss_value, metrics = self._backward_candidate_loss(
-                candidate_state,
-                advantage,
-                loss_scale=1.0 / float(max(1, len(active_advantages))),
+        total_train_timesteps = sum(
+            max(
+                1,
+                int(
+                    int(candidate_row_by_id[candidate_id]["num_inference_steps"])
+                    * max(0.0, min(self.flow_grpo_config.timestep_fraction, 1.0))
+                ),
             )
-            if candidate_loss_value is None:
-                continue
-            total_loss_value = (
-                candidate_loss_value
-                if total_loss_value is None
-                else total_loss_value + candidate_loss_value
-            )
-            for key, value in metrics.items():
-                metric_accumulator[key].append(value)
-            del candidate_state
+            for candidate_id, _ in active_advantages
+        )
+
+        with tqdm(
+            total=total_train_timesteps,
+            desc="Flow-GRPO train timesteps",
+            leave=True,
+        ) as progress_bar:
+            for candidate_index, (candidate_id, advantage) in enumerate(active_advantages, start=1):
+                candidate_state = self._load_candidate_state(candidate_row_by_id[candidate_id]["state_path"])
+                candidate_loss_value, metrics = self._backward_candidate_loss(
+                    candidate_state,
+                    advantage,
+                    loss_scale=1.0 / float(max(1, len(active_advantages))),
+                    progress_bar=progress_bar,
+                    progress_label=f"candidate {candidate_index}/{len(active_advantages)}",
+                )
+                if candidate_loss_value is None:
+                    continue
+                total_loss_value = (
+                    candidate_loss_value
+                    if total_loss_value is None
+                    else total_loss_value + candidate_loss_value
+                )
+                for key, value in metrics.items():
+                    metric_accumulator[key].append(value)
+                del candidate_state
 
         if total_loss_value is None:
             for task_id in task_ids:
