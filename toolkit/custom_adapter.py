@@ -36,20 +36,11 @@ if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
 
 from transformers import (
-    CLIPImageProcessor,
-    CLIPVisionModelWithProjection,
-    CLIPVisionModel,
-    AutoImageProcessor,
-    ConvNextModel,
     ConvNextForImageClassification,
     ConvNextImageProcessor,
     UMT5EncoderModel, LlamaTokenizerFast, AutoModel, AutoTokenizer, BitsAndBytesConfig
 )
 from toolkit.models.size_agnostic_feature_encoder import SAFEImageProcessor, SAFEVisionModel
-
-from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
-
-from transformers import ViTFeatureExtractor, ViTForImageClassification
 
 from toolkit.models.llm_adapter import LLMAdapter
 
@@ -372,13 +363,6 @@ class CustomAdapter(torch.nn.Module):
             self.vision_encoder = PixtralVisionEncoderCompatible.from_pretrained(
                 adapter_config.image_encoder_path,
             ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
-        elif self.config.image_encoder_arch == 'vit':
-            try:
-                self.image_processor = ViTFeatureExtractor.from_pretrained(adapter_config.image_encoder_path)
-            except EnvironmentError:
-                self.image_processor = ViTFeatureExtractor()
-            self.vision_encoder = ViTForImageClassification.from_pretrained(adapter_config.image_encoder_path).to(
-                self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         elif self.config.image_encoder_arch == 'safe':
             try:
                 self.image_processor = SAFEImageProcessor.from_pretrained(adapter_config.image_encoder_path)
@@ -403,20 +387,6 @@ class CustomAdapter(torch.nn.Module):
                     image_std=[0.26862954, 0.26130258, 0.27577711],
                 )
             self.vision_encoder = ConvNextForImageClassification.from_pretrained(
-                adapter_config.image_encoder_path,
-                use_safetensors=True,
-            ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
-        elif self.config.image_encoder_arch == 'vit-hybrid':
-            try:
-                self.image_processor = ViTHybridImageProcessor.from_pretrained(adapter_config.image_encoder_path)
-            except EnvironmentError:
-                print(f"could not load image processor from {adapter_config.image_encoder_path}")
-                self.image_processor = ViTHybridImageProcessor(
-                    size=320,
-                    image_mean=[0.48145466, 0.4578275, 0.40821073],
-                    image_std=[0.26862954, 0.26130258, 0.27577711],
-                )
-            self.vision_encoder = ViTHybridForImageClassification.from_pretrained(
                 adapter_config.image_encoder_path,
                 use_safetensors=True,
             ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))

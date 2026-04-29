@@ -2,6 +2,7 @@
 
 import { useState, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
+import { MdDashboard, MdImage, MdShowChart, MdCode } from 'react-icons/md';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
@@ -18,34 +19,42 @@ type PageKey = 'overview' | 'samples' | 'config' | 'loss_log';
 interface Page {
   name: string;
   value: PageKey;
+  icon: React.ComponentType<{ className?: string }>;
   component: React.ComponentType<{ job: Job }>;
   menuItem?: React.ComponentType<{ job?: Job | null }> | null;
   mainCss?: string;
+  jobTypes?: string[]; // if specified, only show this page for these job types
 }
 
 const pages: Page[] = [
   {
     name: 'Overview',
     value: 'overview',
+    icon: MdDashboard,
     component: JobOverview,
     mainCss: 'pt-24',
   },
   {
     name: 'Samples',
     value: 'samples',
+    icon: MdImage,
     component: SampleImages,
     menuItem: SampleImagesMenu,
     mainCss: 'pt-24',
+    jobTypes: ['train'],
   },
   {
     name: 'Loss Graph',
     value: 'loss_log',
+    icon: MdShowChart,
     component: JobLossGraph,
     mainCss: 'pt-24',
+    jobTypes: ['train'],
   },
   {
     name: 'Config File',
     value: 'config',
+    icon: MdCode,
     component: JobConfigViewer,
     mainCss: 'pt-[80px] px-0 pb-0',
   },
@@ -59,6 +68,13 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
 
   const page = pages.find(p => p.value === pageKey);
 
+  const jobType = job?.job_type || 'unknown';
+
+  let title = `Job: ${job?.name || 'Loading...'}`;
+  if (jobType === 'caption') {
+    title = `Captioning: ${job?.job_ref || 'Loading...'}`;
+  }
+
   return (
     <>
       {/* Fixed top bar */}
@@ -69,7 +85,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           </Button>
         </div>
         <div>
-          <h1 className="text-lg">Job: {job?.name}</h1>
+          <h1 className="text-lg">{title}</h1>
         </div>
         <div className="flex-1"></div>
         {job && (
@@ -97,15 +113,21 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
         )}
       </MainContent>
       <div className="bg-gray-800 absolute top-12 left-0 w-full h-8 flex items-center px-2 text-sm">
-        {pages.map(page => (
-          <Button
-            key={page.value}
-            onClick={() => setPageKey(page.value)}
-            className={`px-4 py-1 h-8  ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700' : ''}`}
-          >
-            {page.name}
-          </Button>
-        ))}
+        {pages.map(page => {
+          if (page.jobTypes && !page.jobTypes.includes(jobType)) {
+            return null;
+          }
+          return (
+            <Button
+              key={page.value}
+              onClick={() => setPageKey(page.value)}
+              className={`px-4 py-1 h-8 flex items-center gap-1.5 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700 text-white' : ''}`}
+            >
+              <page.icon className="text-sm" />
+              {page.name}
+            </Button>
+          );
+        })}
         {page?.menuItem && (
           <>
             <div className="flex-grow"></div>

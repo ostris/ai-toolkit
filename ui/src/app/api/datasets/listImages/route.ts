@@ -36,7 +36,7 @@ export async function POST(request: Request) {
  * @returns Array of absolute paths to image files
  */
 function findImagesRecursively(dir: string): string[] {
-  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav'];
+  const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav', '.flac', '.ogg'];
   let results: string[] = [];
 
   const items = fs.readdirSync(dir);
@@ -51,7 +51,7 @@ function findImagesRecursively(dir: string): string[] {
     } else {
       // If it's a file, check if it's an image and not trashed
       const ext = path.extname(itemPath).toLowerCase();
-      if (imageExtensions.includes(ext) && !item.startsWith('trash_')) {
+      if (imageExtensions.includes(ext) && !item.startsWith('trash_') && !item.startsWith('.')) {
         results.push(itemPath);
       }
     }

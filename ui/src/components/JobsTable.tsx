@@ -14,10 +14,11 @@ import useGPUInfo from '@/hooks/useGPUInfo';
 interface JobsTableProps {
   autoStartQueue?: boolean;
   onlyActive?: boolean;
+  job_type?: string | null;
 }
 
-export default function JobsTable({ onlyActive = false }: JobsTableProps) {
-  const { jobs, status, refreshJobs } = useJobsList(onlyActive, 5000);
+export default function JobsTable({ onlyActive = false, job_type = null }: JobsTableProps) {
+  const { jobs, status, refreshJobs } = useJobsList({ onlyActive, reloadInterval: 5000, job_type });
   const { queues, status: queueStatus, refreshQueues } = useQueueList();
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
 
@@ -30,21 +31,37 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
     {
       title: 'Name',
       key: 'name',
-      render: row => (
-        <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
-          {['running', 'stopping'].includes(row.status) ? (
-            <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
-          ) : null}
-          {row.name}
-        </Link>
-      ),
+      render: row => {
+        let title = row.name;
+        // if (row.job_type === 'train') title = `Train: ${title}`;
+        if (row.job_type === 'caption') {
+          let splits = row.job_ref.split(/[/\\]/);
+          const datasetPath = `${splits[splits.length - 1]}`;
+          title = (
+            <>
+              <small className="opacity-50">CAPTION: </small> {datasetPath}
+            </>
+          );
+        }
+        return (
+          <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+            {['running', 'stopping'].includes(row.status) ? (
+              <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
+            ) : null}
+            {title}
+          </Link>
+        );
+      },
     },
     {
       title: 'Steps',
       key: 'steps',
       render: row => {
         const jobConfig: JobConfig = JSON.parse(row.job_config);
-        const totalSteps = jobConfig.config.process[0].train.steps;
+        if (row.job_type !== 'train') {
+          return <></>;
+        }
+        const totalSteps = jobConfig.config.process[0].train?.steps;
 
         return (
           <div>
@@ -111,12 +128,18 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
     });
     // sort the queued/running jobs by queue position
     Object.keys(jd).forEach(key => {
-      if (key === 'Idle') return;
-      jd[key].jobs.sort((a, b) => {
-        if (a.queue_position === null) return 1;
-        if (b.queue_position === null) return -1;
-        return a.queue_position - b.queue_position;
-      });
+      if (key === 'Idle') {
+        jd[key].jobs.sort((a, b) => {
+          // sort by updated_at, newest first
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        });
+      } else {
+        jd[key].jobs.sort((a, b) => {
+          if (a.queue_position === null) return 1;
+          if (b.queue_position === null) return -1;
+          return a.queue_position - b.queue_position;
+        });
+      }
     });
     return jd;
   }, [jobs, queues, isGPUInfoLoaded]);
@@ -138,37 +161,37 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
               <div
                 className={classNames(
                   'text-md flex px-4 py-1 rounded-t-lg',
-                  { 'bg-green-900': queue?.is_running },
-                  { 'bg-red-900': !queue?.is_running },
+                  { 'bg-green-600 dark:bg-green-900': queue?.is_running },
+                  { 'bg-red-600 dark:bg-red-900': !queue?.is_running },
                 )}
               >
                 <div className="flex items-center space-x-2 flex-1 py-2">
-                  <h2 className="font-semibold text-gray-100">{jobsDict[gpuKey].name}</h2>
+                  <h2 className="font-semibold text-white">{jobsDict[gpuKey].name}</h2>
                   <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {queue?.gpu_ids}</span>
                 </div>
                 <div className="text-sm text-gray-300 italic flex items-center">
                   {queue?.is_running ? (
                     <>
-                      <span className="text-green-400 mr-2">Queue Running</span>
+                      <span className="text-green-100 dark:text-green-400 mr-2">Queue Running</span>
                       <button
                         onClick={async () => {
                           await stopQueue(queue.gpu_ids as string);
                           refresh();
                         }}
-                        className="ml-4 text-xs bg-red-900 hover:bg-red-800 px-2 py-1 rounded"
+                        className="ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
                       >
                         STOP
                       </button>
                     </>
                   ) : (
                     <>
-                      <span className="text-red-400 mr-2">Queue Stopped</span>
+                      <span className="text-red-100 dark:text-red-400 mr-2">Queue Stopped</span>
                       <button
                         onClick={async () => {
                           await startQueue(gpuKey);
                           refresh();
                         }}
-                        className="ml-4 text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded"
+                        className="ml-4 text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
                       >
                         START
                       </button>
@@ -181,7 +204,11 @@ export default function JobsTable({ onlyActive = false }: JobsTableProps) {
                 rows={jobsDict[gpuKey].jobs}
                 isLoading={isLoading}
                 onRefresh={refresh}
-                theadClassName={queue?.is_running ? 'bg-green-950' : 'bg-red-950'}
+                theadClassName={
+                  queue?.is_running
+                    ? 'bg-green-700 dark:bg-green-950 text-white dark:text-gray-400'
+                    : 'bg-red-700 dark:bg-red-950 text-white dark:text-gray-400'
+                }
               />
             </div>
           );

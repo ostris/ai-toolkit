@@ -7,14 +7,13 @@ import { openConfirm } from '@/components/ConfirmModal';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
-import AddImagesModal, { openImagesModal } from '@/components/AddImagesModal';
+import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import BulkCaptionModal from '@/components/BulkCaptionModal';
 import MoveImageModal from '@/components/MoveImageModal';
 import BulkSplitModal from '@/components/BulkSplitModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { isAudio, isVideo, formatDuration } from '@/utils/basic';
-import FullscreenDropOverlay from '@/components/FullscreenDropOverlay';
 import DatasetNotesModal from '@/components/DatasetNotesModal';
 
 interface ImageMetadataEntry {
@@ -99,6 +98,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         setStatus('error');
       });
   };
+  useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
+
   useEffect(() => {
     if (datasetName) {
       refreshImageList(datasetName);
@@ -399,27 +400,27 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       text = 'Loading Images';
       subtitle = 'Please wait while we fetch your dataset images...';
       showIt = true;
-      bgColor = 'bg-gray-50 dark:bg-gray-800/50';
-      textColor = 'text-gray-900 dark:text-gray-100';
-      iconColor = 'text-gray-500 dark:text-gray-400';
+      bgColor = 'bg-gray-800/50';
+      textColor = 'text-gray-100';
+      iconColor = 'text-gray-400';
     }
     if (status == 'error') {
       icon = <LuBan className="w-8 h-8" />;
       text = 'Error Loading Images';
       subtitle = 'There was a problem fetching the images. Please try refreshing the page.';
       showIt = true;
-      bgColor = 'bg-red-50 dark:bg-red-950/20';
-      textColor = 'text-red-900 dark:text-red-100';
-      iconColor = 'text-red-600 dark:text-red-400';
+      bgColor = 'bg-red-600/20';
+      textColor = 'text-red-100';
+      iconColor = 'text-red-400';
     }
     if (status == 'success' && imgList.length === 0) {
       icon = <LuImageOff className="w-8 h-8" />;
       text = 'No Images Found';
       subtitle = 'This dataset is empty. Click "Add Images" to get started.';
       showIt = true;
-      bgColor = 'bg-gray-50 dark:bg-gray-800/50';
-      textColor = 'text-gray-900 dark:text-gray-100';
-      iconColor = 'text-gray-500 dark:text-gray-400';
+      bgColor = 'bg-gray-800/50';
+      textColor = 'text-gray-100';
+      iconColor = 'text-gray-400';
     }
 
     if (!showIt) return null;
@@ -734,10 +735,6 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         imgPath={selectedImage}
         images={sortedImgList.map(img => img.img_path).filter(path => !isAudio(path))}
         onChange={setSelectedImage}
-      />
-      <FullscreenDropOverlay
-        datasetName={datasetName}
-        onComplete={() => refreshImageList(datasetName)}
       />
       <DatasetNotesModal
         isOpen={isNotesModalOpen}

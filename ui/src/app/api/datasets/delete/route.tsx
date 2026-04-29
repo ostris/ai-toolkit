@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     }
 
     // delete it and return success
-    fs.rmdirSync(datasetPath, { recursive: true });
+    fs.rmSync(datasetPath, { recursive: true, force: true });
 
     // Also delete associated notes file if it exists
     try {
@@ -31,6 +31,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to create dataset' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to delete dataset' }, { status: 500 });
   }
 }

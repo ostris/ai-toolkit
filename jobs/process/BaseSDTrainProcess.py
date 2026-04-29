@@ -19,8 +19,7 @@ from safetensors.torch import save_file, load_file
 from torch.utils.data import DataLoader
 import torch
 import torch.backends.cuda
-from huggingface_hub import HfApi, Repository, interpreter_login
-from huggingface_hub.utils import HfFolder
+from huggingface_hub import HfApi, interpreter_login
 from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
@@ -72,10 +71,7 @@ import hashlib
 
 from toolkit.util.blended_blur_noise import get_blended_blur_noise
 from toolkit.util.get_model import get_model_class
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
+from toolkit.basic import flush
 
 
 class BaseSDTrainProcess(BaseTrainProcess):
@@ -522,7 +518,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # prepare meta
         save_meta = get_meta_for_safetensors(save_meta, self.job.name)
-        if not self.is_fine_tuning:
+        if not self.is_fine_tuning and not self.train_config.merge_network_on_save:
             if self.network is not None:
                 lora_name = self.job.name
                 if self.named_lora:
@@ -628,6 +624,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         direct_save=direct_save
                     )
         else:
+            if self.network is not None and self.train_config.merge_network_on_save:
+                # merge the network weights into a full model and save that
+                if not self.network.can_merge_in:
+                    raise ValueError("Network cannot merge in weights. Cannot save full model.")
+                
+                print_acc("Merging network weights into full model for saving...")
+                
+                self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_strength)
+                # reset weights to zero
+                self.network.reset_weights()
+                self.network.is_merged_in = False
+                
+                print_acc("Done merging network weights.")
+                
             if self.save_config.save_format == "diffusers":
                 # saving as a folder path
                 file_path = file_path.replace('.safetensors', '')
@@ -1161,7 +1171,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.train_config.linear_timesteps,
                         self.train_config.linear_timesteps2,
                         self.train_config.timestep_type == 'linear',
-                        self.train_config.timestep_type == 'one_step',
+                        self.train_config.timestep_type in ['one_step', 'two_step', 'four_step', 'eight_step'],
                     ])
                     
                     timestep_type = 'linear' if linear_timesteps else None
@@ -1177,7 +1187,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     if self.sd.is_flux or 'flex' in self.sd.arch:
                         # flux is a patch size of 1, but latents are divided by 2, so we need to double it
                         patch_size = 2
-                    elif hasattr(self.sd.unet.config, 'patch_size'):
+                    elif hasattr(self.sd.unet, 'config') and hasattr(self.sd.unet.config, 'patch_size'):
                         patch_size = self.sd.unet.config.patch_size
                     
                     self.sd.noise_scheduler.set_train_timesteps(
@@ -1215,8 +1225,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if is_reg:
                     content_or_style = self.train_config.content_or_style_reg
 
-                # if self.train_config.timestep_sampling == 'style' or self.train_config.timestep_sampling == 'content':
-                if self.train_config.timestep_type == 'next_sample':
+                if self.train_config.timestep_type in ['two_step', 'four_step', 'eight_step']:
+                    if self.train_config.timestep_type == 'two_step':
+                        indice_choices = [0, 499]
+                    elif self.train_config.timestep_type == 'four_step':
+                        indice_choices = [0, 250, 500, 750]
+                    elif self.train_config.timestep_type == 'eight_step':
+                        indice_choices = [0, 125, 250, 375, 500, 625, 750, 875]
+                    timestep_indices = torch.tensor(random.choices(indice_choices, k=batch_size), device=self.device_torch)
+                    timestep_indices = timestep_indices.long()
+                elif self.train_config.timestep_type == 'next_sample':
                     timestep_indices = torch.randint(
                             0,
                             num_train_timesteps - 2, # -1 for 0 idx, -1 so we can step
@@ -1316,6 +1334,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     batch_noise = batch_noise * scn_scale
                     noise = noise + batch_noise 
                 
+                if self.train_config.do_batch_noise_correction:
+                    if latents.shape[0] == 1:
+                        # if we only have a batch size of 1, then we cant do batch noise correction, so we skip it
+                        print_acc("Skipping batch noise correction because batch size is 1, increase batch size and num_repeats to use this feature")
+                    else:
+                        # shuffle tensors ensuring that no tensor is in the same position as before
+                        batch_noise = latents.clone().roll(shifts=torch.randint(1, latents.shape[0], (1,)).item(), dims=0).to(noise.device, dtype=noise.dtype)
+                        batch_noise_scale = torch.randn(
+                            batch_noise.shape[0], batch_noise.shape[1], 1, 1,
+                            device=batch_noise.device,
+                            dtype=batch_noise.dtype
+                        ) * self.train_config.batch_noise_correction_scale
+                        batch_noise = batch_noise * batch_noise_scale
+                        noise = noise + batch_noise
+                
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
@@ -1329,7 +1362,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.train_config.random_noise_multiplier > 0.0:
                     sigma = self.train_config.random_noise_multiplier
                     noise_multiplier = torch.exp(torch.randn(s, device=noise.device, dtype=noise.dtype) * sigma)
-                
+                    noise = noise * noise_multiplier
             with self.timer('make_noisy_latents'):
 
                 latent_multiplier = self.train_config.latent_multiplier
@@ -1546,7 +1579,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         model_config_to_load = copy.deepcopy(self.model_config)
         print_verbose(verbose, f"Model config copied for loading")
 
-        if self.is_fine_tuning:
+        if self.is_fine_tuning or self.train_config.merge_network_on_save:
             print_verbose(verbose, f"Fine-tuning mode: checking for latest checkpoint to resume from")
             # get the latest checkpoint
             # check to see if we have a latest save
@@ -1632,6 +1665,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_verbose(verbose, f"Model compilation failed: {e}")
         else:
             print_verbose(verbose, f"Torch compile not enabled, skipping compilation")
+
 
         self.sd.add_after_sample_image_hook(self.sample_step_hook)
         print_verbose(verbose, f"Added sample step hook")
@@ -1919,7 +1953,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                 latest_save_path = self.get_latest_save_path(lora_name)
                 extra_weights = None
-                if latest_save_path is not None:
+                if latest_save_path is not None and not self.train_config.merge_network_on_save:
                     print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)
@@ -2020,6 +2054,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             if self.adapter_config is not None and self.adapter is None:
                 self.setup_adapter()
         flush()
+
         ### HOOK ###
         params = self.hook_add_extra_train_params(params)
         self.params = params
@@ -2113,6 +2148,17 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.last_save_step = self.step_num
         ### HOOK ###
         self.hook_before_train_loop()
+
+        # compile the model if needed (must be after LoRA/adapter injection AND accelerator.prepare)
+        if self.model_config.compile:
+            try:
+                # make sure it is on the gpu
+                self.sd.unet.to(self.device_torch)
+                print_acc("Compiling model with torch.compile. The first forward will hang for a while using this. This is normal.")
+                self.sd.unet = torch.compile(self.sd.unet)
+            except Exception as e:
+                print_acc(f"Failed to compile model: {e}")
+                print_acc("Continuing without compilation")
 
         if self.has_first_sample_requested and self.step_num <= 1 and not self.train_config.disable_sampling:
             print_acc("Generating first sample from first sample config")

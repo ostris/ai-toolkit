@@ -40,11 +40,7 @@ import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
 from PIL import Image
 from torchvision.transforms import functional as TF
-
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
+from toolkit.basic import flush
 
 
 adapter_transforms = transforms.Compose([
@@ -360,12 +356,25 @@ class SDTrainer(BaseSDTrainProcess):
             vae = self.sd.vae
             # if not (self.model_config.arch in ["flux"]) or self.sd.vae.__class__.__name__ == "AutoencoderPixelMixer":
             #     vae = self.sd.vae
-            self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path, vae=vae)
+            self.dfe = load_dfe(
+                self.train_config.diffusion_feature_extractor_path, 
+                vae=vae,
+                sd=self.sd
+            )
             self.dfe.to(self.device_torch)
             if hasattr(self.dfe, 'vision_encoder') and self.train_config.gradient_checkpointing:
                 # must be set to train for gradient checkpointing to work
                 self.dfe.vision_encoder.train()
                 self.dfe.vision_encoder.gradient_checkpointing = True
+            elif hasattr(self.dfe, 'model') and self.train_config.gradient_checkpointing:
+                if hasattr(self.dfe.model, 'enable_gradient_checkpointing'): 
+                    self.dfe.model.train()
+                    self.dfe.model.enable_gradient_checkpointing()
+                elif hasattr(self.dfe.model, 'gradient_checkpointing'):
+                    self.dfe.model.train()
+                    self.dfe.model.gradient_checkpointing = True
+                else:
+                    print_acc("Warning: Could not enable gradient checkpointing on diffusion feature extractor model.")
             else:
                 self.dfe.eval()
                 
@@ -574,7 +583,17 @@ class SDTrainer(BaseSDTrainProcess):
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
-        
+        elif self.train_config.do_signal_amplification:
+            if not self.sd.is_flow_matching:
+                raise ValueError("Signal amplification is only supported for flow matching models")
+            with torch.no_grad():
+                nas = 1.0 - (timesteps / 1000).to(noise.device, dtype=noise.dtype)
+                nas = nas * self.train_config.signal_amplification_strength
+                while len(nas.shape) < len(noise.shape):
+                    nas = nas.unsqueeze(-1)
+                aug = batch.latents * nas
+                target = noise - (batch.latents + aug)
+                target = target.detach()
         elif hasattr(self.sd, 'get_loss_target'):
             target = self.sd.get_loss_target(
                 noise=noise, 
@@ -655,7 +674,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version in [3, 4, 5]:
+            elif self.dfe.version in [3, 4, 5, 6, 7, 8, 9, 10]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
@@ -757,8 +776,26 @@ class SDTrainer(BaseSDTrainProcess):
             loss_per_element = (weighing.float() * (denoised_latents.float() - target.float()) ** 2)
             loss = loss_per_element
         else:
-
-            if self.train_config.loss_type == "mae":
+            if self.train_config.t0_loss_target:
+                # do the loss on a stepped timestep 0 prediction
+                # doto handle doing priors, preservations, masking, etc
+                with torch.no_grad():
+                    tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+                    # expand shape to match noise_pred
+                    while len(tv.shape) < len(noise_pred.shape):
+                        tv = tv.unsqueeze(-1)
+                        # min 0.001
+                        tv = torch.clamp(tv, min=0.001)
+                    
+                # step latent
+                t0 = noisy_latents - tv * noise_pred
+                target = batch.latents.detach()
+                pred = t0
+            if self.train_config.loss_type == "pseudo_huber":
+                diff = pred.float() - target.float()
+                c=0.01
+                loss =(torch.sqrt(diff.pow(2) + c ** 2) - c)
+            elif self.train_config.loss_type == "mae":
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
             elif self.train_config.loss_type == "wavelet":
                 loss = wavelet_loss(pred, batch.latents, noise)

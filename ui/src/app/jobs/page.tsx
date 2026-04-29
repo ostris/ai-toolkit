@@ -9,11 +9,11 @@ export default function Dashboard() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Training Queue</h1>
+          <h1 className="text-lg">Queue</h1>
         </div>
         <div className="flex-1"></div>
         <div>
-          <Link href="/jobs/new" className="text-gray-200 bg-slate-600 px-3 py-1 rounded-md">
+          <Link href="/jobs/new" className="text-white bg-slate-600 px-3 py-1 rounded-md">
             New Training Job
           </Link>
         </div>

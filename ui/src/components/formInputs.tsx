@@ -12,7 +12,7 @@ const Select = dynamic(() => import('react-select'), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
 const inputClasses =
-  'w-full text-sm px-3 py-1 bg-gray-800 border border-gray-700 rounded-sm focus:ring-2 focus:ring-gray-600 focus:border-transparent';
+  'w-full text-sm px-3 py-1 bg-gray-950 dark:bg-gray-800 border border-gray-700 rounded-sm text-gray-100 placeholder:text-gray-500 focus:ring-2 focus:ring-gray-600 focus:border-transparent';
 
 export interface InputProps {
   label?: string;
@@ -66,6 +66,49 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
 
 // 👇 Helpful for debugging
 TextInput.displayName = 'TextInput';
+
+export interface TextAreaInputProps extends InputProps {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  rows?: number;
+}
+
+export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextAreaInputProps>((props: TextAreaInputProps, ref) => {
+  const { label, value, onChange, placeholder, required, disabled, rows = 4, className, docKey = null } = props;
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
+  return (
+    <div className={classNames(className)}>
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={e => {
+          if (!disabled) onChange(e.target.value);
+        }}
+        className={`${inputClasses} ${disabled ? 'opacity-30 cursor-not-allowed' : ''}`}
+        placeholder={placeholder}
+        required={required}
+        disabled={disabled}
+        rows={rows}
+      />
+    </div>
+  );
+});
+
+TextAreaInput.displayName = 'TextAreaInput';
 
 export interface NumberInputProps extends InputProps {
   value: number | null;
@@ -200,6 +243,115 @@ export const SelectInput = (props: SelectInputProps) => {
   );
 };
 
+export interface CreatableSelectInputProps extends InputProps {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  options: GroupedSelectOption[] | SelectOption[];
+}
+
+const CUSTOM_SELECT_VALUE = '__custom__';
+
+export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
+  const { label, value, onChange, options, docKey = null } = props;
+  let { doc } = props;
+  if (!doc && docKey) {
+    doc = getDoc(docKey);
+  }
+
+  // Check if current value matches any predefined option
+  let isInOptions = false;
+  if (options && options.length > 0) {
+    if ('options' in options[0]) {
+      isInOptions = (options as GroupedSelectOption[]).flatMap(g => g.options).some(opt => opt.value === value);
+    } else {
+      isInOptions = (options as SelectOption[]).some(opt => opt.value === value);
+    }
+  }
+
+  const [isCustom, setIsCustom] = React.useState(!isInOptions && !!value);
+
+  // Build select options with "Custom" at the top
+  const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: 'Custom' };
+  const selectOptions = React.useMemo(() => {
+    if (options && options.length > 0 && 'options' in options[0]) {
+      return [{ label: '', options: [customOption] }, ...(options as GroupedSelectOption[])];
+    }
+    return [customOption, ...(options as SelectOption[])];
+  }, [options]);
+
+  const selectedOption = isCustom
+    ? customOption
+    : (() => {
+        if (!options || options.length === 0) return undefined;
+        if ('options' in options[0]) {
+          return (options as GroupedSelectOption[]).flatMap(g => g.options).find(opt => opt.value === value);
+        }
+        return (options as SelectOption[]).find(opt => opt.value === value);
+      })();
+
+  return (
+    <div
+      className={classNames(props.className, {
+        'opacity-30 cursor-not-allowed': props.disabled,
+      })}
+    >
+      {label && (
+        <label className={labelClasses}>
+          {label}{' '}
+          {doc && (
+            <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
+              <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
+            </div>
+          )}
+        </label>
+      )}
+      <div className="flex gap-2">
+        <div className={isCustom ? 'w-1/3' : 'w-full'}>
+          <Select
+            value={selectedOption}
+            options={selectOptions}
+            isDisabled={props.disabled}
+            className="aitk-react-select-container"
+            classNamePrefix="aitk-react-select"
+            formatOptionLabel={(option: unknown) => {
+              const opt = option as SelectOption;
+              return opt.value === CUSTOM_SELECT_VALUE ? (
+                <span className="opacity-50 italic">~ Custom ~</span>
+              ) : (
+                opt.label
+              );
+            }}
+            onChange={selected => {
+              if (selected) {
+                const val = (selected as { value: string }).value;
+                if (val === CUSTOM_SELECT_VALUE) {
+                  setIsCustom(true);
+                  onChange('');
+                } else {
+                  setIsCustom(false);
+                  onChange(val);
+                }
+              }
+            }}
+          />
+        </div>
+        {isCustom && (
+          <input
+            type="text"
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            className={`${inputClasses} w-2/3`}
+            placeholder={props.placeholder ?? 'Enter custom value'}
+            disabled={props.disabled}
+            autoFocus
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
 export interface CheckboxProps {
   label?: string | React.ReactNode;
   checked: boolean;
@@ -232,7 +384,7 @@ export const Checkbox = (props: CheckboxProps) => {
         onClick={() => !disabled && onChange(!checked)}
         className={classNames(
           'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2',
-          checked ? 'bg-blue-600' : 'bg-gray-700',
+          checked ? 'bg-blue-500' : 'bg-gray-600',
           disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80',
         )}
       >
@@ -408,7 +560,7 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
 
             {/* Fill */}
             <div
-              className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 h-3 rounded-sm bg-blue-600"
+              className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 h-3 rounded-sm bg-blue-500"
               style={{ width: `${percent}%` }}
             />
 
@@ -432,7 +584,7 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
         </div>
 
         {showValue && (
-          <div className="min-w-[3.5rem] text-right text-sm px-3 py-1 bg-gray-800 border border-gray-700 rounded-sm">
+          <div className="min-w-[3.5rem] text-right text-sm px-3 py-1 bg-gray-950 dark:bg-gray-800 border border-gray-700 rounded-sm">
             {Number.isFinite(value) ? value : ''}
           </div>
         )}

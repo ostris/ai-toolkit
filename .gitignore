@@ -124,6 +124,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.python
+.node
 env/
 venv/
 ENV/
@@ -188,3 +190,4 @@ aitk_db.db-journal
 
 output/*
 output
+.claude
