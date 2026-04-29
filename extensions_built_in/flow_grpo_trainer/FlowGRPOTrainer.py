@@ -227,6 +227,23 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 return max(1, int(patch_size))
         return 1
 
+    def _get_rollout_initial_latents(self, *, height: int, width: int, batch_size: int) -> torch.Tensor:
+        if not hasattr(self.sd, "encode_images") or not hasattr(self.sd, "get_latent_noise_from_latents"):
+            raise RuntimeError(
+                "Flow-GRPO requires encode_images() and get_latent_noise_from_latents() "
+                "to create training-shaped rollout latents."
+            )
+
+        vae_device = getattr(self.sd, "vae_device_torch", self.device_torch)
+        dtype = self.sd.torch_dtype
+        reference_images = [
+            torch.zeros((3, int(height), int(width)), device=vae_device, dtype=dtype)
+            for _ in range(batch_size)
+        ]
+        with torch.no_grad():
+            reference_latents = self.sd.encode_images(reference_images).to(self.device_torch, dtype=dtype)
+            return self.sd.get_latent_noise_from_latents(reference_latents)
+
     def _db_execute(self, query: str, params: tuple = ()) -> list[sqlite3.Row]:
         def _op():
             with self._db_connect() as conn:
@@ -338,6 +355,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         seed: int,
         guidance_scale: float,
         num_inference_steps: int,
+        latents: torch.Tensor,
         image_path: Path,
     ) -> GenerateImageConfig:
         return GenerateImageConfig(
@@ -348,6 +366,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             seed=seed,
             guidance_scale=guidance_scale,
             num_inference_steps=num_inference_steps,
+            latents=latents.detach().clone(),
             output_path=str(image_path),
             output_ext=image_path.suffix.lstrip("."),
             logger=self.logger,
@@ -422,7 +441,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                         self.device_torch, dtype=self.sd.torch_dtype
                     )
 
-                latents = self.sd.get_latent_noise(pixel_height=height, pixel_width=width, batch_size=1).to(
+                latents = self._get_rollout_initial_latents(height=height, width=width, batch_size=1).to(
                     self.device_torch, dtype=self.sd.torch_dtype
                 )
                 rollout_scheduler, timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
@@ -560,6 +579,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                         seed=seed,
                         guidance_scale=guidance_scale,
                         num_inference_steps=num_inference_steps,
+                        latents=state.latents[:, 0].to(self.device_torch, dtype=self.sd.torch_dtype),
                         image_path=image_path,
                     )
                 )
