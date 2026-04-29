@@ -773,18 +773,19 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 raise RuntimeError("Flow-GRPO scheduler did not return required transition outputs.")
         return log_prob, prev_mean, transition_std
 
-    def _compute_candidate_loss(
+    def _backward_candidate_loss(
         self,
         candidate_state: CandidateState,
         advantage: float,
-    ) -> tuple[Optional[torch.Tensor], dict[str, float]]:
+        loss_scale: float,
+    ) -> tuple[Optional[float], dict[str, float]]:
         total_steps = candidate_state.log_probs.shape[1]
         train_steps = max(
             1,
             int(total_steps * max(0.0, min(self.flow_grpo_config.timestep_fraction, 1.0))),
         )
         train_indices = list(range(train_steps))
-        total_loss: Optional[torch.Tensor] = None
+        total_loss_value: Optional[float] = None
         policy_losses: list[float] = []
         kl_losses: list[float] = []
         approx_kls: list[float] = []
@@ -846,8 +847,14 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 loss = loss + self.flow_grpo_config.beta * kl_loss
                 kl_losses.append(float(kl_loss.detach().cpu().item()))
 
-            scaled_loss = loss / float(len(train_indices))
-            total_loss = scaled_loss if total_loss is None else total_loss + scaled_loss
+            scaled_loss = loss * (float(loss_scale) / float(len(train_indices)))
+            step_loss_value = float(scaled_loss.detach().cpu().item())
+            total_loss_value = (
+                step_loss_value
+                if total_loss_value is None
+                else total_loss_value + step_loss_value
+            )
+            self.accelerator.backward(scaled_loss)
 
             policy_losses.append(float(policy_loss.detach().cpu().item()))
             approx_kls.append(float((0.5 * torch.mean((log_prob - old_log_prob) ** 2)).detach().cpu().item()))
@@ -859,6 +866,21 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     .item()
                 )
             )
+            del (
+                log_prob,
+                prev_mean,
+                transition_std,
+                old_log_prob,
+                advantages,
+                ratio,
+                unclipped,
+                clipped,
+                policy_loss,
+                loss,
+                scaled_loss,
+            )
+            if self.flow_grpo_config.beta > 0.0:
+                del ref_prev_mean, std_safe, kl_tensor, kl_loss
 
         metrics = {
             "policy_loss": float(np.mean(policy_losses)) if policy_losses else 0.0,
@@ -866,7 +888,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             "approx_kl": float(np.mean(approx_kls)) if approx_kls else 0.0,
             "clipfrac": float(np.mean(clipfracs)) if clipfracs else 0.0,
         }
-        return total_loss, metrics
+        return total_loss_value, metrics
 
     def _compute_group_advantages(
         self,
@@ -931,7 +953,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         self.network.is_active = True
         self.optimizer.zero_grad(set_to_none=True)
 
-        total_loss: Optional[torch.Tensor] = None
+        total_loss_value: Optional[float] = None
         metric_accumulator = {
             "policy_loss": [],
             "kl_loss": [],
@@ -949,21 +971,28 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
         for candidate_id, advantage in active_advantages:
             candidate_state = self._load_candidate_state(candidate_row_by_id[candidate_id]["state_path"])
-            candidate_loss, metrics = self._compute_candidate_loss(candidate_state, advantage)
-            if candidate_loss is None:
+            candidate_loss_value, metrics = self._backward_candidate_loss(
+                candidate_state,
+                advantage,
+                loss_scale=1.0 / float(max(1, len(active_advantages))),
+            )
+            if candidate_loss_value is None:
                 continue
-            scaled_loss = candidate_loss / float(max(1, len(active_advantages)))
-            total_loss = scaled_loss if total_loss is None else total_loss + scaled_loss
+            total_loss_value = (
+                candidate_loss_value
+                if total_loss_value is None
+                else total_loss_value + candidate_loss_value
+            )
             for key, value in metrics.items():
                 metric_accumulator[key].append(value)
+            del candidate_state
 
-        if total_loss is None:
+        if total_loss_value is None:
             for task_id in task_ids:
                 self._mark_task_processed(task_id, "processed", "processed")
             return None
 
-        self.accelerator.backward(total_loss)
-        loss_value = float(total_loss.detach().cpu().item())
+        loss_value = float(total_loss_value)
         if self.params and self.train_config.optimizer != "adafactor":
             if isinstance(self.params[0], dict):
                 for param_group in self.params:
