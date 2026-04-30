@@ -15,11 +15,20 @@ from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
+from diffusers import ControlNetModel, T2IAdapter
+from PIL import Image
 from tqdm import tqdm
+from torchvision.transforms import functional as TF
+from torchvision.transforms import transforms
 
 from extensions_built_in.sd_trainer.DiffusionTrainer import DiffusionTrainer
+from toolkit.accelerator import unwrap_model
+from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.config_modules import GenerateImageConfig
+from toolkit.custom_adapter import CustomAdapter
+from toolkit.ip_adapter import IPAdapter
 from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
+from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.samplers.custom_flowmatch_sampler import FlowMatchStepWithLogProbScheduler
 
 FLOW_GRPO_NATIVE_SCHEDULER = "flowmatch_step_with_logprob"
@@ -67,6 +76,10 @@ class CandidateState:
     next_latents: torch.Tensor
     log_probs: torch.Tensor
     reference_images: Optional[torch.Tensor]
+    network_multiplier: float = 1.0
+    adapter_conditioning: Optional[torch.Tensor] = None
+    control_tensor: Any = None
+    adapter_conditioning_scale: float = 1.0
 
 
 @dataclass
@@ -78,9 +91,27 @@ class CandidateTrainUnit:
     train_steps: int
 
 
-class _EmptyRolloutBatch:
-    control_tensor = None
-    control_tensor_list = None
+@dataclass
+class _RolloutSampleConditioning:
+    conditional_embeds: PromptEmbeds
+    unconditional_embeds: Optional[PromptEmbeds]
+    adapter_conditioning: Optional[torch.Tensor] = None
+    control_tensor: Any = None
+
+
+class _RolloutBatch:
+    def __init__(
+        self,
+        *,
+        control_tensor: Any = None,
+        latents: Optional[torch.Tensor] = None,
+        tensor: Optional[torch.Tensor] = None,
+    ):
+        self.control_tensor = control_tensor
+        self.control_tensor_list = None
+        self.latents = latents
+        self.tensor = tensor
+        self.inpaint_tensor = None
 
 
 def _clone_tensor(tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -93,6 +124,50 @@ def _clone_prompt_embeds(prompt_embeds: Optional[PromptEmbeds]) -> Optional[Prom
     if prompt_embeds is None:
         return None
     return prompt_embeds.detach().clone().to("cpu")
+
+
+def _clone_tensor_tree(value):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        return _clone_tensor(value)
+    if isinstance(value, list):
+        return [_clone_tensor_tree(item) for item in value]
+    raise TypeError(f"Unsupported tensor tree value type: {type(value)!r}")
+
+
+def _tensor_tree_shape(value):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        return tuple(value.shape)
+    if isinstance(value, list):
+        return tuple(_tensor_tree_shape(item) for item in value)
+    raise TypeError(f"Unsupported tensor tree value type: {type(value)!r}")
+
+
+def _to_device_tensor_tree(value, device: torch.device, dtype: torch.dtype):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        return value.to(device, dtype=dtype)
+    if isinstance(value, list):
+        return [_to_device_tensor_tree(item, device, dtype) for item in value]
+    raise TypeError(f"Unsupported tensor tree value type: {type(value)!r}")
+
+
+def _concat_tensor_tree(values: list[Any], device: torch.device, dtype: torch.dtype):
+    first = values[0]
+    if first is None:
+        return None
+    if isinstance(first, torch.Tensor):
+        return torch.cat([value.to(device, dtype=dtype) for value in values], dim=0)
+    if isinstance(first, list):
+        return [
+            _concat_tensor_tree([value[idx] for value in values], device, dtype)
+            for idx in range(len(first))
+        ]
+    raise TypeError(f"Unsupported tensor tree value type: {type(first)!r}")
 
 
 class FlowGRPOTrainer(DiffusionTrainer):
@@ -309,6 +384,9 @@ class FlowGRPOTrainer(DiffusionTrainer):
             return int(task_seed) + order_index
         return int(self.sample_config.seed) + order_index + self.step_num + (self._task_counter * 1000)
 
+    def _candidate_generation_batch_size(self) -> int:
+        return max(1, min(int(self.train_config.batch_size), self.flow_grpo_config.group_size))
+
     def _prepare_scheduler_run(
         self,
         *,
@@ -365,7 +443,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
         seed: int,
         guidance_scale: float,
         num_inference_steps: int,
-        latents: torch.Tensor,
         image_path: Path,
     ) -> GenerateImageConfig:
         return GenerateImageConfig(
@@ -376,7 +453,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             seed=seed,
             guidance_scale=guidance_scale,
             num_inference_steps=num_inference_steps,
-            latents=latents.detach().clone(),
+            network_multiplier=getattr(self.sample_config, "network_multiplier", 1.0),
             output_path=str(image_path),
             output_ext=image_path.suffix.lstrip("."),
             logger=self.logger,
@@ -385,8 +462,389 @@ class FlowGRPOTrainer(DiffusionTrainer):
             guidance_rescale=getattr(self.sample_config, "guidance_rescale", 0.0),
             adapter_conditioning_scale=getattr(self.sample_config, "adapter_conditioning_scale", 1.0),
             refiner_start_at=getattr(self.sample_config, "refiner_start_at", 0.5),
+            extra_values=getattr(self.sample_config, "extra_values", []),
+            ctrl_img=getattr(self.sample_config, "ctrl_img", None),
+            ctrl_img_1=getattr(self.sample_config, "ctrl_img_1", None),
+            ctrl_img_2=getattr(self.sample_config, "ctrl_img_2", None),
+            ctrl_img_3=getattr(self.sample_config, "ctrl_img_3", None),
+            ctrl_idx=getattr(self.sample_config, "ctrl_idx", 0),
             do_cfg_norm=getattr(self.sample_config, "do_cfg_norm", False),
         )
+
+    @staticmethod
+    def _load_control_image_tensor(path: str, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        return TF.to_tensor(Image.open(path).convert("RGB")).unsqueeze(0).to(device, dtype=dtype)
+
+    def _get_text_encoding_control_images(self, gen_config: GenerateImageConfig):
+        if not getattr(self.sd, "encode_control_in_text_embeddings", False):
+            return None
+
+        ctrl_tensors = [
+            self._load_control_image_tensor(path, self.device_torch, self.sd.torch_dtype)
+            for path in (gen_config.ctrl_img, gen_config.ctrl_img_1, gen_config.ctrl_img_2, gen_config.ctrl_img_3)
+            if path is not None
+        ]
+        if not ctrl_tensors:
+            return None
+        if getattr(self.sd, "has_multiple_control_images", False):
+            return ctrl_tensors
+        return ctrl_tensors[0]
+
+    @staticmethod
+    def _tensor_0_1_from_image(image: Image.Image, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        return transforms.ToTensor()(image).unsqueeze(0).to(device, dtype=dtype)
+
+    def _prepare_sample_time_conditioning(
+        self,
+        gen_config: GenerateImageConfig,
+        *,
+        sample_index: int = 0,
+    ) -> _RolloutSampleConditioning:
+        adapter = getattr(self.sd, "adapter", None)
+        validation_image = None
+        adapter_conditioning = None
+        control_tensor = None
+        if adapter is not None and gen_config.adapter_image_path is not None:
+            validation_image = Image.open(gen_config.adapter_image_path)
+            if ".inpaint." not in gen_config.adapter_image_path:
+                validation_image = validation_image.convert("RGB")
+            elif validation_image.mode != "RGBA":
+                raise ValueError("Inpainting images must have an alpha channel")
+
+            if isinstance(adapter, T2IAdapter):
+                validation_image = validation_image.resize((gen_config.width * 2, gen_config.height * 2))
+                adapter_conditioning = self._tensor_0_1_from_image(
+                    validation_image,
+                    self.device_torch,
+                    self.sd.torch_dtype,
+                )
+            if isinstance(adapter, ControlNetModel):
+                validation_image = validation_image.resize((gen_config.width, gen_config.height))
+                adapter_conditioning = self._tensor_0_1_from_image(
+                    validation_image,
+                    self.device_torch,
+                    self.sd.torch_dtype,
+                )
+            if isinstance(adapter, CustomAdapter) and adapter.control_lora is not None:
+                validation_image = validation_image.resize((gen_config.width, gen_config.height))
+                control_tensor = self._tensor_0_1_from_image(
+                    validation_image,
+                    self.device_torch,
+                    self.sd.torch_dtype,
+                )
+            if isinstance(adapter, IPAdapter) or isinstance(adapter, ClipVisionAdapter):
+                validation_image = transforms.ToTensor()(validation_image)
+            if isinstance(adapter, CustomAdapter):
+                validation_image = transforms.ToTensor()(validation_image)
+                adapter.num_images = 1
+            if isinstance(adapter, ReferenceAdapter):
+                validation_image = transforms.ToTensor()(validation_image)
+                validation_image = validation_image * 2.0 - 1.0
+                validation_image = validation_image.unsqueeze(0)
+                adapter.set_reference_images(validation_image)
+
+        if isinstance(adapter, ClipVisionAdapter) and gen_config.adapter_image_path is not None:
+            conditional_clip_embeds = adapter.get_clip_image_embeds_from_tensors(validation_image)
+            adapter(conditional_clip_embeds)
+
+        if isinstance(adapter, CustomAdapter):
+            gen_config.prompt = adapter.condition_prompt(gen_config.prompt, is_unconditional=False)
+            gen_config.prompt_2 = gen_config.prompt
+            gen_config.negative_prompt = adapter.condition_prompt(gen_config.negative_prompt, is_unconditional=True)
+            gen_config.negative_prompt_2 = gen_config.negative_prompt
+
+        if isinstance(adapter, CustomAdapter) and validation_image is not None:
+            adapter.trigger_pre_te(
+                tensors_0_1=validation_image,
+                is_training=False,
+                has_been_preprocessed=False,
+                quad_count=4,
+            )
+
+        sample_prompts_cache = getattr(self.sd, "sample_prompts_cache", None)
+        if sample_prompts_cache is not None:
+            conditional_embeds = sample_prompts_cache[sample_index]["conditional"].to(
+                self.device_torch,
+                dtype=self.sd.torch_dtype,
+            )
+            unconditional_embeds = sample_prompts_cache[sample_index]["unconditional"].to(
+                self.device_torch,
+                dtype=self.sd.torch_dtype,
+            )
+        else:
+            control_images = self._get_text_encoding_control_images(gen_config)
+            if control_tensor is None:
+                control_tensor = control_images
+            if isinstance(adapter, CustomAdapter):
+                adapter.is_unconditional_run = False
+            conditional_embeds = self.sd.encode_prompt(
+                gen_config.prompt,
+                gen_config.prompt_2,
+                force_all=True,
+                control_images=control_images,
+            )
+
+            if isinstance(adapter, CustomAdapter):
+                adapter.is_unconditional_run = True
+            unconditional_embeds = self.sd.encode_prompt(
+                gen_config.negative_prompt,
+                gen_config.negative_prompt_2,
+                force_all=True,
+                control_images=control_images,
+            )
+            if isinstance(adapter, CustomAdapter):
+                adapter.is_unconditional_run = False
+
+        gen_config.post_process_embeddings(conditional_embeds, unconditional_embeds)
+
+        decorator = getattr(self.sd, "decorator", None)
+        if decorator is not None:
+            conditional_embeds.text_embeds = decorator(conditional_embeds.text_embeds)
+            unconditional_embeds.text_embeds = decorator(unconditional_embeds.text_embeds, is_unconditional=True)
+
+        if isinstance(adapter, IPAdapter) and gen_config.adapter_image_path is not None:
+            conditional_clip_embeds = adapter.get_clip_image_embeds_from_tensors(validation_image)
+            unconditional_clip_embeds = adapter.get_clip_image_embeds_from_tensors(validation_image, True)
+            conditional_embeds = adapter(conditional_embeds, conditional_clip_embeds, is_unconditional=False)
+            unconditional_embeds = adapter(unconditional_embeds, unconditional_clip_embeds, is_unconditional=True)
+
+        if isinstance(adapter, CustomAdapter):
+            conditional_embeds = adapter.condition_encoded_embeds(
+                tensors_0_1=validation_image,
+                prompt_embeds=conditional_embeds,
+                is_training=False,
+                has_been_preprocessed=False,
+                is_generating_samples=True,
+            )
+            unconditional_embeds = adapter.condition_encoded_embeds(
+                tensors_0_1=validation_image,
+                prompt_embeds=unconditional_embeds,
+                is_training=False,
+                has_been_preprocessed=False,
+                is_unconditional=True,
+                is_generating_samples=True,
+            )
+
+        if isinstance(adapter, CustomAdapter) and len(gen_config.extra_values) > 0:
+            extra_values = torch.tensor([gen_config.extra_values], device=self.device_torch, dtype=self.sd.torch_dtype)
+            adapter.add_extra_values(extra_values, is_unconditional=False)
+            adapter.add_extra_values(torch.zeros_like(extra_values), is_unconditional=True)
+
+        conditional_embeds = conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
+        unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
+        if gen_config.guidance_scale <= 1.0:
+            unconditional_embeds = None
+        return _RolloutSampleConditioning(
+            conditional_embeds=conditional_embeds,
+            unconditional_embeds=unconditional_embeds,
+            adapter_conditioning=adapter_conditioning,
+            control_tensor=control_tensor,
+        )
+
+    @contextlib.contextmanager
+    def _rollout_network_state(
+        self,
+        *,
+        network_multiplier: float,
+        active: bool = True,
+        allow_merge: bool = False,
+    ):
+        if self.network is None:
+            yield
+            return
+
+        network = unwrap_model(self.network)
+        was_active = bool(getattr(network, "is_active", True))
+        was_training = bool(network.training)
+        start_multiplier = network.multiplier
+        merge_multiplier = float(network_multiplier)
+        merged = False
+        try:
+            network.is_active = bool(active)
+            network.eval()
+            network.multiplier = float(network_multiplier)
+            if active and allow_merge and getattr(network, "can_merge_in", False):
+                self.sd.unet.to(self.device_torch)
+                network.merge_in(merge_weight=merge_multiplier)
+                merged = True
+            if active:
+                with network:
+                    yield
+            else:
+                yield
+        finally:
+            if merged and getattr(network, "is_merged_in", False):
+                network.merge_out(merge_multiplier)
+            network.multiplier = start_multiplier
+            network.is_active = was_active
+            if was_training:
+                network.train()
+            else:
+                network.eval()
+
+    @contextlib.contextmanager
+    def _preserve_rng_state(self):
+        rng_state = torch.get_rng_state()
+        cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
+        try:
+            yield
+        finally:
+            torch.set_rng_state(rng_state)
+            if cuda_rng_state is not None:
+                torch.cuda.set_rng_state(cuda_rng_state)
+
+    def _build_rollout_batch(
+        self,
+        *,
+        control_tensor: Any,
+        latents: torch.Tensor,
+    ) -> _RolloutBatch:
+        tensor = None
+        if control_tensor is not None:
+            tensor_ref = control_tensor[0] if isinstance(control_tensor, list) else control_tensor
+            tensor = torch.zeros(
+                (
+                    tensor_ref.shape[0],
+                    tensor_ref.shape[1],
+                    tensor_ref.shape[2],
+                    tensor_ref.shape[3],
+                ),
+                device=tensor_ref.device,
+                dtype=tensor_ref.dtype,
+            )
+        return _RolloutBatch(
+            control_tensor=control_tensor,
+            latents=latents,
+            tensor=tensor,
+        )
+
+    def _condition_rollout_latents(
+        self,
+        latents: torch.Tensor,
+        batch: _RolloutBatch,
+    ) -> torch.Tensor:
+        model_latents = self.sd.condition_noisy_latents(latents, batch)
+        adapter = getattr(self.sd, "adapter", None)
+        if isinstance(adapter, CustomAdapter):
+            model_latents = adapter.condition_noisy_latents(model_latents, batch)
+        return model_latents
+
+    def _build_adapter_predict_kwargs(
+        self,
+        *,
+        latents: torch.Tensor,
+        timesteps: torch.Tensor,
+        conditional_embeds: PromptEmbeds,
+        adapter_conditioning: Optional[torch.Tensor],
+        adapter_conditioning_scale: float,
+    ) -> dict[str, Any]:
+        adapter = getattr(self.sd, "adapter", None)
+        if adapter is None or adapter_conditioning is None:
+            return {}
+
+        pred_kwargs: dict[str, Any] = {}
+        adapter_conditioning = adapter_conditioning.to(self.device_torch, dtype=self.sd.torch_dtype)
+        if isinstance(adapter, T2IAdapter):
+            down_block_additional_residuals = adapter(adapter_conditioning)
+            pred_kwargs["down_intrablock_additional_residuals"] = [
+                sample.to(device=self.device_torch, dtype=self.sd.torch_dtype) * float(adapter_conditioning_scale)
+                for sample in down_block_additional_residuals
+            ]
+        elif isinstance(adapter, ControlNetModel):
+            added_cond_kwargs = {}
+            if getattr(self.sd, "is_xl", False):
+                added_cond_kwargs["text_embeds"] = conditional_embeds.pooled_embeds
+                added_cond_kwargs["time_ids"] = self.sd.get_time_ids_from_latents(latents)
+            down_block_res_samples, mid_block_res_sample = adapter(
+                latents,
+                timesteps,
+                encoder_hidden_states=conditional_embeds.text_embeds,
+                controlnet_cond=adapter_conditioning,
+                conditioning_scale=float(adapter_conditioning_scale),
+                guess_mode=False,
+                added_cond_kwargs=added_cond_kwargs,
+                return_dict=False,
+            )
+            pred_kwargs["down_block_additional_residuals"] = down_block_res_samples
+            pred_kwargs["mid_block_additional_residual"] = mid_block_res_sample
+        return pred_kwargs
+
+    @contextlib.contextmanager
+    def _sample_assistant_lora_state(self, *, offload_on_exit: bool = True):
+        model_config = getattr(self.sd, "model_config", None)
+        assistant_lora = getattr(self.sd, "assistant_lora", None)
+        if model_config is None or assistant_lora is None:
+            yield
+            return
+
+        assistant_lora_path = getattr(model_config, "assistant_lora_path", None)
+        inference_lora_path = getattr(model_config, "inference_lora_path", None)
+        if assistant_lora_path is None and inference_lora_path is None:
+            yield
+            return
+
+        assistant_lora_requires_grad = [
+            (param, bool(param.requires_grad))
+            for param in assistant_lora.parameters()
+        ]
+        try:
+            assistant_lora.requires_grad_(False)
+            if assistant_lora_path is not None:
+                if getattr(self.sd, "invert_assistant_lora", False):
+                    assistant_lora.is_active = True
+                    assistant_lora.force_to(self.device_torch, self.sd.torch_dtype)
+                else:
+                    assistant_lora.is_active = False
+
+            if inference_lora_path is not None:
+                assistant_lora.is_active = True
+                assistant_lora.force_to(self.device_torch, self.sd.torch_dtype)
+
+            yield
+        finally:
+            if assistant_lora_path is not None:
+                if getattr(self.sd, "invert_assistant_lora", False):
+                    assistant_lora.is_active = False
+                    if offload_on_exit:
+                        assistant_lora.force_to("cpu", self.sd.torch_dtype)
+                else:
+                    assistant_lora.is_active = True
+
+            if inference_lora_path is not None:
+                assistant_lora.is_active = False
+                if offload_on_exit:
+                    assistant_lora.force_to("cpu", self.sd.torch_dtype)
+            for param, requires_grad in assistant_lora_requires_grad:
+                param.requires_grad_(requires_grad)
+
+    @staticmethod
+    def _decoded_tensor_to_pil(decoded_image: torch.Tensor) -> Image.Image:
+        image = decoded_image.detach().to(torch.float32).cpu()
+        if image.ndim == 4:
+            image = image[0]
+        image = (image.clamp(-1.0, 1.0) + 1.0) * 0.5
+        image = image.permute(1, 2, 0).numpy()
+        image = np.clip(image * 255.0, 0, 255).round().astype(np.uint8)
+        if image.shape[-1] == 1:
+            image = image[:, :, 0]
+        return Image.fromarray(image)
+
+    def _save_rollout_preview_image(
+        self,
+        *,
+        final_latents: torch.Tensor,
+        preview_config: GenerateImageConfig,
+    ) -> Image.Image:
+        with self._model_device_state_preset("generate"):
+            with torch.no_grad():
+                decoded = self.sd.decode_latents(
+                    final_latents.to(self.device_torch, dtype=self.sd.torch_dtype),
+                    device=self.device_torch,
+                    dtype=self.sd.torch_dtype,
+                )
+        image = self._decoded_tensor_to_pil(decoded)
+        preview_config.save_image(image)
+        return image
 
     def _save_candidate_state(self, state: CandidateState, state_path: Path) -> None:
         torch.save(
@@ -409,6 +867,10 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 "next_latents": _clone_tensor(state.next_latents),
                 "log_probs": _clone_tensor(state.log_probs),
                 "reference_images": _clone_tensor(state.reference_images),
+                "network_multiplier": float(state.network_multiplier),
+                "adapter_conditioning": _clone_tensor(state.adapter_conditioning),
+                "control_tensor": _clone_tensor_tree(state.control_tensor),
+                "adapter_conditioning_scale": float(state.adapter_conditioning_scale),
             },
             state_path,
         )
@@ -422,108 +884,187 @@ class FlowGRPOTrainer(DiffusionTrainer):
         *,
         task_id: str,
         candidate_id: str,
-        prompt: str,
-        negative_prompt: str,
-        width: int,
-        height: int,
-        seed: int,
-        guidance_scale: float,
+        gen_config: GenerateImageConfig,
         num_inference_steps: int,
         sampler: str,
         scheduler: str,
     ) -> CandidateState:
-        network_was_active = bool(getattr(self.network, "is_active", True)) if self.network is not None else None
-        network_was_training = bool(self.network.training) if self.network is not None else None
-        try:
-            with self._model_device_state_preset("generate"):
-                if self.network is not None:
-                    self.network.is_active = True
-                    self.network.eval()
+        return self._generate_candidate_states_batch(
+            task_id=task_id,
+            candidate_ids=[candidate_id],
+            gen_configs=[gen_config],
+            num_inference_steps=num_inference_steps,
+            sampler=sampler,
+            scheduler=scheduler,
+            batch_start_index=0,
+            total_candidates=1,
+        )[0]
 
-                torch.manual_seed(seed)
+    def _generate_candidate_states_batch(
+        self,
+        *,
+        task_id: str,
+        candidate_ids: list[str],
+        gen_configs: list[GenerateImageConfig],
+        num_inference_steps: int,
+        sampler: str,
+        scheduler: str,
+        batch_start_index: int,
+        total_candidates: int,
+    ) -> list[CandidateState]:
+        if not gen_configs:
+            return []
+        if len(candidate_ids) != len(gen_configs):
+            raise ValueError("candidate_ids and gen_configs must have the same length.")
+
+        first_config = gen_configs[0]
+        with (
+            self._model_device_state_preset("generate"),
+            self._sample_assistant_lora_state(),
+            self._rollout_network_state(
+                network_multiplier=float(first_config.network_multiplier),
+                active=True,
+                allow_merge=True,
+            ),
+        ):
+            sample_conditioning_list: list[_RolloutSampleConditioning] = []
+            latent_list: list[torch.Tensor] = []
+            for gen_config in gen_configs:
+                torch.manual_seed(gen_config.seed)
                 if torch.cuda.is_available():
-                    torch.cuda.manual_seed(seed)
+                    torch.cuda.manual_seed(gen_config.seed)
 
-                conditional_embeds = self.sd.encode_prompt(prompt).to(self.device_torch, dtype=self.sd.torch_dtype)
-                unconditional_embeds = None
-                if guidance_scale > 1.0:
-                    unconditional_embeds = self.sd.encode_prompt(negative_prompt or "").to(
-                        self.device_torch, dtype=self.sd.torch_dtype
-                    )
-
-                latents = self._get_rollout_initial_latents(height=height, width=width, batch_size=1).to(
-                    self.device_torch, dtype=self.sd.torch_dtype
+                sample_conditioning = self._prepare_sample_time_conditioning(gen_config)
+                sample_conditioning_list.append(sample_conditioning)
+                latent_list.append(
+                    self._get_rollout_initial_latents(
+                        height=gen_config.height,
+                        width=gen_config.width,
+                        batch_size=1,
+                    ).to(self.device_torch, dtype=self.sd.torch_dtype)
                 )
-                rollout_scheduler, timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
-                    sampler=sampler,
-                    scheduler_name=scheduler,
-                    num_inference_steps=num_inference_steps,
+
+            latents = torch.cat(latent_list, dim=0)
+            conditional_embeds = concat_prompt_embeds(
+                [conditioning.conditional_embeds for conditioning in sample_conditioning_list]
+            ).to(self.device_torch, dtype=self.sd.torch_dtype)
+            unconditional_embeds = None
+            if sample_conditioning_list[0].unconditional_embeds is not None:
+                unconditional_embeds = concat_prompt_embeds(
+                    [conditioning.unconditional_embeds for conditioning in sample_conditioning_list]
+                ).to(self.device_torch, dtype=self.sd.torch_dtype)
+            adapter_conditioning = None
+            if sample_conditioning_list[0].adapter_conditioning is not None:
+                adapter_conditioning = _concat_tensor_tree(
+                    [conditioning.adapter_conditioning for conditioning in sample_conditioning_list],
+                    self.device_torch,
+                    self.sd.torch_dtype,
+                )
+            control_tensor = None
+            if sample_conditioning_list[0].control_tensor is not None:
+                control_tensor = _concat_tensor_tree(
+                    [conditioning.control_tensor for conditioning in sample_conditioning_list],
+                    self.device_torch,
+                    self.sd.torch_dtype,
+                )
+            rollout_scheduler, timesteps, sigma_current, sigma_next = self._prepare_scheduler_run(
+                sampler=sampler,
+                scheduler_name=scheduler,
+                num_inference_steps=num_inference_steps,
+                latents=latents,
+            )
+
+            latents_before: list[torch.Tensor] = []
+            latents_after: list[torch.Tensor] = []
+            log_probs: list[torch.Tensor] = []
+
+            step_iter = tqdm(
+                range(timesteps.numel()),
+                desc=(
+                    f"Flow-GRPO rollout "
+                    f"{batch_start_index + 1}-{batch_start_index + len(gen_configs)}/{total_candidates}"
+                ),
+                leave=False,
+            )
+            for idx in step_iter:
+                self.maybe_stop()
+                timestep = timesteps[idx].reshape(1).repeat(latents.shape[0]).to(self.device_torch, dtype=torch.float32)
+                rollout_batch = self._build_rollout_batch(
+                    control_tensor=control_tensor,
                     latents=latents,
                 )
-
-                latents_before: list[torch.Tensor] = []
-                latents_after: list[torch.Tensor] = []
-                log_probs: list[torch.Tensor] = []
-
-                for idx in range(timesteps.numel()):
-                    self.maybe_stop()
-                    timestep = timesteps[idx].reshape(1).repeat(latents.shape[0]).to(self.device_torch, dtype=torch.float32)
-                    with torch.no_grad():
-                        noise_pred = self.sd.predict_noise(
-                            latents=latents,
-                            conditional_embeddings=conditional_embeds,
-                            unconditional_embeddings=unconditional_embeds,
-                            timestep=timestep,
-                            guidance_scale=float(guidance_scale),
-                            batch=_EmptyRolloutBatch(),
-                        )
-
-                    step_output = rollout_scheduler.step(
-                        model_output=noise_pred,
-                        timestep=timesteps[idx],
-                        sample=latents,
-                        noise_level=self.flow_grpo_config.noise_level,
-                        sde_type=self.flow_grpo_config.sde_type,
-                        return_log_prob=True,
-                        return_transition=False,
-                    )
-                    next_latents = step_output.prev_sample.to(self.device_torch, dtype=self.sd.torch_dtype)
-                    log_prob = step_output.log_prob
-                    if log_prob is None:
-                        raise RuntimeError("Flow-GRPO scheduler did not return rollout log-probability.")
-                    latents_before.append(_clone_tensor(latents))
-                    latents_after.append(_clone_tensor(next_latents))
-                    log_probs.append(_clone_tensor(log_prob))
-                    latents = next_latents
-
-                state = CandidateState(
-                    task_id=task_id,
-                    candidate_id=candidate_id,
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    seed=int(seed),
-                    guidance_scale=float(guidance_scale),
-                    num_inference_steps=int(num_inference_steps),
-                    sampler=sampler,
-                    scheduler=scheduler,
-                    conditional_embeds=_clone_prompt_embeds(conditional_embeds),
-                    unconditional_embeds=_clone_prompt_embeds(unconditional_embeds),
-                    timesteps=_clone_tensor(timesteps),
-                    sigma_current=_clone_tensor(sigma_current),
-                    sigma_next=_clone_tensor(sigma_next),
-                    latents=torch.stack(latents_before, dim=1),
-                    next_latents=torch.stack(latents_after, dim=1),
-                    log_probs=torch.stack(log_probs, dim=1),
-                    reference_images=None,
+                model_latents = self._condition_rollout_latents(latents, rollout_batch)
+                adapter_predict_kwargs = self._build_adapter_predict_kwargs(
+                    latents=latents,
+                    timesteps=timestep,
+                    conditional_embeds=conditional_embeds,
+                    adapter_conditioning=adapter_conditioning,
+                    adapter_conditioning_scale=float(first_config.adapter_conditioning_scale),
                 )
-                return state
-        finally:
-            if self.network is not None:
-                self.network.is_active = bool(network_was_active)
-                if network_was_training:
-                    self.network.train()
-                else:
-                    self.network.eval()
+                with torch.no_grad():
+                    noise_pred = self.sd.predict_noise(
+                        latents=model_latents,
+                        conditional_embeddings=conditional_embeds,
+                        unconditional_embeddings=unconditional_embeds,
+                        timestep=timestep,
+                        guidance_scale=float(first_config.guidance_scale),
+                        batch=rollout_batch,
+                        **adapter_predict_kwargs,
+                    )
+
+                step_output = rollout_scheduler.step(
+                    model_output=noise_pred,
+                    timestep=timesteps[idx],
+                    sample=latents,
+                    noise_level=self.flow_grpo_config.noise_level,
+                    sde_type=self.flow_grpo_config.sde_type,
+                    return_log_prob=True,
+                    return_transition=False,
+                )
+                next_latents = step_output.prev_sample.to(self.device_torch, dtype=self.sd.torch_dtype)
+                log_prob = step_output.log_prob
+                if log_prob is None:
+                    raise RuntimeError("Flow-GRPO scheduler did not return rollout log-probability.")
+                latents_before.append(_clone_tensor(latents))
+                latents_after.append(_clone_tensor(next_latents))
+                log_probs.append(_clone_tensor(log_prob))
+                latents = next_latents
+                step_iter.set_postfix(step=f"{idx + 1}/{timesteps.numel()}", batch=len(gen_configs))
+
+            latents_stack = torch.stack(latents_before, dim=1)
+            next_latents_stack = torch.stack(latents_after, dim=1)
+            log_probs_stack = torch.stack(log_probs, dim=1)
+
+            states: list[CandidateState] = []
+            for idx, gen_config in enumerate(gen_configs):
+                sample_conditioning = sample_conditioning_list[idx]
+                states.append(
+                    CandidateState(
+                        task_id=task_id,
+                        candidate_id=candidate_ids[idx],
+                        prompt=gen_config.prompt,
+                        negative_prompt=gen_config.negative_prompt,
+                        seed=int(gen_config.seed),
+                        guidance_scale=float(gen_config.guidance_scale),
+                        num_inference_steps=int(num_inference_steps),
+                        sampler=sampler,
+                        scheduler=scheduler,
+                        conditional_embeds=_clone_prompt_embeds(sample_conditioning.conditional_embeds),
+                        unconditional_embeds=_clone_prompt_embeds(sample_conditioning.unconditional_embeds),
+                        timesteps=_clone_tensor(timesteps),
+                        sigma_current=_clone_tensor(sigma_current),
+                        sigma_next=_clone_tensor(sigma_next),
+                        latents=_clone_tensor(latents_stack[idx : idx + 1]),
+                        next_latents=_clone_tensor(next_latents_stack[idx : idx + 1]),
+                        log_probs=_clone_tensor(log_probs_stack[idx : idx + 1]),
+                        reference_images=None,
+                        network_multiplier=float(gen_config.network_multiplier),
+                        adapter_conditioning=_clone_tensor(sample_conditioning.adapter_conditioning),
+                        control_tensor=_clone_tensor_tree(sample_conditioning.control_tensor),
+                        adapter_conditioning_scale=float(gen_config.adapter_conditioning_scale),
+                    )
+                )
+            return states
 
     def _next_requested_task(self) -> Optional[sqlite3.Row]:
         rows = self._db_execute(
@@ -558,30 +1099,24 @@ class FlowGRPOTrainer(DiffusionTrainer):
         )
 
         candidate_rows: list[tuple] = []
-        preview_configs: list[GenerateImageConfig] = []
+        rng_state = torch.get_rng_state()
+        cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
         try:
             self.update_status("running", "Generating Flow-GRPO rollout group")
-            for order_index in range(self.flow_grpo_config.group_size):
-                self.maybe_stop()
-                candidate_id = str(uuid.uuid4())
-                seed = self._candidate_seed(task_row, order_index)
-                state = self._generate_candidate_state(
-                    task_id=task_id,
-                    candidate_id=candidate_id,
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    width=width,
-                    height=height,
-                    seed=seed,
-                    guidance_scale=guidance_scale,
-                    num_inference_steps=num_inference_steps,
-                    sampler=sampler,
-                    scheduler=scheduler,
+            generation_batch_size = self._candidate_generation_batch_size()
+            for batch_start in range(0, self.flow_grpo_config.group_size, generation_batch_size):
+                batch_end = min(
+                    self.flow_grpo_config.group_size,
+                    batch_start + generation_batch_size,
                 )
-                image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
-                state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
-                preview_configs.append(
-                    self._build_preview_image_config(
+                specs: list[dict[str, Any]] = []
+                for order_index in range(batch_start, batch_end):
+                    self.maybe_stop()
+                    candidate_id = str(uuid.uuid4())
+                    seed = self._candidate_seed(task_row, order_index)
+                    image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
+                    state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
+                    preview_config = self._build_preview_image_config(
                         prompt=prompt,
                         negative_prompt=negative_prompt,
                         width=width,
@@ -589,31 +1124,57 @@ class FlowGRPOTrainer(DiffusionTrainer):
                         seed=seed,
                         guidance_scale=guidance_scale,
                         num_inference_steps=num_inference_steps,
-                        latents=state.latents[:, 0].to(self.device_torch, dtype=self.sd.torch_dtype),
                         image_path=image_path,
                     )
-                )
-                self._save_candidate_state(state, state_path)
-                candidate_rows.append(
-                    (
-                        candidate_id,
-                        self.job_id,
-                        task_id,
-                        order_index,
-                        prompt,
-                        negative_prompt,
-                        seed,
-                        guidance_scale,
-                        num_inference_steps,
-                        sampler,
-                        scheduler,
-                        str(image_path),
-                        str(state_path),
-                        "open",
+                    specs.append(
+                        {
+                            "order_index": order_index,
+                            "candidate_id": candidate_id,
+                            "image_path": image_path,
+                            "state_path": state_path,
+                            "preview_config": preview_config,
+                        }
                     )
-                )
 
-            self.sd.generate_images(preview_configs, sampler=sampler)
+                states = self._generate_candidate_states_batch(
+                    task_id=task_id,
+                    candidate_ids=[spec["candidate_id"] for spec in specs],
+                    gen_configs=[spec["preview_config"] for spec in specs],
+                    num_inference_steps=specs[0]["preview_config"].num_inference_steps,
+                    sampler=sampler,
+                    scheduler=scheduler,
+                    batch_start_index=batch_start,
+                    total_candidates=self.flow_grpo_config.group_size,
+                )
+                for spec, state in zip(specs, states):
+                    order_index = int(spec["order_index"])
+                    preview_config = spec["preview_config"]
+                    preview_image = self._save_rollout_preview_image(
+                        final_latents=state.next_latents[:, -1],
+                        preview_config=preview_config,
+                    )
+                    preview_config.log_image(preview_image, order_index)
+                    if hasattr(self.sd, "_after_sample_image"):
+                        self.sd._after_sample_image(order_index, self.flow_grpo_config.group_size)
+                    self._save_candidate_state(state, spec["state_path"])
+                    candidate_rows.append(
+                        (
+                            state.candidate_id,
+                            self.job_id,
+                            task_id,
+                            order_index,
+                            state.prompt,
+                            state.negative_prompt,
+                            state.seed,
+                            state.guidance_scale,
+                            state.num_inference_steps,
+                            sampler,
+                            scheduler,
+                            str(spec["image_path"]),
+                            str(spec["state_path"]),
+                            "open",
+                        )
+                    )
 
             self._db_execute_many(
                 """
@@ -640,6 +1201,13 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 (task_id,),
             )
             raise
+        finally:
+            torch.set_rng_state(rng_state)
+            if cuda_rng_state is not None:
+                torch.cuda.set_rng_state(cuda_rng_state)
+            adapter = getattr(self.sd, "adapter", None)
+            if isinstance(adapter, ReferenceAdapter):
+                adapter.clear_memory()
 
     def _promote_requested_vote_tasks(self) -> None:
         active_count = self._count_active_vote_tasks()
@@ -745,6 +1313,10 @@ class FlowGRPOTrainer(DiffusionTrainer):
             tuple(float(timestep) for timestep in candidate_state.timesteps.detach().cpu().tolist()),
             tuple(candidate_state.log_probs.shape[1:]),
             candidate_state.unconditional_embeds is not None,
+            float(candidate_state.network_multiplier),
+            tuple(candidate_state.adapter_conditioning.shape) if candidate_state.adapter_conditioning is not None else None,
+            _tensor_tree_shape(candidate_state.control_tensor),
+            float(candidate_state.adapter_conditioning_scale),
         )
 
     @staticmethod
@@ -760,6 +1332,8 @@ class FlowGRPOTrainer(DiffusionTrainer):
         train_units: list[CandidateTrainUnit],
         *,
         disable_lora: bool = False,
+        manage_assistant_lora: bool = True,
+        manage_network_state: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         first_state = train_units[0].candidate_state
         latents = torch.cat(
@@ -794,16 +1368,54 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     for train_unit in train_units
                 ]
             )
+        adapter_conditioning = None
+        if first_state.adapter_conditioning is not None:
+            adapter_conditioning = torch.cat(
+                [
+                    train_unit.candidate_state.adapter_conditioning.to(self.device_torch, dtype=self.sd.torch_dtype)
+                    for train_unit in train_units
+                ],
+                dim=0,
+            )
+        control_tensor = None
+        if first_state.control_tensor is not None:
+            control_tensor = _concat_tensor_tree(
+                [train_unit.candidate_state.control_tensor for train_unit in train_units],
+                self.device_torch,
+                self.sd.torch_dtype,
+            )
 
-        context = self._lora_disabled() if disable_lora else contextlib.nullcontext()
-        with context:
+        with contextlib.ExitStack() as stack:
+            if manage_assistant_lora:
+                stack.enter_context(self._sample_assistant_lora_state(offload_on_exit=disable_lora))
+            if manage_network_state:
+                stack.enter_context(
+                    self._rollout_network_state(
+                        network_multiplier=float(first_state.network_multiplier),
+                        active=not disable_lora,
+                        allow_merge=False,
+                    )
+                )
+            rollout_batch = self._build_rollout_batch(
+                control_tensor=control_tensor,
+                latents=latents,
+            )
+            model_latents = self._condition_rollout_latents(latents, rollout_batch)
+            adapter_predict_kwargs = self._build_adapter_predict_kwargs(
+                latents=latents,
+                timesteps=timesteps,
+                conditional_embeds=conditional_embeds,
+                adapter_conditioning=adapter_conditioning,
+                adapter_conditioning_scale=float(first_state.adapter_conditioning_scale),
+            )
             predict_kwargs: dict[str, Any] = {
-                "latents": latents,
+                "latents": model_latents,
                 "conditional_embeddings": conditional_embeds,
                 "unconditional_embeddings": unconditional_embeds,
                 "timestep": timesteps,
                 "guidance_scale": float(first_state.guidance_scale),
-                "batch": _EmptyRolloutBatch(),
+                "batch": rollout_batch,
+                **adapter_predict_kwargs,
             }
             predict_signature = inspect.signature(self.sd.predict_noise)
             if "requires_grad" in predict_signature.parameters:
@@ -910,62 +1522,75 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 latents=rollout_seed_latents,
             )
 
-        log_prob, prev_mean, transition_std = self._compute_batched_unit_logprob(
-            policy_scheduler,
-            train_units,
-        )
-        old_log_prob = torch.cat(
-            [
-                train_unit.candidate_state.log_probs[:, train_unit.step_index].to(self.device_torch, dtype=log_prob.dtype)
-                for train_unit in train_units
-            ],
-            dim=0,
-        )
+        with (
+            self._sample_assistant_lora_state(offload_on_exit=True),
+            self._rollout_network_state(
+                network_multiplier=float(first_state.network_multiplier),
+                active=True,
+                allow_merge=False,
+            ),
+        ):
+            log_prob, prev_mean, transition_std = self._compute_batched_unit_logprob(
+                policy_scheduler,
+                train_units,
+                manage_assistant_lora=False,
+                manage_network_state=False,
+            )
+            old_log_prob = torch.cat(
+                [
+                    train_unit.candidate_state.log_probs[:, train_unit.step_index].to(
+                        self.device_torch, dtype=log_prob.dtype
+                    )
+                    for train_unit in train_units
+                ],
+                dim=0,
+            )
 
-        advantage_tensor = torch.as_tensor(
-            [train_unit.advantage for train_unit in train_units],
-            device=self.device_torch,
-            dtype=log_prob.dtype,
-        ).reshape_as(log_prob)
-        advantage_tensor = torch.clamp(
-            advantage_tensor,
-            -self.flow_grpo_config.adv_clip_max,
-            self.flow_grpo_config.adv_clip_max,
-        )
+            advantage_tensor = torch.as_tensor(
+                [train_unit.advantage for train_unit in train_units],
+                device=self.device_torch,
+                dtype=log_prob.dtype,
+            ).reshape_as(log_prob)
+            advantage_tensor = torch.clamp(
+                advantage_tensor,
+                -self.flow_grpo_config.adv_clip_max,
+                self.flow_grpo_config.adv_clip_max,
+            )
 
-        ratio = torch.exp(torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0))
-        unclipped = -advantage_tensor * ratio
-        clipped = -advantage_tensor * torch.clamp(
-            ratio,
-            1.0 - self.flow_grpo_config.clip_range,
-            1.0 + self.flow_grpo_config.clip_range,
-        )
-        policy_loss_by_sample = torch.maximum(unclipped, clipped)
-        loss_by_sample = policy_loss_by_sample
+            ratio = torch.exp(torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0))
+            unclipped = -advantage_tensor * ratio
+            clipped = -advantage_tensor * torch.clamp(
+                ratio,
+                1.0 - self.flow_grpo_config.clip_range,
+                1.0 + self.flow_grpo_config.clip_range,
+            )
+            policy_loss_by_sample = torch.maximum(unclipped, clipped)
+            loss_by_sample = policy_loss_by_sample
 
-        if self.flow_grpo_config.beta > 0.0:
-            if reference_scheduler is None:
-                raise RuntimeError("Flow-GRPO reference scheduler was not initialized.")
-            with torch.no_grad():
-                _, ref_prev_mean, _ = self._compute_batched_unit_logprob(
-                    reference_scheduler,
-                    train_units,
-                    disable_lora=True,
-                )
-            std_safe = torch.clamp(transition_std, min=1e-6)
-            kl_tensor = ((prev_mean - ref_prev_mean) ** 2) / (2.0 * (std_safe**2))
-            kl_loss_by_sample = kl_tensor.flatten(start_dim=1).sum(dim=1)
-            loss_by_sample = loss_by_sample + self.flow_grpo_config.beta * kl_loss_by_sample
-            kl_losses.append(float(kl_loss_by_sample.detach().mean().cpu().item()))
+            if self.flow_grpo_config.beta > 0.0:
+                if reference_scheduler is None:
+                    raise RuntimeError("Flow-GRPO reference scheduler was not initialized.")
+                with torch.no_grad():
+                    _, ref_prev_mean, _ = self._compute_batched_unit_logprob(
+                        reference_scheduler,
+                        train_units,
+                        disable_lora=True,
+                        manage_assistant_lora=False,
+                    )
+                std_safe = torch.clamp(transition_std, min=1e-6)
+                kl_tensor = ((prev_mean - ref_prev_mean) ** 2) / (2.0 * (std_safe**2))
+                kl_loss_by_sample = kl_tensor.flatten(start_dim=1).sum(dim=1)
+                loss_by_sample = loss_by_sample + self.flow_grpo_config.beta * kl_loss_by_sample
+                kl_losses.append(float(kl_loss_by_sample.detach().mean().cpu().item()))
 
-        per_unit_scales = torch.as_tensor(
-            [1.0 / float(train_unit.train_steps) for train_unit in train_units],
-            device=self.device_torch,
-            dtype=loss_by_sample.dtype,
-        ).reshape_as(loss_by_sample)
-        scaled_loss = (loss_by_sample * per_unit_scales).sum() / float(active_candidate_count)
-        total_loss_value = float(scaled_loss.detach().cpu().item())
-        self.accelerator.backward(scaled_loss)
+            per_unit_scales = torch.as_tensor(
+                [1.0 / float(train_unit.train_steps) for train_unit in train_units],
+                device=self.device_torch,
+                dtype=loss_by_sample.dtype,
+            ).reshape_as(loss_by_sample)
+            scaled_loss = (loss_by_sample * per_unit_scales).sum() / float(active_candidate_count)
+            total_loss_value = float(scaled_loss.detach().cpu().item())
+            self.accelerator.backward(scaled_loss)
 
         policy_losses.append(float(policy_loss_by_sample.detach().mean().cpu().item()))
         approx_kls.append(float((0.5 * torch.mean((log_prob - old_log_prob) ** 2)).detach().cpu().item()))
