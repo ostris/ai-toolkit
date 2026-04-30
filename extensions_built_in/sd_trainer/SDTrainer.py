@@ -1602,6 +1602,8 @@ class SDTrainer(BaseSDTrainProcess):
                                 self.sd.text_encoder.eval()
                             if isinstance(self.adapter, CustomAdapter):
                                 self.adapter.is_unconditional_run = False
+                            if self.sd.encode_control_in_text_embeddings and batch.control_tensor_list is not None:
+                                prompt_kwargs['control_images'] = batch.control_tensor_list
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
