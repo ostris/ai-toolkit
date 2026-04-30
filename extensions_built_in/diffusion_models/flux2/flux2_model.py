@@ -21,7 +21,7 @@ from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
-from .src.autoencoder import AutoEncoder, AutoEncoderParams
+from .src.autoencoder import AutoEncoder, AutoEncoderParams, AutoEncoderSmallDecoderParams
 from safetensors.torch import load_file, save_file
 from PIL import Image
 import torch.nn.functional as F
@@ -193,17 +193,29 @@ class Flux2Model(BaseModel):
             vae_path = self.flux2_vae_path
 
         if vae_path is None or not os.path.exists(vae_path):
+            vae_filename = FLUX2_VAE_FILENAME
+            if vae_path is not None:
+                # see if it is a filename for huggingface hub
+                if len(vae_path.split("/")) == 3 and vae_path.endswith(".safetensors"):
+                    vae_filename = vae_path.split("/")[-1]
+                    vae_path = "/".join(vae_path.split("/")[:-1])
             p = vae_path if vae_path is not None else model_path
             # assume it is from the hub
             vae_path = huggingface_hub.hf_hub_download(
                 repo_id=p,
-                filename=FLUX2_VAE_FILENAME,
+                filename=vae_filename,
                 token=HF_TOKEN,
             )
-        with torch.device("meta"):
-            vae = AutoEncoder(AutoEncoderParams())
-
+        
         vae_state_dict = load_file(vae_path, device="cpu")
+        
+        autoencoder_params = AutoEncoderParams()
+        if vae_state_dict['decoder.up.0.block.0.conv1.bias'].shape[0] == 96:
+            # this is the small decoder version
+            autoencoder_params = AutoEncoderSmallDecoderParams()
+        
+        with torch.device("meta"):
+            vae = AutoEncoder(autoencoder_params)
 
         # cast to dtype
         for key in vae_state_dict:
@@ -523,3 +535,18 @@ class Flux2Model(BaseModel):
         latents = self.vae.encode(images)
 
         return latents
+    
+    def decode_latents(self, latents, device=None, dtype=None):
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        # Move to vae to device if on cpu
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(device)
+        latents = latents.to(device, dtype=dtype)
+
+        images = self.vae.decode(latents)
+
+        return images

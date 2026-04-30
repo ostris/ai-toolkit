@@ -17,7 +17,7 @@ import { TopBar, MainContent } from '@/components/layout';
 import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
 import SimpleJob from './SimpleJob';
-import AdvancedJob from './AdvancedJob';
+import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
 
@@ -278,17 +278,20 @@ export default function TrainingForm() {
 
       {showAdvancedView ? (
         <div className="pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto">
-          <AdvancedJob
-            jobConfig={jobConfig}
-            setJobConfig={setJobConfig}
-            status={status}
-            handleSubmit={handleSubmit}
-            runId={runId}
-            gpuIDs={gpuIDs}
-            setGpuIDs={setGpuIDs}
-            gpuList={gpuList}
-            datasetOptions={datasetOptions}
-            settings={settings}
+          <AdvancedConfigEditor
+            config={jobConfig}
+            setConfig={setJobConfig}
+            transformOnParse={(parsed: any) => {
+              try {
+                parsed.config.process[0].sqlite_db_path = './aitk_db.db';
+                parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
+                parsed.config.process[0].device = 'cuda';
+                parsed.config.process[0].performance_log_every = 10;
+              } catch (e) {
+                console.warn(e);
+              }
+              return migrateJobConfig(parsed);
+            }}
           />
         </div>
       ) : (

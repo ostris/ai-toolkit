@@ -2,32 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '@/components/Modal';
 import { createGlobalState } from 'react-global-hooks';
 import { useFromNull } from '@/hooks/useFromNull';
-import {
-  Checkbox,
-  CreatableSelectInput,
-  FormGroup,
-  SelectInput,
-  TextAreaInput,
-  TextInput,
-} from '@/components/formInputs';
 import { CaptionJobConfig } from '@/types';
-import { defaultCaptionJobConfig, handleCaptionerTypeChange } from '@/helpers/captionJobConfig';
+import { defaultCaptionJobConfig } from '@/helpers/captionJobConfig';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
-import {
-  captionerTypes,
-  defaultQtype,
-  groupedCaptionerTypes,
-  maxNewTokensOptions,
-  maxResOptions,
-  quantizationOptions,
-} from '@/helpers/captionOptions';
 import { isMac } from '@/helpers/basic';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { apiClient } from '@/utils/api';
 import { v4 as uuidv4 } from 'uuid';
 import { startJob } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
+import CaptionSimpleJob from '@/components/CaptionSimpleJob';
+import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
+import { SelectInput } from '@/components/formInputs';
 
 export interface CaptionDatasetModalState {
   datasetPath: string;
@@ -45,6 +32,7 @@ export const CaptionDatasetModal: React.FC = () => {
   const [jobConfig, setJobConfig] = useNestedState<CaptionJobConfig>(objectCopy(defaultCaptionJobConfig));
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
+  const [activeTab, setActiveTab] = useState<'simple' | 'advanced'>('simple');
   const open = modalInfo !== null;
   const isSavingRef = useRef(false);
   const showGPUSelect = !isMac();
@@ -52,6 +40,7 @@ export const CaptionDatasetModal: React.FC = () => {
   useFromNull(() => {
     // reset the state
     setJobConfig(objectCopy(defaultCaptionJobConfig));
+    setActiveTab('simple');
     // set the path_to_caption
     if (modalInfo?.datasetPath) {
       setJobConfig(modalInfo.datasetPath, 'config.process[0].caption.path_to_caption');
@@ -72,8 +61,6 @@ export const CaptionDatasetModal: React.FC = () => {
     }
     setModalInfo(null);
   };
-
-  const selectedCaptionOption = captionerTypes.find(option => option.name === jobConfig.config.process[0].type);
 
   const saveJob = async () => {
     if (isSavingRef.current) return;
@@ -111,145 +98,54 @@ export const CaptionDatasetModal: React.FC = () => {
       });
   };
 
+  const tabButtonClass = (tab: 'simple' | 'advanced') =>
+    `px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+      activeTab === tab
+        ? 'border-blue-500 text-blue-400'
+        : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600'
+    }`;
+
   return (
-    <Modal isOpen={open} onClose={handleClose} title="Caption Dataset" size="lg">
+    <Modal isOpen={open} onClose={handleClose} title="Caption Dataset" size={activeTab === 'advanced' ? 'xl' : 'lg'}>
       <div className="space-y-4 text-gray-200">
+        <div className="flex items-center border-b border-gray-700 -mt-2">
+          <button type="button" className={tabButtonClass('simple')} onClick={() => setActiveTab('simple')}>
+            Simple
+          </button>
+          <button type="button" className={tabButtonClass('advanced')} onClick={() => setActiveTab('advanced')}>
+            Advanced
+          </button>
+          <div className="flex-1" />
+          {activeTab === 'advanced' && showGPUSelect && (
+            <div className="pb-2">
+              <SelectInput
+                value={`${gpuIDs}`}
+                onChange={value => setGpuIDs(value)}
+                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+              />
+            </div>
+          )}
+        </div>
         <form
           onSubmit={e => {
             e.preventDefault();
             saveJob();
           }}
         >
-          <div className="text-sm text-gray-400">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-              <div>
-                <SelectInput
-                  label="Captioner Type"
-                  value={jobConfig.config.process[0].type}
-                  onChange={value => {
-                    handleCaptionerTypeChange(jobConfig.config.process[0].type, value, jobConfig, setJobConfig);
-                  }}
-                  options={groupedCaptionerTypes}
-                />
-              </div>
-              {showGPUSelect && (
-                <div>
-                  <SelectInput
-                    label="GPU ID"
-                    value={`${gpuIDs}`}
-                    onChange={value => setGpuIDs(value)}
-                    options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
-                  />
-                </div>
-              )}
+          {activeTab === 'simple' ? (
+            <CaptionSimpleJob
+              jobConfig={jobConfig}
+              setJobConfig={setJobConfig}
+              gpuIDs={gpuIDs}
+              setGpuIDs={setGpuIDs}
+              gpuList={gpuList}
+              showGPUSelect={showGPUSelect}
+            />
+          ) : (
+            <div className="h-[60vh] mt-2">
+              <AdvancedConfigEditor config={jobConfig} setConfig={setJobConfig} />
             </div>
-            <div className="mt-4">
-              <CreatableSelectInput
-                label="Name or Path"
-                value={jobConfig.config.process[0].caption.model_name_or_path}
-                docKey="config.process[0].caption.model_name_or_path"
-                onChange={(value: string | null) => {
-                  if (value?.trim() === '') {
-                    value = null;
-                  }
-                  setJobConfig(value, 'config.process[0].caption.model_name_or_path');
-                }}
-                placeholder=""
-                options={selectedCaptionOption?.name_or_path_options || []}
-                required
-              />
-            </div>
-            {selectedCaptionOption?.additionalSections?.includes('caption.model_name_or_path2') && (
-              <div className="mt-4">
-                <CreatableSelectInput
-                  label="Name or Path 2"
-                  value={jobConfig.config.process[0].caption.model_name_or_path2 || ''}
-                  onChange={(value: string | null) => {
-                    if (value?.trim() === '') {
-                      value = null;
-                    }
-                    setJobConfig(value, 'config.process[0].caption.model_name_or_path2');
-                  }}
-                  placeholder=""
-                  options={selectedCaptionOption?.name_or_path2_options || []}
-                />
-              </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-              <div>
-                <SelectInput
-                  label="Quantize"
-                  value={jobConfig.config.process[0].caption.quantize ? jobConfig.config.process[0].caption.qtype : ''}
-                  onChange={value => {
-                    if (value === '') {
-                      setJobConfig(false, 'config.process[0].caption.quantize');
-                      value = defaultQtype;
-                    } else {
-                      setJobConfig(true, 'config.process[0].caption.quantize');
-                    }
-                    setJobConfig(value, 'config.process[0].caption.qtype');
-                  }}
-                  options={quantizationOptions}
-                />
-                {selectedCaptionOption?.additionalSections?.includes('caption.max_res') && (
-                  <div className="mt-4">
-                    <SelectInput
-                      label="Max Resolution"
-                      value={`${jobConfig.config.process[0].caption.max_res || ''}`}
-                      onChange={value => {
-                        const intVal = parseInt(value);
-                        if (!isNaN(intVal)) {
-                          setJobConfig(intVal, 'config.process[0].caption.max_res');
-                        }
-                      }}
-                      options={maxResOptions}
-                    />
-                  </div>
-                )}
-                {selectedCaptionOption?.additionalSections?.includes('caption.max_new_tokens') && (
-                  <div className="mt-4">
-                    <SelectInput
-                      label="Max New Tokens"
-                      value={`${jobConfig.config.process[0].caption.max_new_tokens || ''}`}
-                      onChange={value => {
-                        const intVal = parseInt(value);
-                        if (!isNaN(intVal)) {
-                          setJobConfig(intVal, 'config.process[0].caption.max_new_tokens');
-                        }
-                      }}
-                      options={maxNewTokensOptions}
-                    />
-                  </div>
-                )}
-              </div>
-              <div>
-                <FormGroup label="Options">
-                  <Checkbox
-                    label="Low VRAM"
-                    checked={jobConfig.config.process[0].caption.low_vram}
-                    onChange={value => setJobConfig(value, 'config.process[0].caption.low_vram')}
-                  />
-                  <Checkbox
-                    label="Recaption"
-                    checked={jobConfig.config.process[0].caption.recaption}
-                    onChange={value => setJobConfig(value, 'config.process[0].caption.recaption')}
-                  />
-                </FormGroup>
-              </div>
-            </div>
-            {selectedCaptionOption?.additionalSections?.includes('caption.caption_prompt') && (
-              <div className="mt-4">
-                <TextAreaInput
-                  label="Caption Prompt"
-                  value={jobConfig.config.process[0].caption.caption_prompt || ''}
-                  onChange={value => {
-                    setJobConfig(value, 'config.process[0].caption.caption_prompt');
-                  }}
-                  placeholder="Enter caption prompt"
-                />
-              </div>
-            )}
-          </div>
+          )}
 
           <div className="mt-6 flex justify-end space-x-3">
             <button
