@@ -837,12 +837,40 @@ class FlowGRPOTrainer(DiffusionTrainer):
     ) -> Image.Image:
         with self._model_device_state_preset("generate"):
             with torch.no_grad():
-                decoded = self.sd.decode_latents(
-                    final_latents.to(self.device_torch, dtype=self.sd.torch_dtype),
-                    device=self.device_torch,
-                    dtype=self.sd.torch_dtype,
-                )
-        image = self._decoded_tensor_to_pil(decoded)
+                pipeline = getattr(self.sd, "pipeline", None)
+                vae = getattr(pipeline, "vae", getattr(self.sd, "vae", None))
+                image_processor = getattr(pipeline, "image_processor", None)
+                if vae is None or image_processor is None:
+                    decoded = self.sd.decode_latents(
+                        final_latents.to(self.device_torch, dtype=self.sd.torch_dtype),
+                        device=self.device_torch,
+                        dtype=self.sd.torch_dtype,
+                    )
+                    image = self._decoded_tensor_to_pil(decoded)
+                else:
+                    # Mirrors _get_rollout_initial_latents: stay on model-owned latent semantics.
+                    vae_device = getattr(vae, "device", self.device_torch)
+                    vae_dtype = getattr(vae, "dtype", self.sd.torch_dtype)
+                    if torch.device(vae_device) == torch.device("cpu"):
+                        vae_device = getattr(self.sd, "vae_device_torch", self.device_torch)
+                        vae.to(vae_device)
+
+                    latents = final_latents.to(vae_device, dtype=vae_dtype)
+                    vae_config = getattr(vae, "config", None)
+                    scaling_factor = getattr(vae_config, "scaling_factor", None)
+                    shift_factor = getattr(vae_config, "shift_factor", None)
+                    if isinstance(vae_config, dict):
+                        scaling_factor = vae_config.get("scaling_factor", scaling_factor)
+                        shift_factor = vae_config.get("shift_factor", shift_factor)
+                    if scaling_factor is not None:
+                        latents = latents / scaling_factor
+                        if shift_factor is not None:
+                            latents = latents + shift_factor
+
+                    decoded = vae.decode(latents)
+                    if hasattr(decoded, "sample"):
+                        decoded = decoded.sample
+                    image = image_processor.postprocess(decoded.float(), output_type="pil")[0]
         preview_config.save_image(image)
         return image
 
