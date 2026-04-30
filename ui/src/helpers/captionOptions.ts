@@ -67,6 +67,29 @@ export const captionerTypes: CaptionOption[] = [
             'caption.max_new_tokens',
         ],
     },
+    {
+        name: 'Florence2Captioner',
+        label: 'Florence-2',
+        group: 'image',
+        defaults: {
+            'config.process[0].caption.model_name_or_path': ['microsoft/Florence-2-large-ft', defaultNameOrPath],
+            'config.process[0].caption.extensions': [extensionsImage, defaultExtensions],
+            'config.process[0].caption.caption_prompt': ['<MORE_DETAILED_CAPTION>', undefined],
+            'config.process[0].caption.max_res': [768, undefined],
+            'config.process[0].caption.max_new_tokens': [1024, undefined],
+        },
+        name_or_path_options: [
+            { value: 'microsoft/Florence-2-base', label: 'microsoft/Florence-2-base' },
+            { value: 'microsoft/Florence-2-base-ft', label: 'microsoft/Florence-2-base-ft' },
+            { value: 'microsoft/Florence-2-large', label: 'microsoft/Florence-2-large' },
+            { value: 'microsoft/Florence-2-large-ft', label: 'microsoft/Florence-2-large-ft' },
+        ],
+        additionalSections: [
+            'caption.caption_prompt',
+            'caption.max_res',
+            'caption.max_new_tokens',
+        ],
+    },
 
 ].sort((a, b) => {
     // Sort by label, case-insensitive
