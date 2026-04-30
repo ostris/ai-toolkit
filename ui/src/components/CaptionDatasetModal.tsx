@@ -1,3 +1,4 @@
+'use client';
 import React, { useState, useEffect, useRef } from 'react';
 import { Modal } from '@/components/Modal';
 import { createGlobalState } from 'react-global-hooks';
@@ -15,37 +16,88 @@ import { startQueue } from '@/utils/queue';
 import CaptionSimpleJob from '@/components/CaptionSimpleJob';
 import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import { SelectInput } from '@/components/formInputs';
+import { Loader2 } from 'lucide-react';
 
 export interface CaptionDatasetModalState {
   datasetPath: string;
+  jobId?: string | null;
+  cloneId?: string | null;
   onClose?: () => void;
 }
 
 export const captionDatasetModalState = createGlobalState<CaptionDatasetModalState | null>(null);
 
-export const openCaptionDatasetModal = (datasetPath: string, onClose?: () => void) => {
-  captionDatasetModalState.set({ datasetPath, onClose });
+export const openCaptionDatasetModal = (
+  datasetPath: string,
+  onClose?: () => void,
+  options?: { jobId?: string | null; cloneId?: string | null },
+) => {
+  captionDatasetModalState.set({
+    datasetPath,
+    onClose,
+    jobId: options?.jobId ?? null,
+    cloneId: options?.cloneId ?? null,
+  });
 };
 
 export const CaptionDatasetModal: React.FC = () => {
   const [modalInfo, setModalInfo] = captionDatasetModalState.use();
   const [jobConfig, setJobConfig] = useNestedState<CaptionJobConfig>(objectCopy(defaultCaptionJobConfig));
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
+  const [existingJobName, setExistingJobName] = useState<string | null>(null);
+  const [hasLoadedExistingJob, setHasLoadedExistingJob] = useState(false);
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
   const [activeTab, setActiveTab] = useState<'simple' | 'advanced'>('simple');
   const open = modalInfo !== null;
   const isSavingRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
   const showGPUSelect = !isMac();
+  const isLoadingExistingJob = !!(modalInfo?.jobId || modalInfo?.cloneId) && !hasLoadedExistingJob;
+  const showLoadingOverlay = isLoadingExistingJob || isSaving;
 
   useFromNull(() => {
     // reset the state
     setJobConfig(objectCopy(defaultCaptionJobConfig));
     setActiveTab('simple');
+    setExistingJobName(null);
     // set the path_to_caption
     if (modalInfo?.datasetPath) {
       setJobConfig(modalInfo.datasetPath, 'config.process[0].caption.path_to_caption');
     }
   }, [modalInfo]);
+
+  // clone existing caption job
+  useEffect(() => {
+    if (modalInfo?.cloneId) {
+      apiClient
+        .get(`/api/jobs?id=${modalInfo.cloneId}`)
+        .then(res => res.data)
+        .then(data => {
+          setGpuIDs(data.gpu_ids);
+          const newJobConfig = JSON.parse(data.job_config);
+          newJobConfig.config.name = `${newJobConfig.config.name}_copy`;
+          setJobConfig(newJobConfig);
+        })
+        .catch(error => console.error('Error fetching caption job:', error))
+        .finally(() => setHasLoadedExistingJob(true));
+    }
+  }, [modalInfo?.cloneId]);
+
+  // load existing caption job for editing
+  useEffect(() => {
+    if (modalInfo?.jobId) {
+      apiClient
+        .get(`/api/jobs?id=${modalInfo.jobId}`)
+        .then(res => res.data)
+        .then(data => {
+          setGpuIDs(data.gpu_ids);
+          setExistingJobName(data.name);
+          setJobConfig(JSON.parse(data.job_config));
+        })
+        .catch(error => console.error('Error fetching caption job:', error))
+        .finally(() => setHasLoadedExistingJob(true));
+    }
+  }, [modalInfo?.jobId]);
 
   useEffect(() => {
     if (isGPUInfoLoaded) {
@@ -59,6 +111,7 @@ export const CaptionDatasetModal: React.FC = () => {
     if (modalInfo?.onClose) {
       modalInfo.onClose();
     }
+    setHasLoadedExistingJob(false);
     setModalInfo(null);
   };
 
@@ -69,11 +122,14 @@ export const CaptionDatasetModal: React.FC = () => {
       return;
     }
     isSavingRef.current = true;
+    setIsSaving(true);
+
+    const isEdit = !!modalInfo.jobId;
 
     apiClient
       .post('/api/jobs', {
-        id: null,
-        name: uuidv4(),
+        id: isEdit ? modalInfo.jobId : null,
+        name: isEdit && existingJobName ? existingJobName : uuidv4(),
         gpu_ids: gpuIDs,
         job_config: jobConfig,
         job_type: 'caption',
@@ -85,6 +141,7 @@ export const CaptionDatasetModal: React.FC = () => {
         // start the queue as well
         await startQueue(gpuIDs || '');
         isSavingRef.current = false;
+        setIsSaving(false);
         handleClose();
       })
       .catch(error => {
@@ -95,6 +152,7 @@ export const CaptionDatasetModal: React.FC = () => {
         }
         console.log('Error saving training:', error);
         isSavingRef.current = false;
+        setIsSaving(false);
       });
   };
 
@@ -107,7 +165,12 @@ export const CaptionDatasetModal: React.FC = () => {
 
   return (
     <Modal isOpen={open} onClose={handleClose} title="Caption Dataset" size={activeTab === 'advanced' ? 'xl' : 'lg'}>
-      <div className="space-y-4 text-gray-200">
+      <div className="relative space-y-4 text-gray-200">
+        {showLoadingOverlay && (
+          <div className="absolute -left-6 -right-6 -top-4 -bottom-4 z-10 flex items-center justify-center backdrop-blur-sm bg-gray-900/40">
+            <Loader2 className="w-10 h-10 text-blue-400 animate-spin" />
+          </div>
+        )}
         <div className="flex items-center border-b border-gray-700 -mt-2">
           <button type="button" className={tabButtonClass('simple')} onClick={() => setActiveTab('simple')}>
             Simple

@@ -8,7 +8,6 @@ import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
-import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
@@ -140,7 +139,6 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         )}
       </MainContent>
       <AddImagesModal />
-      <CaptionDatasetModal />
     </>
   );
 }
