@@ -523,3 +523,18 @@ class Flux2Model(BaseModel):
         latents = self.vae.encode(images)
 
         return latents
+    
+    def decode_latents(self, latents, device=None, dtype=None):
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        # Move to vae to device if on cpu
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(device)
+        latents = latents.to(device, dtype=dtype)
+
+        images = self.vae.decode(latents)
+
+        return images

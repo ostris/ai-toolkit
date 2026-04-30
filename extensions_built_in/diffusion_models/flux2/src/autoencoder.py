@@ -4,6 +4,7 @@ import torch
 from einops import rearrange
 from torch import Tensor, nn
 import math
+import torch.utils.checkpoint as ckpt
 
 
 @dataclass
@@ -177,24 +178,41 @@ class Encoder(nn.Module):
         self.conv_out = nn.Conv2d(
             block_in, 2 * z_channels, kernel_size=3, stride=1, padding=1
         )
+        self.gradient_checkpointing = False
+
+    def enable_gradient_checkpointing(self):
+        self.gradient_checkpointing = True
 
     def forward(self, x: Tensor) -> Tensor:
         # downsampling
         hs = [self.conv_in(x)]
         for i_level in range(self.num_resolutions):
             for i_block in range(self.num_res_blocks):
-                h = self.down[i_level].block[i_block](hs[-1])
-                if len(self.down[i_level].attn) > 0:
-                    h = self.down[i_level].attn[i_block](h)
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    h = ckpt.checkpoint(self.down[i_level].block[i_block], hs[-1])
+                    if len(self.down[i_level].attn) > 0:
+                        h = ckpt.checkpoint(self.down[i_level].attn[i_block], h)
+                else:
+                    h = self.down[i_level].block[i_block](hs[-1])
+                    if len(self.down[i_level].attn) > 0:
+                        h = self.down[i_level].attn[i_block](h)
                 hs.append(h)
             if i_level != self.num_resolutions - 1:
-                hs.append(self.down[i_level].downsample(hs[-1]))
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    hs.append(ckpt.checkpoint(self.down[i_level].downsample, hs[-1]))
+                else:
+                    hs.append(self.down[i_level].downsample(hs[-1]))
 
         # middle
         h = hs[-1]
-        h = self.mid.block_1(h)
-        h = self.mid.attn_1(h)
-        h = self.mid.block_2(h)
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+            h = ckpt.checkpoint(self.mid.block_1, h)
+            h = ckpt.checkpoint(self.mid.attn_1, h)
+            h = ckpt.checkpoint(self.mid.block_2, h)
+        else:
+            h = self.mid.block_1(h)
+            h = self.mid.attn_1(h)
+            h = self.mid.block_2(h)
         # end
         h = self.norm_out(h)
         h = swish(h)
@@ -261,6 +279,10 @@ class Decoder(nn.Module):
             num_groups=32, num_channels=block_in, eps=1e-6, affine=True
         )
         self.conv_out = nn.Conv2d(block_in, out_ch, kernel_size=3, stride=1, padding=1)
+        self.gradient_checkpointing = False
+
+    def enable_gradient_checkpointing(self):
+        self.gradient_checkpointing = True
 
     def forward(self, z: Tensor) -> Tensor:
         z = self.post_quant_conv(z)
@@ -272,20 +294,33 @@ class Decoder(nn.Module):
         h = self.conv_in(z)
 
         # middle
-        h = self.mid.block_1(h)
-        h = self.mid.attn_1(h)
-        h = self.mid.block_2(h)
+        if torch.is_grad_enabled() and self.gradient_checkpointing:
+            h = ckpt.checkpoint(self.mid.block_1, h)
+            h = ckpt.checkpoint(self.mid.attn_1, h)
+            h = ckpt.checkpoint(self.mid.block_2, h)
+        else:
+            h = self.mid.block_1(h)
+            h = self.mid.attn_1(h)
+            h = self.mid.block_2(h)
 
         # cast to proper dtype
         h = h.to(upscale_dtype)
         # upsampling
         for i_level in reversed(range(self.num_resolutions)):
             for i_block in range(self.num_res_blocks + 1):
-                h = self.up[i_level].block[i_block](h)
-                if len(self.up[i_level].attn) > 0:
-                    h = self.up[i_level].attn[i_block](h)
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    h = ckpt.checkpoint(self.up[i_level].block[i_block], h)
+                    if len(self.up[i_level].attn) > 0:
+                        h = ckpt.checkpoint(self.up[i_level].attn[i_block], h)
+                else:
+                    h = self.up[i_level].block[i_block](h)
+                    if len(self.up[i_level].attn) > 0:
+                        h = self.up[i_level].attn[i_block](h)
             if i_level != 0:
-                h = self.up[i_level].upsample(h)
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    h = ckpt.checkpoint(self.up[i_level].upsample, h)
+                else:
+                    h = self.up[i_level].upsample(h)
 
         # end
         h = self.norm_out(h)
@@ -326,6 +361,17 @@ class AutoEncoder(nn.Module):
             affine=False,
             track_running_stats=True,
         )
+        self._gradient_checkpointing = False
+
+    @property
+    def gradient_checkpointing(self):
+        return self._gradient_checkpointing
+
+    @gradient_checkpointing.setter
+    def gradient_checkpointing(self, value: bool):
+        self._gradient_checkpointing = value
+        self.encoder.gradient_checkpointing = value
+        self.decoder.gradient_checkpointing = value
 
     @property
     def device(self):
@@ -334,6 +380,11 @@ class AutoEncoder(nn.Module):
     @property
     def dtype(self):
         return next(self.parameters()).dtype
+
+    def enable_gradient_checkpointing(self):
+        self.gradient_checkpointing = True
+        self.encoder.enable_gradient_checkpointing()
+        self.decoder.enable_gradient_checkpointing()
 
     def normalize(self, z):
         self.bn.eval()
