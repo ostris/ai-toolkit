@@ -17,6 +17,17 @@ class AutoEncoderParams:
     num_res_blocks: int = 2
     z_channels: int = 32
 
+@dataclass
+class AutoEncoderSmallDecoderParams:
+    resolution: int = 256
+    in_channels: int = 3
+    ch: int = 128
+    ch_encoder: int = 96
+    out_ch: int = 3
+    ch_mult: list[int] = field(default_factory=lambda: [1, 2, 4, 4])
+    num_res_blocks: int = 2
+    z_channels: int = 32
+
 
 def swish(x: Tensor) -> Tensor:
     return x * torch.sigmoid(x)
@@ -341,10 +352,13 @@ class AutoEncoder(nn.Module):
             num_res_blocks=params.num_res_blocks,
             z_channels=params.z_channels,
         )
+        decoder_ch = params.ch
+        if hasattr(params, "ch_encoder"):
+            decoder_ch = params.ch_encoder
         self.decoder = Decoder(
             resolution=params.resolution,
             in_channels=params.in_channels,
-            ch=params.ch,
+            ch=decoder_ch,
             out_ch=params.out_ch,
             ch_mult=params.ch_mult,
             num_res_blocks=params.num_res_blocks,
