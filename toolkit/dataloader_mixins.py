@@ -1831,6 +1831,9 @@ class LatentCachingFileItemDTOMixin:
                 item["audio_normalize"] = True
             if self.dataset_config.audio_preserve_pitch:
                 item["audio_preserve_pitch"] = True
+        if self.is_audio_model:
+            item["is_audio_model"] = True
+            item["sample_rate"] = self.sample_rate
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
@@ -1893,8 +1896,6 @@ class LatentCachingMixin:
         self.latent_cache = {}
 
     def cache_latents_all_latents(self: 'AiToolkitDataset'):
-        if self.is_audio_model:
-            raise Exception("Audio models are not supported for latent caching yet")
         with accelerator.main_process_first():
             print_acc(f"Caching latents for {self.dataset_path}")
             # cache all latents to disk
@@ -1960,8 +1961,8 @@ class LatentCachingMixin:
                         if to_disk:
                             state_dict['first_frame_latent'] = first_frame_latent.clone().detach().cpu()
                     
-                    # audio
-                    if file_item.audio_data is not None:
+                    # audio (video+audio models only — audio-only models already encoded above via encode_images)
+                    if not self.is_audio_model and file_item.audio_data is not None:
                         audio_latent = self.sd.encode_audio([file_item.audio_data]).squeeze(0)
                         if to_disk:
                             state_dict['audio_latent'] = audio_latent.clone().detach().cpu()

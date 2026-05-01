@@ -1081,12 +1081,62 @@ class OobleckVAE(nn.Module):
         ]
         self.decoder = _SeqWrap(*dec)
         self.bottleneck = VAEBottleneck()
+        self.upscale_factor = math.prod(strides)
 
     def encode(self, x):
         return self.bottleneck.encode(self.encoder(x))
 
     def decode(self, x):
         return self.decoder(self.bottleneck.decode(x))
+
+    def tiled_decode(self, x, tile_seconds=10.0, overlap_seconds=1.0):
+        """VRAM-light decode: split the latent into ~tile_seconds tiles with
+        overlap_seconds of overlap, decode each tile independently, and
+        linearly crossfade the overlapping audio regions."""
+        z = self.bottleneck.decode(x)
+        tile_frames = max(1, round(tile_seconds * LATENT_RATE))
+        overlap_frames = max(1, round(overlap_seconds * LATENT_RATE))
+        if overlap_frames >= tile_frames:
+            raise ValueError("overlap_seconds must be smaller than tile_seconds")
+
+        T = z.shape[-1]
+        if T <= tile_frames:
+            return self.decoder(z)
+
+        step = tile_frames - overlap_frames
+        fade_len = overlap_frames * self.upscale_factor
+        out_T = T * self.upscale_factor
+
+        out = None
+        ramp = None
+        write_pos = 0
+
+        for i, start in enumerate(range(0, T, step)):
+            end = min(start + tile_frames, T)
+            decoded = self.decoder(z[..., start:end])
+
+            if out is None:
+                out = decoded.new_zeros(decoded.shape[0], decoded.shape[1], out_T)
+                ramp = torch.linspace(0, 1, fade_len, device=decoded.device, dtype=decoded.dtype)
+
+            if i == 0:
+                n = decoded.shape[-1]
+                out[..., :n] = decoded
+                write_pos = n
+            else:
+                blend_start = write_pos - fade_len
+                out[..., blend_start:blend_start + fade_len] = (
+                    out[..., blend_start:blend_start + fade_len] * (1 - ramp)
+                    + decoded[..., :fade_len] * ramp
+                )
+                tail = decoded.shape[-1] - fade_len
+                out[..., write_pos:write_pos + tail] = decoded[..., fade_len:]
+                write_pos += tail
+
+            if end == T:
+                break
+
+        return out[..., :write_pos]
 
     @property
     def device(self):
