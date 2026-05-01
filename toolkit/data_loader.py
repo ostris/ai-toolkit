@@ -694,6 +694,13 @@ def get_dataloader_from_datasets(
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
 
+    # Enable pinned memory for faster CPU->GPU transfer when CUDA is available.
+    # pin_memory is independent of num_workers and works even with num_workers=0
+    # (the forced setting on native Windows / macOS due to dataset pickling
+    # constraints). No-op on non-CUDA backends.
+    if torch.cuda.is_available():
+        dataloader_kwargs['pin_memory'] = True
+
     if has_buckets:
         # make sure they all have buckets
         for dataset in datasets:
