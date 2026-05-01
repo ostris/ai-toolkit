@@ -10,6 +10,7 @@ from diffusers.utils import logging, replace_example_docstring
 from diffusers.pipelines.z_image.pipeline_output import ZImagePipelineOutput
 from extensions_built_in.diffusion_models.zeta_chroma.zeta_chroma_transformer import (
     get_schedule,
+    get_low_step_schedule,
     prepare_latent_image_ids,
     make_text_position_ids,
     vae_unflatten,
@@ -80,6 +81,7 @@ class ZetaChromaPipeline(ZImagePipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 512,
+        low_step_schedule: bool = False,
     ):
         device = self._execution_device
 
@@ -119,7 +121,10 @@ class ZetaChromaPipeline(ZImagePipeline):
         )
 
         # --- Timestep schedule ---
-        timesteps = get_schedule(num_inference_steps, num_patches)
+        if low_step_schedule:
+            timesteps = get_low_step_schedule(num_inference_steps)
+        else:
+            timesteps = get_schedule(num_inference_steps, num_patches)
 
         # --- Denoising loop (CFG) ---
         img = noise

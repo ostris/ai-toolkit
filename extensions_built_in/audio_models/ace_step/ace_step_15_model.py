@@ -158,6 +158,8 @@ class AceStep15Model(BaseAudioModel):
             tokenizer=self.tokenizer,
             scheduler=self.get_train_scheduler(),
         )
+        if self.model_config.low_vram:
+            self.pipeline.do_tiled_decoding = True
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         if isinstance(prompt, str):
@@ -325,7 +327,7 @@ class AceStep15Model(BaseAudioModel):
             self.vae.to(device)
         output = self.vae.encode(audio_tensor.to(device=device, dtype=dtype))
         # transpose from [B, 64, T] to [B, T, 64] for DiT
-        output = output.transpose(1, 2)
+        output = output.transpose(1, 2).contiguous()
         return output
 
 

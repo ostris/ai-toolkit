@@ -7,6 +7,7 @@ import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped 
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
+import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
 
 interface JobActionBarProps {
   job: Job;
@@ -84,7 +85,23 @@ export default function JobActionBar({
           <Eye />
         </Link>
       )}
-      {canEdit && (
+      {job.job_type === 'caption' && canEdit && (
+        <div
+          className="ml-2 hover:text-gray-100 inline-block cursor-pointer"
+          onClick={() =>
+            openCaptionDatasetModal(
+              job.job_ref || '',
+              () => {
+                if (onRefresh) onRefresh();
+              },
+              { jobId: job.id },
+            )
+          }
+        >
+          <Pen />
+        </div>
+      )}
+      {job.job_type === 'train' && canEdit && (
         <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
           <Pen />
         </Link>

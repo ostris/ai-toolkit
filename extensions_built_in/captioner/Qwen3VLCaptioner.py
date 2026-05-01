@@ -1,4 +1,8 @@
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from transformers import (
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLMoeForConditionalGeneration,
+    AutoProcessor,
+)
 from collections import OrderedDict
 
 from optimum.quanto import freeze
@@ -21,7 +25,12 @@ class Qwen3VLCaptioner(BaseCaptioner):
 
     def load_model(self):
         self.print_and_status_update("Loading Qwen3VL model")
-        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+        ModelClass = (
+            Qwen3VLMoeForConditionalGeneration
+            if "B-A" in self.caption_config.model_name_or_path
+            else Qwen3VLForConditionalGeneration
+        )
+        self.model = ModelClass.from_pretrained(
             self.caption_config.model_name_or_path,
             dtype=self.torch_dtype,
             device_map="cpu",

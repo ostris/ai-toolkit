@@ -369,7 +369,9 @@ class Wan21I2V(Wan21):
         
 
     def get_generation_pipeline(self):
-        scheduler = UniPCMultistepScheduler(**scheduler_configUniPC)
+        # todo unipc got broken in a diffusers update. Use euler for now.
+        # scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
+        scheduler = self.get_train_scheduler()
         if self.model_config.low_vram:
             pipeline = AggressiveWanI2VUnloadPipeline(
                 vae=self.vae,

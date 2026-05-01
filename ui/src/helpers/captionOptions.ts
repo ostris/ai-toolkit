@@ -1,7 +1,7 @@
 import { GroupedSelectOption, SelectOption } from "@/types";
 
 type CaptionGroup = 'image' | 'music';
-type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens';
+type AdditionalSections = 'caption.model_name_or_path2' | 'caption.caption_prompt' | 'caption.max_res' | 'caption.max_new_tokens' | 'caption.fixed_caption';
 
 export interface CaptionOption {
     name: string;
@@ -41,6 +41,7 @@ export const captionerTypes: CaptionOption[] = [
         ],
         additionalSections: [
             'caption.model_name_or_path2',
+            'caption.fixed_caption',
         ],
     },
     {

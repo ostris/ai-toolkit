@@ -7,9 +7,12 @@ import torch.nn.functional as F
 from diffusers import AutoencoderTiny
 from transformers import AutoImageProcessor, AutoModel, SiglipImageProcessor, SiglipVisionModel
 import lpips
-
+import weakref
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
+from toolkit.models.base_model import BaseModel
+from toolkit.models.sapiens2 import Sapiens2
+import huggingface_hub
 
 
 class ResBlock(nn.Module):
@@ -804,8 +807,374 @@ class DiffusionFeatureExtractor6(nn.Module):
             self.step += 1
         
         return dino_loss
+    
+class ModelOutputWrapper:
+    def __init__(self, head, depth, normals, segmentation):
+        self.head = head
+        self.depth = depth
+        self.normals = normals
+        self.segmentation = segmentation
+    
 
-def load_dfe(model_path, vae=None) -> DiffusionFeatureExtractor:
+class DiffusionFeatureExtractor7(nn.Module):
+    def __init__(
+        self, 
+        device=torch.device("cuda"), 
+        dtype=torch.bfloat16, 
+        vae=None, 
+        sd=None,
+        partial_step: bool = False
+    ):
+        super().__init__()
+        
+        self.version = 7
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
+        pretrained_model_name = "google/tipsv2-b14-dpt"
+        self.model = AutoModel.from_pretrained(
+            pretrained_model_name, 
+            device_map=device,
+            dtype=torch.float32,
+            trust_remote_code=True
+        ).to(device)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        self.do_partial_step = partial_step
+    
+    def get_pred(self, tensor_0_1: torch.Tensor):
+        """
+        tensor_0_1: (bs, 3, h, w), float, values in [0, 1]
+        returns: {"pixel_values": (bs, 3, H, W)} ready for the vision transformer
+        """
+
+        if tensor_0_1.ndim != 4 or tensor_0_1.shape[1] != 3:
+            raise ValueError(f"Expected (bs, 3, h, w), got {tuple(tensor_0_1.shape)}")
+
+        x = tensor_0_1.to(self.model.device, dtype=self.model.dtype)
+
+        # Resize
+        # if not divisible by 16 or total pixels > max_res*max_res, resize to fit within 16 patches
+        max_res = 1024
+        p = 14
+        if (x.shape[-1] % p != 0) or (x.shape[-2] % p != 0) or (x.shape[-1] * x.shape[-2] > max_res * max_res):
+            target_h = x.shape[-2]
+            target_w = x.shape[-1]
+            if x.shape[-1] * target_h > max_res * max_res:
+                scale_factor = math.sqrt((max_res * max_res) / (target_w * target_h))
+                target_h = int(target_h * scale_factor)
+                target_w = int(target_w * scale_factor)
+            target_h = (target_h // p) * p
+            target_w = (target_w // p) * p
+            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+        
+        # do inference. us standard dpy but also the head
+        pixel_values = x.to(self.model.device, dtype=self.model.dtype)
+        h, w = pixel_values.shape[2:]
+        dpt_inputs = self.model._extract_intermediate(pixel_values)
+        # head is a list of 4
+        # each of the 4 is a tuple of (embeds, hidden_state)
+        # concat the hidden states from the 4 layers on dim 1
+        head = torch.cat([h[1] for h in dpt_inputs], dim=1)
+        return ModelOutputWrapper(
+            head=head,
+            depth=self.model.depth_head(dpt_inputs, image_size=(h, w)),
+            normals=self.model.normals_head(dpt_inputs, image_size=(h, w)),
+            segmentation=self.model.segmentation_head(dpt_inputs, image_size=(h, w)),
+        )
+    
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.sd_ref().vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+        
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+            
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+        
+        with torch.no_grad():
+            target_0_1 = (tensors + 1) / 2  # 0 to 1
+        
+        if not self.do_partial_step:
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
+            stepped_latents = x0
+            # min 0.001
+            tv = torch.clamp(tv, min=0.001)
+        else:
+            # step is random 0.05 to 0.02
+            step = torch.rand_like(tv) * 0.03 + 0.02
+            next_step = tv - step
+            next_step = torch.clamp(next_step, min=0.0)
+            stepped_latents = noisy_latents + (next_step - tv) * noise_pred
+            
+            with torch.no_grad():
+                # make a noisy target at next timestep
+                target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+                # add noise
+                target_latents = (1.0 - next_step) * target_latents + next_step * noise
+                target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
+
+        latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+        
+        tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+        
+        device = self.model.device
+        dtype = self.model.dtype
+
+        with torch.no_grad():
+            target = self.get_pred(target_0_1)
+        
+        pred_images = pred_images.to(device, dtype=dtype)
+        pred = self.get_pred(pred_images)
+        
+        head_loss = torch.nn.functional.mse_loss(
+            pred.head.float(), target.head.float()
+        )
+        
+        depth_loss = torch.nn.functional.l1_loss(
+            pred.depth.float(), target.depth.float()
+        )
+        
+        normals_loss = torch.nn.functional.l1_loss(
+            pred.normals.float(), target.normals.float()
+        )
+        
+        segmentation_loss = torch.nn.functional.l1_loss(
+            pred.segmentation.float(), target.segmentation.float()
+        )
+        
+        total_loss = (head_loss + depth_loss + normals_loss + segmentation_loss) / 4.0
+        
+        if self.do_partial_step:
+            total_loss = total_loss * 10.0
+        
+        if 'total' not in self.losses:
+            self.losses['total'] = total_loss.item()
+        else:
+            self.losses['total'] += total_loss.item()
+            
+        if 'head' not in self.losses:
+            self.losses['head'] = head_loss.item()
+        else:
+            self.losses['head'] += head_loss.item()
+            
+        if 'depth' not in self.losses:
+            self.losses['depth'] = depth_loss.item()
+        else:
+            self.losses['depth'] += depth_loss.item()
+            
+        if 'normals' not in self.losses:
+            self.losses['normals'] = normals_loss.item()
+        else:
+            self.losses['normals'] += normals_loss.item()
+            
+        if 'segmentation' not in self.losses:
+            self.losses['segmentation'] = segmentation_loss.item()
+        else:   
+            self.losses['segmentation'] += segmentation_loss.item()
+        
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+            
+            # total_loss += mse_loss
+            self.step += 1
+        
+        return total_loss
+
+class DiffusionFeatureExtractor8(DiffusionFeatureExtractor7):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None, sd=None):
+        super().__init__(device=device, dtype=dtype, vae=vae, sd=sd, partial_step=True)
+        self.version = 8
+
+class DiffusionFeatureExtractor9(nn.Module):
+    def __init__(
+        self, 
+        device=torch.device("cuda"), 
+        dtype=torch.bfloat16, 
+        vae=None, 
+        sd=None,
+        partial_step: bool = False
+    ):
+        super().__init__()
+        
+        self.version = 9
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
+        ckpt_path = huggingface_hub.hf_hub_download(repo_id="facebook/sapiens2-pretrain-1b", filename="sapiens2_1b_pretrain.safetensors")
+        self.model = Sapiens2(arch="sapiens2_1b", img_size=(1024, 768), patch_size=16).eval().cuda()  # img_size is (H, W)
+        self.model.load_state_dict(load_file(ckpt_path))
+        self.model.to(device, dtype=dtype)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        self.do_partial_step = partial_step
+    
+    def get_pred(self, tensor_0_1: torch.Tensor):
+        if tensor_0_1.ndim != 4 or tensor_0_1.shape[1] != 3:
+            raise ValueError(f"Expected (bs, 3, h, w), got {tuple(tensor_0_1.shape)}")
+
+        x = tensor_0_1.to(self.model.device, dtype=self.model.dtype)
+        """Apply ImageNet normalization to a (B, C, H, W) RGB tensor in [0, 1]."""
+        mean = torch.as_tensor((0.485, 0.456, 0.406), dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
+        std = torch.as_tensor((0.229, 0.224, 0.225), dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
+        x = (x - mean) / std
+
+        # Resize
+        # if not divisible by 16 or total pixels > max_res*max_res, resize to fit within 16 patches
+        max_res = 1024
+        p = 16
+        if (x.shape[-1] % p != 0) or (x.shape[-2] % p != 0) or (x.shape[-1] * x.shape[-2] > max_res * max_res):
+            target_h = x.shape[-2]
+            target_w = x.shape[-1]
+            if x.shape[-1] * target_h > max_res * max_res:
+                scale_factor = math.sqrt((max_res * max_res) / (target_w * target_h))
+                target_h = int(target_h * scale_factor)
+                target_w = int(target_w * scale_factor)
+            target_h = (target_h // p) * p
+            target_w = (target_w // p) * p
+            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+        x = x.to(self.model.device, dtype=self.model.dtype)
+        features = self.model(x)[0]
+        return features
+    
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.sd_ref().vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+        
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+            
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+        
+        with torch.no_grad():
+            target_0_1 = (tensors + 1) / 2  # 0 to 1
+        
+        if not self.do_partial_step:
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
+            stepped_latents = x0
+            # min 0.001
+            tv = torch.clamp(tv, min=0.001)
+        else:
+            # step is random 0.1 to 0.25
+            step = torch.rand_like(tv) * 0.15 + 0.1
+            next_step = tv - step
+            next_step = torch.clamp(next_step, min=0.0)
+            stepped_latents = noisy_latents + (next_step - tv) * noise_pred
+            
+            with torch.no_grad():
+                # make a noisy target at next timestep
+                target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+                # add noise
+                target_latents = (1.0 - next_step) * target_latents + next_step * noise
+                target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
+
+        latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+        
+        tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+        
+        device = self.model.device
+        dtype = self.model.dtype
+
+        with torch.no_grad():
+            target = self.get_pred(target_0_1)
+        
+        pred_images = pred_images.to(device, dtype=dtype)
+        pred = self.get_pred(pred_images)
+        
+        perceptual_loss = torch.nn.functional.mse_loss(
+            pred.float(), target.float(), reduction="none"
+        )
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.001) ** 2)
+        loss_perceptual = (perceptual_loss * velocity_equiv_weight).mean()
+        
+        if self.do_partial_step:
+            loss_perceptual = loss_perceptual * 10.0
+        
+        if 'loss' not in self.losses:
+            self.losses['loss'] = loss_perceptual.item()
+        else:
+            self.losses['loss'] += loss_perceptual.item()
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+            
+            # total_loss += mse_loss
+            self.step += 1
+        
+        return loss_perceptual
+
+def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureExtractor:
     if model_path == "v3":
         dfe = DiffusionFeatureExtractor3(vae=vae)
         dfe.eval()
@@ -820,6 +1189,18 @@ def load_dfe(model_path, vae=None) -> DiffusionFeatureExtractor:
         return dfe
     if model_path == "v6":
         dfe = DiffusionFeatureExtractor6(vae=vae)
+        dfe.eval()
+        return dfe
+    if model_path == "v7":
+        dfe = DiffusionFeatureExtractor7(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if model_path == "v8":
+        dfe = DiffusionFeatureExtractor8(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if model_path == "v9":
+        dfe = DiffusionFeatureExtractor9(vae=vae, sd=sd)
         dfe.eval()
         return dfe
     if not os.path.exists(model_path):

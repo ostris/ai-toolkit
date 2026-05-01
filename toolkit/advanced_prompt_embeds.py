@@ -1,3 +1,4 @@
+import os
 from safetensors.torch import load_file, save_file
 
 
@@ -115,6 +116,7 @@ class AdvancedPromptEmbeds:
                     f"Cannot save key {key!r}: expected list of length 1, got {len(value)}"
                 )
             data[key] = value[0]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         save_file(data, path, metadata=metadata)
 
     @classmethod
@@ -123,12 +125,6 @@ class AdvancedPromptEmbeds:
             loaded = load_file(path)
         else:
             raise ValueError("Must provide a path")
-
-        metadata = loaded.metadata()
-        if metadata.get("class_name") != cls.__name__:
-            raise ValueError(
-                f"Metadata class_name {metadata.get('class_name')!r} does not match expected {cls.__name__!r}"
-            )
 
         data = {}
         for key in loaded.keys():
@@ -145,7 +141,7 @@ class AdvancedPromptEmbeds:
             for key in pe.keys():
                 if key not in embeds:
                     embeds[key] = []
-                embeds[key].append(pe[key])
+                embeds[key].extend(pe[key])
         return cls(**embeds)
 
     @classmethod
@@ -161,4 +157,4 @@ class AdvancedPromptEmbeds:
                     f"Cannot split key {key!r}: expected list of length {num_parts}, got {len(values)}"
                 )
             for i in range(num_parts):
-                split_embeds[i]._store[key] = values[i]
+                split_embeds[i]._store[key] = [values[i]]
