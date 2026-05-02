@@ -977,6 +977,12 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        # Pin DataLoader output tensors in page-locked RAM for faster CPU->GPU
+        # transfer. Off by default because page-locked RAM cannot be relocated
+        # by NVIDIA's Windows driver shared-memory VRAM-overflow fallback,
+        # which can cause severe PCIe thrashing for users at the VRAM ceiling.
+        # Opt in if you have stable VRAM headroom and want the transfer speedup.
+        self.pin_memory: bool = kwargs.get('pin_memory', False)
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
