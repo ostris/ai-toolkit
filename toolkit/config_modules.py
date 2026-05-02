@@ -1207,7 +1207,7 @@ class GenerateImageConfig:
             audio_path = self.get_image_path(count, max_count)
             torchaudio.save(
                 audio_path, 
-                (image if len(image.shape) == 2 else image[0]).to('cpu'), # sox requires 2D tensor
+                (image if len(image.shape) == 2 else image[0]).to('cpu').to(torch.float32), # sox requires 2D tensor, and must in float32 (bf16 will cause error)
                 sample_rate=48000, 
                 format=None, 
                 backend=None
