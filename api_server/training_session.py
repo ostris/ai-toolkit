@@ -35,6 +35,7 @@ class TrainingSession:
         config: Dict[str, Any],
         *,
         max_steps: Optional[int] = None,
+        wait_for_initial_ready: bool = True,
     ) -> None:
         self.session_id = session_id
         self.config = config
@@ -78,8 +79,10 @@ class TrainingSession:
         )
         self._thread.start()
 
-        # Wait for trainer to reach initial pause or finish
-        self._wait_for_initial_ready()
+        # Training jobs pause at startup until step budget is granted. Plain
+        # extension jobs should return to the API immediately and run async.
+        if wait_for_initial_ready:
+            self._wait_for_initial_ready()
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -112,6 +115,9 @@ class TrainingSession:
     def _training_loop(self) -> None:
         final_status = 'completed'
         try:
+            with self._status_lock:
+                if self.status == 'initializing':
+                    self.status = 'running'
             with self._capture_output():
                 self.trainer.run()
             aborted = getattr(self.trainer, '_training_aborted', False) or self.controller.abort_event.is_set()
@@ -331,8 +337,8 @@ class TrainingSession:
     def free_vram(self) -> bool:
         if hasattr(self.trainer, 'cleanup_vram'):
             try:
-                self.trainer.cleanup_vram()
-                return True
+                result = self.trainer.cleanup_vram()
+                return result is not False
             except Exception:
                 pass
         return False

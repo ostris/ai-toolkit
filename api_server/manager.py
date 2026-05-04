@@ -19,12 +19,18 @@ class TrainingSessionManager:
         *,
         session_id: Optional[str] = None,
         max_steps: Optional[int] = None,
+        wait_for_initial_ready: bool = True,
     ) -> TrainingSession:
         with self._lock:
             sid = session_id or uuid.uuid4().hex
             if sid in self._sessions:
                 raise ValueError(f'session "{sid}" already exists')
-            session = TrainingSession(sid, config, max_steps=max_steps)
+            session = TrainingSession(
+                sid,
+                config,
+                max_steps=max_steps,
+                wait_for_initial_ready=wait_for_initial_ready,
+            )
             self._sessions[sid] = session
             return session
 
@@ -76,8 +82,10 @@ class TrainingSessionManager:
                     failed_sessions.append(sid)
                     continue
                 session.join(timeout=2)
-                session.free_vram()
-                freed_sessions.append(sid)
+                if session.free_vram():
+                    freed_sessions.append(sid)
+                else:
+                    failed_sessions.append(sid)
             except Exception:
                 failed_sessions.append(sid)
 
@@ -90,6 +98,14 @@ class TrainingSessionManager:
                 pass
 
         if all_stopped:
+            try:
+                from extensions_built_in.captioner.AceStepCaptioner import AceStepCaptioner
+
+                if not AceStepCaptioner.clear_model_cache():
+                    failed_sessions.append('AceStepCaptioner')
+            except Exception:
+                failed_sessions.append('AceStepCaptioner')
+
             try:
                 from toolkit.memory_management import clear_device_state
 

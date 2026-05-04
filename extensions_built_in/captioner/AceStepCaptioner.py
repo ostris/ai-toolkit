@@ -1,5 +1,6 @@
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
+import gc
 import librosa
 import numpy as np
 import torch
@@ -14,6 +15,7 @@ from toolkit.util.quantize import quantize, get_qtype
 from .BaseCaptioner import BaseCaptioner, CaptionConfig
 import transformers
 import logging
+import threading
 import warnings
 
 transformers.logging.set_verbosity_error()
@@ -106,55 +108,110 @@ class AceStepCaptionConfig(CaptionConfig):
 class AceStepCaptioner(BaseCaptioner):
     caption_config_class = AceStepCaptionConfig
     caption_config: AceStepCaptionConfig
+    _model_cache: Dict[Tuple[str, str, str, str, bool, str], Dict[str, Any]] = {}
+    _cache_lock = threading.RLock()
+    _active_runs = 0
 
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         super(AceStepCaptioner, self).__init__(process_id, job, config, **kwargs)
 
-    def load_model(self):
-        self.print_and_status_update("Loading transcriber model")
-        self.model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-            self.caption_config.model_name_or_path,
-            dtype=self.torch_dtype,
-            device_map="cpu",
-        )
-        self.model.to(self.device_torch)
-        self.model.disable_talker()
-        if self.caption_config.quantize:
-            self.print_and_status_update("Quantizing transcriber model")
-            quantize(self.model, weights=get_qtype(self.caption_config.qtype))
-            freeze(self.model)
-            flush()
-        self.processor = Qwen2_5OmniProcessor.from_pretrained(
-            self.caption_config.model_name_or_path
-        )
-        if self.caption_config.low_vram:
-            self.model.to("cpu")
-        
-        self.model2 = None
-        self.processor2 = None
+    def run(self):
+        with self._cache_lock:
+            type(self)._active_runs += 1
+        try:
+            return super().run()
+        finally:
+            with self._cache_lock:
+                type(self)._active_runs = max(0, type(self)._active_runs - 1)
 
-        if self.caption_config.fixed_caption is not None:
-            # load captioner model
-            self.print_and_status_update("Loading captioner model")
-            self.model2 = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-                self.caption_config.model_name_or_path2,
+    def _model_cache_key(self, role: str, model_path: str) -> Tuple[str, str, str, str, bool, str]:
+        return (
+            role,
+            model_path,
+            self.caption_config.dtype,
+            str(self.device_torch),
+            self.caption_config.quantize,
+            self.caption_config.qtype,
+        )
+
+    def _load_cached_qwen_model(self, role: str, model_path: str):
+        cache_key = self._model_cache_key(role, model_path)
+        with self._cache_lock:
+            cached = self._model_cache.get(cache_key)
+            if cached is not None:
+                self.print_and_status_update(f"Reusing {role} model")
+                model = cached["model"]
+                if not self.caption_config.low_vram and model.device == torch.device("cpu"):
+                    model.to(self.device_torch)
+                return model, cached["processor"]
+
+            self.print_and_status_update(f"Loading {role} model")
+            model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
+                model_path,
                 dtype=self.torch_dtype,
                 device_map="cpu",
             )
-            self.model2.to(self.device_torch)
-            self.model2.disable_talker()
+            model.to(self.device_torch)
+            model.disable_talker()
             if self.caption_config.quantize:
-                self.print_and_status_update("Quantizing captioner model")
-                quantize(self.model2, weights=get_qtype(self.caption_config.qtype))
-                freeze(self.model2)
+                self.print_and_status_update(f"Quantizing {role} model")
+                quantize(model, weights=get_qtype(self.caption_config.qtype))
+                freeze(model)
                 flush()
-            self.processor2 = Qwen2_5OmniProcessor.from_pretrained(
+            processor = Qwen2_5OmniProcessor.from_pretrained(model_path)
+            if self.caption_config.low_vram:
+                model.to("cpu")
+
+            self._model_cache[cache_key] = {
+                "model": model,
+                "processor": processor,
+            }
+            return model, processor
+
+    @classmethod
+    def clear_model_cache(cls) -> bool:
+        with cls._cache_lock:
+            if cls._active_runs > 0:
+                return False
+            for cached in list(cls._model_cache.values()):
+                model = cached.get("model")
+                if model is not None:
+                    try:
+                        model.to("cpu")
+                    except Exception:
+                        pass
+            cls._model_cache.clear()
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+        return True
+
+    def load_model(self):
+        self.model, self.processor = self._load_cached_qwen_model(
+            "transcriber",
+            self.caption_config.model_name_or_path,
+        )
+
+        self.model2 = None
+        self.processor2 = None
+
+        if self.caption_config.fixed_caption is None:
+            self.model2, self.processor2 = self._load_cached_qwen_model(
+                "captioner",
                 self.caption_config.model_name_or_path2,
             )
 
-            if self.caption_config.low_vram:
-                self.model2.to("cpu")
         flush()
+
+    def cleanup_vram(self):
+        if not type(self).clear_model_cache():
+            return False
+        return super().cleanup_vram()
 
     def run_qwen_audio(self, model, processor, audio_data, sr, prompt_text):
         """Run a Qwen2.5-Omni model on audio with a text prompt."""
@@ -191,7 +248,11 @@ class AceStepCaptioner(BaseCaptioner):
         return result.strip()
 
     def get_audio_lyrics(self, audio_data: torch.Tensor) -> str:
-        if self.caption_config.low_vram and self.model2.device != torch.device("cpu"):
+        if (
+            self.caption_config.low_vram
+            and self.model2 is not None
+            and self.model2.device != torch.device("cpu")
+        ):
             # move captioner to cpu
             self.model2.to("cpu")
         # move lyric model if needed
@@ -204,6 +265,8 @@ class AceStepCaptioner(BaseCaptioner):
         )
 
     def get_audio_caption(self, audio_data: torch.Tensor) -> str:
+        if self.model2 is None or self.processor2 is None:
+            raise RuntimeError("Captioner model is not loaded")
         if self.caption_config.low_vram and self.model.device != torch.device("cpu"):
             # move lyricmodel to cpu
             self.model.to("cpu")

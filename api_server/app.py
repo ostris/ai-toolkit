@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import os
 import tempfile
 import requests
@@ -27,6 +27,9 @@ JOYCAPTION_LEGACY_MAX_NEW_TOKENS = 300
 JOYCAPTION_LEGACY_TEMPERATURE = 0.5
 JOYCAPTION_LEGACY_TOP_K = 10
 FLORENCE2_DEFAULT_MAX_NEW_TOKENS = 1024
+ACE_STEP_TRANSCRIBER_ID = "ACE-Step/acestep-transcriber"
+ACE_STEP_CAPTIONER_ID = "ACE-Step/acestep-captioner"
+ACE_STEP_AUDIO_EXTENSIONS = ["mp3", "wav", "flac", "ogg"]
 
 
 class SessionCreateRequest(BaseModel):
@@ -131,6 +134,39 @@ class AudioCaptionRequest(BaseModel):
         description="Max audio duration to process in seconds",
         gt=0,
     )
+
+    class Config:
+        allow_population_by_field_name = True
+
+
+class AudioCaptionJobRequest(BaseModel):
+    session_id: Optional[str] = Field(default=None, alias='sessionId')
+    name: Optional[str] = Field(default=None, description="Job name")
+    path_to_caption: str = Field(..., description="Directory containing audio files to caption")
+    extensions: List[str] = Field(
+        default_factory=lambda: list(ACE_STEP_AUDIO_EXTENSIONS),
+        description="Audio file extensions to caption",
+    )
+    caption_extension: str = Field(default="txt", description="Output caption file extension")
+    recaption: bool = Field(default=False, description="Overwrite existing caption files")
+    model_name_or_path: str = Field(
+        default=ACE_STEP_TRANSCRIBER_ID,
+        description="ACE-Step transcriber model path",
+    )
+    model_name_or_path2: Optional[str] = Field(
+        default=ACE_STEP_CAPTIONER_ID,
+        description="ACE-Step captioner model path. Required unless fixed_caption is set.",
+    )
+    fixed_caption: Optional[str] = Field(
+        default=None,
+        description="Optional fixed CAPTION text. When set, the captioner model is skipped.",
+    )
+    dtype: str = Field(default="bf16", description="Model dtype")
+    device: Optional[str] = Field(default=None, description="Device override. Defaults to cuda when available.")
+    quantize: bool = Field(default=True, description="Quantize loaded models")
+    qtype: str = Field(default="float8", description="Quantization type")
+    low_vram: bool = Field(default=True, description="Move inactive models to CPU between stages")
+    sqlite_db_path: Optional[str] = Field(default=None, description="Optional UI sqlite DB path")
 
     class Config:
         allow_population_by_field_name = True
@@ -369,6 +405,70 @@ def _get_cuda_used_memory() -> int:
         return total - free
     except Exception:
         return torch.cuda.memory_reserved()
+
+
+def _get_default_torch_device() -> str:
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _normalize_extensions(extensions: List[str]) -> List[str]:
+    normalized = []
+    for extension in extensions:
+        clean_extension = extension.strip().lower().lstrip(".")
+        if clean_extension and clean_extension not in normalized:
+            normalized.append(clean_extension)
+    if not normalized:
+        raise ValueError("At least one audio extension is required")
+    return normalized
+
+
+def _build_ace_step_audio_caption_job_config(request: AudioCaptionJobRequest) -> Dict[str, Any]:
+    if not os.path.isdir(request.path_to_caption):
+        raise FileNotFoundError(f"Directory not found: {request.path_to_caption}")
+
+    fixed_caption = request.fixed_caption
+    if fixed_caption is not None and fixed_caption.strip() == "":
+        fixed_caption = None
+    if fixed_caption is None and not request.model_name_or_path2:
+        raise ValueError("model_name_or_path2 is required unless fixed_caption is set")
+
+    extensions = _normalize_extensions(request.extensions)
+    device = request.device or _get_default_torch_device()
+    job_name = request.name or f"Caption {os.path.basename(os.path.normpath(request.path_to_caption))}"
+
+    caption_config: Dict[str, Any] = {
+        "model_name_or_path": request.model_name_or_path,
+        "dtype": request.dtype,
+        "quantize": request.quantize,
+        "qtype": request.qtype,
+        "low_vram": request.low_vram,
+        "extensions": extensions,
+        "path_to_caption": request.path_to_caption,
+        "caption_extension": request.caption_extension.strip().lstrip(".") or "txt",
+        "recaption": request.recaption,
+    }
+    if request.model_name_or_path2:
+        caption_config["model_name_or_path2"] = request.model_name_or_path2
+    if fixed_caption is not None:
+        caption_config["fixed_caption"] = fixed_caption
+
+    process_config: Dict[str, Any] = {
+        "type": "AceStepCaptioner",
+        "device": device,
+        "caption": caption_config,
+    }
+    if request.sqlite_db_path:
+        process_config["sqlite_db_path"] = request.sqlite_db_path
+
+    return {
+        "job": "extension",
+        "config": {
+            "name": job_name,
+            "process": [process_config],
+        },
+    }
 
 
 def _is_video_file(file_path: str) -> bool:
@@ -802,6 +902,26 @@ def generate_audio_caption(request: AudioCaptionRequest):
                     os.unlink(temp_path)
                 except Exception:
                     pass
+
+
+@app.post('/audio/caption/jobs', status_code=status.HTTP_201_CREATED)
+def create_audio_caption_job(request: AudioCaptionJobRequest):
+    try:
+        config = _build_ace_step_audio_caption_job_config(request)
+        session = manager.create_session(
+            config,
+            session_id=request.session_id,
+            wait_for_initial_ready=False,
+        )
+        return {
+            "session_id": session.session_id,
+            "status": session.get_status(),
+            "config": config,
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.post('/tag')

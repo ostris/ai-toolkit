@@ -417,6 +417,48 @@ curl -X POST http://localhost:8000/audio/caption \
   }'
 ```
 
+### Start an ACE-Step audio captioning dataset job
+
+This runs the existing `AceStepCaptioner` extension job in the API server. It scans a directory of audio files and writes ACE-Step training captions next to each file as `.txt`.
+
+```bash
+curl -X POST http://localhost:8000/audio/caption/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "justice-cross-caption",
+    "path_to_caption": "/path/Justice-Cross-CD-FLAC",
+    "extensions": ["mp3", "wav", "flac", "ogg"],
+    "recaption": false,
+    "low_vram": true,
+    "quantize": true
+  }'
+```
+
+Check progress with the normal session endpoints:
+
+```bash
+curl http://localhost:8000/sessions/justice-cross-caption
+curl http://localhost:8000/sessions/justice-cross-caption/logs
+```
+
+After the job completes, the ACE-Step models stay cached for later caption jobs with the same model/device/dtype/quantization settings. Free them explicitly when needed:
+
+```bash
+curl -X POST http://localhost:8000/free
+```
+
+Use `fixed_caption` to skip loading the ACE-Step captioner model and reuse one caption for every track while still transcribing lyrics and extracting BPM/key metadata:
+
+```bash
+curl -X POST http://localhost:8000/audio/caption/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "justice-cross-caption-fixed",
+    "path_to_caption": "/path/Justice-Cross-CD-FLAC",
+    "fixed_caption": "French electro house with distorted synth bass, punchy drums, and a dark club energy."
+  }'
+```
+
 ## Audio Model Management
 
 ### Unload audio caption model
@@ -456,6 +498,24 @@ Notes:
 
 - Provide either `audio_*` or `video_*`, not both.
 - Video inputs are decoded to audio before captioning.
+
+## ACE-Step Dataset Job Parameter Reference
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sessionId` | string | generated | Optional managed session id |
+| `path_to_caption` | string | required | Directory containing audio files |
+| `extensions` | string[] | `["mp3", "wav", "flac", "ogg"]` | Audio extensions to scan |
+| `caption_extension` | string | `"txt"` | Output caption extension |
+| `recaption` | boolean | false | Overwrite existing caption files |
+| `model_name_or_path` | string | `"ACE-Step/acestep-transcriber"` | Transcriber model |
+| `model_name_or_path2` | string | `"ACE-Step/acestep-captioner"` | Music captioner model; required unless `fixed_caption` is set |
+| `fixed_caption` | string | null | Optional fixed `<CAPTION>` text for every track |
+| `device` | string | auto | Defaults to `cuda` when available, otherwise `cpu` |
+| `dtype` | string | `"bf16"` | Model dtype |
+| `quantize` | boolean | true | Quantize loaded models |
+| `qtype` | string | `"float8"` | Quantization type |
+| `low_vram` | boolean | true | Move inactive models to CPU between transcription/captioning |
 
 ---
 
