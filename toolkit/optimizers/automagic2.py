@@ -113,7 +113,7 @@ class Automagic2(torch.optim.Optimizer):
 
         beta2 = group["beta2"]
         eps = group["eps"]
-        sq = grad * grad + eps
+        sq = (grad * grad).add_(eps)
 
         if p.dim() >= 2:
             row_state = state["exp_avg_sq_row"]
@@ -159,19 +159,24 @@ class Automagic2(torch.optim.Optimizer):
         state["step"] += 1
 
         update.mul_(lr_t)
-        if group["weight_decay"] != 0.0:
-            p_fp32 = p if p.dtype == torch.float32 else p.to(torch.float32)
-            update.addcmul_(p_fp32, lr_t, value=group["weight_decay"])
+        wd = group["weight_decay"]
 
         if p.dtype == torch.bfloat16:
+            # Single bf16 -> fp32 conversion shared by weight decay and SR.
+            new_p_fp32 = p.to(torch.float32)
+            if wd != 0.0:
+                update.addcmul_(new_p_fp32, lr_t, value=wd)
+            new_p_fp32.sub_(update)
             # Stochastic rounding fp32 -> bf16: add random noise into the lower
             # 16 mantissa bits, then truncate. Done in place on new_p_fp32 so
             # we don't allocate a separate int32 work buffer.
-            new_p_fp32 = p.to(torch.float32).sub_(update)
             as_int = new_p_fp32.view(torch.int32)
             as_int.add_(torch.randint_like(as_int, 1 << 16)).bitwise_and_(-65536)
             p.copy_(new_p_fp32)
         else:
+            if wd != 0.0:
+                p_fp32 = p if p.dtype == torch.float32 else p.to(torch.float32)
+                update.addcmul_(p_fp32, lr_t, value=wd)
             p.add_(update.to(p.dtype), alpha=-1.0)
 
         p.grad = None
