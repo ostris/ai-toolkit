@@ -450,8 +450,6 @@ class WanMidBlock(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-        self.gradient_checkpointing = False
-
     def forward(self, x, feat_cache=None, feat_idx=[0]):
         # First residual block
         x = self.resnets[0](x, feat_cache, feat_idx)
@@ -602,15 +600,22 @@ class WanEncoder3d(nn.Module):
         else:
             x = self.conv_in(x)
 
+        use_ckpt = torch.is_grad_enabled() and self.gradient_checkpointing and feat_cache is None
+
         ## downsamples
         for layer in self.down_blocks:
-            if feat_cache is not None:
+            if use_ckpt:
+                x = self._gradient_checkpointing_func(layer, x)
+            elif feat_cache is not None:
                 x = layer(x, feat_cache, feat_idx)
             else:
                 x = layer(x)
 
         ## middle
-        x = self.mid_block(x, feat_cache, feat_idx)
+        if use_ckpt:
+            x = self._gradient_checkpointing_func(self.mid_block, x)
+        else:
+            x = self.mid_block(x, feat_cache, feat_idx)
 
         ## head
         x = self.norm_out(x)
@@ -681,8 +686,6 @@ class WanResidualUpBlock(nn.Module):
             self.upsampler = WanResample(out_dim, mode=upsample_mode, upsample_out_dim=out_dim)
         else:
             self.upsampler = None
-
-        self.gradient_checkpointing = False
 
     def forward(self, x, feat_cache=None, feat_idx=[0], first_chunk=False):
         """
@@ -755,8 +758,6 @@ class WanUpBlock(nn.Module):
         self.upsamplers = None
         if upsample_mode is not None:
             self.upsamplers = nn.ModuleList([WanResample(out_dim, mode=upsample_mode)])
-
-        self.gradient_checkpointing = False
 
     def forward(self, x, feat_cache=None, feat_idx=[0], first_chunk=None):
         """
@@ -889,12 +890,20 @@ class WanDecoder3d(nn.Module):
         else:
             x = self.conv_in(x)
 
+        use_ckpt = torch.is_grad_enabled() and self.gradient_checkpointing and feat_cache is None
+
         ## middle
-        x = self.mid_block(x, feat_cache, feat_idx)
+        if use_ckpt:
+            x = self._gradient_checkpointing_func(self.mid_block, x)
+        else:
+            x = self.mid_block(x, feat_cache, feat_idx)
 
         ## upsamples
         for up_block in self.up_blocks:
-            x = up_block(x, feat_cache, feat_idx, first_chunk = first_chunk)
+            if use_ckpt:
+                x = self._gradient_checkpointing_func(up_block, x, None, [0], first_chunk)
+            else:
+                x = up_block(x, feat_cache, feat_idx, first_chunk = first_chunk)
 
         ## head
         x = self.norm_out(x)
@@ -961,7 +970,7 @@ class AutoencoderKLWan(ModelMixin, ConfigMixin, FromOriginalModelMixin):
     for all models (such as downloading or saving).
     """
 
-    _supports_gradient_checkpointing = False
+    _supports_gradient_checkpointing = True
 
     @register_to_config
     def __init__(
