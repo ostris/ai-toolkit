@@ -32,6 +32,7 @@ class Automagic2(torch.optim.Optimizer):
         eps: float = 1e-30,
         clip_threshold: float = 1.0,
         weight_decay: float = 0.0,
+        agreement_threshold: float = 0.6,
     ):
         if lr > 1e-3:
             print(f"Warning! Start lr {lr} is very high; forcing to 1e-6.")
@@ -45,6 +46,7 @@ class Automagic2(torch.optim.Optimizer):
             eps=eps,
             clip_threshold=clip_threshold,
             weight_decay=weight_decay,
+            agreement_threshold=agreement_threshold,
         )
         super().__init__(params, defaults)
 
@@ -152,7 +154,7 @@ class Automagic2(torch.optim.Optimizer):
 
         lr_t = state["lr"]
         if state["step"] > 0:
-            direction = (agreement >= 0.5).to(lr_t.dtype) * 2.0 - 1.0
+            direction = (agreement >= group["agreement_threshold"]).to(lr_t.dtype) * 2.0 - 1.0
             lr_t.add_(direction, alpha=group["lr_bump"]).clamp_(
                 min=group["min_lr"], max=group["max_lr"]
             )
@@ -210,7 +212,10 @@ class Automagic2(torch.optim.Optimizer):
         # Parent casts every fp state tensor to param.dtype; force lr back to fp32
         # so subsequent lr_bump (default 1e-6) isn't rounded away on bf16 weights.
         super().load_state_dict(state_dict)
+        # Constructor args always win over whatever was saved in the checkpoint.
         for group in self.param_groups:
+            for k, v in self.defaults.items():
+                group[k] = v
             for p in group["params"]:
                 st = self.state.get(p)
                 if st is not None and isinstance(st.get("lr"), torch.Tensor):
