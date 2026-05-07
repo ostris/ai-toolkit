@@ -346,6 +346,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 ctrl_img_2=sample_item.ctrl_img_2,
                 ctrl_img_3=sample_item.ctrl_img_3,
                 do_cfg_norm=sample_config.do_cfg_norm,
+                log_step=step,
                 **extra_args
             ))
 
@@ -478,8 +479,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         return latest_item
 
     def post_save_hook(self, save_path):
-        # override in subclass
-        pass
+        self.logger.log_checkpoint(save_path)
     
     def done_hook(self):
         pass
@@ -489,7 +489,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
     def save(self, step=None):
         if not self.accelerator.is_main_process:
-            return
+            return None
         flush()
         if self.ema is not None:
             # always save params as ema
@@ -610,6 +610,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         yaml.dump(self.meta, f)
                     # move it back
                     self.adapter = self.adapter.to(orig_device, dtype=orig_dtype)
+                    file_path = name_or_path
                 else:
                     direct_save = False
                     if self.adapter_config.train_only_image_encoder:
@@ -661,6 +662,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     get_torch_dtype(self.save_config.dtype)
                 )
 
+        # snapshot the checkpoint path before it gets overwritten by SNR/optimizer saves
+        checkpoint_path = file_path
+
         # save learnable params as json if we have thim
         if self.snr_gos:
             json_data = {
@@ -673,7 +677,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             with open(path_to_save, 'w') as f:
                 json.dump(json_data, f, indent=4)
         
-        print_acc(f"Saved checkpoint to {file_path}")
+        print_acc(f"Saved checkpoint to {checkpoint_path}")
 
         # save optimizer
         if self.optimizer is not None:
@@ -691,11 +695,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 print_acc("Could not save optimizer")
 
         self.clean_up_saves()
-        self.post_save_hook(file_path)
+        self.post_save_hook(checkpoint_path)
 
         if self.ema is not None:
             self.ema.train()
         flush()
+        return checkpoint_path
 
     # Called before the model is loaded
     def hook_before_model_load(self):
@@ -713,6 +718,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_before_train_loop(self):
         if self.accelerator.is_main_process:
             self.logger.start()
+            if self.dataset_configs:
+                self.logger.log_datasets(self.dataset_configs)
         self.prepare_accelerator()
         
     def sample_step_hook(self, img_num, total_imgs):
@@ -2403,8 +2410,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
-            self.save()
-            self.logger.finish()
+            try:
+                final_path = self.save()
+                # Register model (only for adapter training, not merged saves)
+                if (
+                    final_path
+                    and self.network_config is not None
+                    and not self.train_config.merge_network_on_save
+                ):
+                    self.logger.log_model(
+                        lora_path=final_path,
+                        base_model=self.model_config.name_or_path_original,
+                        model_type=self.model_config.arch or "sd1",
+                        network_type=self.network_config.type,
+                        lora_rank=self.network_config.rank,
+                        lora_alpha=self.network_config.linear_alpha,
+                    )
+            finally:
+                self.logger.finish()
         self.accelerator.end_training()
 
         if self.accelerator.is_main_process:

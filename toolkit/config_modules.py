@@ -37,9 +37,15 @@ class LoggingConfig:
         self.log_every: int = kwargs.get('log_every', 100)
         self.verbose: bool = kwargs.get('verbose', False)
         self.use_wandb: bool = kwargs.get('use_wandb', False)
+        self.use_mlflow: bool = kwargs.get('use_mlflow', False)
         self.use_ui_logger: bool = kwargs.get('use_ui_logger', False)
         self.project_name: str = kwargs.get('project_name', 'ai-toolkit')
         self.run_name: str = kwargs.get('run_name', None)
+        self.mlflow_tracking_uri: str = kwargs.get('mlflow_tracking_uri', None)
+        self.mlflow_experiment_name: str = kwargs.get('mlflow_experiment_name', None)
+        self.mlflow_log_artifacts: bool = kwargs.get('mlflow_log_artifacts', False)
+        self.mlflow_register_model: bool = kwargs.get('mlflow_register_model', False)
+        self.mlflow_registered_model_name: str = kwargs.get('mlflow_registered_model_name', None)
 
 class SampleItem:
     def __init__(
@@ -1075,6 +1081,7 @@ class GenerateImageConfig:
             fps: int = 15,
             ctrl_idx: int = 0,
             do_cfg_norm: bool = False,
+            log_step: Optional[int] = None,
     ):
         self.width: int = width
         self.height: int = height
@@ -1114,6 +1121,8 @@ class GenerateImageConfig:
         self.ctrl_img_1 = ctrl_img_1
         self.ctrl_img_2 = ctrl_img_2
         self.ctrl_img_3 = ctrl_img_3
+        # Runtime-only metadata used to align sample artifacts with the training step.
+        self.log_step = log_step
 
         # prompt string will override any settings above
         self._process_prompt_string()
@@ -1341,7 +1350,7 @@ class GenerateImageConfig:
         if self.logger is None:
             return
 
-        self.logger.log_image(image, count, self.prompt)
+        self.logger.log_image(image, count, self.prompt, step=self.log_step)
         
         
 def validate_configs(

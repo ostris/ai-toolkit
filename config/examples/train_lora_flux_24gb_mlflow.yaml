@@ -1,0 +1,89 @@
+---
+# Example: Training a FLUX LoRA with MLflow experiment tracking
+#
+# Prerequisites:
+#   pip install "mlflow>=3,<4"
+#
+# To view results, start the MLflow UI:
+#   mlflow ui                             # local (default: http://localhost:5000)
+#   mlflow server --host 0.0.0.0          # remote
+#
+# You can also point to an existing tracking server:
+#   logging.mlflow_tracking_uri: "http://your-server:5000"
+
+job: extension
+config:
+  name: "my_flux_lora_mlflow"
+  process:
+    - type: 'sd_trainer'
+      training_folder: "output"
+      device: cuda:0
+      network:
+        type: "lora"
+        linear: 16
+        linear_alpha: 16
+      save:
+        dtype: float16
+        save_every: 250
+        max_step_saves_to_keep: 4
+      datasets:
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          shuffle_tokens: false
+          cache_latents_to_disk: true
+          resolution: [ 512, 768, 1024 ]
+      train:
+        batch_size: 1
+        steps: 2000
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+        dtype: bf16
+      model:
+        name_or_path: "black-forest-labs/FLUX.1-dev"
+        is_flux: true
+        quantize: true
+
+      # ---- Logging & Experiment Tracking ----
+      logging:
+        log_every: 10
+        verbose: false
+
+        # MLflow
+        use_mlflow: true
+        project_name: "flux-lora-training"
+        run_name: "my_flux_lora_mlflow"
+        mlflow_tracking_uri: null              # null = local ./mlruns directory
+        mlflow_experiment_name: "flux-lora"
+        mlflow_log_artifacts: true             # log checkpoint .safetensors as MLflow artifacts
+        mlflow_register_model: true            # register final LoRA in MLflow (appears in Models tab)
+        mlflow_registered_model_name: null     # optional: versioned name in Model Registry (null = model logged as artifact only, not registered)
+
+        # W&B (can be enabled simultaneously with MLflow)
+        # use_wandb: true
+
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        prompts:
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 20
+meta:
+  name: "[name]"
+  version: '1.0'
