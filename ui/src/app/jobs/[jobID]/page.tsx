@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use } from 'react';
+import { useState, use, useEffect } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
 import { MdDashboard, MdImage, MdShowChart, MdCode } from 'react-icons/md';
 import { Button } from '@headlessui/react';
@@ -12,9 +12,11 @@ import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import JobLossGraph from '@/components/JobLossGraph';
+import FlowGRPOVotingPanel from '@/components/FlowGRPOVotingPanel';
 import { Job } from '@prisma/client';
+import { getProcessType } from '@/utils/jobs';
 
-type PageKey = 'overview' | 'samples' | 'config' | 'loss_log';
+type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'voting';
 
 interface Page {
   name: string;
@@ -24,6 +26,7 @@ interface Page {
   menuItem?: React.ComponentType<{ job?: Job | null }> | null;
   mainCss?: string;
   jobTypes?: string[]; // if specified, only show this page for these job types
+  processTypes?: string[];
 }
 
 const pages: Page[] = [
@@ -52,6 +55,15 @@ const pages: Page[] = [
     jobTypes: ['train'],
   },
   {
+    name: 'Voting',
+    value: 'voting',
+    icon: MdImage,
+    component: FlowGRPOVotingPanel,
+    mainCss: 'pt-24',
+    jobTypes: ['train'],
+    processTypes: ['flow_grpo_trainer'],
+  },
+  {
     name: 'Config File',
     value: 'config',
     icon: MdCode,
@@ -69,6 +81,13 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const page = pages.find(p => p.value === pageKey);
 
   const jobType = job?.job_type || 'unknown';
+  const processType = job ? getProcessType(job) : '';
+
+  useEffect(() => {
+    if (processType === 'flow_grpo_trainer') {
+      setPageKey(current => (current === 'overview' ? 'voting' : current));
+    }
+  }, [processType]);
 
   let title = `Job: ${job?.name || 'Loading...'}`;
   if (jobType === 'caption') {
@@ -115,6 +134,12 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
       <div className="bg-gray-800 absolute top-12 left-0 w-full h-8 flex items-center px-2 text-sm">
         {pages.map(page => {
           if (page.jobTypes && !page.jobTypes.includes(jobType)) {
+            return null;
+          }
+          if (page.processTypes && !page.processTypes.includes(processType)) {
+            return null;
+          }
+          if (page.value === 'samples' && processType === 'flow_grpo_trainer') {
             return null;
           }
           return (

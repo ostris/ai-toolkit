@@ -78,6 +78,8 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
   const isAudioModel = !!(modelArch?.group === 'audio');
+  const isFlowGRPO = jobConfig.config.process[0].type === 'flow_grpo_trainer';
+  const datasets = jobConfig.config.process[0].datasets || [];
 
   const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
     if (!modelArch) return null;
@@ -127,8 +129,11 @@ export default function SimpleJob({
     if (!disableSections.includes('slider')) {
       count += 1; // add slider card
     }
+    if (isFlowGRPO) {
+      count += 1;
+    }
     return count;
-  }, [modelArch, disableSections]);
+  }, [modelArch, disableSections, isFlowGRPO]);
 
   let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
 
@@ -509,6 +514,64 @@ export default function SimpleJob({
               />
             </Card>
           )}
+          {isFlowGRPO && (
+            <Card title="Flow-GRPO">
+              <div className="grid gap-x-4 gap-y-2 md:grid-cols-2">
+                <NumberInput
+                  label="Group Size"
+                  value={jobConfig.config.process[0].grpo?.group_size || 4}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.group_size')}
+                  min={2}
+                  required
+                />
+                <SelectInput
+                  label="Transition Mode"
+                  value={jobConfig.config.process[0].grpo?.sde_type || 'sde'}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.sde_type')}
+                  options={[
+                    { value: 'sde', label: 'SDE' },
+                    { value: 'cps', label: 'CPS' },
+                  ]}
+                />
+                <NumberInput
+                  label="Clip Range"
+                  value={jobConfig.config.process[0].grpo?.clip_range ?? 0.2}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.clip_range')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Advantage Clip Max"
+                  value={jobConfig.config.process[0].grpo?.adv_clip_max || 5}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.adv_clip_max')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Regularizer Beta"
+                  value={jobConfig.config.process[0].grpo?.beta ?? 0.04}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.beta')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Noise Level"
+                  value={jobConfig.config.process[0].grpo?.noise_level || 0.7}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.noise_level')}
+                  min={0}
+                  required
+                />
+                <NumberInput
+                  label="Timestep Fraction"
+                  value={jobConfig.config.process[0].grpo?.timestep_fraction || 1}
+                  onChange={value => setJobConfig(value, 'config.process[0].grpo.timestep_fraction')}
+                  min={0}
+                  max={1}
+                  required
+                />
+              </div>
+            </Card>
+          )}
           <Card title="Save">
             <SelectInput
               label="Data Type"
@@ -824,19 +887,20 @@ export default function SimpleJob({
             </div>
           </Card>
         </div>
-        <div>
-          <Card title="Datasets">
+        {!disableSections.includes('datasets') && (
+          <div>
+            <Card title="Datasets">
             <>
-              {jobConfig.config.process[0].datasets.map((dataset, i) => (
+              {datasets.map((dataset, i) => (
                 <div key={i} className="p-4 rounded-lg bg-gray-800 relative">
                   <div className="absolute top-2 right-2 flex gap-1">
                     <button
                       type="button"
                       onClick={() => {
                         const duplicated = objectCopy(dataset);
-                        const datasets = [...jobConfig.config.process[0].datasets];
-                        datasets.splice(i + 1, 0, duplicated);
-                        setJobConfig(datasets, 'config.process[0].datasets');
+                        const nextDatasets = [...datasets];
+                        nextDatasets.splice(i + 1, 0, duplicated);
+                        setJobConfig(nextDatasets, 'config.process[0].datasets');
                       }}
                       className="bg-gray-700 hover:bg-gray-600 rounded-full p-2 text-sm transition-colors"
                       title="Duplicate Dataset"
@@ -847,7 +911,7 @@ export default function SimpleJob({
                       type="button"
                       onClick={() =>
                         setJobConfig(
-                          jobConfig.config.process[0].datasets.filter((_, index) => index !== i),
+                          datasets.filter((_, index) => index !== i),
                           'config.process[0].datasets',
                         )
                       }
@@ -1100,17 +1164,19 @@ export default function SimpleJob({
                   // automaticallt add the controls for a new dataset
                   const controls = modelArch?.controls ?? [];
                   newDataset.controls = controls;
-                  setJobConfig([...jobConfig.config.process[0].datasets, newDataset], 'config.process[0].datasets');
+                  setJobConfig([...datasets, newDataset], 'config.process[0].datasets');
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
               >
                 Add Dataset
               </button>
             </>
-          </Card>
-        </div>
-        <div>
-          <Card title="Sample">
+            </Card>
+          </div>
+        )}
+        {!isFlowGRPO && (
+          <div>
+            <Card title="Sample">
             <div className={sampleTopStyleClass}>
               <div>
                 <NumberInput
@@ -1528,8 +1594,9 @@ export default function SimpleJob({
             >
               Add Prompt
             </button>
-          </Card>
-        </div>
+            </Card>
+          </div>
+        )}
 
         {status === 'success' && <p className="text-green-500 text-center">Training saved successfully!</p>}
         {status === 'error' && <p className="text-red-500 text-center">Error saving training. Please try again.</p>}

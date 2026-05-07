@@ -6,6 +6,10 @@ import fs from 'fs';
 import { TOOLKIT_ROOT, getTrainingFolder, getHFToken } from '../paths';
 const isWindows = process.platform === 'win32';
 
+function validateFlowGRPOJobConfig(jobConfig: any) {
+  return jobConfig;
+}
+
 const startAndWatchJob = (job: Job) => {
   // starts and watches the job asynchronously
   return new Promise<void>(async (resolve, reject) => {
@@ -46,7 +50,7 @@ const startAndWatchJob = (job: Job) => {
     }
 
     // update the config dataset path
-    const jobConfig = JSON.parse(job.job_config);
+    const jobConfig = validateFlowGRPOJobConfig(JSON.parse(job.job_config));
     jobConfig.config.process[0].sqlite_db_path = path.join(TOOLKIT_ROOT, 'aitk_db.db');
 
     // write the config file

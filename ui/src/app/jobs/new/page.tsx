@@ -93,8 +93,9 @@ export default function TrainingForm() {
       // Use functional updater so we check the *current* state, not a stale closure
       setJobConfig((prev: JobConfig) => {
         let updated = prev;
-        for (let i = 0; i < prev.config.process[0].datasets.length; i++) {
-          if (prev.config.process[0].datasets[i].folder_path === defaultDatasetPath) {
+        const datasets = prev.config.process[0].datasets || [];
+        for (let i = 0; i < datasets.length; i++) {
+          if (datasets[i].folder_path === defaultDatasetPath) {
             updated = setNestedValue(updated, datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
           }
         }
@@ -151,13 +152,14 @@ export default function TrainingForm() {
   const saveJob = async () => {
     if (status === 'saving') return;
     setStatus('saving');
+    const jobConfigToSave = migrateJobConfig(objectCopy(jobConfig));
 
     apiClient
       .post('/api/jobs', {
         id: runId,
-        name: jobConfig.config.name,
+        name: jobConfigToSave.config.name,
         gpu_ids: gpuIDs,
-        job_config: jobConfig,
+        job_config: jobConfigToSave,
       })
       .then(res => {
         setStatus('success');
@@ -223,25 +225,22 @@ export default function TrainingForm() {
               <SelectInput
                 value={`${jobConfig?.config.process[0].type}`}
                 onChange={value => {
+                  let nextConfig = objectCopy(jobConfig);
                   // undo current job type changes
                   const currentOption = jobTypeOptions.find(
                     option => option.value === jobConfig?.config.process[0].type,
                   );
                   if (currentOption && currentOption.onDeactivate) {
-                    setJobConfig(currentOption.onDeactivate(objectCopy(jobConfig)));
+                    nextConfig = currentOption.onDeactivate(nextConfig);
                   }
                   const option = jobTypeOptions.find(option => option.value === value);
                   if (option) {
                     if (option.onActivate) {
-                      setJobConfig(option.onActivate(objectCopy(jobConfig)));
+                      nextConfig = option.onActivate(nextConfig);
                     }
-                    jobTypeOptions.forEach(opt => {
-                      if (opt.value !== option.value && opt.onDeactivate) {
-                        setJobConfig(opt.onDeactivate(objectCopy(jobConfig)));
-                      }
-                    });
                   }
-                  setJobConfig(value, 'config.process[0].type');
+                  nextConfig.config.process[0].type = value;
+                  setJobConfig(migrateJobConfig(nextConfig));
                 }}
                 options={jobTypeOptions}
               />

@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
 import './globals.css';
 import Sidebar from '@/components/Sidebar';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -11,8 +10,6 @@ import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
 
 export const dynamic = 'force-dynamic';
-
-const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Ostris - AI Toolkit',
@@ -40,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         />
       </head>
-      <body className={inter.className}>
+      <body>
         <script dangerouslySetInnerHTML={{ __html: `window.server_platform = "${platform}";` }} />
         <ThemeProvider>
           <AuthWrapper authRequired={authRequired}>
