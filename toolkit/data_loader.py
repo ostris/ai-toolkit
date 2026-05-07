@@ -694,6 +694,16 @@ def get_dataloader_from_datasets(
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
 
+    # Enable pinned memory only when explicitly opted in via dataset config and
+    # CUDA is available. pin_memory speeds up CPU->GPU transfer (helpful even at
+    # num_workers=0), but page-locked RAM cannot be relocated by NVIDIA's
+    # Windows driver shared-memory VRAM-overflow fallback, which can cause
+    # severe PCIe thrashing for users at the VRAM ceiling. Off by default; opt
+    # in via 'pin_memory: true' on the dataset config when VRAM headroom is
+    # stable.
+    if torch.cuda.is_available() and dataset_config_list[0].pin_memory:
+        dataloader_kwargs['pin_memory'] = True
+
     if has_buckets:
         # make sure they all have buckets
         for dataset in datasets:
