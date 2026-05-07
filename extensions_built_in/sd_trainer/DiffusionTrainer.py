@@ -30,6 +30,7 @@ class DiffusionTrainer(SDTrainer):
         
         if self.is_ui_trainer:
             self.is_stopping = False
+            self._is_saving = False
             # Create a thread pool for database operations
             self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             # Track all async tasks
@@ -161,7 +162,19 @@ class DiffusionTrainer(SDTrainer):
     def maybe_stop(self):
         if not self.is_ui_trainer:
             return
+        if self._is_saving or self.is_stopping:
+            return
         if self.should_stop():
+            # Trigger an immediate save of LoRA weights and optimizer.pt.
+            # This ensures the current step is recorded in the Metadata,
+            # allowing the user to resume from this exact point later.
+            print(f"\n[Stop Signal Detected] Saving emergency checkpoint at step {self.step_num}...")
+            self._is_saving = True
+            try:
+                self.save(self.step_num) 
+            finally:
+                self._is_saving = False
+
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
@@ -333,8 +346,10 @@ class DiffusionTrainer(SDTrainer):
         self.update_status("running", "Training")
 
     def save(self, step=None):
-        self.maybe_stop()
+        if not self._is_saving:
+            self.maybe_stop()
         self.update_status("running", "Saving model")
         super().save(step)
-        self.maybe_stop()
-        self.update_status("running", "Training")
+        if not self._is_saving:
+            self.maybe_stop()
+            self.update_status("running", "Training")

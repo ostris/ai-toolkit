@@ -680,12 +680,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
             try:
                 filename = f'optimizer.pt'
                 file_path = os.path.join(self.save_root, filename)
+                backup_optimizer_path = os.path.join(self.save_root, 'optimizer_prev.pt')
+                
+                # If optimizer.pt already exists, rename it to optimizer_prev.pt
+                if os.path.exists(file_path):
+                    # If an old backup also exists, delete it first (to ensure a successful rename)
+                    if os.path.exists(backup_optimizer_path):
+                        os.remove(backup_optimizer_path)
+                    
+                    os.rename(file_path, backup_optimizer_path)
+                    print_acc(f"Existing optimizer.pt moved to optimizer_prev.pt")
+
                 try:
                     state_dict = unwrap_model(self.optimizer).state_dict()
                 except Exception as e:
                     state_dict = self.optimizer.state_dict()
                 torch.save(state_dict, file_path)
-                print_acc(f"Saved optimizer to {file_path}")
+                print_acc(f"Saved latest optimizer to {file_path}")
             except Exception as e:
                 print_acc(e)
                 print_acc("Could not save optimizer")
