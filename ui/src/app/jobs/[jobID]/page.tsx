@@ -48,7 +48,7 @@ const pages: Page[] = [
     value: 'loss_log',
     icon: MdShowChart,
     component: JobLossGraph,
-    mainCss: 'pt-24',
+    mainCss: 'pt-24 pb-4',
     jobTypes: ['train'],
   },
   {
