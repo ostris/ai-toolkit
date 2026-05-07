@@ -825,7 +825,16 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     paths = [p for p in paths if '_cn' not in p]
 
                 if len(paths) > 0:
-                    latest_path = max(paths, key=os.path.getctime)
+                    # Sort by step number embedded in the filename (zero-padded, e.g. name_000001500.safetensors).
+                    # Falling back to ctime is unreliable after file transfers because timestamps reset.
+                    def _step_sort_key(p):
+                        stem = os.path.splitext(os.path.basename(p))[0]
+                        parts = stem.rsplit('_', 1)
+                        if len(parts) == 2 and parts[1].isdigit():
+                            return (1, int(parts[1]))
+                        return (0, os.path.getctime(p))
+
+                    latest_path = max(paths, key=_step_sort_key)
         
         if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
             # set pretrained lora path as load path if we do not have a checkpoint to resume from
