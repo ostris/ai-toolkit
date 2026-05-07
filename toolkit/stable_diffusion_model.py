@@ -1012,6 +1012,12 @@ class StableDiffusion:
         self.vae: 'AutoencoderKL' = pipe.vae.to(self.vae_device_torch, dtype=self.vae_torch_dtype)
         self.vae.eval()
         self.vae.requires_grad_(False)
+        # Flux VAE loaded from ComfyUI single-file checkpoints may not carry these config values
+        if self.is_flux:
+            if getattr(self.vae.config, 'scaling_factor', None) is None:
+                self.vae.config.scaling_factor = 0.3611
+            if getattr(self.vae.config, 'shift_factor', None) is None:
+                self.vae.config.shift_factor = 0.1159
         VAE_SCALE_FACTOR = 2 ** (len(self.vae.config['block_out_channels']) - 1)
         self.vae_scale_factor = VAE_SCALE_FACTOR
         self.unet.to(self.device_torch, dtype=dtype)
@@ -2449,7 +2455,7 @@ class StableDiffusion:
             prompt_embeds, pooled_prompt_embeds = train_tools.encode_prompts_flux(
                 self.tokenizer,  # list
                 self.text_encoder,  # list
-                prompt,
+                [prompt if prompt is not None else ''] if isinstance(prompt, str) or prompt is None else prompt,
                 truncate=not long_prompts,
                 max_length=512,
                 dropout_prob=dropout_prob,
