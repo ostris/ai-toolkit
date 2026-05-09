@@ -291,16 +291,26 @@ class AceStep15Model(BaseAudioModel):
         with torch.no_grad():
             model: AceStep15 = self.model
             tt = timestep.to(self.device_torch, dtype=torch.long) / 1000
+
+            batch_size = latent_model_input.shape[0]
             latent_len = latent_model_input.shape[1]
             device = self.device_torch
             dtype = self.torch_dtype
-            attn = torch.ones(1, latent_len, device=device, dtype=dtype)
 
-            # build context from silence latent matching the actual input length
+            # Match decoder attention mask to the actual latent batch.
+            # This fixes normal training with batch_size > 1 and concept slider batching.
+            attn = torch.ones(batch_size, latent_len, device=device, dtype=dtype)
+
+            # Build context from silence latent matching the actual input length.
             sil = get_silence_latent(latent_len, device, dtype)  # [1, 64, T]
             src = sil.transpose(1, 2)  # [1, T, 64]
+
+            # Match silence context batch to latent_model_input batch.
+            if src.shape[0] != batch_size:
+                src = src.expand(batch_size, -1, -1).contiguous()
+
             chunk_masks = torch.ones_like(src)
-            context = torch.cat([src, chunk_masks], dim=-1)  # [1, T, 128]
+            context = torch.cat([src, chunk_masks], dim=-1)  # [B, T, 128]
 
         pred = model.decoder(
             x=latent_model_input.detach(),
