@@ -829,13 +829,12 @@ class DiffusionFeatureExtractor7(nn.Module):
         
         self.version = 7
         self.sd_ref = weakref.ref(sd) if sd is not None else None
+        from toolkit.models.tipsv2 import TIPSv2DPTModel
         pretrained_model_name = "google/tipsv2-b14-dpt"
-        self.model = AutoModel.from_pretrained(
-            pretrained_model_name, 
-            device_map=device,
-            dtype=torch.float32,
-            trust_remote_code=True
-        ).to(device)
+        self.model = TIPSv2DPTModel.from_pretrained(
+            pretrained_model_name,
+            dtype=dtype,
+        ).to(device, dtype=dtype)
 
         self.losses = {}
         self.log_every = 100
