@@ -380,20 +380,24 @@ export default function SimpleJob({
                 }}
                 options={transformerQuantizationOptions}
               />
-              <SelectInput
-                label="Text Encoder"
-                value={jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''}
-                onChange={value => {
-                  if (value === '') {
-                    setJobConfig(false, 'config.process[0].model.quantize_te');
-                    value = defaultQtype;
-                  } else {
-                    setJobConfig(true, 'config.process[0].model.quantize_te');
+              {!disableSections.includes('model.quantize_te') && (
+                <SelectInput
+                  label="Text Encoder"
+                  value={
+                    jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''
                   }
-                  setJobConfig(value, 'config.process[0].model.qtype_te');
-                }}
-                options={quantizationOptions}
-              />
+                  onChange={value => {
+                    if (value === '') {
+                      setJobConfig(false, 'config.process[0].model.quantize_te');
+                      value = defaultQtype;
+                    } else {
+                      setJobConfig(true, 'config.process[0].model.quantize_te');
+                    }
+                    setJobConfig(value, 'config.process[0].model.qtype_te');
+                  }}
+                  options={quantizationOptions}
+                />
+              )}
             </Card>
           )}
           {modelArch?.additionalSections?.includes('model.multistage') && (
