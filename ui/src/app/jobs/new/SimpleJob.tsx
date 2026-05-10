@@ -232,6 +232,31 @@ export default function SimpleJob({
         )}
         <div className={topBarClass}>
           <Card title="Job">
+            <SelectInput
+              label="Job Type"
+              value={`${jobConfig.config.process[0].type}`}
+              onChange={value => {
+                const currentOption = jobTypeOptions.find(
+                  option => option.value === jobConfig.config.process[0].type,
+                );
+                if (currentOption && currentOption.onDeactivate) {
+                  setJobConfig(currentOption.onDeactivate(objectCopy(jobConfig)));
+                }
+                const option = jobTypeOptions.find(option => option.value === value);
+                if (option) {
+                  if (option.onActivate) {
+                    setJobConfig(option.onActivate(objectCopy(jobConfig)));
+                  }
+                  jobTypeOptions.forEach(opt => {
+                    if (opt.value !== option.value && opt.onDeactivate) {
+                      setJobConfig(opt.onDeactivate(objectCopy(jobConfig)));
+                    }
+                  });
+                }
+                setJobConfig(value, 'config.process[0].type');
+              }}
+              options={jobTypeOptions}
+            />
             <TextInput
               label="Training Name"
               value={jobConfig.config.name}

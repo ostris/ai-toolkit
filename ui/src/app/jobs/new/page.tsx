@@ -14,12 +14,14 @@ import useDatasetList from '@/hooks/useDatasetList';
 import YAML from 'yaml';
 import path from 'path';
 import { TopBar, MainContent } from '@/components/layout';
-import { Button } from '@headlessui/react';
+import { Button, MenuItem } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
+import OverflowMenu from '@/components/OverflowMenu';
 import SimpleJob from './SimpleJob';
 import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
+import { isMac } from '@/helpers/basic';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -195,77 +197,80 @@ export default function TrainingForm() {
             <FaChevronLeft />
           </Button>
         </div>
-        <div>
-          <h1 className="text-lg">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-sm md:text-lg truncate">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
         </div>
-        <div className="flex-1"></div>
-        {showAdvancedView && (
-          <>
-            <div>
-              <SelectInput
-                value={`${gpuIDs}`}
-                onChange={value => setGpuIDs(value)}
-                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
-              />
-            </div>
-            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
-            <div>
-              <Button className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md" onClick={handleImportConfig}>
-                Import Config
-              </Button>
-            </div>
-            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
-          </>
-        )}
-        {!showAdvancedView && (
-          <>
-            <div>
-              <SelectInput
-                value={`${jobConfig?.config.process[0].type}`}
-                onChange={value => {
-                  // undo current job type changes
-                  const currentOption = jobTypeOptions.find(
-                    option => option.value === jobConfig?.config.process[0].type,
-                  );
-                  if (currentOption && currentOption.onDeactivate) {
-                    setJobConfig(currentOption.onDeactivate(objectCopy(jobConfig)));
-                  }
-                  const option = jobTypeOptions.find(option => option.value === value);
-                  if (option) {
-                    if (option.onActivate) {
-                      setJobConfig(option.onActivate(objectCopy(jobConfig)));
-                    }
-                    jobTypeOptions.forEach(opt => {
-                      if (opt.value !== option.value && opt.onDeactivate) {
-                        setJobConfig(opt.onDeactivate(objectCopy(jobConfig)));
-                      }
-                    });
-                  }
-                  setJobConfig(value, 'config.process[0].type');
-                }}
-                options={jobTypeOptions}
-              />
-            </div>
-            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
-          </>
-        )}
-
-        <div className="pr-2">
-          <Button
-            className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
-            onClick={() => setShowAdvancedView(!showAdvancedView)}
-          >
-            {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
-          </Button>
+        {/* Desktop: show all controls inline */}
+        <div className="hidden md:flex items-center">
+          {showAdvancedView && (
+            <>
+              {!isMac() && (
+                <>
+                  <div>
+                    <SelectInput
+                      value={`${gpuIDs}`}
+                      onChange={value => setGpuIDs(value)}
+                      options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+                    />
+                  </div>
+                  <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+                </>
+              )}
+              <div>
+                <Button className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md" onClick={handleImportConfig}>
+                  Import Config
+                </Button>
+              </div>
+              <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+            </>
+          )}
+          <div className="pr-2">
+            <Button
+              className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md whitespace-nowrap"
+              onClick={() => setShowAdvancedView(!showAdvancedView)}
+            >
+              {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
+            </Button>
+          </div>
+          <div>
+            <Button
+              className="text-white bg-green-600 hover:bg-green-700 px-3 py-1 rounded-md whitespace-nowrap"
+              onClick={() => saveJob()}
+              disabled={status === 'saving'}
+            >
+              {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+            </Button>
+          </div>
         </div>
-        <div>
+        {/* Mobile: create button + overflow menu */}
+        <div className="flex md:hidden items-center gap-1">
           <Button
-            className="text-white bg-green-600 hover:bg-green-700 px-3 py-1 rounded-md"
+            className="text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded-md text-xs whitespace-nowrap"
             onClick={() => saveJob()}
             disabled={status === 'saving'}
           >
-            {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+            {status === 'saving' ? 'Saving...' : runId ? 'Update' : 'Create'}
           </Button>
+          <OverflowMenu>
+              <MenuItem>
+                <button
+                  className="w-full text-left cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
+                  onClick={() => setShowAdvancedView(!showAdvancedView)}
+                >
+                  {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
+                </button>
+              </MenuItem>
+              {showAdvancedView && (
+                <MenuItem>
+                  <button
+                    className="w-full text-left cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
+                    onClick={handleImportConfig}
+                  >
+                    Import Config
+                  </button>
+                </MenuItem>
+              )}
+          </OverflowMenu>
         </div>
       </TopBar>
 
@@ -277,8 +282,17 @@ export default function TrainingForm() {
         onChange={handleFileSelected}
       />
 
+      {showAdvancedView && !isMac() && (
+        <div className="md:hidden bg-gray-900 border-t border-gray-800 absolute top-12 left-0 w-full h-10 flex items-center px-3 gap-2 text-sm z-[5]">
+          <SelectInput
+            value={`${gpuIDs}`}
+            onChange={value => setGpuIDs(value)}
+            options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+          />
+        </div>
+      )}
       {showAdvancedView ? (
-        <div className="pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto">
+        <div className={`${!isMac() ? 'pt-[88px]' : 'pt-[48px]'} md:pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto`}>
           <AdvancedConfigEditor
             config={jobConfig}
             setConfig={setJobConfig}

@@ -7,6 +7,7 @@ import { TextInput } from '@/components/formInputs';
 import useDatasetList from '@/hooks/useDatasetList';
 import { Button } from '@headlessui/react';
 import { FaRegTrashAlt } from 'react-icons/fa';
+import { Plus } from 'lucide-react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
@@ -39,6 +40,7 @@ export default function Datasets() {
       title: 'Actions',
       key: 'actions',
       className: 'w-20 text-right',
+      mobileAlignRight: true,
       render: row => (
         <button
           className="text-gray-200 hover:bg-red-600 p-2 rounded-full transition-colors"
@@ -114,15 +116,16 @@ export default function Datasets() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Datasets</h1>
+          <h1 className="text-sm md:text-lg">Datasets</h1>
         </div>
         <div className="flex-1"></div>
         <div>
           <Button
-            className="text-white bg-slate-600 px-3 py-1 rounded-md hover:bg-slate-500 transition-colors"
+            className="text-white bg-slate-600 px-3 py-1 rounded-md hover:bg-slate-500 transition-colors flex items-center gap-1.5"
             onClick={() => openNewDatasetModal()}
           >
-            New Dataset
+            <Plus className="w-4 h-4" />
+            <span className="whitespace-nowrap">New Dataset</span>
           </Button>
         </div>
       </TopBar>

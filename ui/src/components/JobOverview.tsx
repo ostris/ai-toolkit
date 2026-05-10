@@ -92,7 +92,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       {/* Job Information Panel */}
-      <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
+      <div className="col-span-1 md:col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <h2 className="text-gray-100">
             <Info className="w-5 h-5 mr-2 -mt-1 text-amber-600 dark:text-amber-400 inline-block" /> {job.info}

@@ -4,13 +4,15 @@ import { useEffect, useState, use, useMemo } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
-import { Button } from '@headlessui/react';
+import { Button, MenuItem } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import OverflowMenu from '@/components/OverflowMenu';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -105,11 +107,11 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             <FaChevronLeft />
           </Button>
         </div>
-        <div>
-          <h1 className="text-lg">Dataset: {datasetName}</h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="text-sm md:text-lg truncate">Dataset: {datasetName}</h1>
         </div>
-        <div className="flex-1"></div>
-        <div>
+        {/* Desktop: all buttons inline */}
+        <div className="hidden md:flex items-center gap-2">
           <AutoCaptionButton
             datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
             setIsAutoCaptioning={setIsAutoCaptioning}
@@ -120,6 +122,25 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           >
             Add Images
           </Button>
+        </div>
+        {/* Mobile: Add Images button + overflow menu */}
+        <div className="flex md:hidden items-center gap-1">
+          <Button
+            className="text-white bg-slate-600 px-2 py-1 rounded-md text-xs"
+            onClick={() => openImagesModal(datasetName, () => refreshImageList(datasetName))}
+          >
+            Add Images
+          </Button>
+          <OverflowMenu>
+            <MenuItem>
+              <button
+                className="w-full text-left cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
+                onClick={() => openCaptionDatasetModal(pathJoin(settings.DATASETS_FOLDER, datasetName), () => {})}
+              >
+                Auto Caption
+              </button>
+            </MenuItem>
+          </OverflowMenu>
         </div>
       </TopBar>
       <MainContent>
