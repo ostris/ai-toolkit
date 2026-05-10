@@ -150,8 +150,12 @@ class HidreamO1Model(BaseModel):
         model_path = self.model_config.name_or_path
 
         self.print_and_status_update("Loading transformer")
-
-        processor = AutoProcessor.from_pretrained(model_path)
+        
+        try:
+            processor = AutoProcessor.from_pretrained(model_path)
+        except Exception as e:
+            print(f"Failed to load processor from model path {model_path}, trying original path. Error: {e}")
+            processor = AutoProcessor.from_pretrained(self.model_config.name_or_path_original)
 
         tokenizer = get_tokenizer(processor)
         add_special_tokens(tokenizer)
@@ -452,6 +456,9 @@ class HidreamO1Model(BaseModel):
             save_directory=output_path,
             safe_serialization=True,
         )
+        
+        # save processor
+        self.tokenizer.save_pretrained(output_path)
 
         meta_path = os.path.join(output_path, "aitk_meta.yaml")
         with open(meta_path, "w") as f:
