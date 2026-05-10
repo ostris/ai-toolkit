@@ -1,3 +1,5 @@
+from typing import Optional
+
 import librosa
 import numpy as np
 import torch
@@ -9,7 +11,7 @@ from optimum.quanto import freeze
 from toolkit.basic import flush
 from toolkit.util.quantize import quantize, get_qtype
 
-from .BaseCaptioner import BaseCaptioner
+from .BaseCaptioner import BaseCaptioner, CaptionConfig
 import transformers
 import logging
 import warnings
@@ -95,7 +97,16 @@ def analyze_audio(audio_path):
     }
 
 
+class AceStepCaptionConfig(CaptionConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.fixed_caption: Optional[str] = kwargs.get("fixed_caption", None)
+
+
 class AceStepCaptioner(BaseCaptioner):
+    caption_config_class = AceStepCaptionConfig
+    caption_config: AceStepCaptionConfig
+
     def __init__(self, process_id: int, job, config: OrderedDict, **kwargs):
         super(AceStepCaptioner, self).__init__(process_id, job, config, **kwargs)
 
@@ -118,27 +129,31 @@ class AceStepCaptioner(BaseCaptioner):
         )
         if self.caption_config.low_vram:
             self.model.to("cpu")
+        
+        self.model2 = None
+        self.processor2 = None
 
-        # load captioner model
-        self.print_and_status_update("Loading captioner model")
-        self.model2 = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-            self.caption_config.model_name_or_path2,
-            dtype=self.torch_dtype,
-            device_map="cpu",
-        )
-        self.model2.to(self.device_torch)
-        self.model2.disable_talker()
-        if self.caption_config.quantize:
-            self.print_and_status_update("Quantizing captioner model")
-            quantize(self.model2, weights=get_qtype(self.caption_config.qtype))
-            freeze(self.model2)
-            flush()
-        self.processor2 = Qwen2_5OmniProcessor.from_pretrained(
-            self.caption_config.model_name_or_path2,
-        )
+        if self.caption_config.fixed_caption is not None:
+            # load captioner model
+            self.print_and_status_update("Loading captioner model")
+            self.model2 = Qwen2_5OmniForConditionalGeneration.from_pretrained(
+                self.caption_config.model_name_or_path2,
+                dtype=self.torch_dtype,
+                device_map="cpu",
+            )
+            self.model2.to(self.device_torch)
+            self.model2.disable_talker()
+            if self.caption_config.quantize:
+                self.print_and_status_update("Quantizing captioner model")
+                quantize(self.model2, weights=get_qtype(self.caption_config.qtype))
+                freeze(self.model2)
+                flush()
+            self.processor2 = Qwen2_5OmniProcessor.from_pretrained(
+                self.caption_config.model_name_or_path2,
+            )
 
-        if self.caption_config.low_vram:
-            self.model2.to("cpu")
+            if self.caption_config.low_vram:
+                self.model2.to("cpu")
         flush()
 
     def run_qwen_audio(self, model, processor, audio_data, sr, prompt_text):
@@ -228,7 +243,10 @@ class AceStepCaptioner(BaseCaptioner):
                 lyrics = lyrics.split("# Lyrics")[1].strip()
 
             # get the caption from the audio
-            caption = self.get_audio_caption(audio_data)
+            if self.caption_config.fixed_caption is not None:
+                caption = self.caption_config.fixed_caption
+            else:
+                caption = self.get_audio_caption(audio_data)
 
             output = f"<CAPTION>\n{caption}\n</CAPTION>\n"
             output += f"<LYRICS>\n{lyrics}\n</LYRICS>\n"

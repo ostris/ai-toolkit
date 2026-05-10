@@ -2,8 +2,9 @@
 
 import { Job } from '@prisma/client';
 import useJobLossLog, { LossPoint } from '@/hooks/useJobLossLog';
-import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import uPlot from 'uplot';
+import 'uplot/dist/uPlot.min.css';
 
 interface Props {
   job: Job;
@@ -21,22 +22,36 @@ function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
 }
 
-// EMA smoothing that works on a per-series list.
-// alpha=1 -> no smoothing, alpha closer to 0 -> more smoothing.
-function emaSmoothPoints(points: { step: number; value: number }[], alpha: number) {
-  if (points.length === 0) return [];
-  const a = clamp01(alpha);
-  const out: { step: number; value: number }[] = new Array(points.length);
+// Fallback canvas height used before the container has been measured.
+const FALLBACK_CANVAS_HEIGHT = 360;
+const MIN_CANVAS_HEIGHT = 160;
 
-  let prev = points[0].value;
-  out[0] = { step: points[0].step, value: prev };
+// Compute canvas size so uPlot's canvas + its HTML legend fit inside `host`.
+// `host` should be a layout-controlled wrapper (NOT the uPlot mount node, since
+// uPlot's stylesheet sets `width: min-content` on its mount node).
+function computeCanvasSize(host: HTMLElement): { width: number; height: number } | null {
+  const { width, height } = host.getBoundingClientRect();
+  if (width <= 0 || height <= 0) return null;
+  const legend = host.querySelector('.u-legend') as HTMLElement | null;
+  const legendH = legend?.getBoundingClientRect().height ?? 0;
+  return { width, height: Math.max(MIN_CANVAS_HEIGHT, height - legendH) };
+}
 
-  for (let i = 1; i < points.length; i++) {
-    const x = points[i].value;
-    prev = a * x + (1 - a) * prev;
-    out[i] = { step: points[i].step, value: prev };
+// EMA over a (number|null)[] series. Nulls are preserved as gaps and do not
+// advance the running average.
+function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
+  const out: (number | null)[] = new Array(ys.length);
+  let prev: number | null = null;
+  for (let i = 0; i < ys.length; i++) {
+    const v = ys[i];
+    if (v === null || !Number.isFinite(v)) {
+      out[i] = null;
+      continue;
+    }
+    if (prev === null) prev = v as number;
+    else prev = alpha * (v as number) + (1 - alpha) * prev;
+    out[i] = prev;
   }
-
   return out;
 }
 
@@ -64,7 +79,6 @@ function strokeForKey(key: string) {
   return PALETTE[hashToIndex(key, PALETTE.length)];
 }
 
-// Returns a solid but duller/darker version of an rgba color string for the trend overlay.
 function dulledColor(rgba: string): string {
   const m = rgba.match(/rgba?\((\d+),(\d+),(\d+)/);
   if (!m) return 'rgba(120,120,120,1)';
@@ -97,6 +111,8 @@ export default function JobLossGraph({ job }: Props) {
   // which loss series are enabled (default: all enabled)
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
 
+  const [isZoomed, setIsZoomed] = useState(false);
+
   // keep enabled map in sync with discovered keys (enable new ones automatically)
   useEffect(() => {
     setEnabled(prev => {
@@ -104,7 +120,6 @@ export default function JobLossGraph({ job }: Props) {
       for (const k of lossKeys) {
         if (next[k] === undefined) next[k] = true;
       }
-      // drop removed keys
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
       }
@@ -114,200 +129,249 @@ export default function JobLossGraph({ job }: Props) {
 
   const activeKeys = useMemo(() => lossKeys.filter(k => enabled[k] !== false), [lossKeys, enabled]);
 
-  // Zoom state for drag-to-zoom
-  const [zoomLeft, setZoomLeft] = useState<number | null>(null);
-  const [zoomRight, setZoomRight] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  // Selection tracked entirely in refs to avoid re-renders during drag
-  const selectStartLabel = useRef<number | null>(null);
-  const selectStartPx = useRef<number | null>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const chartWrapperRef = useRef<HTMLDivElement>(null);
-
-  const perSeries = useMemo(() => {
-    // Build per-series processed point arrays (raw + smoothed + fullSmooth), then merge by step for charting.
+  // Build uPlot-aligned data + series configs.
+  const built = useMemo(() => {
     const stride = Math.max(1, plotStride | 0);
-
-    // smoothing%: 0 => no smoothing (alpha=1.0), 100 => heavy smoothing (alpha=0.02)
     const t = clamp01(smoothing / 100);
     const alpha = 1.0 - t * 0.98; // 1.0 -> 0.02
-
-    // Full smoothing overlay: always max smoothing (alpha=0.02)
     const fullAlpha = 0.005;
 
-    const out: Record<string, { raw: { step: number; value: number }[]; smooth: { step: number; value: number }[]; fullSmooth: { step: number; value: number }[] }> =
-      {};
+    // Union of all steps across active series.
+    const stepSet = new Set<number>();
+    for (const key of activeKeys) {
+      const pts: LossPoint[] = series[key] ?? [];
+      for (const p of pts) {
+        if (p.value === null || !Number.isFinite(p.value as number)) continue;
+        if (useLogScale && (p.value as number) <= 0) continue;
+        stepSet.add(p.step);
+      }
+    }
+    let xs = Array.from(stepSet).sort((a, b) => a - b);
+    if (stride > 1) xs = xs.filter((_, i) => i % stride === 0);
+    if (windowSize > 0 && xs.length > windowSize) xs = xs.slice(xs.length - windowSize);
+
+    const xsSet = new Set(xs);
+
+    const data: (number[] | (number | null)[])[] = [xs];
+    const seriesConfigs: uPlot.Series[] = [{}]; // x
 
     for (const key of activeKeys) {
       const pts: LossPoint[] = series[key] ?? [];
-
-      let raw = pts
-        .filter(p => p.value !== null && Number.isFinite(p.value as number))
-        .map(p => ({ step: p.step, value: p.value as number }))
-        .filter(p => (useLogScale ? p.value > 0 : true))
-        .filter((_, idx) => idx % stride === 0);
-
-      // windowing (applies after stride)
-      if (windowSize > 0 && raw.length > windowSize) {
-        raw = raw.slice(raw.length - windowSize);
+      const map = new Map<number, number>();
+      for (const p of pts) {
+        if (p.value === null || !Number.isFinite(p.value as number)) continue;
+        if (useLogScale && (p.value as number) <= 0) continue;
+        if (!xsSet.has(p.step)) continue;
+        map.set(p.step, p.value as number);
       }
+      const raw: (number | null)[] = xs.map(s => (map.has(s) ? (map.get(s) as number) : null));
+      const smooth = emaWithNulls(raw, alpha);
+      const fullSmooth = emaWithNulls(raw, fullAlpha);
 
-      const smooth = emaSmoothPoints(raw, alpha);
-      const fullSmooth = emaSmoothPoints(raw, fullAlpha);
+      const color = strokeForKey(key);
+      const colorFaded = color.replace('1)', '0.40)');
+      const colorDull = dulledColor(color);
 
-      out[key] = { raw, smooth, fullSmooth };
+      if (showRaw) {
+        data.push(raw);
+        seriesConfigs.push({
+          label: `${key} (raw)`,
+          stroke: colorFaded,
+          width: 1.25,
+          spanGaps: false,
+          points: { show: false },
+        });
+      }
+      if (showSmoothed) {
+        data.push(smooth);
+        seriesConfigs.push({
+          label: key,
+          stroke: color,
+          width: 2,
+          spanGaps: false,
+          points: { show: false },
+        });
+      }
+      data.push(fullSmooth);
+      seriesConfigs.push({
+        label: `${key} (trend)`,
+        stroke: colorDull,
+        width: 2.5,
+        spanGaps: false,
+        points: { show: false },
+      });
     }
 
-    return out;
-  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale]);
-
-  const chartData = useMemo(() => {
-    // Merge series into one array of objects keyed by step.
-    // Fields: `${key}__raw` and `${key}__smooth`
-    const map = new Map<number, any>();
-
-    for (const key of activeKeys) {
-      const s = perSeries[key];
-      if (!s) continue;
-
-      for (const p of s.raw) {
-        const row = map.get(p.step) ?? { step: p.step };
-        row[`${key}__raw`] = p.value;
-        map.set(p.step, row);
+    // y-domain clipping (2nd–98th percentile of all visible y values).
+    let yClip: { min: number; max: number } | null = null;
+    if (clipOutliers && xs.length >= 10) {
+      const vals: number[] = [];
+      for (let s = 1; s < data.length; s++) {
+        const arr = data[s] as (number | null)[];
+        for (const v of arr) {
+          if (v !== null && Number.isFinite(v)) vals.push(v as number);
+        }
       }
-      for (const p of s.smooth) {
-        const row = map.get(p.step) ?? { step: p.step };
-        row[`${key}__smooth`] = p.value;
-        map.set(p.step, row);
-      }
-      for (const p of s.fullSmooth) {
-        const row = map.get(p.step) ?? { step: p.step };
-        row[`${key}__fullsmooth`] = p.value;
-        map.set(p.step, row);
+      if (vals.length >= 10) {
+        vals.sort((a, b) => a - b);
+        const lo = vals[Math.floor(vals.length * 0.02)];
+        const hi = vals[Math.ceil(vals.length * 0.98) - 1];
+        if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
+          yClip = { min: lo, max: hi };
+        }
       }
     }
 
-    const arr = Array.from(map.values());
-    arr.sort((a, b) => a.step - b.step);
-    return arr;
-  }, [activeKeys, perSeries]);
+    return { data: data as uPlot.AlignedData, seriesConfigs, yClip };
+  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showRaw, showSmoothed, clipOutliers]);
 
-  // Zoomed slice of chartData
-  const visibleData = useMemo(() => {
-    if (zoomLeft == null || zoomRight == null) return chartData;
-    const lo = Math.min(zoomLeft, zoomRight);
-    const hi = Math.max(zoomLeft, zoomRight);
-    return chartData.filter(d => d.step >= lo && d.step <= hi);
-  }, [chartData, zoomLeft, zoomRight]);
+  // Layout wrapper we measure for sizing — uPlot collapses its own mount node
+  // to width:min-content, so we can't read sizes off it.
+  const chartHostRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const uplotRef = useRef<uPlot | null>(null);
 
-  // Convert a pixel x within the wrapper to a fractional position [0,1] across the plot area
-  const pxToFraction = useCallback((clientX: number) => {
-    const wrapper = chartWrapperRef.current;
-    if (!wrapper) return 0;
-    const rect = wrapper.getBoundingClientRect();
-    // chart margin left (8) + yAxis width (72) = 80, margin right = 16
-    const plotLeft = 80;
-    const plotRight = rect.width - 16;
-    const plotWidth = plotRight - plotLeft;
-    const localX = clientX - rect.left;
-    return Math.max(0, Math.min(1, (localX - plotLeft) / plotWidth));
-  }, []);
-
-  const fractionToStep = useCallback((frac: number) => {
-    const data = visibleData;
-    if (data.length === 0) return 0;
-    const idx = Math.round(frac * (data.length - 1));
-    return data[Math.max(0, Math.min(data.length - 1, idx))].step;
-  }, [visibleData]);
-
-  // Native DOM events for drag selection
+  // Latest yClip read by the y-scale range fn — kept current via effect.
+  const yClipRef = useRef<{ min: number; max: number } | null>(null);
   useEffect(() => {
-    const wrapper = chartWrapperRef.current;
-    if (!wrapper) return;
+    yClipRef.current = built.yClip;
+  }, [built.yClip]);
 
-    const onDown = (e: MouseEvent) => {
-      selectStartPx.current = e.clientX;
-      selectStartLabel.current = fractionToStep(pxToFraction(e.clientX));
-      setIsDragging(true);
-      if (overlayRef.current) overlayRef.current.style.display = 'none';
+  // Track zoom state via ref so the data-update effect can decide whether to refit scales.
+  const isZoomedRef = useRef(false);
+  useEffect(() => {
+    isZoomedRef.current = isZoomed;
+  }, [isZoomed]);
+
+  // Structural recreate key — recreate uPlot only when the series shape or
+  // axis distribution changes. Data updates go through setData.
+  const hasData = (built.data[0]?.length ?? 0) > 1;
+  const structuralKey = useMemo(
+    () => `${activeKeys.join('|')}|raw=${showRaw}|sm=${showSmoothed}|log=${useLogScale}|has=${hasData}`,
+    [activeKeys, showRaw, showSmoothed, useLogScale, hasData],
+  );
+
+  useEffect(() => {
+    if (uplotRef.current) {
+      uplotRef.current.destroy();
+      uplotRef.current = null;
+    }
+    if (!containerRef.current || !chartHostRef.current) return;
+    if (!hasData) return;
+
+    const host = chartHostRef.current;
+    const rect = host.getBoundingClientRect();
+    const initialHeight = rect.height > 0 ? Math.max(MIN_CANVAS_HEIGHT, rect.height - 40) : FALLBACK_CANVAS_HEIGHT;
+    const opts: uPlot.Options = {
+      width: rect.width || 800,
+      height: initialHeight,
+      padding: [12, 16, 0, 4],
+      series: built.seriesConfigs,
+      scales: {
+        x: { time: false },
+        y: {
+          distr: useLogScale ? 3 : 1,
+          range: (_u, dataMin, dataMax) => {
+            const c = yClipRef.current;
+            if (c) return [c.min, c.max];
+            return [dataMin, dataMax];
+          },
+        },
+      },
+      axes: [
+        {
+          stroke: 'rgba(255,255,255,0.55)',
+          grid: { stroke: 'rgba(255,255,255,0.06)' },
+          ticks: { stroke: 'rgba(255,255,255,0.15)' },
+        },
+        {
+          stroke: 'rgba(255,255,255,0.55)',
+          grid: { stroke: 'rgba(255,255,255,0.06)' },
+          ticks: { stroke: 'rgba(255,255,255,0.15)' },
+          size: 60,
+          values: (_u, ticks) => ticks.map(tk => formatNum(tk)),
+        },
+      ],
+      cursor: {
+        drag: { x: true, y: false, setScale: true },
+        points: { size: 6 },
+      },
+      legend: { show: true },
+      hooks: {
+        setScale: [
+          (u, key) => {
+            if (key !== 'x') return;
+            const xs = u.data[0] as number[];
+            if (!xs || !xs.length) return;
+            const sx = u.scales.x;
+            const zoomed = sx.min !== xs[0] || sx.max !== xs[xs.length - 1];
+            setIsZoomed(zoomed);
+          },
+        ],
+      },
     };
 
-    const onMove = (e: MouseEvent) => {
-      if (selectStartPx.current == null) return;
-      const rect = wrapper.getBoundingClientRect();
-      const plotLeft = 80;
-      const plotRight = rect.width - 16;
-      const startLocal = selectStartPx.current - rect.left;
-      const curLocal = e.clientX - rect.left;
-      // Clamp to plot area
-      const clampedStart = Math.max(plotLeft, Math.min(plotRight, startLocal));
-      const clampedCur = Math.max(plotLeft, Math.min(plotRight, curLocal));
-      const left = Math.min(clampedStart, clampedCur);
-      const width = Math.abs(clampedCur - clampedStart);
-      if (overlayRef.current) {
-        overlayRef.current.style.display = width > 3 ? 'block' : 'none';
-        overlayRef.current.style.left = `${left}px`;
-        overlayRef.current.style.width = `${width}px`;
-      }
-    };
+    uplotRef.current = new uPlot(opts, built.data, containerRef.current);
+    setIsZoomed(false);
 
-    const onUp = (e: MouseEvent) => {
-      if (selectStartPx.current == null) return;
-      const startStep = selectStartLabel.current!;
-      const endStep = fractionToStep(pxToFraction(e.clientX));
-      selectStartPx.current = null;
-      selectStartLabel.current = null;
-      setIsDragging(false);
-      if (overlayRef.current) overlayRef.current.style.display = 'none';
-      if (startStep !== endStep) {
-        setZoomLeft(Math.min(startStep, endStep));
-        setZoomRight(Math.max(startStep, endStep));
-      }
-    };
+    // After uPlot mounts its legend, right-size the canvas against the actual
+    // legend height so the canvas fills the remaining vertical space.
+    const fitted = computeCanvasSize(host);
+    if (fitted) uplotRef.current.setSize(fitted);
 
-    wrapper.addEventListener('mousedown', onDown);
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
     return () => {
-      wrapper.removeEventListener('mousedown', onDown);
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      uplotRef.current?.destroy();
+      uplotRef.current = null;
     };
-  }, [pxToFraction, fractionToStep]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structuralKey]);
+
+  // Push new data without recreating — preserves zoom & cursor state.
+  useEffect(() => {
+    const u = uplotRef.current;
+    if (!u) return;
+    // When zoomed, pass resetScales=false so the user's view stays put. uPlot
+    // skips its commit() in that branch though, so force a redraw to actually
+    // re-render the new smoothed/strided values within the zoom window.
+    if (isZoomedRef.current) {
+      u.setData(built.data, false);
+      u.redraw(true, true);
+    } else {
+      u.setData(built.data, true);
+    }
+  }, [built]);
+
+  // Resize observer — fit canvas to the wrapper's available space minus the
+  // HTML legend uPlot renders below it. Observe the layout wrapper, not the
+  // uPlot mount node (which uPlot pins to width:min-content).
+  // Re-runs on `hasData` because the observed element only exists once data
+  // has loaded (see the `!hasData` branch below).
+  useEffect(() => {
+    const el = chartHostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const u = uplotRef.current;
+      if (!u) return;
+      const fitted = computeCanvasSize(el);
+      if (fitted) u.setSize(fitted);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [hasData]);
 
   const handleResetZoom = useCallback(() => {
-    setZoomLeft(null);
-    setZoomRight(null);
+    const u = uplotRef.current;
+    if (!u) return;
+    const xs = u.data[0] as number[];
+    if (!xs || !xs.length) return;
+    u.setScale('x', { min: xs[0], max: xs[xs.length - 1] });
   }, []);
 
-  const hasData = chartData.length > 1;
-  const isZoomed = zoomLeft != null && zoomRight != null;
-
-  const yDomain = useMemo((): [number | 'auto', number | 'auto'] => {
-    if (!clipOutliers || chartData.length < 10) return ['auto', 'auto'];
-
-    // Collect visible values (prefer smoothed if shown, else raw)
-    const vals: number[] = [];
-    for (const row of chartData) {
-      for (const key of activeKeys) {
-        const k = showSmoothed ? `${key}__smooth` : `${key}__raw`;
-        const v = row[k];
-        if (typeof v === 'number' && Number.isFinite(v)) vals.push(v);
-      }
-    }
-    if (vals.length < 10) return ['auto', 'auto'];
-
-    vals.sort((a, b) => a - b);
-    const lo = vals[Math.floor(vals.length * 0.02)];
-    const hi = vals[Math.ceil(vals.length * 0.98) - 1];
-
-    if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) return ['auto', 'auto'];
-    return [lo, hi];
-  }, [clipOutliers, chartData, activeKeys, showSmoothed]);
+  const totalPoints = built.data[0]?.length ?? 0;
 
   return (
-    <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
-      <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
+    <div className="bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col h-full">
+      <div className="bg-gray-800 px-4 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-blue-400" />
           <h2 className="text-gray-100 text-sm font-medium">Loss graph</h2>
@@ -315,7 +379,7 @@ export default function JobLossGraph({ job }: Props) {
             {status === 'loading' && 'Loading...'}
             {status === 'refreshing' && 'Refreshing...'}
             {status === 'error' && 'Error'}
-            {status === 'success' && hasData && `${chartData.length.toLocaleString()} steps`}
+            {status === 'success' && hasData && `${totalPoints.toLocaleString()} steps`}
             {status === 'success' && !hasData && 'No data yet'}
           </span>
         </div>
@@ -330,126 +394,36 @@ export default function JobLossGraph({ job }: Props) {
       </div>
 
       {/* Chart */}
-      <div className="px-4  pt-4 pb-4">
-        <div ref={chartWrapperRef} className="bg-gray-950 rounded-lg border border-gray-800 h-96 relative select-none">
-          {/* Drag selection overlay — positioned via refs, no re-renders */}
-          <div
-            ref={overlayRef}
-            style={{ display: 'none', position: 'absolute', top: 10, bottom: 10, pointerEvents: 'none', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.4)', zIndex: 5 }}
-          />
+      <div className="px-4 pt-4 pb-4 flex-1 min-h-0 flex flex-col">
+        <div
+          className="bg-gray-950 rounded-lg border border-gray-800 relative select-none flex-1 min-h-0"
+          style={{ minHeight: 240 }}
+        >
           {!hasData ? (
-            <div className="h-full w-full flex items-center justify-center text-sm text-gray-400">
+            <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
               {status === 'error' ? 'Failed to load loss logs.' : 'Waiting for loss points...'}
             </div>
           ) : (
             <>
-            {isZoomed && (
-              <button
-                type="button"
-                onClick={handleResetZoom}
-                className="absolute top-2 right-2 z-10 px-2 py-1 rounded text-xs bg-blue-600/80 hover:bg-blue-600 text-white border border-blue-500/50"
-              >
-                Reset zoom
-              </button>
-            )}
-            <ResponsiveContainer width="100%" height="100%" style={isDragging ? { pointerEvents: 'none' } : undefined}>
-              <LineChart
-                data={visibleData}
-                margin={{ top: 10, right: 16, bottom: 10, left: 8 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis
-                  dataKey="step"
-                  tick={{ fill: 'rgba(255,255,255,0.55)', fontSize: 12 }}
-                  tickLine={{ stroke: 'rgba(255,255,255,0.15)' }}
-                  axisLine={{ stroke: 'rgba(255,255,255,0.15)' }}
-                  minTickGap={40}
-                />
-                <YAxis
-                  scale={useLogScale ? 'log' : 'linear'}
-                  tick={{ fill: 'rgba(255,255,255,0.55)', fontSize: 12 }}
-                  tickLine={{ stroke: 'rgba(255,255,255,0.15)' }}
-                  axisLine={{ stroke: 'rgba(255,255,255,0.15)' }}
-                  width={72}
-                  tickFormatter={formatNum}
-                  domain={yDomain}
-                  allowDataOverflow={clipOutliers}
-                />
-                {!isDragging && (
-                  <Tooltip
-                    cursor={{ stroke: 'rgba(59,130,246,0.25)', strokeWidth: 1 }}
-                    contentStyle={{
-                      background: 'rgba(17,24,39,0.96)',
-                      border: '1px solid rgba(31,41,55,1)',
-                      borderRadius: 10,
-                      color: 'rgba(255,255,255,0.9)',
-                      fontSize: 12,
-                    }}
-                    labelStyle={{ color: 'rgba(255,255,255,0.75)' }}
-                    labelFormatter={(label: any) => `step ${label}`}
-                    formatter={(value: any, name: any) => [formatNum(Number(value)), name]}
-                  />
-                )}
-
-                <Legend
-                  wrapperStyle={{
-                    paddingTop: 8,
-                    color: 'rgba(255,255,255,0.7)',
-                    fontSize: 12,
-                  }}
-                />
-
-                {/* Raw lines */}
-                {showRaw && activeKeys.map(k => (
-                  <Line
-                    key={`${k}__raw`}
-                    type="monotone"
-                    dataKey={`${k}__raw`}
-                    name={`${k} (raw)`}
-                    stroke={strokeForKey(k).replace('1)', '0.40)')}
-                    strokeWidth={1.25}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))}
-                {/* Smoothed lines */}
-                {showSmoothed && activeKeys.map(k => (
-                  <Line
-                    key={`${k}__smooth`}
-                    type="monotone"
-                    dataKey={`${k}__smooth`}
-                    name={`${k}`}
-                    stroke={strokeForKey(k)}
-                    strokeWidth={2}
-                    dot={false}
-                    isAnimationActive={false}
-                  />
-                ))}
-                {/* Full-smooth trend overlay — rendered last so it's on top, hidden from legend/tooltip */}
-                {activeKeys.map(k => (
-                  <Line
-                    key={`${k}__fullsmooth`}
-                    type="monotone"
-                    dataKey={`${k}__fullsmooth`}
-                    name={`${k}__fullsmooth`}
-                    stroke={dulledColor(strokeForKey(k))}
-                    strokeWidth={2.5}
-                    dot={false}
-                    isAnimationActive={false}
-                    legendType="none"
-                    tooltipType="none"
-                  />
-                ))}
-
-              </LineChart>
-            </ResponsiveContainer>
+              {isZoomed && (
+                <button
+                  type="button"
+                  onClick={handleResetZoom}
+                  className="absolute top-2 right-2 z-10 px-2 py-1 rounded text-xs bg-blue-600/80 hover:bg-blue-600 text-white border border-blue-500/50"
+                >
+                  Reset zoom
+                </button>
+              )}
+              <div ref={chartHostRef} className="absolute top-0 left-0 right-0 bottom-2 overflow-hidden">
+                <div ref={containerRef} />
+              </div>
             </>
           )}
         </div>
       </div>
 
       {/* Controls */}
-      <div className="px-4 pb-2">
+      <div className="px-4 pb-2 shrink-0">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <label className="block text-xs text-gray-400 mb-2">Display</label>
@@ -520,9 +494,31 @@ export default function JobLossGraph({ job }: Props) {
             />
             <div className="mt-2 text-[11px] text-gray-500">UI downsample for huge runs.</div>
           </div>
-
         </div>
       </div>
+
+      <style jsx global>{`
+        .uplot,
+        .uplot * {
+          font-family: inherit;
+        }
+        .uplot .u-legend {
+          color: rgba(255, 255, 255, 0.85);
+          font-size: 12px;
+          margin-top: 4px;
+        }
+        .uplot .u-legend th,
+        .uplot .u-legend td {
+          color: rgba(255, 255, 255, 0.85);
+        }
+        .uplot .u-legend .u-marker {
+          border-radius: 2px;
+        }
+        .uplot .u-select {
+          background: rgba(59, 130, 246, 0.15);
+          border: 1px solid rgba(59, 130, 246, 0.4);
+        }
+      `}</style>
     </div>
   );
 }

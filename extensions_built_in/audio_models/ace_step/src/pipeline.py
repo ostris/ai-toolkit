@@ -36,6 +36,7 @@ class AceStep15Pipeline:
         self.text_encoder: TextEncoder = text_encoder
         self.tokenizer: AutoTokenizer = tokenizer
         self.scheduler = scheduler
+        self.do_tiled_decoding = False
 
     def to(self, *args, **kwargs):
         self.transformer.to(*args, **kwargs)
@@ -158,6 +159,9 @@ class AceStep15Pipeline:
                 xt = xt - vt * (tv - t_sched_t[i + 1].item())
 
         # VAE decode
-        wav = self.vae.decode(xt.transpose(1, 2))  # [1, 2, samples]
+        if self.do_tiled_decoding:
+            wav = self.vae.tiled_decode(xt.transpose(1, 2))  # [1, 2, samples]
+        else:
+            wav = self.vae.decode(xt.transpose(1, 2))  # [1, 2, samples]
         wav = wav[0, :, : int(duration * SAMPLE_RATE)]
         return wav
