@@ -1,4 +1,8 @@
+'use client';
+
 import classNames from 'classnames';
+import { Menu } from 'lucide-react';
+import { toggleSidebar } from './Sidebar';
 
 interface Props {
   className?: string;
@@ -13,6 +17,12 @@ export const TopBar: React.FC<Props> = ({ children, className }) => {
         className,
       )}
     >
+      <button
+        className="md:hidden p-1 mr-1 text-gray-300 hover:text-white"
+        onClick={toggleSidebar}
+      >
+        <Menu className="w-5 h-5" />
+      </button>
       {children ? children : null}
     </div>
   );

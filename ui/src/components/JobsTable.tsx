@@ -56,6 +56,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     {
       title: 'Steps',
       key: 'steps',
+      hideOnMobile: true,
       render: row => {
         const jobConfig: JobConfig = JSON.parse(row.job_config);
         if (row.job_type !== 'train') {
@@ -81,6 +82,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     {
       title: 'GPU',
       key: 'gpu_ids',
+      hideOnMobile: true,
     },
     {
       title: 'Status',
@@ -97,14 +99,19 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     {
       title: 'Info',
       key: 'info',
+      hideOnMobile: true,
       className: 'truncate max-w-xs',
     },
     {
       title: 'Actions',
       key: 'actions',
       className: 'text-right',
+      mobileAlignRight: true,
       render: row => {
         return <JobActionBar job={row} onRefresh={refreshJobs} autoStartQueue={false} />;
+      },
+      mobileRender: row => {
+        return <JobActionBar job={row} onRefresh={refreshJobs} variant="menu" stopPropagation />;
       },
     },
   ];
@@ -165,33 +172,33 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
                   { 'bg-red-600 dark:bg-red-900': !queue?.is_running },
                 )}
               >
-                <div className="flex items-center space-x-2 flex-1 py-2">
-                  <h2 className="font-semibold text-white">{jobsDict[gpuKey].name}</h2>
-                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {queue?.gpu_ids}</span>
+                <div className="flex items-center space-x-2 flex-1 py-2 min-w-0">
+                  <h2 className="font-semibold text-white truncate text-sm md:text-base">{jobsDict[gpuKey].name}</h2>
+                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 shrink-0 whitespace-nowrap"># {queue?.gpu_ids}</span>
                 </div>
-                <div className="text-sm text-gray-300 italic flex items-center">
+                <div className="text-sm text-gray-300 italic flex items-center shrink-0">
                   {queue?.is_running ? (
                     <>
-                      <span className="text-green-100 dark:text-green-400 mr-2">Queue Running</span>
+                      <span className="text-green-100 dark:text-green-400 mr-2 hidden md:inline">Queue Running</span>
                       <button
                         onClick={async () => {
                           await stopQueue(queue.gpu_ids as string);
                           refresh();
                         }}
-                        className="ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
+                        className="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
                       >
                         STOP
                       </button>
                     </>
                   ) : (
                     <>
-                      <span className="text-red-100 dark:text-red-400 mr-2">Queue Stopped</span>
+                      <span className="text-red-100 dark:text-red-400 mr-2 hidden md:inline">Queue Stopped</span>
                       <button
                         onClick={async () => {
                           await startQueue(gpuKey);
                           refresh();
                         }}
-                        className="ml-4 text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
+                        className="text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
                       >
                         START
                       </button>
