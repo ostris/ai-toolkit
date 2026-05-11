@@ -61,8 +61,42 @@ export interface ModelArch {
 
 const defaultNameOrPath = '';
 const defaultLinearRank = 32
+const defaultAnimaSamples = [
+  {
+    prompt: 'masterpiece, best quality, very aesthetic, 1girl, solo, blue hair, blue eyes, moonlit room, blue roses',
+  },
+  {
+    prompt: 'masterpiece, best quality, very aesthetic, scenic fantasy greenhouse, soft moonlight, detailed background',
+  },
+];
 
 export const modelArchs: ModelArch[] = [
+  {
+    name: 'anima',
+    label: 'Anima',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['mrfatso/anima-preview3-diffusers', defaultNameOrPath],
+      'config.process[0].model.quantize': [false, false],
+      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].model.qtype': ['', 'qfloat8'],
+      'config.process[0].model.qtype_te': ['', 'qfloat8'],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].network.linear': [16, defaultLinearRank],
+      'config.process[0].network.linear_alpha': [16, defaultLinearRank],
+      'config.process[0].sample.sample_steps': [25, 30],
+      'config.process[0].sample.samples': [defaultAnimaSamples, defaultSampleConfig.samples],
+      'config.process[0].sample.neg': [
+        'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, signature, artist name',
+        '',
+      ],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+  },
   {
     name: 'flux',
     label: 'FLUX.1',
