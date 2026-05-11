@@ -1072,7 +1072,7 @@ export default function SimpleJob({
                           <div className="grid grid-cols-2 gap-2">
                             {[
                               [256, 512, 768, 1024],
-                              [1280, 1328, 1536],
+                              [1280, 1328, 1536, 2048],
                             ].map(resGroup => (
                               <div key={resGroup[0]} className="space-y-2">
                                 {resGroup.map(res => (

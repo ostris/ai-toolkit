@@ -38,7 +38,7 @@ from transformers.utils import (
     is_torchdynamo_compiling,
 )
 from transformers.utils.deprecation import deprecate_kwarg
-from transformers.utils.generic import check_model_inputs
+from transformers.utils.generic import merge_with_config_defaults
 from transformers.models.qwen3_vl.configuration_qwen3_vl import (
     Qwen3VLConfig,
     Qwen3VLTextConfig,
@@ -935,7 +935,7 @@ class Qwen3VLTextModel(Qwen3VLPreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @check_model_inputs
+    @merge_with_config_defaults
     @auto_docstring
     def forward(
         self,
@@ -953,12 +953,18 @@ class Qwen3VLTextModel(Qwen3VLPreTrainedModel):
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Union[tuple, BaseModelOutputWithPast]:
         r"""
+        cache_position (`torch.LongTensor` of shape `(seqlen,)`, *optional*):
+            Indices depicting the position of the input sequence tokens in the sequence. Used to index into the
+            key/value cache for incremental decoding.
         visual_pos_masks (`torch.Tensor` of shape `(batch_size, seqlen)`, *optional*):
             The mask of the visual positions.
         deepstack_visual_embeds (`list[torch.Tensor]`, *optional*):
             The deepstack visual embeddings. The shape is (num_layers, visual_seqlen, embed_dim).
             The feature is extracted from the different visual encoder layers, and fed to the decoder
             hidden states. It's from the paper DeepStack(https://arxiv.org/abs/2406.04334).
+        return_mid_results_layers (`list[int]`, *optional*):
+            Indices of decoder layers whose hidden states should be collected and returned as
+            intermediate results on the output's `mid_results` attribute.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
@@ -1885,7 +1891,7 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
         )
 
     @auto_docstring
-    @check_model_inputs
+    @merge_with_config_defaults
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -1910,6 +1916,21 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
             The temporal, height and width of feature shape of each image in LLM.
         video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
             The temporal, height and width of feature shape of each video in LLM.
+        cache_position (`torch.LongTensor` of shape `(seqlen,)`, *optional*):
+            Indices depicting the position of the input sequence tokens in the sequence. Used to index into the
+            key/value cache for incremental decoding.
+        vinputs (`torch.Tensor`, *optional*):
+            Visual inputs for the generation pathway. When provided, the forward call is dispatched to
+            `_forward_generation` instead of the standard understanding path.
+        timestep (`torch.Tensor`, *optional*):
+            Diffusion timestep tensor passed through to the generation forward when `vinputs` is provided.
+        token_types (`torch.Tensor`, *optional*):
+            Per-token type identifiers used by the generation forward to distinguish text vs. visual tokens.
+        use_flash_attn (`bool`, *optional*, defaults to `False`):
+            Whether to use a flash-attention kernel in the generation forward path.
+        return_mid_results_layers (`list[int]`, *optional*):
+            Indices of decoder layers whose hidden states should be collected and returned as
+            intermediate results on the output's `mid_results` attribute.
         """
         # Dispatch to generation forward if vinputs is provided
         if vinputs is not None:
@@ -2152,7 +2173,7 @@ class Qwen3VLForConditionalGeneration(Qwen3VLPreTrainedModel, GenerationMixin):
         self.model.visual.gradient_checkpointing_enable()
         self.model.language_model.gradient_checkpointing_enable()
 
-    @check_model_inputs
+    @merge_with_config_defaults
     def forward(
         self,
         input_ids: torch.LongTensor = None,

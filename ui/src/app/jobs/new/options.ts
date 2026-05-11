@@ -932,9 +932,21 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [false, false],
       'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].train.max_loss': [1.0, undefined],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['patch_embed'], []],
+      'config.process[0].network.transformer_only': [false, undefined],
+      'config.process[0].sample.width': [2048, 1024],
+      'config.process[0].sample.height': [2048, 1024],
+      'config.process[0].model.model_kwargs': [
+        {
+          noise_scale_inference: 8.0,
+          noise_scale: 8.0,
+        },
+        {},
+      ],
     },
     disableSections: [
-      'network.conv', 
+      'network.conv',
       'model.quantize_te',
       'train.unload_text_encoder',
     ],

@@ -11,16 +11,19 @@ from toolkit.prompt_utils import PromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
+from safetensors.torch import load_file, save_file
 from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
 
 from transformers import AutoProcessor
+from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig
 from .src.hidream_o1.qwen3_vl_transformers import Qwen3VLForConditionalGeneration
 from .src.hidream_o1.pipeline import HiDreamO1Pipeline, DEFAULT_NOISE_SCALE
 from toolkit.models.FakeVAE import FakeVAE
 from typing import TYPE_CHECKING
+from .src.hidream_o1.model_config import model_config
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
@@ -129,16 +132,19 @@ class HidreamO1Model(BaseModel):
         self.noise_scale = self.model_config.model_kwargs.get(
             "noise_scale", DEFAULT_NOISE_SCALE
         )
+        self.noise_scale_inference = self.model_config.model_kwargs.get(
+            "noise_scale_inference", self.noise_scale
+        )
         print(f"Using noise scale: {self.noise_scale}")
         global _GLOBAL_NOISE_SCALE
         _GLOBAL_NOISE_SCALE = self.noise_scale
+        self.is_comfy_weight = False  # save as single file if true
 
     # static method to get the noise scheduler
     @staticmethod
     def get_train_scheduler():
         return HidreamO1FlowmatchScheduler(
-            **scheduler_config,
-            noise_scale=_GLOBAL_NOISE_SCALE
+            **scheduler_config, noise_scale=_GLOBAL_NOISE_SCALE
         )
 
     def get_bucket_divisibility(self):
@@ -150,20 +156,52 @@ class HidreamO1Model(BaseModel):
         model_path = self.model_config.name_or_path
 
         self.print_and_status_update("Loading transformer")
-        
+
         try:
             processor = AutoProcessor.from_pretrained(model_path)
         except Exception as e:
-            print(f"Failed to load processor from model path {model_path}, trying original path. Error: {e}")
-            processor = AutoProcessor.from_pretrained(self.model_config.name_or_path_original)
+            print(
+                f"Failed to load processor from model path {model_path}, trying original path. Error: {e}"
+            )
+            processor_path = self.model_config.extras_name_or_path
+            if processor_path.endswith(".safetensors"):
+                processor_path = "HiDream-ai/HiDream-O1-Image"
+            processor = AutoProcessor.from_pretrained(processor_path)
 
         tokenizer = get_tokenizer(processor)
         add_special_tokens(tokenizer)
 
-        transformer = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=self.torch_dtype,
-        ).to(self.device_torch, dtype=dtype)
+        if model_path.endswith(".safetensors"):
+            self.is_comfy_weight = True
+            self.print_and_status_update(
+                "Model is in safetensors format, loading with safetensors"
+            )
+            state_dict = load_file(model_path)
+
+            for key, value in state_dict.items():
+                state_dict[key] = value.to(dtype=dtype)
+
+            # comfy ui is missing the lm head. It isnt used, but our model needs it for now
+            state_dict["lm_head.weight"] = torch.zeros(
+                151936, 4096, dtype=torch.bfloat16, device="cpu"
+            )
+
+            # transformer.load_state_dict(state_dict, assign=True)
+            transformer = Qwen3VLForConditionalGeneration.from_pretrained(
+                None,
+                config=Qwen3VLConfig(**model_config),
+                state_dict=state_dict,
+                torch_dtype=self.torch_dtype,
+            )
+            del state_dict  # free memory
+        else:
+            transformer = Qwen3VLForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=self.torch_dtype,
+            )
+        flush()
+        if not self.model_config.low_vram:
+            transformer.to(self.device_torch)
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
@@ -182,6 +220,12 @@ class HidreamO1Model(BaseModel):
             )
 
         flush()
+
+        # move over to device now if low vram
+        if self.model_config.low_vram:
+            transformer.to(self.device_torch)
+
+        # fake ones so the trainer doesnt break
         vae = FakeVAE().to(self.device_torch, dtype=dtype)
         text_encoder = FakeTextEncoder().to(self.device_torch, dtype=dtype)
 
@@ -201,20 +245,12 @@ class HidreamO1Model(BaseModel):
 
         self.print_and_status_update("Preparing Model")
 
-        text_encoder = [text_encoder]
-        tokenizer = [tokenizer]
-
-        flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
-        text_encoder[0].requires_grad_(False)
-        text_encoder[0].eval()
         flush()
 
         # save it to the model class
         self.vae = vae
-        self.text_encoder = text_encoder  # list of text encoders
-        self.tokenizer = processor  # list of tokenizers
+        self.text_encoder = text_encoder
+        self.tokenizer = processor
         self.model = pipe.model
         self.pipeline = pipe
         self.print_and_status_update("Model Loaded")
@@ -279,7 +315,7 @@ class HidreamO1Model(BaseModel):
             num_inference_steps=gen_config.num_inference_steps,
             guidance_scale=gen_config.guidance_scale,
             generator=generator,
-            noise_scale=self.noise_scale,
+            noise_scale=self.noise_scale_inference,
             **extra,
         ).images[0]
         return img
@@ -452,17 +488,26 @@ class HidreamO1Model(BaseModel):
 
     def save_model(self, output_path, meta, save_dtype):
         transformer: Qwen3VLForConditionalGeneration = unwrap_model(self.model)
-        transformer.save_pretrained(
-            save_directory=output_path,
-            safe_serialization=True,
-        )
-        
-        # save processor
-        self.tokenizer.save_pretrained(output_path)
+        if self.is_comfy_weight:
+            sd = transformer.state_dict()
+            save_dict = {}
+            for key, value in sd.items():
+                if "lm_head.weight" in key:
+                    continue  # comfy checkpoint doesnt have the lm head, so skip it
+                save_dict[key] = value.clone().to("cpu", dtype=save_dtype)
+            save_file(save_dict, output_path, metadata=meta)
+        else:
+            transformer.save_pretrained(
+                save_directory=output_path,
+                safe_serialization=True,
+            )
 
-        meta_path = os.path.join(output_path, "aitk_meta.yaml")
-        with open(meta_path, "w") as f:
-            yaml.dump(meta, f)
+            # save processor
+            self.tokenizer.save_pretrained(output_path)
+
+            meta_path = os.path.join(output_path, "aitk_meta.yaml")
+            with open(meta_path, "w") as f:
+                yaml.dump(meta, f)
 
     def get_loss_target(self, *args, **kwargs):
         noise = kwargs.get("noise")
