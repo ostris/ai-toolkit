@@ -4,6 +4,7 @@ from typing import List, Optional
 import torch
 import yaml
 from toolkit.config_modules import GenerateImageConfig, ModelConfig
+from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
@@ -495,6 +496,10 @@ class HidreamO1Model(BaseModel):
                 if "lm_head.weight" in key:
                     continue  # comfy checkpoint doesnt have the lm head, so skip it
                 save_dict[key] = value.clone().to("cpu", dtype=save_dtype)
+            
+            if not output_path.endswith(".safetensors"):
+                output_path += ".safetensors"
+            meta = get_meta_for_safetensors(meta, name=self.arch)
             save_file(save_dict, output_path, metadata=meta)
         else:
             transformer.save_pretrained(
@@ -525,12 +530,15 @@ class HidreamO1Model(BaseModel):
         new_sd = {}
         for key, value in state_dict.items():
             new_key = key.replace("transformer.", "diffusion_model.")
+            new_key = new_key.replace(".model.", ".")
             new_sd[new_key] = value
         return new_sd
 
     def convert_lora_weights_before_load(self, state_dict):
         new_sd = {}
         for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
+            new_key = key.replace("diffusion_model.", "transformer.model.")
+            # to load legacy keys
+            new_key = new_key.replace("transformer.model.model.", "transformer.model.")
             new_sd[new_key] = value
         return new_sd
