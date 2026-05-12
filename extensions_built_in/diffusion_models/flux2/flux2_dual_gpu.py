@@ -72,6 +72,13 @@ class Flux2DualGPUMixin:
         """
         override = get_te_device_override()
         self.te_device_torch = override if override is not None else self.device_torch
+        if self.te_device_torch.type == "cpu":
+            self.print_and_status_update(
+                "FLUX2_TE_DEVICE=cpu — Mistral will run on CPU. Set "
+                "`cache_text_embeddings: true` and `unload_text_encoder: true` "
+                "in your config so it runs once at startup; otherwise it runs "
+                "on CPU every step (very slow)."
+            )
 
     # ----------------------------------------------------------- TE override
 
@@ -102,17 +109,50 @@ class Flux2DualGPUMixin:
         Also installs the LoRA / multiplier patches that align downstream
         ai-toolkit machinery with the split layout.
         """
-        d0 = torch.device("cuda:0")
-        d1 = torch.device("cuda:1")
+        # Primary device follows the model's configured device (normally
+        # cuda:0); the second half goes on the next CUDA ordinal.
+        d0 = self.device_torch
+        if d0.type != "cuda":
+            raise RuntimeError(
+                f"FLUX2_DUAL_GPU=true requires a CUDA device; got {d0}. "
+                "Unset FLUX2_DUAL_GPU for non-CUDA training."
+            )
+        n_cuda = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        d1_index = (d0.index or 0) + 1
+        if n_cuda < d1_index + 1:
+            raise RuntimeError(
+                f"FLUX2_DUAL_GPU=true needs at least {d1_index + 1} CUDA "
+                f"device(s) — to use cuda:{d0.index or 0} + cuda:{d1_index} — "
+                f"but found {n_cuda}. Unset FLUX2_DUAL_GPU for single-GPU "
+                "training."
+            )
+        d1 = torch.device(f"cuda:{d1_index}")
+
         n_single = len(transformer.single_blocks)
         override = os.getenv("FLUX2_DUAL_GPU_SPLIT_AT")
-        split_at = int(override) if override else (n_single // 2)
+        if override is not None:
+            try:
+                split_at = int(override)
+            except ValueError:
+                raise ValueError(
+                    "FLUX2_DUAL_GPU_SPLIT_AT must be an integer; got "
+                    f"{override!r}."
+                )
+            if not (1 <= split_at < n_single):
+                raise ValueError(
+                    f"FLUX2_DUAL_GPU_SPLIT_AT={split_at} is out of range; "
+                    f"must be in [1, {n_single - 1}] for a model with "
+                    f"{n_single} single_blocks."
+                )
+        else:
+            split_at = n_single // 2
+
         self.print_and_status_update(
             f"Distributing transformer across {d0} and {d1}"
         )
         self.print_and_status_update(
-            f"Single-block split: {split_at} on cuda:0, "
-            f"{n_single - split_at} on cuda:1"
+            f"Single-block split: {split_at} on {d0}, "
+            f"{n_single - split_at} on {d1}"
         )
 
         # input projections + positional embedder + modulations on d0
@@ -307,8 +347,8 @@ def _patch_force_to() -> None:
         # Move the network container itself first (usually no params).
         try:
             self_n.to(device, dtype)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[flux2_dual_gpu] network.to({device}, {dtype}) failed: {e}")
         loras = []
         if hasattr(self_n, "unet_loras"):
             loras += self_n.unet_loras
@@ -368,8 +408,11 @@ def _patch_apply_to_with_lazy_forward() -> None:
             # (apply_to captured the un-wrapped version).
             try:
                 lora.org_module[0].forward = lora.forward
-            except Exception:
-                pass
+            except Exception as e:
+                print(
+                    "[flux2_dual_gpu] could not rebind org_module forward for "
+                    f"{getattr(lora, 'lora_name', lora)}: {e}"
+                )
             lora._dual_gpu_wrapped = True
         return ret
 

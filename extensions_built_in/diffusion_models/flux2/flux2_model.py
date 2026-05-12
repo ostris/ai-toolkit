@@ -197,7 +197,10 @@ class Flux2Model(Flux2DualGPUMixin, BaseModel):
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
             )
 
-        if self.model_config.low_vram:
+        if self.model_config.low_vram and not is_dual_gpu_enabled():
+            # With the dual-GPU split active the transformer is statically
+            # distributed and transformer.to() is a no-op for device moves —
+            # low_vram offloading does not apply, so skip the (misleading) move.
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
 
