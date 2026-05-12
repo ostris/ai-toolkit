@@ -109,24 +109,16 @@ class Flux2DualGPUMixin:
         Also installs the LoRA / multiplier patches that align downstream
         ai-toolkit machinery with the split layout.
         """
-        # Primary device follows the model's configured device (normally
-        # cuda:0); the second half goes on the next CUDA ordinal.
-        d0 = self.device_torch
-        if d0.type != "cuda":
+        # Split lives on cuda:0 + cuda:1. (Quanto QTensors don't move cleanly
+        # to a bare "cuda" device, so keep these explicitly indexed.)
+        if not torch.cuda.is_available() or torch.cuda.device_count() < 2:
             raise RuntimeError(
-                f"FLUX2_DUAL_GPU=true requires a CUDA device; got {d0}. "
-                "Unset FLUX2_DUAL_GPU for non-CUDA training."
+                "FLUX2_DUAL_GPU=true needs at least 2 CUDA devices (cuda:0 + "
+                f"cuda:1); found {torch.cuda.device_count() if torch.cuda.is_available() else 0}. "
+                "Unset FLUX2_DUAL_GPU for single-GPU training."
             )
-        n_cuda = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        d1_index = (d0.index or 0) + 1
-        if n_cuda < d1_index + 1:
-            raise RuntimeError(
-                f"FLUX2_DUAL_GPU=true needs at least {d1_index + 1} CUDA "
-                f"device(s) — to use cuda:{d0.index or 0} + cuda:{d1_index} — "
-                f"but found {n_cuda}. Unset FLUX2_DUAL_GPU for single-GPU "
-                "training."
-            )
-        d1 = torch.device(f"cuda:{d1_index}")
+        d0 = torch.device("cuda:0")
+        d1 = torch.device("cuda:1")
 
         n_single = len(transformer.single_blocks)
         override = os.getenv("FLUX2_DUAL_GPU_SPLIT_AT")
