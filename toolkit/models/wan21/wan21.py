@@ -654,6 +654,31 @@ class Wan21(BaseModel):
         latents = (latents - latents_mean) * latents_std
 
         return latents.to(device, dtype=dtype)
+    
+    def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        if self.vae.device == torch.device('cpu'):
+            self.vae.to(device)
+
+        latents = latents.to(device, dtype=dtype)
+
+        latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
+        )
+        latents_std = torch.tensor(self.vae.config.latents_std).view(
+            1, self.vae.config.z_dim, 1, 1, 1
+        ).to(latents.device, latents.dtype)
+        latents = latents * latents_std + latents_mean
+
+        images = self.vae.decode(latents).sample
+
+        return images.to(device, dtype=dtype)
 
     def get_model_has_grad(self):
         return False

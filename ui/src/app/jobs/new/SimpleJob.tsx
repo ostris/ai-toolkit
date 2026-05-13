@@ -380,20 +380,24 @@ export default function SimpleJob({
                 }}
                 options={transformerQuantizationOptions}
               />
-              <SelectInput
-                label="Text Encoder"
-                value={jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''}
-                onChange={value => {
-                  if (value === '') {
-                    setJobConfig(false, 'config.process[0].model.quantize_te');
-                    value = defaultQtype;
-                  } else {
-                    setJobConfig(true, 'config.process[0].model.quantize_te');
+              {!disableSections.includes('model.quantize_te') && (
+                <SelectInput
+                  label="Text Encoder"
+                  value={
+                    jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''
                   }
-                  setJobConfig(value, 'config.process[0].model.qtype_te');
-                }}
-                options={quantizationOptions}
-              />
+                  onChange={value => {
+                    if (value === '') {
+                      setJobConfig(false, 'config.process[0].model.quantize_te');
+                      value = defaultQtype;
+                    } else {
+                      setJobConfig(true, 'config.process[0].model.quantize_te');
+                    }
+                    setJobConfig(value, 'config.process[0].model.qtype_te');
+                  }}
+                  options={quantizationOptions}
+                />
+              )}
             </Card>
           )}
           {modelArch?.additionalSections?.includes('model.multistage') && (
@@ -580,6 +584,7 @@ export default function SimpleJob({
                     { value: 'adamw', label: 'AdamW' },
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'automagic', label: 'Automagic' },
+                    { value: 'automagic2', label: 'Automagic v2' },
                     { value: 'prodigyopt', label: 'Prodigy' },
                     { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
@@ -1067,7 +1072,7 @@ export default function SimpleJob({
                           <div className="grid grid-cols-2 gap-2">
                             {[
                               [256, 512, 768, 1024],
-                              [1280, 1328, 1536],
+                              [1280, 1328, 1536, 2048],
                             ].map(resGroup => (
                               <div key={resGroup[0]} className="space-y-2">
                                 {resGroup.map(res => (

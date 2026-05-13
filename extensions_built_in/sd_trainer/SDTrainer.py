@@ -916,7 +916,17 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss + norm_std_loss
 
 
-        return loss + additional_loss
+        loss = loss + additional_loss
+        
+        if self.train_config.max_loss_debug and self.train_config.max_loss is not None:
+            if loss.item() > self.train_config.max_loss:
+                print_acc(f"Loss {loss.item()} is greater than max loss {self.train_config.max_loss}. Clipping to max loss.")
+                print_acc(f"timesteps: {timesteps}")
+
+        if self.train_config.max_loss is not None:
+            loss = torch.clamp(loss, max=self.train_config.max_loss)
+        
+        return loss
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
         return batch
