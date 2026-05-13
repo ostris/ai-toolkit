@@ -17,7 +17,6 @@ from toolkit.util.quantize import get_qtype, quantize, quantize_model
 
 try:
     from diffusers import AnimaAutoBlocks, AnimaModularPipeline, AnimaTextConditioner
-    from diffusers.guiders import ClassifierFreeGuidance
     from diffusers.models import CosmosTransformer3DModel
     from diffusers.modular_pipelines import SequentialPipelineBlocks
     from diffusers.modular_pipelines.anima.modular_blocks_anima import AnimaCoreDenoiseStep, AnimaDecodeStep
@@ -330,7 +329,6 @@ class AnimaModel(BaseModel):
         pipeline = AnimaEmbedsToImageBlocks().init_pipeline()
         pipeline.update_components(
             scheduler=self.get_train_scheduler(),
-            guider=ClassifierFreeGuidance(guidance_scale=4.0),
             transformer=trainable_model.transformer,
             vae=unwrap_model(self.vae),
         )
