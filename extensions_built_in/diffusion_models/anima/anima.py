@@ -16,8 +16,11 @@ from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscre
 from toolkit.util.quantize import get_qtype, quantize, quantize_model
 
 try:
-    from diffusers import AnimaPipeline, AnimaTextConditioner
+    from diffusers import AnimaAutoBlocks, AnimaModularPipeline, AnimaTextConditioner
+    from diffusers.guiders import ClassifierFreeGuidance
     from diffusers.models import CosmosTransformer3DModel
+    from diffusers.modular_pipelines import SequentialPipelineBlocks
+    from diffusers.modular_pipelines.anima.modular_blocks_anima import AnimaCoreDenoiseStep, AnimaDecodeStep
 except ImportError as e:
     raise ImportError(
         "Anima requires the Diffusers Anima branch. Run `uv pip install -r requirements.txt`."
@@ -208,6 +211,12 @@ class AnimaTrainableModel(torch.nn.Module):
                 module.gradient_checkpointing = True
 
 
+class AnimaEmbedsToImageBlocks(SequentialPipelineBlocks):
+    model_name = "anima"
+    block_classes = [AnimaCoreDenoiseStep, AnimaDecodeStep]
+    block_names = ["denoise", "decode"]
+
+
 class AnimaModel(BaseModel):
     arch = "anima"
 
@@ -243,8 +252,9 @@ class AnimaModel(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Anima model")
 
-        pipe: AnimaPipeline = AnimaPipeline.from_pretrained(self.model_config.name_or_path, torch_dtype=dtype)
-        pipe.scheduler = self.get_train_scheduler()
+        pipe: AnimaModularPipeline = AnimaAutoBlocks().init_pipeline(self.model_config.name_or_path)
+        pipe.load_components(torch_dtype=dtype)
+        pipe.update_components(scheduler=self.get_train_scheduler())
 
         transformer = pipe.transformer
         text_conditioner = pipe.text_conditioner
@@ -317,19 +327,14 @@ class AnimaModel(BaseModel):
 
     def get_generation_pipeline(self):
         trainable_model = unwrap_model(self.trainable_model)
-        pipeline = AnimaPipeline(
+        pipeline = AnimaEmbedsToImageBlocks().init_pipeline()
+        pipeline.update_components(
             scheduler=self.get_train_scheduler(),
-            text_encoder=unwrap_model(self.text_encoder[0]),
-            tokenizer=self.tokenizer[0],
-            t5_tokenizer=self.t5_tokenizer,
-            text_conditioner=trainable_model.text_conditioner,
+            guider=ClassifierFreeGuidance(guidance_scale=4.0),
             transformer=trainable_model.transformer,
             vae=unwrap_model(self.vae),
         )
         pipeline = pipeline.to(self.device_torch)
-        if self.model_config.low_vram:
-            pipeline.text_encoder.to("cpu")
-            flush()
         return pipeline
 
     def _offload_text_encoder(self):
@@ -405,7 +410,7 @@ class AnimaModel(BaseModel):
 
     def generate_single_image(
         self,
-        pipeline: AnimaPipeline,
+        pipeline: AnimaModularPipeline,
         gen_config: GenerateImageConfig,
         conditional_embeds: AnimaPromptEmbeds,
         unconditional_embeds: AnimaPromptEmbeds,
@@ -421,6 +426,7 @@ class AnimaModel(BaseModel):
 
         if pipeline.vae.device != self.device_torch:
             pipeline.vae.to(self.device_torch, dtype=self.vae_torch_dtype)
+        pipeline.guider.guidance_scale = gen_config.guidance_scale
 
         try:
             return pipeline(
@@ -429,14 +435,14 @@ class AnimaModel(BaseModel):
                 height=gen_config.height,
                 width=gen_config.width,
                 num_inference_steps=gen_config.num_inference_steps,
-                guidance_scale=gen_config.guidance_scale,
                 latents=gen_config.latents,
                 generator=generator,
+                output="images",
                 **extra,
-            ).images[0]
+            )[0]
         finally:
             if self.model_config.low_vram:
-                self.vae.to("cpu")
+                pipeline.vae.to("cpu")
                 flush()
 
     def get_noise_prediction(
@@ -514,11 +520,14 @@ class AnimaModel(BaseModel):
         return prompt_embeds, conditioner_attention_mask
 
     def _get_t5_prompt_ids(self, prompt: List[str]):
-        return self.pipeline._get_t5_prompt_ids(
-            prompt=prompt,
-            max_sequence_length=self.max_sequence_length,
-            device=self.device_torch,
+        text_inputs = self.t5_tokenizer(
+            prompt,
+            padding="longest",
+            max_length=self.max_sequence_length,
+            truncation=True,
+            return_tensors="pt",
         )
+        return text_inputs.input_ids.to(self.device_torch), text_inputs.attention_mask.to(self.device_torch)
 
     def get_prompt_embeds(self, prompt: str) -> AnimaPromptEmbeds:
         if self.pipeline.text_encoder.device != self.device_torch:
