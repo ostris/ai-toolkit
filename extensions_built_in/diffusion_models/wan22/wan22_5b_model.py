@@ -15,6 +15,7 @@ from torchvision.transforms import functional as TF
 
 from toolkit.models.wan21.wan21 import Wan21, AggressiveWanUnloadPipeline
 from toolkit.models.wan21.wan_utils import add_first_frame_conditioning_v22
+from .wan22_dual_gpu import Wan22DualGPUMixin
 
 
 # for generation only?
@@ -80,7 +81,7 @@ def time_text_monkeypatch(
 
     return temb, timestep_proj, encoder_hidden_states, encoder_hidden_states_image
 
-class Wan225bModel(Wan21):
+class Wan225bModel(Wan22DualGPUMixin, Wan21):
     arch = "wan22_5b"
     _wan_generation_scheduler_config = scheduler_configUniPC
     _wan_expand_timesteps = True
