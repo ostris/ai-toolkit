@@ -31,6 +31,8 @@ from transformers import (
 )
 from tqdm import tqdm
 
+from .qwen_image_dual_gpu import QwenImageDualGPUMixin, is_dual_gpu_enabled
+
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
@@ -52,7 +54,10 @@ scheduler_config = {
 }
 
 
-class QwenImageModel(BaseModel):
+# QwenImageDualGPUMixin is first in the MRO so its text_encoder_to override
+# and setup_dual_gpu_distribution take precedence over BaseModel. The
+# dual-GPU path itself stays inert unless QWEN_IMAGE_DUAL_GPU=true.
+class QwenImageModel(QwenImageDualGPUMixin, BaseModel):
     arch = "qwen_image"
     _qwen_image_keep_visual = False
     _qwen_pipeline = QwenImagePipeline
@@ -69,6 +74,10 @@ class QwenImageModel(BaseModel):
         super().__init__(
             device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs
         )
+        # resolve te_device_torch (QWEN_IMAGE_TE_DEVICE override or
+        # device_torch); always set, used even when the dual-GPU path is
+        # disabled.
+        self.init_te_device()
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["QwenImageTransformer2DModel"]
@@ -125,14 +134,28 @@ class QwenImageModel(BaseModel):
             quantize_model(self, transformer)
             flush()
 
-        if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
+        # Dual-GPU model-parallel path (QWEN_IMAGE_DUAL_GPU=true). The
+        # transformer is still on CPU here (diffusers from_pretrained loads
+        # to CPU and quantize_model runs in place), so the mixin can
+        # distribute its modules across cuda:0/cuda:1 cleanly. After this
+        # returns the transformer's .to() is pinned to ignore device moves.
+        use_dual_gpu = is_dual_gpu_enabled()
+        if use_dual_gpu:
+            self.setup_dual_gpu_distribution(transformer, dtype)
+            flush()
+
+        if (
+            not use_dual_gpu
+            and self.model_config.layer_offloading
+            and self.model_config.layer_offloading_transformer_percent > 0
+        ):
             MemoryManager.attach(
                 transformer,
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent
             )
 
-        if self.model_config.low_vram:
+        if self.model_config.low_vram and not use_dual_gpu:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
 
@@ -158,7 +181,12 @@ class QwenImageModel(BaseModel):
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent
             )
 
-        text_encoder.to(self.device_torch, dtype=dtype)
+        # Route to te_device_torch, not device_torch: under
+        # QWEN_IMAGE_DUAL_GPU the transformer already occupies
+        # cuda:0/cuda:1, so the Qwen2.5-VL TE must land on CPU
+        # (QWEN_IMAGE_TE_DEVICE=cpu). te_device_torch == device_torch when
+        # the dual-GPU path is inactive, so this is a no-op change otherwise.
+        text_encoder.to(self.te_device_torch, dtype=dtype)
         flush()
 
         if self.model_config.quantize_te:
@@ -206,13 +234,18 @@ class QwenImageModel(BaseModel):
         text_encoder = [pipe.text_encoder]
         tokenizer = [pipe.tokenizer]
 
-        # leave it on cpu for now
-        if not self.low_vram:
+        # leave it on cpu for now. When dual-GPU is active the transformer
+        # is already distributed across cuda:0/cuda:1 and its .to() is
+        # pinned, so skip the single-device move (preserve_dual_gpu_split_on_pipe).
+        if not self.low_vram and not self.preserve_dual_gpu_split_on_pipe(pipe):
             pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        # just to make sure everything is on the right device and dtype.
+        # te_device_torch, not device_torch: under QWEN_IMAGE_DUAL_GPU this
+        # keeps the Qwen2.5-VL TE on CPU (the transformer owns cuda:0/cuda:1).
+        # No-op change when the dual-GPU path is inactive.
+        text_encoder[0].to(self.te_device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         flush()
@@ -352,12 +385,17 @@ class QwenImageModel(BaseModel):
         return noise_pred
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
-        if self.pipeline.text_encoder.device != self.device_torch:
-            self.pipeline.text_encoder.to(self.device_torch)
-        
+        # te_device_torch, not device_torch: under QWEN_IMAGE_DUAL_GPU the
+        # transformer owns cuda:0/cuda:1, so the Qwen2.5-VL TE encodes on
+        # CPU. encode_prompt's `device` arg must follow the TE so its
+        # tokenized inputs land on the same device. No-op when the
+        # dual-GPU path is inactive (te_device_torch == device_torch).
+        if self.pipeline.text_encoder.device != self.te_device_torch:
+            self.pipeline.text_encoder.to(self.te_device_torch)
+
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
-            device=self.device_torch,
+            device=self.te_device_torch,
             num_images_per_prompt=1,
         )
         # diffusers >=0.37 returns None when all tokens are valid (no padding)
