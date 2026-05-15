@@ -29,6 +29,8 @@ except ImportError:
         "Diffusers is out of date. Update diffusers to the latest version by doing pip uninstall diffusers and then pip install -r requirements.txt"
     )
 
+from .z_image_dual_gpu import ZImageDualGPUMixin, is_dual_gpu_enabled
+
 
 scheduler_config = {
     "num_train_timesteps": 1000,
@@ -37,7 +39,7 @@ scheduler_config = {
 }
 
 
-class ZImageModel(BaseModel):
+class ZImageModel(ZImageDualGPUMixin, BaseModel):
     arch = "zimage"
 
     def __init__(
@@ -55,6 +57,7 @@ class ZImageModel(BaseModel):
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["ZImageTransformer2DModel"]
+        self.init_te_device()
 
     # static method to get the noise scheduler
     @staticmethod
@@ -182,23 +185,32 @@ class ZImageModel(BaseModel):
             quantize_model(self, transformer)
             flush()
 
-        if (
-            self.model_config.layer_offloading
-            and self.model_config.layer_offloading_transformer_percent > 0
-        ):
-            MemoryManager.attach(
-                transformer,
-                self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[
-                    transformer.x_pad_token,
-                    transformer.cap_pad_token,
-                ]
-            )
+        if is_dual_gpu_enabled():
+            # Dual-GPU is mutually exclusive with layer_offloading + low_vram
+            # (both schemes manage transformer device residence). Distribute
+            # the transformer across cuda:0 / cuda:1 instead. After this
+            # call, transformer.to() is pinned to ignore device args so
+            # later pipe.transformer.to() / generate_single_image .to()
+            # sites become no-ops and the split layout survives.
+            self.setup_dual_gpu_distribution(transformer, dtype)
+        else:
+            if (
+                self.model_config.layer_offloading
+                and self.model_config.layer_offloading_transformer_percent > 0
+            ):
+                MemoryManager.attach(
+                    transformer,
+                    self.device_torch,
+                    offload_percent=self.model_config.layer_offloading_transformer_percent,
+                    ignore_modules=[
+                        transformer.x_pad_token,
+                        transformer.cap_pad_token,
+                    ]
+                )
 
-        if self.model_config.low_vram:
-            self.print_and_status_update("Moving transformer to CPU")
-            transformer.to("cpu")
+            if self.model_config.low_vram:
+                self.print_and_status_update("Moving transformer to CPU")
+                transformer.to("cpu")
 
         flush()
 
@@ -220,7 +232,7 @@ class ZImageModel(BaseModel):
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
-        text_encoder.to(self.device_torch, dtype=dtype)
+        text_encoder.to(self.te_device_torch, dtype=dtype)
         flush()
 
         if self.model_config.quantize_te:
@@ -263,7 +275,7 @@ class ZImageModel(BaseModel):
 
         flush()
         # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        text_encoder[0].to(self.te_device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         flush()
