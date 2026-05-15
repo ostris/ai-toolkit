@@ -1,455 +1,588 @@
-from typing import List, Optional, Union
+"""
+HiDream-O1 reference-image pipeline helpers for training.
+
+Architecture recap (from the technical report and inference code):
+  - The model has NO VAE; it works on raw 32×32 RGB patches (PATCH_SIZE=32).
+  - Special tokens used during reference-image conditioning:
+        <|bor_token|>  – beginning-of-reference block  (one per ref image)
+        <|eor_token|>  – end-of-reference block         (one per ref image)
+        <|bot_token|>  – beginning-of-target            (single, after all refs)
+        <|tms_token|>  – timestep placeholder           (one per sample)
+        <|boi_token|>  – beginning-of-image (generation target)
+  - Sequence layout for a sample with N reference images:
+        [text_tokens] [bor] [REF_PATCHES_1] [eor]
+                      [bor] [REF_PATCHES_2] [eor]
+                      ...
+                      [bot]
+                      [tms]
+                      [boi] [TARGET_PATCHES…]
+  - Reference patches are AR (causal) tokens; target patches are generative tokens.
+  - All image pixels are encoded through model.x_embedder (BottleneckPatchEmbed),
+    the same linear that handles target patches.
+
+This module provides:
+  - `patchify_image`            – convert a PIL/tensor image to flat patches
+  - `build_ref_input_ids`       – build the text+reference-token prefix input_ids
+  - `build_ref_conditioning`    – full conditioning dict for one training sample
+  - `collate_ref_batch`         – batch-collate with left-padding for variable refs
+  - `encode_ref_prompt`         – pipeline-level helper (wraps HiDreamO1Pipeline)
+"""
+
+from __future__ import annotations
+
+import math
+from typing import List, Optional, Tuple, Union
 
 import einops
-import numpy as np
 import torch
+import torchvision.transforms.v2 as T
 from PIL import Image
-import torchvision.transforms.v2 as transforms
 
-from diffusers import DiffusionPipeline, FlowMatchEulerDiscreteScheduler
-from diffusers.utils import BaseOutput
-from dataclasses import dataclass
+# The canonical patch size used by HiDream-O1
+PATCH_SIZE: int = 32
+TIMESTEP_TOKEN_NUM: int = 1
 
+# ---------------------------------------------------------------------------
+# Image → patch tensor helpers
+# ---------------------------------------------------------------------------
 
-TIMESTEP_TOKEN_NUM = 1
-DEFAULT_NOISE_SCALE = 8.0
-T_EPS = 0.001
-PATCH_SIZE = 32
-
-TENSOR_TRANSFORM = transforms.Compose(
+_IMG_TRANSFORM = T.Compose(
     [
-        transforms.ToImage(),
-        transforms.ToDtype(torch.float32, scale=True),
-        transforms.Normalize([0.5], [0.5]),
+        T.ToImage(),
+        T.ToDtype(torch.float32, scale=True),
+        T.Normalize([0.5], [0.5]),  # → [-1, 1]
     ]
 )
 
 
 def round_to_patch(dim: int, patch: int = PATCH_SIZE) -> int:
+    """Round *dim* down to the nearest multiple of *patch* (minimum = *patch*)."""
     return max(patch, int(dim // patch * patch))
 
 
-def _get_rope_index_t2i(
-    spatial_merge_size: int,
+def resize_image_to_patches(
+    image: Image.Image,
+    max_patches_per_side: int = 16,
+    patch_size: int = PATCH_SIZE,
+) -> Image.Image:
+    """
+    Resize *image* so that both dimensions are multiples of *patch_size* and
+    neither side exceeds *max_patches_per_side * patch_size* pixels.
+    Aspect ratio is preserved (shrink-only, bilinear).
+    """
+    max_px = max_patches_per_side * patch_size
+    w, h = image.size
+    scale = min(max_px / w, max_px / h, 1.0)
+    nw = round_to_patch(int(w * scale), patch_size)
+    nh = round_to_patch(int(h * scale), patch_size)
+    if (nw, nh) != (w, h):
+        image = image.resize((nw, nh), Image.BILINEAR)
+    return image
+
+
+def patchify_image(
+    image: Union[Image.Image, torch.Tensor],
+    patch_size: int = PATCH_SIZE,
+    max_patches_per_side: int = 16,
+) -> torch.Tensor:
+    """
+    Convert *image* (PIL or CHW float tensor in [-1,1]) to a flat patch tensor
+    of shape ``(H/p * W/p, C*p*p)``.
+
+    This matches the layout expected by ``model.x_embedder`` (BottleneckPatchEmbed)
+    and the target-patch patchification in the forward pass.
+    """
+    if isinstance(image, Image.Image):
+        image = image.convert("RGB")
+        image = resize_image_to_patches(image, max_patches_per_side, patch_size)
+        img_t: torch.Tensor = _IMG_TRANSFORM(image)  # (3, H, W)
+    else:
+        # Assume CHW tensor already in [-1,1]; snap dimensions to patch grid
+        c, h, w = image.shape
+        nh = round_to_patch(h, patch_size)
+        nw = round_to_patch(w, patch_size)
+        if (nh, nw) != (h, w):
+            img_t = torch.nn.functional.interpolate(
+                image.unsqueeze(0), size=(nh, nw), mode="bilinear", align_corners=False
+            ).squeeze(0)
+        else:
+            img_t = image
+
+    # (C, H, W) → (H/p * W/p, C*p*p)
+    patches = einops.rearrange(
+        img_t,
+        "C (H p1) (W p2) -> (H W) (C p1 p2)",
+        p1=patch_size,
+        p2=patch_size,
+    )
+    return patches  # (num_patches, C*p*p)
+
+
+# ---------------------------------------------------------------------------
+# Token-sequence builders
+# ---------------------------------------------------------------------------
+
+def _get_token_id(tokenizer, attr: str) -> int:
+    """Safely retrieve a special-token id from the tokenizer."""
+    token = getattr(tokenizer, attr, None)
+    if token is None:
+        raise AttributeError(
+            f"Tokenizer is missing attribute '{attr}'. "
+            "Call add_special_tokens(tokenizer) before building conditioning."
+        )
+    ids = tokenizer.encode(token, add_special_tokens=False)
+    if not ids:
+        raise ValueError(f"Token '{token}' not found in tokenizer vocabulary.")
+    return ids[0]
+
+
+def build_ref_input_ids(
+    text_input_ids: torch.Tensor,
+    ref_patch_counts: List[int],
+    tokenizer,
+    *,
+    device: Optional[torch.device] = None,
+) -> torch.Tensor:
+    """
+    Build the full prefix input_ids tensor for a sample that has reference images.
+
+    Layout:
+        [text_tokens] [bor] [REF_1_image_tokens] [eor]
+                      [bor] [REF_2_image_tokens] [eor]
+                      ...
+                      [bot]
+                      [tms * TIMESTEP_TOKEN_NUM]
+                      [boi] [TARGET image_tokens – appended by pipeline later]
+
+    Parameters
+    ----------
+    text_input_ids : (1, txt_len) or (txt_len,)
+        Text tokens already tokenized (with chat template applied and boi/tms suffix
+        stripped – i.e. just the plain chat-templated text part).
+    ref_patch_counts : list[int]
+        Number of patches for each reference image (``H/p * W/p``).
+    tokenizer : any
+        Tokenizer with ``bor_token``, ``eor_token``, ``bot_token``, ``tms_token``,
+        ``boi_token`` attributes attached.
+
+    Returns
+    -------
+    input_ids : (1, total_len) int64 tensor
+    """
+    if text_input_ids.dim() == 1:
+        text_input_ids = text_input_ids.unsqueeze(0)
+    dev = device or text_input_ids.device
+
+    # Retrieve special token ids
+    bor_id = _get_token_id(tokenizer, "bor_token")
+    eor_id = _get_token_id(tokenizer, "eor_token")
+    bot_id = _get_token_id(tokenizer, "bot_token")
+    tms_id = _get_token_id(tokenizer, "tms_token")
+    boi_id = _get_token_id(tokenizer, "boi_token")
+    # image_token_id is used as the placeholder inside ref/target windows
+    img_id = tokenizer.encode(
+        "<|image_pad|>", add_special_tokens=False
+    )
+    # Fallback: use image_token_id from model config if available
+    if not img_id:
+        img_id = [tokenizer.encode("<|vision_pad|>", add_special_tokens=False)]
+    img_id = img_id[0] if img_id else 151655  # default from qwen3-vl config
+
+    # Build the reference blocks: [bor, img×N, eor] for each ref
+    ref_blocks: List[torch.Tensor] = []
+    for n_patches in ref_patch_counts:
+        block = torch.tensor(
+            [bor_id] + [img_id] * n_patches + [eor_id],
+            dtype=torch.long,
+            device=dev,
+        ).unsqueeze(0)  # (1, n_patches+2)
+        ref_blocks.append(block)
+
+    # [bot] [tms×TIMESTEP_TOKEN_NUM]
+    control_tokens = torch.tensor(
+        [bot_id] + [tms_id] * TIMESTEP_TOKEN_NUM,
+        dtype=torch.long,
+        device=dev,
+    ).unsqueeze(0)  # (1, 1+TIMESTEP_TOKEN_NUM)
+
+    parts = [text_input_ids.to(dev)] + ref_blocks + [control_tokens]
+    return torch.cat(parts, dim=1)  # (1, total_prefix_len)
+
+
+# ---------------------------------------------------------------------------
+# Full conditioning builder (mirrors _build_t2i_sample_from_input_ids in pipeline.py
+# but extended to handle reference image pixel tokens)
+# ---------------------------------------------------------------------------
+
+from .pipeline import (  # noqa: E402  (relative import – same package)
+    _get_rope_index_t2i,
+    PATCH_SIZE as _P,
+    TIMESTEP_TOKEN_NUM as _TMN,
+)
+
+
+def build_ref_conditioning(
+    text_input_ids: torch.Tensor,
+    ref_patches: List[torch.Tensor],
+    height: int,
+    width: int,
+    model_config,
+    tokenizer,
+    *,
+    device: Optional[torch.device] = None,
+) -> dict:
+    """
+    Build the complete per-sample conditioning dict for training with reference images.
+
+    This is the training analogue of HiDreamO1Pipeline.build_conditioning_sample,
+    extended to inject reference-image pixel patches into the sequence.
+
+    Parameters
+    ----------
+    text_input_ids : (1, txt_len) int64
+        Plain text tokens (chat-template applied, **no** boi/tms suffix yet).
+    ref_patches : list of (n_patches_i, C*p*p) float tensors
+        Patchified reference images (from ``patchify_image``).
+    height, width : int
+        Target image pixel dimensions (must be multiples of PATCH_SIZE).
+    model_config : Qwen3VLConfig (or compatible)
+        The model's config; needs image_token_id, video_token_id,
+        vision_start_token_id.
+    tokenizer
+        Tokenizer with the HiDream special tokens attached.
+
+    Returns
+    -------
+    dict with keys:
+        input_ids         (1, prefix_len)      int64
+        position_ids      (3, 1, total_len)    int64
+        token_types       (1, total_len)        int64  0=AR, 1=gen
+        vinput_mask       (1, total_len)        bool   True=generation patches
+        ref_vinput_mask   (1, total_len)        bool   True=reference patches
+        n_ref_patches     int   total reference patch count
+        n_tgt_patches     int   target patch count  (h//p * w//p)
+    """
+    if text_input_ids.dim() == 1:
+        text_input_ids = text_input_ids.unsqueeze(0)
+
+    dev = device or text_input_ids.device
+    image_token_id = model_config.image_token_id
+    video_token_id = model_config.video_token_id
+    vision_start_token_id = model_config.vision_start_token_id
+
+    # Token ids
+    bor_id = _get_token_id(tokenizer, "bor_token")
+    eor_id = _get_token_id(tokenizer, "eor_token")
+    bot_id = _get_token_id(tokenizer, "bot_token")
+    tms_id = _get_token_id(tokenizer, "tms_token")
+    boi_id = _get_token_id(tokenizer, "boi_token")
+
+    # -----------------------------------------------------------------------
+    # Patch counts
+    # -----------------------------------------------------------------------
+    ref_patch_counts = [p.shape[0] for p in ref_patches]
+    n_ref_patches_total = sum(ref_patch_counts)
+    h_patches = height // PATCH_SIZE
+    w_patches = width // PATCH_SIZE
+    n_tgt_patches = h_patches * w_patches
+
+    # -----------------------------------------------------------------------
+    # Build prefix input_ids  [text | bor img×n eor | … | bot tms×1]
+    # -----------------------------------------------------------------------
+    prefix_ids = build_ref_input_ids(
+        text_input_ids,
+        ref_patch_counts,
+        tokenizer,
+        device=dev,
+    )  # (1, prefix_len)
+
+    # -----------------------------------------------------------------------
+    # Append generation image tokens  [boi | img×n_tgt]
+    # (mirrors what _build_t2i_sample_from_input_ids does for the target)
+    # -----------------------------------------------------------------------
+    gen_tokens = torch.zeros(
+        (1, n_tgt_patches), dtype=torch.long, device=dev
+    ) + image_token_id
+    gen_tokens[0, 0] = vision_start_token_id  # first token is vision_start per pipeline
+
+    full_ids = torch.cat([prefix_ids, gen_tokens], dim=1)  # (1, total_len)
+    total_len = full_ids.shape[1]
+
+    # -----------------------------------------------------------------------
+    # Compute image_grid_thw for the TARGET (used by rope indexing)
+    # -----------------------------------------------------------------------
+    image_grid_thw = torch.tensor(
+        [1, h_patches, w_patches], dtype=torch.int64, device=dev
+    ).unsqueeze(0)  # (1, 3)
+
+    # -----------------------------------------------------------------------
+    # Position IDs (3D RoPE as in _get_rope_index_t2i from pipeline.py)
+    # We only pass the TARGET vision tokens to the rope helper (reference
+    # tokens use text-style sequential positions).
+    # -----------------------------------------------------------------------
+    # We need to build position ids manually here because we have reference
+    # image tokens in-between which the standard helper doesn't know about.
+    # Strategy:
+    #   1. Compute positions for [text | ref_blocks | bot+tms] as pure text (sequential).
+    #   2. For the target vision window, use the 2D grid positions from rope helper.
+    position_ids = _build_position_ids_with_refs(
+        full_ids=full_ids,
+        prefix_ids=prefix_ids,
+        ref_patch_counts=ref_patch_counts,
+        image_grid_thw=image_grid_thw,
+        model_config=model_config,
+        vision_start_token_id=vision_start_token_id,
+        image_token_id=image_token_id,
+        video_token_id=video_token_id,
+    )  # (3, 1, total_len)
+
+    # -----------------------------------------------------------------------
+    # token_types: 0 = AR (text + reference patches), 1 = generation patches
+    # -----------------------------------------------------------------------
+    token_types = torch.zeros((1, total_len), dtype=torch.long, device=dev)
+    prefix_len = prefix_ids.shape[1]
+    # Generation window starts right after the prefix
+    token_types[0, prefix_len:] = 1  # target patches
+
+    # -----------------------------------------------------------------------
+    # vinput_mask: True where generation target patches live
+    # -----------------------------------------------------------------------
+    vinput_mask = token_types == 1  # (1, total_len)
+
+    # -----------------------------------------------------------------------
+    # ref_vinput_mask: True where reference patches live inside the prefix
+    # -----------------------------------------------------------------------
+    ref_vinput_mask = torch.zeros((1, total_len), dtype=torch.bool, device=dev)
+    # Walk through prefix_ids to locate reference patch positions
+    ids_flat = prefix_ids[0].tolist()
+    ref_mask_list = []
+    i = 0
+    while i < len(ids_flat):
+        if ids_flat[i] == bor_id:
+            # skip bor token itself
+            i += 1
+            start = i
+            while i < len(ids_flat) and ids_flat[i] != eor_id:
+                i += 1
+            # positions [start, i) are reference patch slots
+            ref_mask_list.extend(range(start, i))
+            i += 1  # skip eor
+        else:
+            i += 1
+    for pos in ref_mask_list:
+        ref_vinput_mask[0, pos] = True
+
+    # -----------------------------------------------------------------------
+    # binary token_types (0/1) already computed; pass as token_types_bin
+    # -----------------------------------------------------------------------
+    return {
+        "input_ids": prefix_ids,           # (1, prefix_len)
+        "position_ids": position_ids,      # (3, 1, total_len)
+        "token_types": token_types,        # (1, total_len)
+        "vinput_mask": vinput_mask,        # (1, total_len) bool
+        "ref_vinput_mask": ref_vinput_mask,  # (1, total_len) bool
+        "n_ref_patches": n_ref_patches_total,
+        "n_tgt_patches": n_tgt_patches,
+    }
+
+
+def _build_position_ids_with_refs(
+    full_ids: torch.Tensor,
+    prefix_ids: torch.Tensor,
+    ref_patch_counts: List[int],
+    image_grid_thw: torch.Tensor,
+    model_config,
+    vision_start_token_id: int,
     image_token_id: int,
     video_token_id: int,
-    vision_start_token_id: int,
-    input_ids: torch.LongTensor,
-    image_grid_thw: torch.LongTensor,
-    skip_vision_start_token: List[int],
-    fix_point: int = 4096,
-):
-    """Compute mrope position ids for the t2i case used by HiDream-O1."""
-    attention_mask = torch.ones_like(input_ids)
+) -> torch.Tensor:
+    """
+    Build 3D RoPE position ids for the full sequence including reference tokens.
+
+    Reference patch tokens are assigned sequential text-like positions so the
+    model can attend to them with causal attention.  The target image window
+    gets proper 2D H×W grid positions as in the standard pipeline.
+    """
+    dev = full_ids.device
+    bs = full_ids.shape[0]
+    total_len = full_ids.shape[1]
+    prefix_len = prefix_ids.shape[1]
+
     position_ids = torch.ones(
-        3,
-        input_ids.shape[0],
-        input_ids.shape[1],
-        dtype=input_ids.dtype,
-        device=input_ids.device,
+        3, bs, total_len, dtype=torch.long, device=dev
     )
 
-    for i, ids_row in enumerate(input_ids):
-        ids_row = ids_row[attention_mask[i] == 1]
-        vision_start_indices = torch.argwhere(ids_row == vision_start_token_id).squeeze(
-            1
+    for b in range(bs):
+        ids_row = full_ids[b]
+
+        # --- Assign sequential positions to the full prefix (text + ref tokens)
+        seq_pos = torch.arange(prefix_len, device=dev)
+        position_ids[:, b, :prefix_len] = seq_pos.unsqueeze(0).expand(3, -1)
+
+        # --- Assign grid positions to the target window
+        h_patches = image_grid_thw[0, 1].item()
+        w_patches = image_grid_thw[0, 2].item()
+        n_tgt = h_patches * w_patches
+        spatial_merge = getattr(model_config.vision_config, "spatial_merge_size", 1)
+        llm_h = int(h_patches // spatial_merge)
+        llm_w = int(w_patches // spatial_merge)
+
+        # t_index is always 0 for single-frame images
+        h_index = (
+            torch.arange(llm_h, device=dev)
+            .view(1, -1, 1)
+            .expand(1, llm_h, llm_w)
+            .flatten()
         )
-        vision_tokens = ids_row[vision_start_indices + 1]
-        image_nums = (vision_tokens == image_token_id).sum().item()
-        video_nums = (vision_tokens == video_token_id).sum().item()
-        input_tokens = ids_row.tolist()
-
-        llm_pos_ids_list = []
-        st = 0
-        image_index = 0
-        video_index = 0
-        remain_images, remain_videos = image_nums, video_nums
-        local_fix_point = fix_point
-
-        for _ in range(image_nums + video_nums):
-            ed_image = (
-                input_tokens.index(image_token_id, st)
-                if (image_token_id in input_tokens and remain_images > 0)
-                else len(input_tokens) + 1
-            )
-            ed_video = (
-                input_tokens.index(video_token_id, st)
-                if (video_token_id in input_tokens and remain_videos > 0)
-                else len(input_tokens) + 1
-            )
-            if ed_image < ed_video:
-                t, h, w = image_grid_thw[image_index].tolist()
-                image_index += 1
-                remain_images -= 1
-                ed = ed_image
-            else:
-                t, h, w = image_grid_thw[video_index].tolist()
-                video_index += 1
-                remain_videos -= 1
-                ed = ed_video
-
-            llm_grid_t = t
-            llm_grid_h = h // spatial_merge_size
-            llm_grid_w = w // spatial_merge_size
-
-            text_len = ed - st - skip_vision_start_token[image_index - 1]
-            text_len = max(0, text_len)
-
-            st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
-            llm_pos_ids_list.append(
-                torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-            )
-
-            t_index = (
-                torch.arange(llm_grid_t)
-                .view(-1, 1)
-                .expand(-1, llm_grid_h * llm_grid_w)
-                .flatten()
-            )
-            h_index = (
-                torch.arange(llm_grid_h)
-                .view(1, -1, 1)
-                .expand(llm_grid_t, -1, llm_grid_w)
-                .flatten()
-            )
-            w_index = (
-                torch.arange(llm_grid_w)
-                .view(1, 1, -1)
-                .expand(llm_grid_t, llm_grid_h, -1)
-                .flatten()
-            )
-
-            if skip_vision_start_token[image_index - 1]:
-                if local_fix_point > 0:
-                    local_fix_point = local_fix_point - st_idx
-                llm_pos_ids_list.append(
-                    torch.stack([t_index, h_index, w_index]) + local_fix_point + st_idx
-                )
-                local_fix_point = 0
-            else:
-                llm_pos_ids_list.append(
-                    torch.stack([t_index, h_index, w_index]) + text_len + st_idx
-                )
-            st = ed + llm_grid_t * llm_grid_h * llm_grid_w
-
-        if st < len(input_tokens):
-            st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
-            text_len = len(input_tokens) - st
-            llm_pos_ids_list.append(
-                torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx
-            )
-
-        llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
-        position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(
-            position_ids.device
+        w_index = (
+            torch.arange(llm_w, device=dev)
+            .view(1, 1, -1)
+            .expand(1, llm_h, llm_w)
+            .flatten()
         )
+        t_index = torch.zeros_like(h_index)
+
+        # Base position for the target: continue from the last prefix position
+        base = prefix_len
+        position_ids[0, b, prefix_len : prefix_len + n_tgt] = base + t_index
+        position_ids[1, b, prefix_len : prefix_len + n_tgt] = base + h_index
+        position_ids[2, b, prefix_len : prefix_len + n_tgt] = base + w_index
 
     return position_ids
 
 
-def _build_t2i_sample_from_input_ids(
-    input_ids: torch.Tensor,
+# ---------------------------------------------------------------------------
+# Batch collation for variable-length reference sets
+# ---------------------------------------------------------------------------
+
+def collate_ref_batch(
+    samples: List[dict],
+    tokenizer,
+    pad_token_id: int = 0,
+) -> dict:
+    """
+    Collate a list of per-sample conditioning dicts (from build_ref_conditioning)
+    into a batch with left-padding on the text/prefix dimension.
+
+    Each sample dict must have:
+        input_ids       (1, prefix_len_i)
+        position_ids    (3, 1, total_len_i)
+        token_types     (1, total_len_i)
+        vinput_mask     (1, total_len_i)
+        ref_vinput_mask (1, total_len_i)
+        ref_patches     list[tensor(n_i, dim)]   – pixel patches per ref image
+        target_patches  tensor(n_tgt, dim)        – target image pixel patches
+
+    Returns a dict ready for HidreamO1Model.get_noise_prediction / forward.
+    """
+    bs = len(samples)
+    device = samples[0]["input_ids"].device
+
+    # -----------------------------------------------------------------------
+    # Find max sequence lengths
+    # -----------------------------------------------------------------------
+    max_prefix_len = max(s["input_ids"].shape[1] for s in samples)
+    max_total_len = max(s["token_types"].shape[1] for s in samples)
+
+    input_ids_out = torch.full(
+        (bs, max_prefix_len), pad_token_id, dtype=torch.long, device=device
+    )
+    position_ids_out = torch.ones(
+        (3, bs, max_total_len), dtype=torch.long, device=device
+    )
+    token_types_out = torch.zeros(
+        (bs, max_total_len), dtype=torch.long, device=device
+    )
+    vinput_mask_out = torch.zeros(
+        (bs, max_total_len), dtype=torch.bool, device=device
+    )
+    ref_vinput_mask_out = torch.zeros(
+        (bs, max_total_len), dtype=torch.bool, device=device
+    )
+    attention_mask_out = torch.zeros(
+        (bs, max_total_len), dtype=torch.long, device=device
+    )
+
+    for i, s in enumerate(samples):
+        pl = s["input_ids"].shape[1]
+        tl = s["token_types"].shape[1]
+        pad_len = max_prefix_len - pl
+        total_pad = max_total_len - tl
+
+        # Left-pad the prefix
+        input_ids_out[i, pad_len:] = s["input_ids"][0]
+        # Left-pad positions
+        position_ids_out[:, i, total_pad:] = s["position_ids"][:, 0, :]
+        # Left-pad masks
+        token_types_out[i, total_pad:] = s["token_types"][0]
+        vinput_mask_out[i, total_pad:] = s["vinput_mask"][0]
+        ref_vinput_mask_out[i, total_pad:] = s["ref_vinput_mask"][0]
+        # Attention mask: 1 for real tokens, 0 for padding
+        attention_mask_out[i, total_pad:] = 1
+
+    return {
+        "input_ids": input_ids_out,
+        "position_ids": position_ids_out,
+        "token_types": token_types_out,
+        "vinput_mask": vinput_mask_out,
+        "ref_vinput_mask": ref_vinput_mask_out,
+        "attention_mask": attention_mask_out,
+    }
+
+
+# ---------------------------------------------------------------------------
+# AdvancedPromptEmbeds helper for ref-image training
+# ---------------------------------------------------------------------------
+
+def encode_ref_prompt(
+    pipeline,
+    prompt: Union[str, List[str]],
+    ref_images: List[Union[Image.Image, torch.Tensor]],
     height: int,
     width: int,
-    model_config,
-    attention_mask: Optional[torch.Tensor] = None,
-):
-    """Build the full conditioning sample (position_ids/token_types/vinput_mask)
-    around an already-tokenized prompt."""
-    image_token_id = model_config.image_token_id
-    video_token_id = model_config.video_token_id
-    vision_start_token_id = model_config.vision_start_token_id
-    image_len = (height // PATCH_SIZE) * (width // PATCH_SIZE)
-
-    if input_ids.dim() == 1:
-        input_ids = input_ids.unsqueeze(0)
-
-    image_grid_thw = torch.tensor(
-        [1, height // PATCH_SIZE, width // PATCH_SIZE], dtype=torch.int64
-    ).unsqueeze(0)
-
-    vision_tokens = (
-        torch.zeros((1, image_len), dtype=input_ids.dtype, device=input_ids.device)
-        + image_token_id
-    )
-    vision_tokens[0, 0] = vision_start_token_id
-    input_ids_pad = torch.cat([input_ids, vision_tokens], dim=-1)
-
-    position_ids = _get_rope_index_t2i(
-        spatial_merge_size=1,
-        image_token_id=image_token_id,
-        video_token_id=video_token_id,
-        vision_start_token_id=vision_start_token_id,
-        input_ids=input_ids_pad,
-        image_grid_thw=image_grid_thw,
-        skip_vision_start_token=[1],
-    )
-
-    txt_seq_len = input_ids.shape[-1]
-    all_seq_len = position_ids.shape[-1]
-
-    token_types = torch.zeros((1, all_seq_len), dtype=input_ids.dtype)
-    bgn = txt_seq_len - TIMESTEP_TOKEN_NUM
-    token_types[0, bgn : bgn + image_len + TIMESTEP_TOKEN_NUM] = 1
-    token_types[0, txt_seq_len - TIMESTEP_TOKEN_NUM : txt_seq_len] = 3
-
-    vinput_mask = token_types == 1
-    token_types_bin = (token_types > 0).to(token_types.dtype)
-
-    sample = {
-        "input_ids": input_ids,
-        "position_ids": position_ids,
-        "token_types": token_types_bin,
-        "vinput_mask": vinput_mask,
-    }
-    if attention_mask is not None:
-        if attention_mask.dim() == 1:
-            attention_mask = attention_mask.unsqueeze(0)
-        sample["attention_mask"] = attention_mask
-    return sample
-
-
-@dataclass
-class HiDreamO1PipelineOutput(BaseOutput):
-    images: List[Image.Image]
-
-
-class HiDreamO1Pipeline(DiffusionPipeline):
+    max_patches_per_side: int = 16,
+) -> Tuple["AdvancedPromptEmbeds", List[torch.Tensor]]:  # noqa: F821
     """
-    Diffusers-style inference pipeline for HiDream-O1 (base model).
+    Encode a prompt + list of reference images into the AdvancedPromptEmbeds
+    format used by HidreamO1Model, and return the patchified reference tensors.
 
-    HiDream-O1 is a unified text/vision/diffusion model with no VAE — the
-    transformer directly predicts image patches in pixel space. This pipeline
-    keeps only the components needed for text-to-image inference.
+    Parameters
+    ----------
+    pipeline : HiDreamO1Pipeline
+        The pipeline (with tokenizer and model attached).
+    prompt : str or list[str]
+        Text prompt(s).  If a list, batch size must match len(ref_images) grouping.
+    ref_images : list of PIL.Image or CHW float tensors
+        Reference images for **one** training sample.
+    height, width : int
+        Target output dimensions (multiples of PATCH_SIZE).
+    max_patches_per_side : int
+        Maximum patches per side when resizing reference images.
+
+    Returns
+    -------
+    embeds : AdvancedPromptEmbeds
+        Token-id embeds as expected by HidreamO1Model.get_prompt_embeds.
+    ref_patches_list : list[Tensor]
+        One (n_i, C*p*p) float32 tensor per reference image, ready to be
+        passed to _forward_generation as additional vinputs context.
     """
+    from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 
-    model_cpu_offload_seq = "model"
+    if isinstance(prompt, str):
+        prompt = [prompt]
 
-    def __init__(
-        self,
-        model,
-        processor,
-        scheduler: FlowMatchEulerDiscreteScheduler,
-    ):
-        super().__init__()
-        self.register_modules(model=model, processor=processor, scheduler=scheduler)
+    tokenizer = pipeline.tokenizer
+    ref_patches_list = [
+        patchify_image(img, patch_size=PATCH_SIZE, max_patches_per_side=max_patches_per_side)
+        for img in ref_images
+    ]
 
-    @property
-    def tokenizer(self):
-        return (
-            self.processor.tokenizer
-            if hasattr(self.processor, "tokenizer")
-            else self.processor
-        )
+    token_list = []
+    for p in prompt:
+        ids = pipeline.encode_prompt(p)  # (1, seq_len) – text + boi + tms
+        token_list.append(ids)
 
-    def _snap_resolution(self, width: int, height: int):
-        w, h = round_to_patch(width), round_to_patch(height)
-        if (w, h) != (width, height):
-            print(f"[hidream-o1] Resolution rounded from {width}x{height} to {w}x{h}")
-        return w, h
-
-    def build_conditioning_sample(
-        self,
-        input_ids: torch.Tensor,
-        height: int,
-        width: int,
-        attention_mask: Optional[torch.Tensor] = None,
-    ):
-        """Build the per-sample conditioning dict (input_ids, position_ids,
-        token_types, vinput_mask) around already-tokenized text. Useful when
-        a training loop needs to batch samples manually."""
-        return _build_t2i_sample_from_input_ids(
-            input_ids,
-            height,
-            width,
-            self.model.config,
-            attention_mask=attention_mask,
-        )
-
-    def encode_prompt(self, prompt: str) -> torch.Tensor:
-        """Apply the chat template + boi/tms suffix and tokenize.
-        Returns input_ids of shape (1, seq_len). Use these to precompute and
-        pass back into __call__ via `prompt_input_ids` / `negative_prompt_input_ids`."""
-        tokenizer = self.tokenizer
-        boi_token = getattr(tokenizer, "boi_token", "<|boi_token|>")
-        tms_token = getattr(tokenizer, "tms_token", "<|tms_token|>")
-
-        messages = [{"role": "user", "content": prompt}]
-        template_caption = (
-            self.processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            + boi_token
-            + tms_token * TIMESTEP_TOKEN_NUM
-        )
-        return tokenizer.encode(
-            template_caption, return_tensors="pt", add_special_tokens=False
-        )
-
-    @torch.no_grad()
-    def __call__(
-        self,
-        prompt: Optional[Union[str, List[str]]] = None,
-        negative_prompt: Optional[Union[str, List[str]]] = " ",
-        prompt_input_ids: Optional[torch.Tensor] = None,
-        negative_prompt_input_ids: Optional[torch.Tensor] = None,
-        prompt_attention_mask: Optional[torch.Tensor] = None,
-        negative_prompt_attention_mask: Optional[torch.Tensor] = None,
-        height: int = 1440,
-        width: int = 2560,
-        num_inference_steps: int = 50,
-        guidance_scale: float = 5.0,
-        shift: float = 3.0,
-        generator: Optional[torch.Generator] = None,
-        seed: Optional[int] = None,
-        noise_scale: float = None,
-        output_type: str = "pil",
-        return_dict: bool = True,
-    ):
-        if noise_scale is None:
-            noise_scale = DEFAULT_NOISE_SCALE
-        if prompt is None and prompt_input_ids is None:
-            raise ValueError("Provide either `prompt` or `prompt_input_ids`.")
-
-        def _unwrap_str(x):
-            if isinstance(x, list):
-                if len(x) != 1:
-                    raise ValueError(
-                        "HiDreamO1Pipeline currently supports batch size 1."
-                    )
-                return x[0]
-            return x
-
-        prompt = _unwrap_str(prompt)
-        negative_prompt = _unwrap_str(negative_prompt)
-
-        device = self._execution_device
-        dtype = torch.bfloat16
-        model_config = self.model.config
-
-        width, height = self._snap_resolution(width, height)
-        h_patches = height // PATCH_SIZE
-        w_patches = width // PATCH_SIZE
-
-        do_cfg = guidance_scale > 1.0
-
-        if prompt_input_ids is None:
-            prompt_input_ids = self.encode_prompt(prompt)
-        if do_cfg and negative_prompt_input_ids is None:
-            if negative_prompt is None:
-                negative_prompt = " "
-            negative_prompt_input_ids = self.encode_prompt(negative_prompt)
-
-        cond_sample = _build_t2i_sample_from_input_ids(
-            prompt_input_ids,
-            height,
-            width,
-            model_config,
-            attention_mask=prompt_attention_mask,
-        )
-        uncond_sample = (
-            _build_t2i_sample_from_input_ids(
-                negative_prompt_input_ids,
-                height,
-                width,
-                model_config,
-                attention_mask=negative_prompt_attention_mask,
-            )
-            if do_cfg
-            else None
-        )
-
-        def _to_device(s):
-            return {
-                k: (v.to(device) if torch.is_tensor(v) else v) for k, v in s.items()
-            }
-
-        cond_sample = _to_device(cond_sample)
-        if uncond_sample is not None:
-            uncond_sample = _to_device(uncond_sample)
-
-        if generator is None:
-            if seed is None:
-                seed = 0
-            generator = torch.Generator(device="cpu").manual_seed(seed + 1)
-            torch.manual_seed(seed + 1)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(seed + 1)
-
-        noise = noise_scale * torch.randn(
-            (1, 3, height, width), generator=generator
-        ).to(device, dtype)
-        z = einops.rearrange(
-            noise,
-            "B C (H p1) (W p2) -> B (H W) (C p1 p2)",
-            p1=PATCH_SIZE,
-            p2=PATCH_SIZE,
-        )
-
-        if shift is not None and hasattr(self.scheduler, "set_shift"):
-            self.scheduler.set_shift(shift)
-        self.scheduler.set_timesteps(num_inference_steps, device=device)
-
-        timesteps = self.scheduler.timesteps
-
-        def _forward_once(sample, z_in, t_pixeldit):
-            with torch.autocast(device.type, dtype=dtype):
-                kwargs = {
-                    "input_ids": sample["input_ids"],
-                    "position_ids": sample["position_ids"],
-                    "vinputs": z_in,
-                    "timestep": t_pixeldit.reshape(-1).to(device),
-                    "token_types": sample["token_types"],
-                    "use_flash_attn": True,
-                }
-                if "attention_mask" in sample:
-                    kwargs["attention_mask"] = sample["attention_mask"]
-                outputs = self.model(**kwargs)
-            x_pred = outputs.x_pred
-            return x_pred[0, sample["vinput_mask"][0]].unsqueeze(0)
-
-        for step_t in self.progress_bar(timesteps):
-            t_pixeldit = 1.0 - step_t.float() / 1000.0
-            sigma = (step_t.float() / 1000.0).to(dtype=torch.float32).clamp_min(T_EPS)
-
-            x_pred_cond = _forward_once(cond_sample, z.clone(), t_pixeldit)
-            v_cond = (x_pred_cond.float() - z.float()) / sigma
-
-            if do_cfg:
-                x_pred_uncond = _forward_once(uncond_sample, z.clone(), t_pixeldit)
-                v_uncond = (x_pred_uncond.float() - z.float()) / sigma
-                v_guided = v_uncond + guidance_scale * (v_cond - v_uncond)
-            else:
-                v_guided = v_cond
-
-            model_output = -v_guided
-            z = self.scheduler.step(
-                model_output.float(),
-                step_t.to(dtype=torch.float32),
-                z.float(),
-                return_dict=False,
-            )[0].to(dtype)
-
-        img = (z + 1) / 2
-        img = einops.rearrange(
-            img.cpu().float(),
-            "B (H W) (C p1 p2) -> B C (H p1) (W p2)",
-            H=h_patches,
-            W=w_patches,
-            p1=PATCH_SIZE,
-            p2=PATCH_SIZE,
-        )
-
-        if output_type == "pt":
-            images = img.clamp(0, 1)
-        elif output_type == "np":
-            images = np.clip(img.numpy().transpose(0, 2, 3, 1), 0, 1)
-        else:
-            arr = np.round(
-                np.clip(img[0].numpy().transpose(1, 2, 0) * 255, 0, 255)
-            ).astype(np.uint8)
-            images = [Image.fromarray(arr).convert("RGB")]
-
-        if not return_dict:
-            return (images,)
-        return HiDreamO1PipelineOutput(images=images)
+    pe = AdvancedPromptEmbeds(text_embeds=token_list)
+    pe._frozen_dtype_keys = ["text_embeds"]
+    return pe, ref_patches_list
