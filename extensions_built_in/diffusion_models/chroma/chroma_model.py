@@ -20,6 +20,7 @@ from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
 from .src.model import Chroma, chroma_params
+from .chroma_dual_gpu import ChromaDualGPUMixin, is_dual_gpu_enabled
 from safetensors.torch import load_file, save_file
 from toolkit.metadata import get_meta_for_safetensors
 import huggingface_hub
@@ -62,7 +63,7 @@ class FakeCLIP(torch.nn.Module):
         return torch.zeros(1, 1, 1).to(self.device)
 
 
-class ChromaModel(BaseModel):
+class ChromaModel(ChromaDualGPUMixin, BaseModel):
     arch = "chroma"
 
     def __init__(
@@ -85,6 +86,7 @@ class ChromaModel(BaseModel):
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ['Chroma']
+        self.init_te_device()
 
     # static method to get the noise scheduler
     @staticmethod
@@ -192,6 +194,12 @@ class ChromaModel(BaseModel):
         else:
             transformer.to(self.device_torch, dtype=dtype)
 
+        if is_dual_gpu_enabled():
+            # After this call, transformer.to() is pinned to ignore device
+            # arguments — the later pipe.transformer.to(self.device_torch)
+            # sites become no-ops and the split layout survives.
+            self.setup_dual_gpu_distribution(transformer, dtype)
+
         flush()
 
         self.print_and_status_update("Loading T5")
@@ -201,7 +209,7 @@ class ChromaModel(BaseModel):
         text_encoder_2 = T5EncoderModel.from_pretrained(
             extras_path, subfolder="text_encoder_2", torch_dtype=dtype
         )
-        text_encoder_2.to(self.device_torch, dtype=dtype)
+        text_encoder_2.to(self.te_device_torch, dtype=dtype)
         flush()
 
         if self.model_config.quantize_te:
@@ -250,10 +258,10 @@ class ChromaModel(BaseModel):
 
         flush()
         # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        text_encoder[0].to(self.te_device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
-        text_encoder[1].to(self.device_torch)
+        text_encoder[1].to(self.te_device_torch)
         text_encoder[1].requires_grad_(False)
         text_encoder[1].eval()
         pipe.transformer = pipe.transformer.to(self.device_torch)
