@@ -359,14 +359,23 @@ class ZImageModel(ZImageDualGPUMixin, BaseModel):
         return noise_pred
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
-        if self.pipeline.text_encoder.device != self.device_torch:
-            self.pipeline.text_encoder.to(self.device_torch)
+        # Route tokenization + encoding through the TE device. Under
+        # Z_IMAGE_TE_DEVICE=cpu the Qwen3 encoder stays on CPU; without
+        # this guard the force-move to self.device_torch would pull it
+        # onto cuda:0 (defeating the offload) and a mismatched device
+        # would crash inside Qwen3's token_embedding.
+        if self.pipeline.text_encoder.device != self.te_device_torch:
+            self.pipeline.text_encoder.to(self.te_device_torch)
 
         prompt_embeds, _ = self.pipeline.encode_prompt(
             prompt,
             do_classifier_free_guidance=False,
-            device=self.device_torch,
+            device=self.te_device_torch,
         )
+        # Bring the output back to the trainer device so downstream
+        # pipeline ops (which run on device_torch) match.
+        if hasattr(prompt_embeds, "device") and prompt_embeds.device != self.device_torch:
+            prompt_embeds = prompt_embeds.to(self.device_torch)
         pe = PromptEmbeds([prompt_embeds, None])
         return pe
 
