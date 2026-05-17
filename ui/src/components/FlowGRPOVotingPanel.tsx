@@ -5,6 +5,7 @@ import { Job } from '@prisma/client';
 import { Button } from '@headlessui/react';
 import classNames from 'classnames';
 import { FaDice } from 'react-icons/fa';
+import { EyeOff } from 'lucide-react';
 import { apiClient } from '@/utils/api';
 import useFlowGRPOVoteTasks, { FlowGRPOVoteTaskView } from '@/hooks/useFlowGRPOVoteTasks';
 import { FlowGRPOLiveTaskConfig, JobConfig } from '@/types';
@@ -112,7 +113,7 @@ const getTaskStatusMessage = (task: { status: string; error?: string | null }) =
   if (task.status === 'requested') return 'Waiting for the trainer to pick up this task.';
   if (task.status === 'generating') return 'Generating candidates...';
   if (task.status === 'open') return 'Waiting for votes.';
-  if (task.status === 'voted') return 'Vote received, waiting to be applied.';
+  if (task.status === 'voted') return 'Applying vote...';
   if (task.status === 'processed') return 'Vote processed.';
   if (task.status === 'stale') return 'Task skipped because rollout trajectories became stale.';
   if (task.status === 'failed') return task.error ? `Task failed: ${task.error}` : 'Task failed.';
@@ -126,20 +127,28 @@ const cleanPrompt = (prompt: string) =>
     .trim();
 
 const parseProgressSnapshot = (error: string | null | undefined) => {
-  if (!error || !error.startsWith('{"type":"grpo_progress"')) return null;
+  if (!error) return null;
   try {
     const parsed = JSON.parse(error) as {
+      type?: string;
       completed_steps?: number;
       total_steps?: number;
       generated_candidates?: number;
       target_candidates?: number;
+      it_per_sec?: number;
+      elapsed_sec?: number;
+      remaining_sec?: number;
     };
+    if (parsed.type !== 'grpo_progress') return null;
     if (!Number.isFinite(parsed.completed_steps) || !Number.isFinite(parsed.total_steps)) return null;
     return {
       completedSteps: parsed.completed_steps as number,
       totalSteps: parsed.total_steps as number,
       generatedCandidates: Number.isFinite(parsed.generated_candidates) ? (parsed.generated_candidates as number) : null,
       targetCandidates: Number.isFinite(parsed.target_candidates) ? (parsed.target_candidates as number) : null,
+      itPerSec: Number.isFinite(parsed.it_per_sec) ? (parsed.it_per_sec as number) : null,
+      elapsedSec: Number.isFinite(parsed.elapsed_sec) ? (parsed.elapsed_sec as number) : null,
+      remainingSec: Number.isFinite(parsed.remaining_sec) ? (parsed.remaining_sec as number) : null,
     };
   } catch {
     return null;
@@ -147,6 +156,25 @@ const parseProgressSnapshot = (error: string | null | undefined) => {
 };
 
 const draftStorageKey = (jobID: string) => `flow-grpo-voting-draft:${jobID}`;
+
+const formatIterationRate = (itPerSec: number | null) => {
+  if (itPerSec == null || !Number.isFinite(itPerSec) || itPerSec <= 0) return null;
+  if (itPerSec < 1) {
+    return `${(1 / itPerSec).toFixed(2)} s/it`;
+  }
+  return `${itPerSec.toFixed(2)} it/s`;
+};
+
+const formatTqdmDuration = (seconds: number) => {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = `${m}`.padStart(h > 0 ? 2 : 1, '0');
+  const ss = `${s}`.padStart(2, '0');
+  if (h > 0) return `${h}:${mm}:${ss}`;
+  return `${m}:${ss}`;
+};
 
 export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
   const jobConfig = JSON.parse(job.job_config) as JobConfig;
@@ -293,20 +321,34 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
     const stepsPerCandidate = task.num_inference_steps ?? defaultTaskValues.num_inference_steps;
     const fallbackCompletedSteps = generatedCount * stepsPerCandidate;
     const fallbackTotalSteps = Math.max(1, targetCandidates * stepsPerCandidate);
-    const progressSnapshot = task.status === 'generating' ? parseProgressSnapshot(task.error) : null;
-    const completedSteps = progressSnapshot?.completedSteps ?? fallbackCompletedSteps;
-    const totalSteps = progressSnapshot?.totalSteps ?? fallbackTotalSteps;
+    const progressSnapshot =
+      task.status === 'generating' || task.status === 'voted'
+        ? parseProgressSnapshot(task.error)
+        : null;
+    const isApplyingVote = task.status === 'voted';
+    const completedSteps = isApplyingVote
+      ? (progressSnapshot?.completedSteps ?? 0)
+      : (progressSnapshot?.completedSteps ?? fallbackCompletedSteps);
+    const totalSteps = isApplyingVote
+      ? Math.max(1, progressSnapshot?.totalSteps ?? 1)
+      : (progressSnapshot?.totalSteps ?? fallbackTotalSteps);
     const displayGenerated =
       progressSnapshot?.generatedCandidates != null
         ? Math.max(generatedCount, progressSnapshot.generatedCandidates)
         : generatedCount;
     const displayTarget = progressSnapshot?.targetCandidates ?? targetCandidates;
+    const itPerSec = progressSnapshot?.itPerSec ?? null;
+    const formattedRate = formatIterationRate(itPerSec);
+    const elapsedSec = progressSnapshot?.elapsedSec ?? null;
+    const remainingSec = progressSnapshot?.remainingSec ?? null;
+    const formattedTqdmTime =
+      elapsedSec != null && remainingSec != null
+        ? `${formatTqdmDuration(elapsedSec)}<${formatTqdmDuration(remainingSec)}`
+        : null;
     const progress =
-      task.status === 'requested'
-        ? 0
-        : task.status === 'generating'
-          ? Math.min(99, Math.round((completedSteps / totalSteps) * 100))
-          : 100;
+      task.status === 'generating' || task.status === 'voted'
+        ? Math.min(99, Math.round((completedSteps / totalSteps) * 100))
+        : 100;
 
     return (
       <div key={task.id} className="rounded-xl border border-gray-800 bg-gray-950 p-4">
@@ -319,14 +361,6 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {!includeVoting && (
-              <Button
-                onClick={() => hideHistoryTask(task.id)}
-                className="rounded-md bg-gray-800 px-2.5 py-1 text-xs text-gray-300 hover:bg-gray-700"
-              >
-                Hide
-              </Button>
-            )}
             <div
               className={classNames(
                 'rounded-full px-3 py-1 text-xs font-medium',
@@ -341,17 +375,27 @@ export default function FlowGRPOVotingPanel({ job, compact = false }: Props) {
             >
               {statusLabels[task.status] || task.status}
             </div>
+            {!includeVoting && (
+              <Button
+                onClick={() => hideHistoryTask(task.id)}
+                title="Hide"
+                aria-label="Hide"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700"
+              >
+                <EyeOff className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
 
-        {(task.status === 'requested' || task.status === 'generating') && (
+        {(task.status === 'generating' || task.status === 'voted') && (
           <div className="mb-3">
             <div className="mb-1.5 flex items-center justify-between text-xs text-gray-400">
-              <span>
-                Generated {displayGenerated}/{displayTarget} candidates
-              </span>
+              <span>{isApplyingVote ? 'Applying vote' : `Generated ${displayGenerated}/${displayTarget} candidates`}</span>
               <span>
                 Steps {completedSteps}/{totalSteps}
+                {formattedTqdmTime ? `  •  ${formattedTqdmTime}` : ''}
+                {formattedRate ? `  •  ${formattedRate}` : ''}
               </span>
             </div>
             <div className="h-1.5 overflow-hidden rounded bg-gray-800">
