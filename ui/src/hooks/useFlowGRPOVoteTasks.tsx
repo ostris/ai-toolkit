@@ -33,12 +33,20 @@ export interface FlowGRPOVoteTaskView {
   status: string;
   created_at: string;
   candidates: FlowGRPOCandidateView[];
+  votes: Array<{
+    id: string;
+    candidate_id: string | null;
+    value: string;
+    reward: number;
+    processed: boolean;
+    created_at: string;
+  }>;
 }
 
 export default function useFlowGRPOVoteTasks(
   jobID: string,
   reloadInterval: number | null = 3000,
-  taskStatus = 'requested,generating,open,voted',
+  taskStatus = 'requested,generating,open,voted,processed,stale,failed',
 ) {
   const [tasks, setTasks] = useState<FlowGRPOVoteTaskView[]>([]);
   const [requestStatus, setRequestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getVotingInputImageMode } from '@/utils/modelCapabilities';
 
 const prisma = new PrismaClient();
 
@@ -77,6 +78,10 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
       `${body.scheduler || 'flowmatch_step_with_logprob'}`.trim() || 'flowmatch_step_with_logprob';
     const seedValue = `${body.seed ?? ''}`.trim();
     const seed = seedValue === '' ? null : parseInt(seedValue, 10);
+    const ctrlImgValue = `${body.ctrl_img ?? ''}`.trim();
+    const ctrlImg1Value = `${body.ctrl_img_1 ?? ''}`.trim();
+    const ctrlImg2Value = `${body.ctrl_img_2 ?? ''}`.trim();
+    const ctrlImg3Value = `${body.ctrl_img_3 ?? ''}`.trim();
 
     if (!prompt) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
@@ -100,11 +105,30 @@ export async function POST(request: Request, { params }: { params: { jobID: stri
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 });
     }
+    const jobConfig = JSON.parse(job.job_config);
+    const modelArch = `${jobConfig?.config?.process?.[0]?.model?.arch || ''}`;
+    const inputImageMode = getVotingInputImageMode(modelArch);
+    let promptWithInputImage = prompt;
+    if (inputImageMode === 'single') {
+      if (ctrlImgValue) {
+        promptWithInputImage = `${promptWithInputImage} --ctrl_img ${ctrlImgValue}`;
+      }
+    } else if (inputImageMode === 'multi') {
+      if (ctrlImg1Value) {
+        promptWithInputImage = `${promptWithInputImage} --ctrl_img_1 ${ctrlImg1Value}`;
+      }
+      if (ctrlImg2Value) {
+        promptWithInputImage = `${promptWithInputImage} --ctrl_img_2 ${ctrlImg2Value}`;
+      }
+      if (ctrlImg3Value) {
+        promptWithInputImage = `${promptWithInputImage} --ctrl_img_3 ${ctrlImg3Value}`;
+      }
+    }
 
     const task = await prisma.flowGRPOVoteTask.create({
       data: {
         job_id: params.jobID,
-        prompt,
+        prompt: promptWithInputImage,
         negative_prompt: negativePrompt,
         width,
         height,

@@ -235,6 +235,10 @@ export interface FlowGRPOLiveTaskConfig {
   width: number;
   height: number;
   seed?: number | null;
+  ctrl_img?: string | null;
+  ctrl_img_1?: string | null;
+  ctrl_img_2?: string | null;
+  ctrl_img_3?: string | null;
   guidance_scale: number;
   num_inference_steps: number;
   sampler: string;
