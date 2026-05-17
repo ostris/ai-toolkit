@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import inspect
+import json
 import os
 import sqlite3
 import time
@@ -1190,6 +1191,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         try:
             self.update_status("running", "Generating Flow-GRPO rollout group")
             generation_batch_size = self._candidate_generation_batch_size()
+            generation_progress_start = time.monotonic()
             for batch_start in range(0, self.flow_grpo_config.group_size, generation_batch_size):
                 batch_end = min(
                     self.flow_grpo_config.group_size,
@@ -1231,15 +1233,24 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     batch_candidate_count: int,
                 ):
                     completed_steps = base_completed_steps + (step_idx * batch_candidate_count)
-                    progress_payload = (
-                        '{"type":"grpo_progress",'
-                        f'"completed_steps":{completed_steps},'
-                        f'"total_steps":{total_steps},'
-                        f'"generated_candidates":{batch_start},'
-                        f'"target_candidates":{self.flow_grpo_config.group_size},'
-                        f'"batch_steps":{step_idx},'
-                        f'"batch_steps_total":{total_step_count}'
-                        '}'
+                    elapsed = max(1e-6, time.monotonic() - generation_progress_start)
+                    remaining_steps = max(0, total_steps - completed_steps)
+                    it_per_sec = completed_steps / elapsed
+                    remaining_sec = (remaining_steps / it_per_sec) if it_per_sec > 0 else None
+                    progress_payload = json.dumps(
+                        {
+                            "type": "grpo_progress",
+                            "phase": "generation",
+                            "completed_steps": completed_steps,
+                            "total_steps": total_steps,
+                            "generated_candidates": batch_start,
+                            "target_candidates": self.flow_grpo_config.group_size,
+                            "batch_steps": step_idx,
+                            "batch_steps_total": total_step_count,
+                            "it_per_sec": it_per_sec,
+                            "elapsed_sec": elapsed,
+                            "remaining_sec": remaining_sec,
+                        }
                     )
                     self._db_execute_write(
                         "UPDATE FlowGRPOVoteTask SET error = ? WHERE id = ? AND job_id = ?",
@@ -1862,12 +1873,41 @@ class FlowGRPOTrainer(DiffusionTrainer):
             for start_index in range(0, len(train_units), train_batch_size):
                 train_unit_batches.append(train_units[start_index : start_index + train_batch_size])
 
+        apply_total_steps = len(train_unit_batches)
+        apply_progress_start = time.monotonic()
+
+        def _write_apply_progress(completed_steps: int) -> None:
+            if apply_total_steps <= 0:
+                return
+            elapsed = max(1e-6, time.monotonic() - apply_progress_start)
+            remaining_steps = max(0, apply_total_steps - completed_steps)
+            it_per_sec = completed_steps / elapsed
+            remaining_sec = (remaining_steps / it_per_sec) if it_per_sec > 0 else None
+            progress_payload = json.dumps(
+                {
+                    "type": "grpo_progress",
+                    "phase": "apply_vote",
+                    "completed_steps": completed_steps,
+                    "total_steps": apply_total_steps,
+                    "it_per_sec": it_per_sec,
+                    "elapsed_sec": elapsed,
+                    "remaining_sec": remaining_sec,
+                }
+            )
+            for task_id in task_ids:
+                self._db_execute_write(
+                    "UPDATE FlowGRPOVoteTask SET error = ? WHERE id = ? AND job_id = ?",
+                    (progress_payload, task_id, self.job_id),
+                )
+
+        _write_apply_progress(0)
+
         with tqdm(
             total=len(train_unit_batches),
             desc="Flow-GRPO train batches",
             leave=True,
         ) as progress_bar:
-            for train_units in train_unit_batches:
+            for batch_index, train_units in enumerate(train_unit_batches):
                 unit_count = len(train_units)
                 candidate_loss_value, metrics = self._backward_train_unit_batch_loss(
                     train_units,
@@ -1875,6 +1915,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     progress_bar=progress_bar,
                 )
                 if candidate_loss_value is None:
+                    _write_apply_progress(batch_index + 1)
                     continue
                 total_loss_value = (
                     candidate_loss_value
@@ -1883,6 +1924,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 )
                 for key, value in metrics.items():
                     metric_accumulator[key].extend([value] * unit_count)
+                _write_apply_progress(batch_index + 1)
         train_unit_batches.clear()
         loaded_candidate_states.clear()
 
