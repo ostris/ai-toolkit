@@ -104,11 +104,12 @@ class _RolloutBatch:
         self,
         *,
         control_tensor: Any = None,
+        control_tensor_list: Any = None,
         latents: Optional[torch.Tensor] = None,
         tensor: Optional[torch.Tensor] = None,
     ):
         self.control_tensor = control_tensor
-        self.control_tensor_list = None
+        self.control_tensor_list = control_tensor_list
         self.latents = latents
         self.tensor = tensor
         self.inpaint_tensor = None
@@ -445,7 +446,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         num_inference_steps: int,
         image_path: Path,
     ) -> GenerateImageConfig:
-        return GenerateImageConfig(
+        image_config = GenerateImageConfig(
             prompt=prompt,
             width=width,
             height=height,
@@ -470,10 +471,30 @@ class FlowGRPOTrainer(DiffusionTrainer):
             ctrl_idx=getattr(self.sample_config, "ctrl_idx", 0),
             do_cfg_norm=getattr(self.sample_config, "do_cfg_norm", False),
         )
+        # Keep first control image addressable through both legacy and multi-image fields.
+        if image_config.ctrl_img is None and image_config.ctrl_img_1 is not None:
+            image_config.ctrl_img = image_config.ctrl_img_1
+        if image_config.ctrl_img_1 is None and image_config.ctrl_img is not None:
+            image_config.ctrl_img_1 = image_config.ctrl_img
+        return image_config
 
     @staticmethod
     def _load_control_image_tensor(path: str, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return TF.to_tensor(Image.open(path).convert("RGB")).unsqueeze(0).to(device, dtype=dtype)
+
+    @staticmethod
+    def _control_image_paths(gen_config: GenerateImageConfig) -> list[str]:
+        ordered_paths: list[str] = []
+        seen: set[str] = set()
+        for raw_path in (gen_config.ctrl_img, gen_config.ctrl_img_1, gen_config.ctrl_img_2, gen_config.ctrl_img_3):
+            if raw_path is None:
+                continue
+            path = str(raw_path).strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            ordered_paths.append(path)
+        return ordered_paths
 
     def _get_text_encoding_control_images(self, gen_config: GenerateImageConfig):
         if not getattr(self.sd, "encode_control_in_text_embeddings", False):
@@ -481,8 +502,18 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
         ctrl_tensors = [
             self._load_control_image_tensor(path, self.device_torch, self.sd.torch_dtype)
-            for path in (gen_config.ctrl_img, gen_config.ctrl_img_1, gen_config.ctrl_img_2, gen_config.ctrl_img_3)
-            if path is not None
+            for path in self._control_image_paths(gen_config)
+        ]
+        if not ctrl_tensors:
+            return None
+        if getattr(self.sd, "has_multiple_control_images", False):
+            return ctrl_tensors
+        return ctrl_tensors[0]
+
+    def _get_rollout_control_tensors(self, gen_config: GenerateImageConfig):
+        ctrl_tensors = [
+            self._load_control_image_tensor(path, self.device_torch, self.sd.torch_dtype)
+            for path in self._control_image_paths(gen_config)
         ]
         if not ctrl_tensors:
             return None
@@ -574,7 +605,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         else:
             control_images = self._get_text_encoding_control_images(gen_config)
             if control_tensor is None:
-                control_tensor = control_images
+                control_tensor = self._get_rollout_control_tensors(gen_config)
             if isinstance(adapter, CustomAdapter):
                 adapter.is_unconditional_run = False
             conditional_embeds = self.sd.encode_prompt(
@@ -698,7 +729,25 @@ class FlowGRPOTrainer(DiffusionTrainer):
         *,
         control_tensor: Any,
         latents: torch.Tensor,
+        cfg_batch_repeat: int = 1,
     ) -> _RolloutBatch:
+        control_tensor_list = None
+        if isinstance(control_tensor, list):
+            batch_size = int(latents.shape[0])
+            control_tensor_list = []
+            for batch_idx in range(batch_size):
+                per_sample_controls = []
+                for control_item in control_tensor:
+                    if not isinstance(control_item, torch.Tensor):
+                        continue
+                    if control_item.shape[0] == batch_size:
+                        per_sample_controls.append(control_item[batch_idx : batch_idx + 1])
+                    elif control_item.shape[0] == 1:
+                        per_sample_controls.append(control_item)
+                control_tensor_list.append(per_sample_controls)
+            if cfg_batch_repeat > 1:
+                control_tensor_list = control_tensor_list * int(cfg_batch_repeat)
+
         tensor = None
         if control_tensor is not None:
             tensor_ref = control_tensor[0] if isinstance(control_tensor, list) else control_tensor
@@ -714,6 +763,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
             )
         return _RolloutBatch(
             control_tensor=control_tensor,
+            control_tensor_list=control_tensor_list,
             latents=latents,
             tensor=tensor,
         )
@@ -939,6 +989,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
         scheduler: str,
         batch_start_index: int,
         total_candidates: int,
+        progress_callback=None,
     ) -> list[CandidateState]:
         if not gen_configs:
             return []
@@ -1020,6 +1071,12 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 rollout_batch = self._build_rollout_batch(
                     control_tensor=control_tensor,
                     latents=latents,
+                    cfg_batch_repeat=2
+                    if (
+                        unconditional_embeds is not None
+                        and float(first_config.guidance_scale) > 1.0
+                    )
+                    else 1,
                 )
                 model_latents = self._condition_rollout_latents(latents, rollout_batch)
                 adapter_predict_kwargs = self._build_adapter_predict_kwargs(
@@ -1058,6 +1115,8 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 log_probs.append(_clone_tensor(log_prob))
                 latents = next_latents
                 step_iter.set_postfix(step=f"{idx + 1}/{timesteps.numel()}", batch=len(gen_configs))
+                if progress_callback is not None:
+                    progress_callback(idx + 1, timesteps.numel(), len(gen_configs))
 
             latents_stack = torch.stack(latents_before, dim=1)
             next_latents_stack = torch.stack(latents_after, dim=1)
@@ -1126,7 +1185,6 @@ class FlowGRPOTrainer(DiffusionTrainer):
             (task_id, self.job_id),
         )
 
-        candidate_rows: list[tuple] = []
         rng_state = torch.get_rng_state()
         cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
         try:
@@ -1142,7 +1200,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     self.maybe_stop()
                     candidate_id = str(uuid.uuid4())
                     seed = self._candidate_seed(task_row, order_index)
-                    image_path = task_dir / f"{order_index:02d}_{candidate_id}.webp"
+                    image_path = task_dir / f"{order_index:02d}_{candidate_id}.png"
                     state_path = task_dir / f"{order_index:02d}_{candidate_id}.pt"
                     preview_config = self._build_preview_image_config(
                         prompt=prompt,
@@ -1164,6 +1222,30 @@ class FlowGRPOTrainer(DiffusionTrainer):
                         }
                     )
 
+                total_steps = self.flow_grpo_config.group_size * num_inference_steps
+                base_completed_steps = batch_start * num_inference_steps
+
+                def _progress_update(
+                    step_idx: int,
+                    total_step_count: int,
+                    batch_candidate_count: int,
+                ):
+                    completed_steps = base_completed_steps + (step_idx * batch_candidate_count)
+                    progress_payload = (
+                        '{"type":"grpo_progress",'
+                        f'"completed_steps":{completed_steps},'
+                        f'"total_steps":{total_steps},'
+                        f'"generated_candidates":{batch_start},'
+                        f'"target_candidates":{self.flow_grpo_config.group_size},'
+                        f'"batch_steps":{step_idx},'
+                        f'"batch_steps_total":{total_step_count}'
+                        '}'
+                    )
+                    self._db_execute_write(
+                        "UPDATE FlowGRPOVoteTask SET error = ? WHERE id = ? AND job_id = ?",
+                        (progress_payload, task_id, self.job_id),
+                    )
+
                 states = self._generate_candidate_states_batch(
                     task_id=task_id,
                     candidate_ids=[spec["candidate_id"] for spec in specs],
@@ -1173,6 +1255,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     scheduler=scheduler,
                     batch_start_index=batch_start,
                     total_candidates=self.flow_grpo_config.group_size,
+                    progress_callback=_progress_update,
                 )
                 for spec, state in zip(specs, states):
                     order_index = int(spec["order_index"])
@@ -1185,7 +1268,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     if hasattr(self.sd, "_after_sample_image"):
                         self.sd._after_sample_image(order_index, self.flow_grpo_config.group_size)
                     self._save_candidate_state(state, spec["state_path"])
-                    candidate_rows.append(
+                    candidate_row = (
                         (
                             state.candidate_id,
                             self.job_id,
@@ -1203,19 +1286,18 @@ class FlowGRPOTrainer(DiffusionTrainer):
                             "open",
                         )
                     )
-
-            self._db_execute_many(
-                """
-                INSERT INTO FlowGRPOCandidate (
-                    id, job_id, vote_task_id, order_index, prompt, negative_prompt, seed,
-                    guidance_scale, num_inference_steps, sampler, scheduler, image_path, state_path, status,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                candidate_rows,
-            )
+                    self._db_execute_many(
+                        """
+                        INSERT INTO FlowGRPOCandidate (
+                            id, job_id, vote_task_id, order_index, prompt, negative_prompt, seed,
+                            guidance_scale, num_inference_steps, sampler, scheduler, image_path, state_path, status,
+                            created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """,
+                        [candidate_row],
+                    )
             self._db_execute_write(
-                "UPDATE FlowGRPOVoteTask SET status = 'open' WHERE id = ? AND job_id = ?",
+                "UPDATE FlowGRPOVoteTask SET status = 'open', error = NULL WHERE id = ? AND job_id = ?",
                 (task_id, self.job_id),
             )
             self._task_counter += 1
@@ -1427,6 +1509,12 @@ class FlowGRPOTrainer(DiffusionTrainer):
             rollout_batch = self._build_rollout_batch(
                 control_tensor=control_tensor,
                 latents=latents,
+                cfg_batch_repeat=2
+                if (
+                    unconditional_embeds is not None
+                    and float(first_state.guidance_scale) > 1.0
+                )
+                else 1,
             )
             model_latents = self._condition_rollout_latents(latents, rollout_batch)
             adapter_predict_kwargs = self._build_adapter_predict_kwargs(
