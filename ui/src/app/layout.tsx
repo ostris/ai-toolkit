@@ -9,6 +9,7 @@ import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
 import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import MergeLoRAsModal from '@/components/MergeLoRAsModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,6 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ConfirmModal />
         <DocModal />
         <CaptionDatasetModal />
+        <MergeLoRAsModal />
       </body>
     </html>
   );

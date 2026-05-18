@@ -68,14 +68,14 @@ export const Modal: React.FC<ModalProps> = ({
       >
         {/* Modal panel */}
         <div
-          className={`relative mx-auto w-full ${sizeClasses[size]} rounded-lg bg-white dark:bg-gray-900 border border-gray-700 shadow-xl transition-all`}
+          className={`relative mx-auto w-full ${sizeClasses[size]} rounded-xl bg-gray-900 shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/80 transition-all`}
           onClick={e => e.stopPropagation()}
         >
           {/* Modal header */}
           {(title || showCloseButton) && (
-            <div className="flex items-center justify-between rounded-t-lg border-b border-gray-700 bg-gray-850 px-6 py-4">
+            <div className="flex items-center justify-between bg-gray-800 px-4 py-3 rounded-t-xl">
               {title && (
-                <h3 id="modal-title" className="text-xl font-semibold text-gray-100">
+                <h3 id="modal-title" className="font-semibold text-gray-100">
                   {title}
                 </h3>
               )}

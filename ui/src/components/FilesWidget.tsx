@@ -2,8 +2,10 @@ import React from 'react';
 import useFilesList from '@/hooks/useFilesList';
 import Link from 'next/link';
 import { Loader2, AlertCircle, Download, Box, Brain } from 'lucide-react';
+import { openMergeLoRAsModal } from './MergeLoRAsModal';
+import { getFilename, getFoldername } from '@/utils/basic';
 
-export default function FilesWidget({ jobID }: { jobID: string }) {
+export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName: string }) {
   const { files, status, refreshFiles } = useFilesList(jobID, 5000);
 
   const cleanSize = (size: number) => {
@@ -26,6 +28,24 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
           <h2 className="font-semibold text-gray-100">Checkpoints</h2>
           <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">{files.length}</span>
         </div>
+        {files.length > 0 && (
+          <span
+            className="px-3 py-1 rounded-full text-sm bg-purple-500/10 text-purple-500 uppercase cursor-pointer hover:bg-purple-500/20"
+            onClick={() => {
+              const outputName = `${jobName}_merged`;
+              openMergeLoRAsModal(
+                getFoldername(files[0].path),
+                outputName,
+                files.map(f => ({ path: f.path })),
+                () => {
+                  refreshFiles();
+                },
+              );
+            }}
+          >
+            merge
+          </span>
+        )}
       </div>
 
       <div className="p-2">
@@ -45,7 +65,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         {['success', 'refreshing'].includes(status) && (
           <div className="space-y-1">
             {files.map((file, index) => {
-              const fileName = file.path.split('/').pop() || '';
+              const fileName = getFilename(file.path);
               const nameWithoutExt = fileName.replace('.safetensors', '');
               return (
                 <a
