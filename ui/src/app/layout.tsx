@@ -20,6 +20,12 @@ export const metadata: Metadata = {
   description: 'A toolkit for building AI things.',
 };
 
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   // Check if the AI_TOOLKIT_AUTH environment variable is set
   const authRequired = process.env.AI_TOOLKIT_AUTH ? true : false;

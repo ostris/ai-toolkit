@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
 import { SampleConfig, SampleItem } from '@/types';
@@ -9,6 +9,7 @@ import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
 import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 
 interface Props {
   imgPath: string | null; // current image path
@@ -199,6 +200,54 @@ export default function SampleImageViewer({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onCancel, handleArrowUp, handleArrowDown, handleArrowLeft, handleArrowRight]);
 
+  // Touch swipe navigation
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const multiTouchRef = useRef(false);
+  const zoomedRef = useRef(false);
+  const SWIPE_THRESHOLD = 40; // px before a swipe counts
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length > 1) {
+      multiTouchRef.current = true;
+      touchStartRef.current = null;
+      return;
+    }
+    multiTouchRef.current = false;
+    const t = e.touches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  }, []);
+
+  const onTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      const start = touchStartRef.current;
+      touchStartRef.current = null;
+      // If a pinch happened or we're zoomed in, don't treat as a swipe.
+      if (multiTouchRef.current || zoomedRef.current) {
+        if (e.touches.length === 0) multiTouchRef.current = false;
+        return;
+      }
+      if (!start) return;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - start.x;
+      const dy = t.clientY - start.y;
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absX < SWIPE_THRESHOLD && absY < SWIPE_THRESHOLD) return;
+      if (absX > absY) {
+        // Horizontal swipe: left = next (ArrowRight), right = prev (ArrowLeft)
+        if (dx < 0) handleArrowRight();
+        else handleArrowLeft();
+      } else {
+        // Vertical swipe: up = next step (ArrowDown), down = prev step (ArrowUp)
+        if (dy < 0) handleArrowDown();
+        else handleArrowUp();
+      }
+    },
+    [handleArrowLeft, handleArrowRight, handleArrowUp, handleArrowDown],
+  );
+
   if (!mounted) return null;
 
   return createPortal(
@@ -208,15 +257,17 @@ export default function SampleImageViewer({
         className="fixed inset-0 bg-gray-900/75 transition-opacity data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in"
       />
       <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
-        <div className="flex min-h-full items-center justify-center p-4 text-center">
+        <div className="flex min-h-full items-center justify-center p-0 sm:p-4 text-center">
           <DialogPanel
             transition
-            className="relative transform rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in max-w-[95%] max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col overflow-hidden"
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+            className="relative transform rounded-none sm:rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in w-full sm:w-auto sm:max-w-[95%] sm:max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col overflow-hidden touch-pan-y"
           >
             <div className="overflow-hidden flex items-center justify-center">
               {displayedImgPath &&
                 (isAudio(displayedImgPath) ? (
-                  <div className="w-[500px] h-[500px] max-w-[95vw] max-h-[82vh]">
+                  <div className="w-[500px] h-[500px] max-w-full sm:max-w-[95vw] max-h-[82vh]">
                     <AudioPlayer
                       src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                       title={displayedImgPath.replace(/^.*[\\/]/, '')}
@@ -226,7 +277,7 @@ export default function SampleImageViewer({
                 ) : isVideo(displayedImgPath) ? (
                   <video
                     src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
-                    className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
+                    className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain"
                     preload="none"
                     playsInline
                     loop
@@ -234,11 +285,27 @@ export default function SampleImageViewer({
                     controls={true}
                   />
                 ) : (
-                  <img
-                    src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
-                    alt="Sample Image"
-                    className="w-auto h-auto max-w-[95vw] max-h-[82vh] object-contain"
-                  />
+                  <TransformWrapper
+                    key={displayedImgPath}
+                    initialScale={1}
+                    minScale={1}
+                    maxScale={6}
+                    doubleClick={{ mode: 'toggle', step: 2 }}
+                    wheel={{ step: 0.2 }}
+                    panning={{ disabled: false }}
+                    onTransform={(_ref, state) => {
+                      zoomedRef.current = state.scale > 1.01;
+                    }}
+                  >
+                    <TransformComponent wrapperClass="!w-full !h-auto" contentClass="!w-full !h-auto">
+                      <img
+                        src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
+                        alt="Sample Image"
+                        draggable={false}
+                        className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none"
+                      />
+                    </TransformComponent>
+                  </TransformWrapper>
                 ))}
             </div>
             {/* # make full width */}

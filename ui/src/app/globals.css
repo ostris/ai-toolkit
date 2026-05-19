@@ -43,6 +43,21 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Prevent iOS Safari from auto-zooming when a form field is focused.
+   iOS only zooms when the field's font-size is < 16px. */
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select,
+  .aitk-react-select-container .aitk-react-select__control,
+  .aitk-react-select-container .aitk-react-select__input,
+  .aitk-react-select-container .aitk-react-select__single-value,
+  .aitk-react-select-container .aitk-react-select__placeholder,
+  .aitk-react-select-container .aitk-react-select__option {
+    font-size: 16px !important;
+  }
+}
+
 @layer components {
   /* control */
   .aitk-react-select-container .aitk-react-select__control {

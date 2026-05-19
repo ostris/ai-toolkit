@@ -114,15 +114,16 @@ export default function Datasets() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Datasets</h1>
+          <h1 className="text-base sm:text-lg">Datasets</h1>
         </div>
         <div className="flex-1"></div>
         <div>
           <Button
-            className="text-white bg-slate-600 px-3 py-1 rounded-md hover:bg-slate-500 transition-colors"
+            className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md hover:bg-slate-500 transition-colors text-sm sm:text-base whitespace-nowrap"
             onClick={() => openNewDatasetModal()}
           >
-            New Dataset
+            <span className="sm:hidden">+ New</span>
+            <span className="hidden sm:inline">New Dataset</span>
           </Button>
         </div>
       </TopBar>
