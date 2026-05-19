@@ -7,6 +7,7 @@ import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped 
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
+import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
 
 interface JobActionBarProps {
   job: Job;
@@ -84,7 +85,23 @@ export default function JobActionBar({
           <Eye />
         </Link>
       )}
-      {canEdit && (
+      {job.job_type === 'caption' && canEdit && (
+        <div
+          className="ml-2 hover:text-gray-100 inline-block cursor-pointer"
+          onClick={() =>
+            openCaptionDatasetModal(
+              job.job_ref || '',
+              () => {
+                if (onRefresh) onRefresh();
+              },
+              { jobId: job.id },
+            )
+          }
+        >
+          <Pen />
+        </div>
+      )}
+      {job.job_type === 'train' && canEdit && (
         <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
           <Pen />
         </Link>
@@ -123,11 +140,16 @@ export default function JobActionBar({
           <Cog />
         </MenuButton>
         <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
-          <MenuItem>
-            <Link href={`/jobs/new?cloneId=${job.id}`} className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block">
-              Clone Job
-            </Link>
-          </MenuItem>
+          {job.job_type === 'train' && (
+            <MenuItem>
+              <Link
+                href={`/jobs/new?cloneId=${job.id}`}
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
+              >
+                Clone Job
+              </Link>
+            </MenuItem>
+          )}
           <MenuItem>
             <div
               className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"

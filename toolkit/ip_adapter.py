@@ -37,10 +37,6 @@ from transformers import (
 )
 from toolkit.models.size_agnostic_feature_encoder import SAFEImageProcessor, SAFEVisionModel
 
-from transformers import ViTHybridImageProcessor, ViTHybridForImageClassification
-
-from transformers import ViTFeatureExtractor, ViTForImageClassification
-
 import torch.nn.functional as F
 
 
@@ -404,13 +400,6 @@ class IPAdapter(torch.nn.Module):
             self.image_encoder = SiglipVisionModel.from_pretrained(
                 adapter_config.image_encoder_path,
                 ignore_mismatched_sizes=True).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
-        elif self.config.image_encoder_arch == 'vit':
-            try:
-                self.clip_image_processor = ViTFeatureExtractor.from_pretrained(adapter_config.image_encoder_path)
-            except EnvironmentError:
-                self.clip_image_processor = ViTFeatureExtractor()
-            self.image_encoder = ViTForImageClassification.from_pretrained(adapter_config.image_encoder_path).to(
-                self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
         elif self.config.image_encoder_arch == 'safe':
             try:
                 self.clip_image_processor = SAFEImageProcessor.from_pretrained(adapter_config.image_encoder_path)
@@ -449,20 +438,6 @@ class IPAdapter(torch.nn.Module):
                     image_std=[0.229, 0.224, 0.225],
                 )
             self.image_encoder = ConvNextV2ForImageClassification.from_pretrained(
-                adapter_config.image_encoder_path,
-                use_safetensors=True,
-            ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))
-        elif self.config.image_encoder_arch == 'vit-hybrid':
-            try:
-                self.clip_image_processor = ViTHybridImageProcessor.from_pretrained(adapter_config.image_encoder_path)
-            except EnvironmentError:
-                print(f"could not load image processor from {adapter_config.image_encoder_path}")
-                self.clip_image_processor = ViTHybridImageProcessor(
-                    size=320,
-                    image_mean=[0.48145466, 0.4578275, 0.40821073],
-                    image_std=[0.26862954, 0.26130258, 0.27577711],
-                )
-            self.image_encoder = ViTHybridForImageClassification.from_pretrained(
                 adapter_config.image_encoder_path,
                 use_safetensors=True,
             ).to(self.device, dtype=get_torch_dtype(self.sd_ref().dtype))

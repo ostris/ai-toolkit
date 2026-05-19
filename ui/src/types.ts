@@ -51,6 +51,7 @@ export interface CpuInfo {
 
 export interface GPUApiResponse {
   hasNvidiaSmi: boolean;
+  isMac: boolean;
   gpus: GpuInfo[];
   error?: string;
 }
@@ -70,6 +71,7 @@ export interface NetworkConfig {
   network_kwargs: {
     ignore_if_contains: string[];
   };
+  transformer_only?: boolean;
 }
 
 export interface SaveConfig {
@@ -107,6 +109,7 @@ export interface DatasetConfig {
   control_path_1?: string | null;
   control_path_2?: string | null;
   control_path_3?: string | null;
+  auto_frame_count?: boolean;
 }
 
 export interface EMAConfig {
@@ -146,6 +149,8 @@ export interface TrainConfig {
   loss_type: 'mse' | 'mae' | 'wavelet' | 'stepped';
   do_differential_guidance?: boolean;
   differential_guidance_scale?: number;
+  audio_loss_multiplier?: number;
+  max_loss?: number | null;
 }
 
 export interface QuantizeKwargsConfig {
@@ -247,6 +252,37 @@ export interface JobConfig {
   job: string;
   config: ConfigObject;
   meta: MetaConfig;
+}
+
+export interface CaptionProcessConfig {
+  type: string;
+  sqlite_db_path?: string;
+  device: string;
+  caption: {
+    model_name_or_path: string;
+    model_name_or_path2?: string;
+    dtype: string;
+    quantize: boolean;
+    qtype: string;
+    low_vram: boolean;
+    extensions: string[];
+    path_to_caption: string;
+    recaption: boolean;
+    caption_prompt?: string;
+    max_res?: number;
+    max_new_tokens?: number;
+    fixed_caption?: string;
+  }
+}
+
+export interface CaptionConfigObject {
+  name: string;
+  process: CaptionProcessConfig[];
+}
+
+export interface CaptionJobConfig {
+  job: string;
+  config: CaptionConfigObject;
 }
 
 export interface ConfigDoc {
