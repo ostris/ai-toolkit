@@ -68,7 +68,7 @@ export const Modal: React.FC<ModalProps> = ({
       >
         {/* Modal panel */}
         <div
-          className={`relative mx-auto w-full ${sizeClasses[size]} max-h-full overflow-y-auto rounded-xl bg-gray-900 shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/80 transition-all`}
+          className={`relative my-auto mx-auto w-full ${sizeClasses[size]} rounded-xl bg-gray-900 shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/80 transition-all`}
           onClick={e => e.stopPropagation()}
         >
           {/* Modal header */}
