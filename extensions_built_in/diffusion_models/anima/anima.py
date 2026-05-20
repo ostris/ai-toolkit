@@ -605,8 +605,49 @@ class AnimaModel(BaseModel):
             return key.replace("text_conditioner.", "transformer.text_conditioner.", 1)
         return key
 
+    @staticmethod
+    def _convert_diffusers_lora_key_to_comfy(key: str) -> str:
+        key = AnimaModel._strip_ai_toolkit_wrapper_prefix(key)
+
+        if key.startswith("text_conditioner."):
+            return key.replace("text_conditioner.", "diffusion_model.llm_adapter.", 1)
+
+        if not key.startswith("transformer."):
+            return key
+
+        rename_dict = {
+            "transformer_blocks.": "blocks.",
+            "norm1.linear_1": "adaln_modulation_self_attn.1",
+            "norm1.linear_2": "adaln_modulation_self_attn.2",
+            "norm2.linear_1": "adaln_modulation_cross_attn.1",
+            "norm2.linear_2": "adaln_modulation_cross_attn.2",
+            "norm3.linear_1": "adaln_modulation_mlp.1",
+            "norm3.linear_2": "adaln_modulation_mlp.2",
+            "attn1.to_q": "self_attn.q_proj",
+            "attn1.to_k": "self_attn.k_proj",
+            "attn1.to_v": "self_attn.v_proj",
+            "attn1.to_out.0": "self_attn.output_proj",
+            "attn2.to_q": "cross_attn.q_proj",
+            "attn2.to_k": "cross_attn.k_proj",
+            "attn2.to_v": "cross_attn.v_proj",
+            "attn2.to_out.0": "cross_attn.output_proj",
+            "ff.net.0.proj": "mlp.layer1",
+            "ff.net.2": "mlp.layer2",
+            "norm_out.linear_1": "final_layer.adaln_modulation.1",
+            "norm_out.linear_2": "final_layer.adaln_modulation.2",
+            "proj_out": "final_layer.linear",
+            "time_embed.t_embedder": "t_embedder.1",
+            "time_embed.norm": "t_embedding_norm",
+            "patch_embed.proj": "x_embedder.proj.1",
+        }
+
+        key = key.removeprefix("transformer.")
+        for diffusers_key, comfy_key in rename_dict.items():
+            key = key.replace(diffusers_key, comfy_key)
+        return f"diffusion_model.{key}"
+
     def convert_lora_weights_before_save(self, state_dict):
-        return {self._strip_ai_toolkit_wrapper_prefix(key): value for key, value in state_dict.items()}
+        return {self._convert_diffusers_lora_key_to_comfy(key): value for key, value in state_dict.items()}
 
     def convert_lora_weights_before_load(self, state_dict):
         if any(key.startswith("diffusion_model.") for key in state_dict):
