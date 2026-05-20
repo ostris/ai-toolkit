@@ -330,6 +330,7 @@ class AnimaModel(BaseModel):
         pipeline.update_components(
             scheduler=self.get_train_scheduler(),
             transformer=trainable_model.transformer,
+            text_conditioner=trainable_model.text_conditioner,
             vae=unwrap_model(self.vae),
         )
         pipeline = pipeline.to(self.device_torch)
@@ -419,17 +420,20 @@ class AnimaModel(BaseModel):
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
-        conditional_prompt_embeds = self._condition_prompt_embeds(conditional_embeds, dtype=self.torch_dtype)
-        unconditional_prompt_embeds = self._condition_prompt_embeds(unconditional_embeds, dtype=self.torch_dtype)
-
         if pipeline.vae.device != self.device_torch:
             pipeline.vae.to(self.device_torch, dtype=self.vae_torch_dtype)
         pipeline.guider.guidance_scale = gen_config.guidance_scale
 
         try:
             return pipeline(
-                prompt_embeds=conditional_prompt_embeds,
-                negative_prompt_embeds=unconditional_prompt_embeds,
+                qwen_prompt_embeds=conditional_embeds.text_embeds,
+                qwen_attention_mask=conditional_embeds.attention_mask,
+                t5_input_ids=conditional_embeds.t5_input_ids,
+                t5_attention_mask=conditional_embeds.t5_attention_mask,
+                negative_qwen_prompt_embeds=unconditional_embeds.text_embeds,
+                negative_qwen_attention_mask=unconditional_embeds.attention_mask,
+                negative_t5_input_ids=unconditional_embeds.t5_input_ids,
+                negative_t5_attention_mask=unconditional_embeds.t5_attention_mask,
                 height=gen_config.height,
                 width=gen_config.width,
                 num_inference_steps=gen_config.num_inference_steps,
