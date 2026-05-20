@@ -231,7 +231,10 @@ class AnimaModel(BaseModel):
         super().__init__(device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs)
         self.is_flow_matching = True
         self.is_transformer = True
-        self.target_lora_modules = ["AnimaTrainableModel"]
+        self.train_text_conditioner = model_config.model_kwargs.get("train_text_conditioner", False)
+        self.target_lora_modules = ["CosmosTransformer3DModel"]
+        if self.train_text_conditioner:
+            self.target_lora_modules.append("AnimaTextConditioner")
         self.supports_model_paths = True
         self.use_old_lokr_format = False
         self.max_sequence_length = model_config.model_kwargs.get("max_sequence_length", 512)
@@ -578,7 +581,10 @@ class AnimaModel(BaseModel):
         return "anima"
 
     def get_transformer_block_names(self) -> Optional[List[str]]:
-        return ["transformer_blocks", "text_conditioner"]
+        block_names = ["transformer_blocks"]
+        if self.train_text_conditioner:
+            block_names.append("text_conditioner")
+        return block_names
 
     def get_model_to_train(self):
         return self.trainable_model
