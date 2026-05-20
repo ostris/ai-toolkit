@@ -255,7 +255,11 @@ class AnimaModel(BaseModel):
         self.print_and_status_update("Loading Anima model")
 
         pipe: AnimaModularPipeline = AnimaAutoBlocks().init_pipeline(self.model_config.name_or_path)
-        pipe.load_components(torch_dtype=dtype)
+        load_kwargs = {"torch_dtype": dtype}
+        model_path = os.path.abspath(os.path.expanduser(str(self.model_config.name_or_path)))
+        if os.path.isdir(model_path):
+            load_kwargs["pretrained_model_name_or_path"] = model_path
+        pipe.load_components(**load_kwargs)
         pipe.update_components(scheduler=self.get_train_scheduler())
 
         transformer = pipe.transformer
