@@ -859,7 +859,7 @@ class SliderConfig:
                 self.targets.append(target)
         print(f"Built {len(self.targets)} slider targets (with permutations)")
 
-ControlTypes = Literal['depth', 'line', 'pose', 'inpaint', 'mask']
+ControlTypes = Literal['depth', 'line', 'pose', 'inpaint', 'mask', 'sapiens2_mask']
 
 class DatasetConfig:
     """

@@ -1,7 +1,6 @@
 from typing import List
 import torch
 from transformers import T5Tokenizer, UMT5EncoderModel
-from toolkit.models.loaders.comfy import get_comfy_path
 
 class PatchedT5Tokenizer(T5Tokenizer):
     def __init__(
@@ -40,15 +39,8 @@ def get_umt5_encoder(
     Load the UMT5 encoder model from the specified path.
     """
     tokenizer = PatchedT5Tokenizer.from_pretrained(model_path, subfolder=tokenizer_subfolder)
-    comfy_path = get_comfy_path(comfy_files)
-    comfy_path = None
-    if comfy_path is not None:
-        text_encoder = UMT5EncoderModel.from_single_file(
-            comfy_path, torch_dtype=torch_dtype
-        )
-    else:
-        print(f"Using {model_path} for UMT5 encoder.")
-        text_encoder = UMT5EncoderModel.from_pretrained(
-            model_path, subfolder=encoder_subfolder, torch_dtype=torch_dtype
-        )
+    print(f"Using {model_path} for UMT5 encoder.")
+    text_encoder = UMT5EncoderModel.from_pretrained(
+        model_path, subfolder=encoder_subfolder, torch_dtype=torch_dtype
+    )
     return tokenizer, text_encoder

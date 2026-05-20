@@ -149,6 +149,7 @@ class BaseCaptioner(BaseExtensionProcess):
     def find_files(self):
         # recursivly find all the files in the path_to_caption with the specified extensions and save the paths to self.file_paths
         for root, dirs, files in os.walk(self.caption_config.path_to_caption):
+            dirs[:] = [d for d in dirs if d != "_controls"]
             for file in files:
                 if any(
                     file.lower().endswith(f".{ext}") and not file.startswith(".")
