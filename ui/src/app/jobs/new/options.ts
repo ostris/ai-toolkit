@@ -77,7 +77,7 @@ export const modelArchs: ModelArch[] = [
     group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['mrfatso/anima-preview3-diffusers', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['circlestone-labs/Anima-Base-v1.0-Diffusers', defaultNameOrPath],
       'config.process[0].model.quantize': [false, false],
       'config.process[0].model.quantize_te': [false, false],
       'config.process[0].model.qtype': ['', 'qfloat8'],
