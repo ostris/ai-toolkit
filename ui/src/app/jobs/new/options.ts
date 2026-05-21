@@ -619,6 +619,8 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+      'model.assistant_lora_path',
+      'model.lora_merge_strength',
     ],
   },
   {
@@ -772,6 +774,8 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+      'model.assistant_lora_path',
+      'model.lora_merge_strength',
     ],
   },
   {
@@ -825,6 +829,8 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+      'model.assistant_lora_path',
+      'model.lora_merge_strength',
     ],
   },
   {

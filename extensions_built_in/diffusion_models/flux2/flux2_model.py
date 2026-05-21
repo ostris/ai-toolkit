@@ -1,10 +1,12 @@
 import math
 import os
-from typing import TYPE_CHECKING, List, Optional
+from collections import OrderedDict
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import huggingface_hub
 import torch
-from toolkit.config_modules import GenerateImageConfig, ModelConfig
+from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
+from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.memory_management.manager import MemoryManager
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.models.base_model import BaseModel
@@ -91,6 +93,186 @@ class Flux2Model(BaseModel):
     def get_flux2_params(self):
         return Flux2Params()
 
+    def _resolve_flux2_base_lora_path(self, lora_path: str) -> str:
+        if os.path.isdir(lora_path):
+            lora_path = os.path.join(lora_path, "pytorch_lora_weights.safetensors")
+
+        if os.path.exists(lora_path):
+            return lora_path
+
+        path_split = lora_path.split("/")
+        if len(path_split) == 2 and not path_split[-1].endswith(".safetensors"):
+            self.print_and_status_update(f"Downloading FLUX.2 helper LoRA: {lora_path}")
+            return huggingface_hub.hf_hub_download(
+                repo_id=lora_path,
+                filename="pytorch_lora_weights.safetensors",
+                token=HF_TOKEN,
+            )
+
+        if len(path_split) >= 3 and path_split[-1].endswith(".safetensors"):
+            repo_id = f"{path_split[0]}/{path_split[1]}"
+            filename = "/".join(path_split[2:])
+            self.print_and_status_update(f"Downloading FLUX.2 helper LoRA: {lora_path}")
+            return huggingface_hub.hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                token=HF_TOKEN,
+            )
+
+        raise ValueError(
+            "FLUX.2 helper LoRA path must be a local file, a local directory containing "
+            "`pytorch_lora_weights.safetensors`, a Hugging Face repo, or a Hugging Face path "
+            f"in the form `user/repo/file.safetensors`. Got: {lora_path}"
+        )
+
+    def _get_flux2_base_lora_merge_specs(self) -> List[Dict[str, Any]]:
+        if self.model_config.inference_lora_path is not None:
+            raise ValueError(
+                "FLUX.2 inference_lora_path is not supported as a runtime adapter. "
+                "Use assistant_lora_path or lora_path to merge a helper LoRA into the base model."
+            )
+
+        helper_lora_path = self.model_config.assistant_lora_path
+        base_lora_path = self.model_config.lora_path
+
+        if helper_lora_path is not None and base_lora_path is not None:
+            raise ValueError(
+                "Cannot set both assistant_lora_path and lora_path for FLUX.2 base LoRA merging."
+            )
+
+        lora_path = helper_lora_path if helper_lora_path is not None else base_lora_path
+        if lora_path is None:
+            return []
+
+        resolved_lora_path = self._resolve_flux2_base_lora_path(lora_path)
+        state_dict = load_file(resolved_lora_path)
+        label = "helper" if helper_lora_path is not None else "base"
+        return [
+            {
+                "state_dict": OrderedDict(state_dict),
+                "strength": self.model_config.lora_merge_strength,
+                "source_path": resolved_lora_path,
+                "label": label,
+            }
+        ]
+
+    def _infer_flux2_base_lora_network_config(
+        self, state_dict: Dict[str, torch.Tensor]
+    ) -> NetworkConfig:
+        converted_state_dict = self.convert_lora_weights_before_load(state_dict)
+
+        is_lokr = any("lokr_w1" in key for key in converted_state_dict)
+        is_lora = any(
+            "lora_A" in key or "lora_down" in key for key in converted_state_dict
+        )
+        if not is_lora and not is_lokr:
+            raise ValueError(
+                "FLUX.2 helper LoRA merge only supports recognizable LoRA or LoKr weights."
+            )
+
+        network_kwargs: Dict[str, Any] = {
+            "only_if_contains": [],
+            "target_lin_modules": self.target_lora_modules,
+        }
+        network_config: Dict[str, Any] = {
+            "type": "lora",
+            "network_kwargs": network_kwargs,
+            "transformer_only": False,
+            "old_lokr_format": self.use_old_lokr_format,
+        }
+
+        if is_lokr:
+            largest_factor = 0
+            only_if_contains = []
+            for key, value in converted_state_dict.items():
+                if "lokr_w1" not in key:
+                    continue
+                largest_factor = max(largest_factor, int(value.shape[0]))
+                contains_key = key.split(".lokr_w1")[0].replace("lycoris_", "")
+                if contains_key not in only_if_contains:
+                    only_if_contains.append(contains_key)
+            network_config["type"] = "lokr"
+            network_config["lokr_full_rank"] = True
+            network_config["lokr_factor"] = largest_factor
+            network_kwargs["only_if_contains"] = only_if_contains
+        else:
+            linear_dim = None
+            only_if_contains = []
+            for key, value in converted_state_dict.items():
+                if "lora_A" in key:
+                    linear_dim = int(value.shape[0])
+                    contains_key = key.split(".lora_A")[0]
+                elif "lora_down" in key:
+                    linear_dim = int(value.shape[0])
+                    contains_key = key.split(".lora_down")[0]
+                else:
+                    continue
+                if contains_key not in only_if_contains:
+                    only_if_contains.append(contains_key)
+
+            if linear_dim is None:
+                raise ValueError(
+                    "FLUX.2 helper LoRA merge could not infer the LoRA rank from the provided weights."
+                )
+
+            network_config["linear"] = linear_dim
+            network_config["linear_alpha"] = linear_dim
+            network_kwargs["only_if_contains"] = only_if_contains
+
+        return NetworkConfig(**network_config)
+
+    def _cleanup_flux2_base_lora_network(self, network: LoRASpecialNetwork):
+        if not hasattr(network, "get_all_modules"):
+            return
+        for module in network.get_all_modules():
+            if hasattr(module, "org_forward"):
+                module.org_module[0].forward = module.org_forward
+
+    def _merge_base_lora_into_flux2_transformer(self, transformer: Flux2):
+        merge_specs = self._get_flux2_base_lora_merge_specs()
+        if len(merge_specs) == 0:
+            return
+
+        self.print_and_status_update("Loading FLUX.2 helper LoRA")
+        for merge_spec in merge_specs:
+            lora_state_dict = merge_spec["state_dict"]
+            merge_strength = merge_spec["strength"]
+            network_config = self._infer_flux2_base_lora_network_config(lora_state_dict)
+
+            self.print_and_status_update(
+                f"Merging FLUX.2 {merge_spec['label']} LoRA into transformer "
+                f"(strength {merge_strength})"
+            )
+            network = LoRASpecialNetwork(
+                text_encoder=None,
+                unet=transformer,
+                lora_dim=network_config.linear,
+                multiplier=1.0,
+                alpha=network_config.linear_alpha,
+                train_unet=True,
+                train_text_encoder=False,
+                conv_lora_dim=network_config.conv,
+                conv_alpha=network_config.conv_alpha,
+                is_transformer=True,
+                network_config=network_config,
+                network_type=network_config.type,
+                transformer_only=network_config.transformer_only,
+                base_model=self,
+                **network_config.network_kwargs,
+            )
+            network.apply_to(None, transformer, False, True)
+            try:
+                network.load_weights(lora_state_dict)
+                network.merge_in(merge_strength)
+            finally:
+                self._cleanup_flux2_base_lora_network(network)
+                del network
+                flush()
+
+        # The helper is now part of the transformer weights. Keep generation from
+        # trying to toggle a separate runtime adapter.
+        self.model_config.assistant_lora_path = None
+
     def load_te(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Mistral")
@@ -154,6 +336,7 @@ class Flux2Model(BaseModel):
             transformer_state_dict[key] = transformer_state_dict[key].to(dtype)
 
         transformer.load_state_dict(transformer_state_dict, assign=True)
+        self._merge_base_lora_into_flux2_transformer(transformer)
 
         if self.model_config.quantize:
             # patch the state dict method

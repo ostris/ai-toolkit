@@ -1368,8 +1368,14 @@ def validate_configs(
         
     if model_config.accuracy_recovery_adapter is not None:
         if model_config.assistant_lora_path is not None:
-            raise ValueError("Cannot use accuracy recovery adapter and assistant lora at the same time. "
-                             "Please set one of them to None.")
+            flux2_helper_merge_arches = {
+                "flux2",
+                "flux2_klein_4b",
+                "flux2_klein_9b",
+            }
+            if model_config.arch not in flux2_helper_merge_arches:
+                raise ValueError("Cannot use accuracy recovery adapter and assistant lora at the same time. "
+                                 "Please set one of them to None.")
 
     # see if any datasets are caching text embeddings
     is_caching_text_embeddings = any(dataset.cache_text_embeddings for dataset in dataset_configs)
