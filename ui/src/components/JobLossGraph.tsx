@@ -145,7 +145,9 @@ export default function JobLossGraph({ job }: Props) {
   // which loss series are enabled (default: all enabled)
   const [enabled, setEnabled] = useState<Record<string, boolean>>(initSettings.enabled ?? {});
 
-  const [isZoomed, setIsZoomed] = useState(false);
+  // Initialise from saved settings so the Reset zoom button is visible immediately
+  // when returning to a job that had an active zoom.
+  const [isZoomed, setIsZoomed] = useState(initSettings.zoomRange != null);
 
   // Persisted x-axis zoom range (step numbers). Null = unzoomed.
   const [zoomRange, setZoomRange] = useState<{ min: number; max: number } | null>(
@@ -373,7 +375,11 @@ export default function JobLossGraph({ job }: Props) {
 
     const uplotInstance = new uPlot(opts, built.data, containerRef.current);
     uplotRef.current = uplotInstance;
-    setIsZoomed(false);
+    // Only reset isZoomed if there is no saved range to restore. If there is,
+    // the requestAnimationFrame below will re-apply setScale which fires the
+    // hook and sets isZoomed(true) — resetting to false first would cause a
+    // flicker where the Reset zoom button disappears and reappears.
+    if (!zoomRangeRef.current) setIsZoomed(false);
 
     // Defer the size fix to the next animation frame so the browser has done a
     // layout pass and the legend's rendered height is accurate. The synchronous
