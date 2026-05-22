@@ -1895,8 +1895,12 @@ class LatentCachingMixin:
                 print_acc(" - Saving latents to disk")
             if to_memory:
                 print_acc(" - Keeping latents in memory")
-            # move sd items to cpu except for vae
-            self.sd.set_device_state_preset('cache_latents')
+            # Only shuffle models between devices when we actually have to encode.
+            # When every latent is already cached, the loop below is pure os.path.exists
+            # checks, but set_device_state_preset/restore would still move the (9B) unet
+            # off and back onto the GPU twice per dataset*resolution pass — that move, not
+            # the encode, is what made warm starts take 10s+. Gate it like cache_text_embeddings.
+            did_move = False
 
             # use tqdm to show progress
             i = 0
@@ -1918,6 +1922,10 @@ class LatentCachingMixin:
                             file_item._cached_audio_latent = state_dict['audio_latent'].to('cpu', dtype=self.sd.torch_dtype)
                 else:
                     # not saved to disk, calculate
+                    if not did_move:
+                        # move sd items to cpu except for vae (only now that we have work)
+                        self.sd.set_device_state_preset('cache_latents')
+                        did_move = True
                     # load the image first
                     file_item.load_and_process_image(self.transform, only_load_latents=True)
                     dtype = self.sd.torch_dtype
@@ -1986,8 +1994,9 @@ class LatentCachingMixin:
                 file_item.is_latent_cached = True
                 i += 1
 
-            # restore device state
-            self.sd.restore_device_state()
+            # restore device state (only if we actually changed it)
+            if did_move:
+                self.sd.restore_device_state()
 
 
 class TextEmbeddingFileItemDTOMixin:
