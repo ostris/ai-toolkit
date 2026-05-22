@@ -125,6 +125,30 @@ export default function SampleImageViewer({
     setImageAtIndex(nextIdx);
   }, [sampleImages, currentIndex, imgInfo.promptIdx, setImageAtIndex]);
 
+  const handleDelete = useCallback(() => {
+    if (!imgPath) return;
+    openConfirm({
+      title: 'Delete Sample',
+      message: `Are you sure you want to delete this sample? This action cannot be undone.`,
+      type: 'warning',
+      confirmText: 'Delete',
+      onConfirm: () => {
+        apiClient
+          .post('/api/img/delete', { imgPath: imgPath })
+          .then(() => {
+            console.log('Image deleted:', imgPath);
+            onChange(null);
+            if (refreshSampleImages) {
+              refreshSampleImages();
+            }
+          })
+          .catch(error => {
+            console.error('Error deleting image:', error);
+          });
+      },
+    });
+  }, [imgPath, onChange, refreshSampleImages]);
+
   const sampleItem = useMemo<SampleItem | null>(() => {
     if (!sampleConfig) return null;
     if (imgInfo.promptIdx < 0) return null;
@@ -192,13 +216,17 @@ export default function SampleImageViewer({
         case 'ArrowRight':
           handleArrowRight();
           break;
+        case 'Delete':
+        case 'Backspace':
+          handleDelete();
+          break;
         default:
           break;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onCancel, handleArrowUp, handleArrowDown, handleArrowLeft, handleArrowRight]);
+  }, [isOpen, onCancel, handleArrowUp, handleArrowDown, handleArrowLeft, handleArrowRight, handleDelete]);
 
   // Touch swipe navigation
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -292,17 +320,17 @@ export default function SampleImageViewer({
                     maxScale={6}
                     doubleClick={{ mode: 'toggle', step: 2 }}
                     wheel={{ step: 0.2 }}
-                    panning={{ disabled: false }}
+                    panning={{ disabled: false, allowRightClickPan: false }}
                     onTransform={(_ref, state) => {
                       zoomedRef.current = state.scale > 1.01;
                     }}
                   >
-                    <TransformComponent wrapperClass="!w-full !h-auto" contentClass="!w-full !h-auto">
+                    <TransformComponent>
                       <img
                         src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
                         alt="Sample Image"
                         draggable={false}
-                        className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none"
+                        className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none !pointer-events-auto"
                       />
                     </TransformComponent>
                   </TransformWrapper>
@@ -379,32 +407,7 @@ export default function SampleImageViewer({
                     </MenuItem>
                   )}
                   <MenuItem>
-                    <div
-                      className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
-                      onClick={() => {
-                        let message = `Are you sure you want to delete this sample? This action cannot be undone.`;
-                        openConfirm({
-                          title: 'Delete Sample',
-                          message: message,
-                          type: 'warning',
-                          confirmText: 'Delete',
-                          onConfirm: () => {
-                            apiClient
-                              .post('/api/img/delete', { imgPath: imgPath })
-                              .then(() => {
-                                console.log('Image deleted:', imgPath);
-                                onChange(null);
-                                if (refreshSampleImages) {
-                                  refreshSampleImages();
-                                }
-                              })
-                              .catch(error => {
-                                console.error('Error deleting image:', error);
-                              });
-                          },
-                        });
-                      }}
-                    >
+                    <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
                       Delete Sample
                     </div>
                   </MenuItem>
