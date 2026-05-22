@@ -957,6 +957,28 @@ export const modelArchs: ModelArch[] = [
       'model.layer_offloading',
     ],
   },
+  {
+    name: 'zimage_l2p',
+    label: 'Z-Image L2P (pixel space)',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['zhen-nan/L2P/model-1k-merge.safetensors', defaultNameOrPath],
+      'config.process[0].model.extras_name_or_path': ['Tongyi-MAI/Z-Image-Turbo', undefined],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+    },
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });

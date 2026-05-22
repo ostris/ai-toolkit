@@ -12,6 +12,7 @@ from .zeta_chroma import ZetaChromaModel
 from .ernie_image import ErnieImageModel
 from .nucleus_image import NucleusImageModel
 from .hidream.hidream_o1_model import HidreamO1Model
+from .z_image.z_image_l2p_model import ZImageL2PModel
 
 AI_TOOLKIT_MODELS = [
     # put a list of models here
@@ -38,4 +39,5 @@ AI_TOOLKIT_MODELS = [
     ErnieImageModel,
     NucleusImageModel,
     HidreamO1Model,
+    ZImageL2PModel,
 ]
