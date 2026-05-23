@@ -557,7 +557,3 @@ class ZImageL2PModel(ZImageModel):
                 continue
             save_dict[key] = value.to("cpu").to(save_dtype)
         save_file(save_dict, output_path, metadata=meta)
-
-        meta_path = output_path + ".aitk_meta.yaml"
-        with open(meta_path, "w") as f:
-            yaml.dump(meta, f)
