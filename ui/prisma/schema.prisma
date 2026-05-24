@@ -44,4 +44,75 @@ model Job {
   @@index([job_type])
   @@index([job_ref])
 
+  flow_grpo_vote_tasks FlowGRPOVoteTask[]
+  flow_grpo_candidates FlowGRPOCandidate[]
+  flow_grpo_votes      FlowGRPOVote[]
+}
+
+model FlowGRPOVoteTask {
+  id              String   @id @default(uuid())
+  job_id          String
+  prompt          String
+  negative_prompt String   @default("")
+  width           Int?
+  height          Int?
+  seed            Int?
+  guidance_scale  Float?
+  num_inference_steps Int?
+  sampler         String?
+  scheduler       String?
+  error           String?
+  status          String   @default("requested")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  job        Job                 @relation(fields: [job_id], references: [id], onDelete: Cascade)
+  candidates FlowGRPOCandidate[]
+  votes      FlowGRPOVote[]
+
+  @@index([job_id, status, created_at])
+}
+
+model FlowGRPOCandidate {
+  id                  String   @id @default(uuid())
+  job_id              String
+  vote_task_id        String
+  order_index         Int
+  prompt              String
+  negative_prompt     String   @default("")
+  seed                Int
+  guidance_scale      Float
+  num_inference_steps Int
+  sampler             String
+  scheduler           String
+  image_path          String
+  state_path          String
+  status              String   @default("open")
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  job       Job              @relation(fields: [job_id], references: [id], onDelete: Cascade)
+  vote_task FlowGRPOVoteTask @relation(fields: [vote_task_id], references: [id], onDelete: Cascade)
+  votes     FlowGRPOVote[]
+
+  @@index([job_id, vote_task_id, order_index])
+}
+
+model FlowGRPOVote {
+  id           String   @id @default(uuid())
+  job_id       String
+  vote_task_id String
+  candidate_id String?
+  value        String
+  reward       Float
+  processed    Boolean  @default(false)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  job       Job              @relation(fields: [job_id], references: [id], onDelete: Cascade)
+  vote_task FlowGRPOVoteTask @relation(fields: [vote_task_id], references: [id], onDelete: Cascade)
+  candidate FlowGRPOCandidate? @relation(fields: [candidate_id], references: [id], onDelete: Cascade)
+
+  @@index([job_id, processed, created_at])
+  @@index([vote_task_id, processed])
 }

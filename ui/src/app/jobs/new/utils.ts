@@ -58,10 +58,22 @@ export const handleModelArchChange = (
     }
   }
 
-  const numDatasets = jobConfig.config.process[0].datasets.length;
+  const numDatasets = jobConfig.config.process[0].datasets?.length || 0;
 
   let currentDefaults = expandDatasetDefaults(currentArch.defaults || {}, numDatasets);
   let newDefaults = expandDatasetDefaults(newArch?.defaults || {}, numDatasets);
+  const isFlowGRPO = jobConfig.config.process[0].type === 'flow_grpo_trainer';
+  const samplerKey = 'config.process[0].sample.sampler';
+  const schedulerKey = 'config.process[0].train.noise_scheduler';
+
+  // Flow-GRPO uses a dedicated native scheduler/sampler and must not be overwritten
+  // by architecture defaults while switching model arches.
+  if (isFlowGRPO) {
+    delete currentDefaults[samplerKey];
+    delete currentDefaults[schedulerKey];
+    delete newDefaults[samplerKey];
+    delete newDefaults[schedulerKey];
+  }
 
   // set new model
   setJobConfig(newArchName, 'config.process[0].model.arch');
@@ -71,7 +83,7 @@ export const handleModelArchChange = (
   const hasMultiControlPaths = newArch?.additionalSections?.includes('datasets.multi_control_paths') || false;
   const hasNumFrames = newArch?.additionalSections?.includes('datasets.num_frames') || false;
   const controls = newArch?.controls ?? [];
-  const datasets = jobConfig.config.process[0].datasets.map(dataset => {
+  const datasets = (jobConfig.config.process[0].datasets || []).map(dataset => {
     const newDataset = objectCopy(dataset);
     newDataset.controls = controls;
     if (hasMultiControlPaths) {
@@ -142,5 +154,10 @@ export const handleModelArchChange = (
 
   for (const key in newDefaults) {
     setJobConfig(newDefaults[key][0], key);
+  }
+
+  if (isFlowGRPO) {
+    setJobConfig('flowmatch_step_with_logprob', schedulerKey);
+    setJobConfig('flowmatch_step_with_logprob', samplerKey);
   }
 };

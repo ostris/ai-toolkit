@@ -70,6 +70,14 @@ export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
 
+export const getProcessType = (job: Job) => {
+  return getJobConfig(job).config.process[0]?.type || '';
+};
+
+export const isFlowGRPOJob = (job: Job) => {
+  return getProcessType(job) === 'flow_grpo_trainer';
+};
+
 export const getAvaliableJobActions = (job: Job) => {
   const jobConfig = getJobConfig(job);
   const isStopping = job.stop && job.status === 'running';

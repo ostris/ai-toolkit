@@ -28,21 +28,29 @@ const contentTypeMap: { [key: string]: string } = {
   '.ogg': 'audio/ogg',
 };
 
-export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
+export async function GET(request: NextRequest, { params }: { params: { imagePath: string | string[] } }) {
   const { imagePath } = await params;
   try {
-    // Decode the path
-    const filepath = decodeURIComponent(imagePath);
+    const encodedPath = Array.isArray(imagePath) ? imagePath.join('/') : imagePath;
+    let decodedPath = decodeURIComponent(encodedPath);
+    if (!path.isAbsolute(decodedPath)) {
+      decodedPath = `${path.sep}${decodedPath}`;
+    }
+    const filepath = path.resolve(decodedPath);
 
     // Get allowed directories
     const datasetRoot = await getDatasetsRoot();
     const trainingRoot = await getTrainingFolder();
     const dataRoot = await getDataRoot();
 
-    const allowedDirs = [datasetRoot, trainingRoot, dataRoot];
+    const allowedDirs = [datasetRoot, trainingRoot, dataRoot]
+      .filter(Boolean)
+      .map(allowedDir => path.resolve(allowedDir));
 
     // Security check: Ensure path is in allowed directory
-    const isAllowed = allowedDirs.some(allowedDir => filepath.startsWith(allowedDir)) && !filepath.includes('..');
+    const isAllowed = allowedDirs.some(
+      allowedDir => filepath === allowedDir || filepath.startsWith(`${allowedDir}${path.sep}`),
+    );
 
     if (!isAllowed) {
       console.warn(`Access denied: ${filepath} not in ${allowedDirs.join(', ')}`);

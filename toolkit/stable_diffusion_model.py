@@ -2573,7 +2573,8 @@ class StableDiffusion:
         if self.vae.device == torch.device("cpu"):
             self.vae.to(self.device_torch)
         latents = latents.to(self.device_torch, dtype=self.torch_dtype)
-        latents = (latents / self.vae.config['scaling_factor']) + self.vae.config['shift_factor']
+        shift = self.vae.config['shift_factor'] if self.vae.config['shift_factor'] is not None else 0
+        latents = (latents / self.vae.config['scaling_factor']) + shift
         images = self.vae.decode(latents).sample
         images = images.to(device, dtype=dtype)
 
