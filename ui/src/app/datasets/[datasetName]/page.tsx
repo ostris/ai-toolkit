@@ -4,6 +4,7 @@ import { useEffect, useState, use, useMemo } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import DatasetImageCard from '@/components/DatasetImageCard';
+import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
 import AddImagesModal, { openImagesModal, useOpenImagesModalOnDrag } from '@/components/AddImagesModal';
 import { TopBar, MainContent } from '@/components/layout';
@@ -19,6 +20,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const datasetName = usableParams.datasetName;
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const { settings, isSettingsLoaded } = useSettings();
+  const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
+  const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
@@ -137,12 +140,21 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                 isAutoCaptioning={isAutoCaptioning}
                 imageUrl={img.img_path}
                 onDelete={() => refreshImageList(datasetName)}
+                onImageClick={() => setSelectedImgPath(img.img_path)}
+                captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
               />
             ))}
           </div>
         )}
       </MainContent>
       <AddImagesModal />
+      <DatasetImageViewer
+        imgPath={selectedImgPath}
+        imageList={imgList.map(img => img.img_path)}
+        onChange={setSelectedImgPath}
+        refreshImages={() => refreshImageList(datasetName)}
+        onCaptionSaved={path => setCaptionRefreshKeys(prev => ({ ...prev, [path]: (prev[path] || 0) + 1 }))}
+      />
     </>
   );
 }

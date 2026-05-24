@@ -13,6 +13,8 @@ interface DatasetImageCardProps {
   children?: ReactNode;
   className?: string;
   onDelete?: () => void;
+  onImageClick?: () => void;
+  captionRefreshKey?: number;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -22,6 +24,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   children,
   className = '',
   onDelete = () => {},
+  onImageClick,
+  captionRefreshKey = 0,
 }) => {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState<boolean>(false);
@@ -46,7 +50,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           data = `${data}`;
         }
         setCaption(data || '');
-        setSavedCaption(data || '');
+        setSavedCaption((data || '').trim());
         setIsCaptionLoaded(true);
       })
       .catch(error => {
@@ -91,6 +95,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     }, 5000);
     return () => clearInterval(interval);
   }, [isAutoCaptioning, inViewport, isVisible]);
+
+  // External trigger (e.g. caption edited in the full-screen viewer) — re-fetch
+  useEffect(() => {
+    if (captionRefreshKey === 0) return;
+    setIsCaptionLoaded(false);
+  }, [captionRefreshKey]);
 
   useEffect(() => {
     // Create intersection observer to check viewport visibility
@@ -194,9 +204,12 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
                   src={`/api/img/${encodeURIComponent(imageUrl)}`}
                   alt={alt}
                   onLoad={handleLoad}
-                  className={`w-full h-full object-contain transition-opacity duration-300 ${
-                    loaded ? 'opacity-100' : 'opacity-0'
-                  }`}
+                  onClick={onImageClick}
+                  className={classNames('w-full h-full object-contain transition-opacity duration-300', {
+                    'opacity-100': loaded,
+                    'opacity-0': !loaded,
+                    'cursor-zoom-in': !!onImageClick,
+                  })}
                 />
               )}
             </>
@@ -250,7 +263,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             onBlur={saveCaption}
           >
             <textarea
-              className={classNames("w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none", {
+              className={classNames('w-full bg-transparent resize-none outline-none focus:ring-0 focus:outline-none', {
                 'opacity-50 cursor-not-allowed': isAutoCaptioning,
               })}
               value={caption}
