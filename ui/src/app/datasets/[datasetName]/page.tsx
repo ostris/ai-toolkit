@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, use, useMemo } from 'react';
+import { useEffect, useState, use, useMemo, useCallback } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
+import { VirtuosoGrid } from 'react-virtuoso';
 import DatasetImageCard from '@/components/DatasetImageCard';
 import DatasetImageViewer from '@/components/DatasetImageViewer';
 import { Button } from '@headlessui/react';
@@ -22,17 +23,16 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const { settings, isSettingsLoaded } = useSettings();
   const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
 
   const refreshImageList = (dbName: string) => {
     setStatus('loading');
-    console.log('Fetching images for dataset:', dbName);
     apiClient
       .post('/api/datasets/listImages', { datasetName: dbName })
       .then((res: any) => {
         const data = res.data;
-        console.log('Images:', data.images);
-        // sort
-        data.images.sort((a: { img_path: string }, b: { img_path: string }) => a.img_path.localeCompare(b.img_path));
+        // Server already sorts; avoid the client-side sort that's expensive on large lists.
         setImgList(data.images);
         setStatus('success');
       })
@@ -42,6 +42,8 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
       });
   };
   useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
+
+  const imgPaths = useMemo(() => imgList.map(img => img.img_path), [imgList]);
 
   useEffect(() => {
     if (datasetName) {
@@ -129,28 +131,36 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
           </Button>
         </div>
       </TopBar>
-      <MainContent>
+      <MainContent ref={scrollParentCallback}>
         {PageInfoContent}
-        {status === 'success' && imgList.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {imgList.map(img => (
-              <DatasetImageCard
-                key={img.img_path}
-                alt="image"
-                isAutoCaptioning={isAutoCaptioning}
-                imageUrl={img.img_path}
-                onDelete={() => refreshImageList(datasetName)}
-                onImageClick={() => setSelectedImgPath(img.img_path)}
-                captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
-              />
-            ))}
-          </div>
+        {status === 'success' && imgList.length > 0 && scrollParent && (
+          <VirtuosoGrid
+            totalCount={imgList.length}
+            customScrollParent={scrollParent}
+            overscan={400}
+            listClassName="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
+            itemContent={index => {
+              const img = imgList[index];
+              if (!img) return null;
+              return (
+                <DatasetImageCard
+                  alt="image"
+                  isAutoCaptioning={isAutoCaptioning}
+                  imageUrl={img.img_path}
+                  onDelete={() => refreshImageList(datasetName)}
+                  onImageClick={() => setSelectedImgPath(img.img_path)}
+                  captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
+                />
+              );
+            }}
+            computeItemKey={index => imgList[index]?.img_path ?? index}
+          />
         )}
       </MainContent>
       <AddImagesModal />
       <DatasetImageViewer
         imgPath={selectedImgPath}
-        imageList={imgList.map(img => img.img_path)}
+        imageList={imgPaths}
         onChange={setSelectedImgPath}
         refreshImages={() => refreshImageList(datasetName)}
         onCaptionSaved={path => setCaptionRefreshKeys(prev => ({ ...prev, [path]: (prev[path] || 0) + 1 }))}

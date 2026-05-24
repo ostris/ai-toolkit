@@ -94,9 +94,9 @@ function extractArtFromTag(buf: Buffer): ArtResult {
         verMajor === 4
           ? synchsafeToInt(tagData[offset + 4], tagData[offset + 5], tagData[offset + 6], tagData[offset + 7])
           : (tagData[offset + 4] << 24) |
-            (tagData[offset + 5] << 16) |
-            (tagData[offset + 6] << 8) |
-            tagData[offset + 7];
+          (tagData[offset + 5] << 16) |
+          (tagData[offset + 6] << 8) |
+          tagData[offset + 7];
       const flag2 = tagData[offset + 9];
       offset += 10;
       if (!id.trim() || size <= 0 || offset + size > tagData.length) break;
@@ -135,19 +135,22 @@ export async function GET(request: NextRequest, { params }: { params: { audioPat
     const trainingRoot = await getTrainingFolder();
     const dataRoot = await getDataRoot();
     const allowedDirs = [datasetRoot, trainingRoot, dataRoot];
-    const isAllowed = allowedDirs.some(d => filepath.startsWith(d)) && !filepath.includes('..');
+    // Resolve so `..` segments collapse, then verify still under an allowed root.
+    // Substring `.includes('..')` false-positives on filenames containing `..` as text.
+    const resolved = path.resolve(filepath);
+    const isAllowed = allowedDirs.some(d => resolved === d || resolved.startsWith(d + path.sep));
     if (!isAllowed) {
       return new NextResponse('Access denied', { status: 403 });
     }
 
-    const stat = await fs.promises.stat(filepath).catch(() => null);
+    const stat = await fs.promises.stat(resolved).catch(() => null);
     if (!stat || !stat.isFile()) {
       return new NextResponse('File not found', { status: 404 });
     }
 
     // Read only the ID3 tag (first min(tagSize, 4MB) bytes).
     // First read 10 bytes to get tag size, then read the full tag.
-    const fd = await fs.promises.open(filepath, 'r');
+    const fd = await fs.promises.open(resolved, 'r');
     try {
       const headerBuf = Buffer.alloc(10);
       await fd.read(headerBuf, 0, 10, 0);
@@ -167,7 +170,7 @@ export async function GET(request: NextRequest, { params }: { params: { audioPat
         return new NextResponse('No album art found', { status: 404 });
       }
 
-      return new NextResponse(art.data, {
+      return new NextResponse(art.data as any, {
         headers: {
           'Content-Type': art.mime,
           'Content-Length': String(art.data.length),

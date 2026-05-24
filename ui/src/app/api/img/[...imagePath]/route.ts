@@ -41,21 +41,26 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
 
     const allowedDirs = [datasetRoot, trainingRoot, dataRoot];
 
-    // Security check: Ensure path is in allowed directory
-    const isAllowed = allowedDirs.some(allowedDir => filepath.startsWith(allowedDir)) && !filepath.includes('..');
+    // Security check: resolve the path so any `..` segments are collapsed,
+    // then ensure it's still under an allowed root. (Plain `.includes('..')`
+    // false-positives on filenames that contain `..` as text, e.g. an ellipsis.)
+    const resolved = path.resolve(filepath);
+    const isAllowed = allowedDirs.some(
+      allowedDir => resolved === allowedDir || resolved.startsWith(allowedDir + path.sep),
+    );
 
     if (!isAllowed) {
-      console.warn(`Access denied: ${filepath} not in ${allowedDirs.join(', ')}`);
+      console.warn(`Access denied: ${resolved} not in ${allowedDirs.join(', ')}`);
       return new NextResponse('Access denied', { status: 403 });
     }
 
     // Stat file (async)
-    const stat = await fs.promises.stat(filepath).catch(() => null);
+    const stat = await fs.promises.stat(resolved).catch(() => null);
     if (!stat || !stat.isFile()) {
       return new NextResponse('File not found', { status: 404 });
     }
 
-    const ext = path.extname(filepath).toLowerCase();
+    const ext = path.extname(resolved).toLowerCase();
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
     // Support range requests for video/audio seeking
@@ -66,7 +71,7 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
       const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
       const chunkSize = end - start + 1;
 
-      const stream = fs.createReadStream(filepath, { start, end });
+      const stream = fs.createReadStream(resolved, { start, end });
       const readable = new ReadableStream({
         start(controller) {
           stream.on('data', chunk => controller.enqueue(chunk));
@@ -91,7 +96,7 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     }
 
     // Stream the file instead of buffering it entirely
-    const stream = fs.createReadStream(filepath);
+    const stream = fs.createReadStream(resolved);
     const readable = new ReadableStream({
       start(controller) {
         stream.on('data', chunk => controller.enqueue(chunk));

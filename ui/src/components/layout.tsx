@@ -1,4 +1,5 @@
 'use client';
+import React from 'react';
 import classNames from 'classnames';
 import ThemeLogo from './ThemeLogo';
 import { mobileSidebarState } from './Sidebar';
@@ -35,10 +36,14 @@ export const TopBar: React.FC<Props> = ({ children, className }) => {
   );
 };
 
-export const MainContent: React.FC<Props> = ({ children, className }) => {
+export const MainContent = React.forwardRef<HTMLDivElement, Props>(({ children, className }, ref) => {
   return (
-    <div className={classNames('pt-14 px-2 sm:px-4 absolute top-0 left-0 w-full h-full overflow-auto', className)}>
+    <div
+      ref={ref}
+      className={classNames('pt-14 px-2 sm:px-4 absolute top-0 left-0 w-full h-full overflow-auto', className)}
+    >
       {children ? children : null}
     </div>
   );
-};
+});
+MainContent.displayName = 'MainContent';
