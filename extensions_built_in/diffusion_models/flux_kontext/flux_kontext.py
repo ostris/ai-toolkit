@@ -22,6 +22,7 @@ from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTok
 from einops import rearrange, repeat
 import random
 import torch.nn.functional as F
+from .flux_kontext_dual_gpu import FluxKontextDualGPUMixin, is_dual_gpu_enabled
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
@@ -38,7 +39,7 @@ scheduler_config = {
 
 
 
-class FluxKontextModel(BaseModel):
+class FluxKontextModel(FluxKontextDualGPUMixin, BaseModel):
     arch = "flux_kontext"
 
     def __init__(
@@ -61,6 +62,7 @@ class FluxKontextModel(BaseModel):
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ['FluxTransformer2DModel']
+        self.init_te_device()
 
     # static method to get the noise scheduler
     @staticmethod
@@ -111,6 +113,12 @@ class FluxKontextModel(BaseModel):
         else:
             transformer.to(self.device_torch, dtype=dtype)
 
+        if is_dual_gpu_enabled():
+            # After this call, transformer.to() is pinned to ignore device
+            # arguments — the later pipe.transformer.to(self.device_torch)
+            # sites become no-ops and the split layout survives.
+            self.setup_dual_gpu_distribution(transformer, dtype)
+
         flush()
 
         self.print_and_status_update("Loading T5")
@@ -120,7 +128,7 @@ class FluxKontextModel(BaseModel):
         text_encoder_2 = T5EncoderModel.from_pretrained(
             base_model_path, subfolder="text_encoder_2", torch_dtype=dtype
         )
-        text_encoder_2.to(self.device_torch, dtype=dtype)
+        text_encoder_2.to(self.te_device_torch, dtype=dtype)
         flush()
 
         if self.model_config.quantize_te:
@@ -135,7 +143,7 @@ class FluxKontextModel(BaseModel):
             base_model_path, subfolder="text_encoder", torch_dtype=dtype)
         tokenizer = CLIPTokenizer.from_pretrained(
             base_model_path, subfolder="tokenizer", torch_dtype=dtype)
-        text_encoder.to(self.device_torch, dtype=dtype)
+        text_encoder.to(self.te_device_torch, dtype=dtype)
 
         self.print_and_status_update("Loading VAE")
         vae = AutoencoderKL.from_pretrained(
@@ -167,10 +175,10 @@ class FluxKontextModel(BaseModel):
 
         flush()
         # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        text_encoder[0].to(self.te_device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
-        text_encoder[1].to(self.device_torch)
+        text_encoder[1].to(self.te_device_torch)
         text_encoder[1].requires_grad_(False)
         text_encoder[1].eval()
         pipe.transformer = pipe.transformer.to(self.device_torch)
@@ -352,14 +360,24 @@ class FluxKontextModel(BaseModel):
         return noise_pred
     
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
-        if self.pipeline.text_encoder.device != self.device_torch:
-            self.pipeline.text_encoder.to(self.device_torch)
+        # Route to te_device_torch so both CLIP-L and T5 share a device.
+        # encode_prompts_flux uses text_encoder[0].device to place input_ids
+        # for *both* encoders; if CLIP-L is on cuda:0 while T5 stays on cpu
+        # (the FLUX_KONTEXT_TE_DEVICE=cpu case), T5's token_embedding crashes
+        # with "index on cuda:0, weight on cpu".
+        if self.pipeline.text_encoder.device != self.te_device_torch:
+            self.pipeline.text_encoder.to(self.te_device_torch)
         prompt_embeds, pooled_prompt_embeds = train_tools.encode_prompts_flux(
             self.tokenizer,
             self.text_encoder,
             prompt,
             max_length=512,
         )
+        # Bring outputs back to the trainer device.
+        if prompt_embeds.device != self.device_torch:
+            prompt_embeds = prompt_embeds.to(self.device_torch)
+        if pooled_prompt_embeds.device != self.device_torch:
+            pooled_prompt_embeds = pooled_prompt_embeds.to(self.device_torch)
         pe = PromptEmbeds(
             prompt_embeds
         )

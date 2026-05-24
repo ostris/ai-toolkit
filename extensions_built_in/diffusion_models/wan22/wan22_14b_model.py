@@ -23,6 +23,7 @@ from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from torchvision.transforms import functional as TF
 
 from toolkit.models.wan21.wan21 import Wan21
+from .wan22_dual_gpu import Wan22DualGPUMixin
 from .wan22_5b_model import (
     scheduler_config,
     time_text_monkeypatch,
@@ -161,7 +162,7 @@ class DualWanTransformer3DModel(torch.nn.Module):
         return self
 
 
-class Wan2214bModel(Wan21):
+class Wan2214bModel(Wan22DualGPUMixin, Wan21):
     arch = "wan22_14b"
     _wan_generation_scheduler_config = scheduler_configUniPC
     _wan_expand_timesteps = False
@@ -244,7 +245,16 @@ class Wan2214bModel(Wan21):
         return 16
 
     def load_wan_transformer(self, transformer_path, subfolder=None):
-        if self.model_config.split_model_over_gpus:
+        # Dual-GPU model-parallel: distribute each of the two transformers
+        # (high-noise + low-noise experts) across cuda:0/cuda:1 individually.
+        # The DualWanTransformer3DModel wrapper still routes by timestep
+        # boundary; whichever expert it picks now runs through our split
+        # forward. Activates when WAN_DUAL_GPU=true.
+        use_dual_gpu = (
+            hasattr(self, 'setup_dual_gpu_distribution')
+            and os.getenv("WAN_DUAL_GPU", "false").lower() == "true"
+        )
+        if self.model_config.split_model_over_gpus and not use_dual_gpu:
             raise ValueError(
                 "Splitting model over gpus is not supported for Wan2.2 models"
             )
@@ -289,8 +299,8 @@ class Wan2214bModel(Wan21):
 
         flush()
 
-        if self.model_config.low_vram:
-            # quantize on the device
+        if self.model_config.low_vram or use_dual_gpu:
+            # quantize on CPU; for dual-GPU, distribution happens post-quant
             transformer_1.to('cpu', dtype=dtype)
             flush()
         else:
@@ -303,7 +313,11 @@ class Wan2214bModel(Wan21):
             quantize_model(self, transformer_1)
             flush()
 
-        if self.model_config.low_vram:
+        if use_dual_gpu:
+            self.print_and_status_update("Distributing Transformer 1 across cuda:0/cuda:1")
+            self.setup_dual_gpu_distribution(transformer_1, dtype)
+            flush()
+        elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer 1 to CPU")
             transformer_1.to("cpu")
         else:
@@ -319,8 +333,8 @@ class Wan2214bModel(Wan21):
 
         flush()
 
-        if self.model_config.low_vram:
-            # quantize on the device
+        if self.model_config.low_vram or use_dual_gpu:
+            # quantize on CPU; for dual-GPU, distribution happens post-quant
             transformer_2.to('cpu', dtype=dtype)
             flush()
         else:
@@ -333,7 +347,11 @@ class Wan2214bModel(Wan21):
             quantize_model(self, transformer_2)
             flush()
 
-        if self.model_config.low_vram:
+        if use_dual_gpu:
+            self.print_and_status_update("Distributing Transformer 2 across cuda:0/cuda:1")
+            self.setup_dual_gpu_distribution(transformer_2, dtype)
+            flush()
+        elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer 2 to CPU")
             transformer_2.to("cpu")
         else:

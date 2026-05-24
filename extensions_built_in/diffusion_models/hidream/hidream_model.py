@@ -23,6 +23,7 @@ from transformers import T5TokenizerFast, T5EncoderModel, CLIPTextModel, CLIPTok
 from .src.pipelines.hidream_image.pipeline_hidream_image import HiDreamImagePipeline
 from .src.models.transformers.transformer_hidream_image import HiDreamImageTransformer2DModel
 from .src.schedulers.fm_solvers_unipc import FlowUniPCMultistepScheduler
+from .hidream_dual_gpu import HiDreamDualGPUMixin, is_dual_gpu_enabled
 from transformers import LlamaForCausalLM, PreTrainedTokenizerFast
 from einops import rearrange, repeat
 import random
@@ -50,7 +51,10 @@ LLAMA_MODEL_PATH = "unsloth/Meta-Llama-3.1-8B-Instruct"
 BASE_MODEL_PATH = "HiDream-ai/HiDream-I1-Full"
 
 
-class HidreamModel(BaseModel):
+# HiDreamDualGPUMixin is first in the MRO so its text_encoder_to override
+# and setup_dual_gpu_distribution take precedence over BaseModel. The
+# dual-GPU path itself stays inert unless HIDREAM_DUAL_GPU=true.
+class HidreamModel(HiDreamDualGPUMixin, BaseModel):
     arch = "hidream"
     hidream_transformer_class = HiDreamImageTransformer2DModel
     hidream_pipeline_class = HiDreamImagePipeline
@@ -75,6 +79,9 @@ class HidreamModel(BaseModel):
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ['HiDreamImageTransformer2DModel']
+        # Resolve te_device_torch (HIDREAM_TE_DEVICE or device_torch). Always
+        # present; used even when the dual-GPU path itself is disabled.
+        self.init_te_device()
 
     # static method to get the noise scheduler
     @staticmethod
@@ -109,7 +116,9 @@ class HidreamModel(BaseModel):
             output_attentions=True,
             torch_dtype=torch.bfloat16,
         )
-        text_encoder_4.to(self.device_torch, dtype=dtype)
+        # te_device_torch, not device_torch: under HIDREAM_DUAL_GPU the ~30 GB
+        # Llama-3.1-8B encoder must land on CPU to free VRAM for the split transformer.
+        text_encoder_4.to(self.te_device_torch, dtype=dtype)
         
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing llama 8b model")
@@ -126,14 +135,17 @@ class HidreamModel(BaseModel):
         self.print_and_status_update("Loading transformer")
             
         transformer = self.hidream_transformer_class.from_pretrained(
-            model_path, 
-            subfolder="transformer", 
+            model_path,
+            subfolder="transformer",
             torch_dtype=torch.bfloat16
         )
-        
-        if not self.low_vram:
+
+        # Under HIDREAM_DUAL_GPU keep the transformer on CPU through quantize so
+        # the mixin can distribute its modules across cuda:0/cuda:1 cleanly after.
+        use_dual_gpu = is_dual_gpu_enabled()
+        if not self.low_vram and not use_dual_gpu:
             transformer.to(self.device_torch, dtype=dtype)
-        
+
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing transformer")
             quantization_type = get_qtype(self.model_config.qtype)
@@ -152,14 +164,22 @@ class HidreamModel(BaseModel):
                 transformer.to(self.device_torch, dtype=dtype)
                 quantize(transformer, weights=quantization_type)
                 freeze(transformer)
-            else: 
+            else:
                 quantize(transformer, weights=quantization_type)
                 freeze(transformer)
-            
-        if self.low_vram:
+
+        # Dual-GPU model-parallel path (HIDREAM_DUAL_GPU=true). The transformer
+        # is still on CPU here, so the mixin can distribute its modules across
+        # cuda:0/cuda:1 cleanly. After this returns the transformer's .to() is
+        # pinned to ignore device moves.
+        if use_dual_gpu:
+            self.setup_dual_gpu_distribution(transformer, dtype)
+            flush()
+
+        if self.low_vram and not use_dual_gpu:
             # unload it for now
             transformer.to('cpu')
-        
+
         flush()
         
         self.print_and_status_update("Loading vae")
@@ -173,22 +193,25 @@ class HidreamModel(BaseModel):
         
         self.print_and_status_update("Loading clip encoders")
         
+        # te_device_torch, not device_torch: under HIDREAM_DUAL_GPU the text
+        # encoders are offloaded (typically to CPU) to free VRAM for the split transformer.
         text_encoder = CLIPTextModelWithProjection.from_pretrained(
             extras_path,
             subfolder="text_encoder",
             torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
-        
+        ).to(self.te_device_torch, dtype=dtype)
+
         tokenizer = CLIPTokenizer.from_pretrained(
             extras_path,
             subfolder="tokenizer"
         )
-        
+
+        # te_device_torch, not device_torch: text encoders offloaded under HIDREAM_DUAL_GPU.
         text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(
             extras_path,
             subfolder="text_encoder_2",
             torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        ).to(self.te_device_torch, dtype=dtype)
         
         tokenizer_2 = CLIPTokenizer.from_pretrained(
             extras_path,
@@ -198,11 +221,12 @@ class HidreamModel(BaseModel):
         flush()
         self.print_and_status_update("Loading T5 encoders")
         
+        # te_device_torch, not device_torch: text encoders offloaded under HIDREAM_DUAL_GPU.
         text_encoder_3 = T5EncoderModel.from_pretrained(
             extras_path,
             subfolder="text_encoder_3",
             torch_dtype=torch.bfloat16
-        ).to(self.device_torch, dtype=dtype)
+        ).to(self.te_device_torch, dtype=dtype)
         
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing T5")
@@ -219,13 +243,16 @@ class HidreamModel(BaseModel):
         
         if self.low_vram:
             self.print_and_status_update("Moving everything to device")
-            # move it all back
-            transformer.to(self.device_torch, dtype=dtype)
+            # move it all back. Under HIDREAM_DUAL_GPU the transformer is
+            # already distributed (and its .to() pinned), so leave it; the
+            # text encoders route to te_device_torch to keep VRAM free.
+            if not use_dual_gpu:
+                transformer.to(self.device_torch, dtype=dtype)
             vae.to(self.device_torch, dtype=dtype)
-            text_encoder.to(self.device_torch, dtype=dtype)
-            text_encoder_2.to(self.device_torch, dtype=dtype)
-            text_encoder_4.to(self.device_torch, dtype=dtype)
-            text_encoder_3.to(self.device_torch, dtype=dtype)
+            text_encoder.to(self.te_device_torch, dtype=dtype)
+            text_encoder_2.to(self.te_device_torch, dtype=dtype)
+            text_encoder_4.to(self.te_device_torch, dtype=dtype)
+            text_encoder_3.to(self.te_device_torch, dtype=dtype)
             
         # set to eval mode
         # transformer.eval()
@@ -255,8 +282,10 @@ class HidreamModel(BaseModel):
         tokenizer_list = [tokenizer, tokenizer_2, tokenizer_3, tokenizer_4]
         
         for te in text_encoder_list:
-            # set the dtype
-            te.to(self.device_torch, dtype=dtype)
+            # set the dtype. te_device_torch, not device_torch: under
+            # HIDREAM_DUAL_GPU the text encoders stay off the GPUs holding
+            # the split transformer.
+            te.to(self.te_device_torch, dtype=dtype)
             # freeze the model
             freeze(te)
             # set to eval mode
@@ -389,16 +418,34 @@ class HidreamModel(BaseModel):
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         self.text_encoder_to(self.device_torch, dtype=self.torch_dtype)
         max_sequence_length = 128
+        # Route tokenization + encoding through the TE device. Under
+        # HIDREAM_TE_DEVICE=cpu the 4 text encoders live on CPU, and
+        # _encode_prompt uses ``device`` to place input_ids before calling
+        # each text_encoder. Mismatched device crashes inside CLIP's
+        # token_embedding (RuntimeError: index on cuda:0, weight on cpu).
         prompt_embeds, pooled_prompt_embeds = self.pipeline._encode_prompt(
             prompt = prompt,
             prompt_2 = prompt,
             prompt_3 = prompt,
             prompt_4 = prompt,
-            device = self.device_torch,
+            device = self.te_device_torch,
             dtype = self.torch_dtype,
             num_images_per_prompt = 1,
             max_sequence_length = max_sequence_length,
         )
+        # Bring outputs back to the trainer device so downstream pipeline
+        # ops (which run on device_torch) match. HiDream's _encode_prompt
+        # returns prompt_embeds as a *list* of per-encoder tensors (one
+        # per of the 4 text encoders) and pooled_prompt_embeds as a
+        # single tensor — move both shapes element-wise.
+        def _to_device(x):
+            if isinstance(x, (list, tuple)):
+                return type(x)(_to_device(v) for v in x)
+            if hasattr(x, "to") and getattr(x, "device", None) != self.device_torch:
+                return x.to(self.device_torch)
+            return x
+        prompt_embeds = _to_device(prompt_embeds)
+        pooled_prompt_embeds = _to_device(pooled_prompt_embeds)
         pe = PromptEmbeds(
             [prompt_embeds, pooled_prompt_embeds]
         )

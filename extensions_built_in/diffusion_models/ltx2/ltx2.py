@@ -23,6 +23,8 @@ from safetensors.torch import load_file
 from PIL import Image
 import huggingface_hub
 
+from .ltx2_dual_gpu import LTX2DualGPUMixin, is_dual_gpu_enabled
+
 try:
     from diffusers import LTX2Pipeline, LTX2ImageToVideoPipeline
     from diffusers.models.autoencoders import (
@@ -198,7 +200,10 @@ class AudioProcessor(torch.nn.Module):
         return mel.permute(0, 1, 3, 2).contiguous()
 
 
-class LTX2Model(BaseModel):
+# LTX2DualGPUMixin is first in the MRO so its text_encoder_to override and
+# setup_dual_gpu_distribution take precedence over BaseModel. The dual-GPU
+# path itself stays inert unless LTX2_DUAL_GPU=true.
+class LTX2Model(LTX2DualGPUMixin, BaseModel):
     arch = "ltx2"
     ltx_version = "2.0"
     ltx_te_path = None
@@ -215,6 +220,9 @@ class LTX2Model(BaseModel):
         super().__init__(
             device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs
         )
+        # resolve te_device_torch (LTX2_TE_DEVICE override or device_torch);
+        # always set, used even when the dual-GPU path is disabled.
+        self.init_te_device()
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["LTX2VideoTransformer3DModel"]
@@ -296,8 +304,19 @@ class LTX2Model(BaseModel):
             quantize_model(self, transformer)
             flush()
 
+        # Dual-GPU model-parallel path (LTX2_DUAL_GPU=true). The transformer
+        # is still on CPU here (diffusers from_pretrained loads to CPU and
+        # quantize_model runs in place), so the mixin can distribute its
+        # modules across cuda:0/cuda:1 cleanly. After this returns the
+        # transformer's .to() is pinned to ignore device moves.
+        use_dual_gpu = is_dual_gpu_enabled()
+        if use_dual_gpu:
+            self.setup_dual_gpu_distribution(transformer, dtype)
+            flush()
+
         if (
-            self.model_config.layer_offloading
+            not use_dual_gpu
+            and self.model_config.layer_offloading
             and self.model_config.layer_offloading_transformer_percent > 0
         ):
             ignore_modules = []
@@ -315,7 +334,7 @@ class LTX2Model(BaseModel):
                 ignore_modules=ignore_modules,
             )
 
-        if self.model_config.low_vram:
+        if self.model_config.low_vram and not use_dual_gpu:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
 
@@ -444,7 +463,11 @@ class LTX2Model(BaseModel):
                 ],
             )
 
-        text_encoder.to(self.device_torch, dtype=dtype)
+        # Route to te_device_torch, not device_torch: under LTX2_DUAL_GPU the
+        # transformer already occupies cuda:0/cuda:1, so the 12B Gemma3 TE must
+        # land on CPU (LTX2_TE_DEVICE=cpu). te_device_torch == device_torch when
+        # the dual-GPU path is inactive, so this is a no-op change otherwise.
+        text_encoder.to(self.te_device_torch, dtype=dtype)
         flush()
 
         self.print_and_status_update("Loading VAEs and other components")
@@ -522,13 +545,18 @@ class LTX2Model(BaseModel):
         text_encoder = [pipe.text_encoder]
         tokenizer = [pipe.tokenizer]
 
-        # leave it on cpu for now
-        if not self.low_vram:
+        # leave it on cpu for now. When dual-GPU is active the transformer is
+        # already distributed across cuda:0/cuda:1 and its .to() is pinned, so
+        # skip the single-device move (preserve_dual_gpu_split_on_pipe).
+        if not self.low_vram and not self.preserve_dual_gpu_split_on_pipe(pipe):
             pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
-        # just to make sure everything is on the right device and dtype
-        text_encoder[0].to(self.device_torch)
+        # just to make sure everything is on the right device and dtype.
+        # te_device_torch, not device_torch: under LTX2_DUAL_GPU this keeps the
+        # 12B Gemma3 TE on CPU (the transformer owns cuda:0/cuda:1). No-op
+        # change when the dual-GPU path is inactive.
+        text_encoder[0].to(self.te_device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         flush()
@@ -862,6 +890,17 @@ class LTX2Model(BaseModel):
 
             video_timestep = timestep.clone()
 
+            # Under LTX2_DUAL_GPU the transformer is split across cuda:0/cuda:1;
+            # diffusers' `.device` (first-parameter device) is ambiguous for a
+            # split model and can resolve to cuda:1. The split's I/O convention
+            # is cuda:0 — input enters and output leaves there — so pin helper
+            # modules (connectors, audio latents) to that. No-op otherwise.
+            transformer_io_device = (
+                torch.device("cuda:0")
+                if is_dual_gpu_enabled()
+                else self.transformer.device
+            )
+
             # i2v from first frame
             if batch.dataset_config.do_i2v and batch.num_frames > 1:
                 # check to see if we had it cached
@@ -965,13 +1004,13 @@ class LTX2Model(BaseModel):
                     num_mel_bins=num_mel_bins,
                     noise_scale=0.0,
                     dtype=torch.float32,
-                    device=self.transformer.device,
+                    device=transformer_io_device,
                     generator=None,
                     latents=None,
                 )
 
-            if self.pipeline.connectors.device != self.transformer.device:
-                self.pipeline.connectors.to(self.transformer.device)
+            if self.pipeline.connectors.device != transformer_io_device:
+                self.pipeline.connectors.to(transformer_io_device)
 
             # Padding side for default Gemma3-12B text encoder
             tokenizer_padding_side = "left"
@@ -1046,10 +1085,15 @@ class LTX2Model(BaseModel):
         return unpacked_output
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
-        if self.pipeline.text_encoder.device != self.device_torch:
-            self.pipeline.text_encoder.to(self.device_torch)
+        # te_device_torch, not device_torch: under LTX2_DUAL_GPU the transformer
+        # owns cuda:0/cuda:1, so the 12B Gemma3 TE encodes on CPU. With
+        # cache_text_embeddings this runs once at training start; the tokenized
+        # inputs below follow the TE onto te_device_torch. No-op when the
+        # dual-GPU path is inactive (te_device_torch == device_torch).
+        if self.pipeline.text_encoder.device != self.te_device_torch:
+            self.pipeline.text_encoder.to(self.te_device_torch)
 
-        device = self.device_torch
+        device = self.te_device_torch
         scale_factor = 8
         batch_size = len(prompt)
         # Gemma expects left padding for chat-style prompts

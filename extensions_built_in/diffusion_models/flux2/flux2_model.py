@@ -22,6 +22,7 @@ from transformers import AutoProcessor, Mistral3ForConditionalGeneration
 from .src.model import Flux2, Flux2Params
 from .src.pipeline import Flux2Pipeline
 from .src.autoencoder import AutoEncoder, AutoEncoderParams, AutoEncoderSmallDecoderParams
+from .flux2_dual_gpu import Flux2DualGPUMixin, is_dual_gpu_enabled
 from safetensors.torch import load_file, save_file
 from PIL import Image
 import torch.nn.functional as F
@@ -46,14 +47,16 @@ scheduler_config = {
     "use_dynamic_shifting": True,
 }
 
-MISTRAL_PATH = "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+MISTRAL_PATH = os.getenv(
+    "FLUX2_MISTRAL_PATH", "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+)
 FLUX2_VAE_FILENAME = "ae.safetensors"
 FLUX2_TRANSFORMER_FILENAME = "flux2-dev.safetensors"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
 
-class Flux2Model(BaseModel):
+class Flux2Model(Flux2DualGPUMixin, BaseModel):
     arch = "flux2"
     flux2_te_type: str = "mistral"  # "mistral" or "qwen"
     flux2_vae_path: str = None
@@ -72,6 +75,10 @@ class Flux2Model(BaseModel):
         super().__init__(
             device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs
         )
+        # Resolve te_device_torch from FLUX2_TE_DEVICE env var (or default to
+        # self.device_torch). Mixin attribute used throughout the model below
+        # and overrides text_encoder_to().
+        self.init_te_device()
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["Flux2"]
@@ -101,15 +108,21 @@ class Flux2Model(BaseModel):
                 torch_dtype=dtype,
             )
         )
-        text_encoder.to(self.device_torch, dtype=dtype)
-
-        flush()
-
+        # Quantize on CPU FIRST to avoid the ~48GB bf16 transient when moving
+        # Mistral to GPU. Mirrors the transformer load pattern. Critical on
+        # 32GB cards where the unquantized model won't fit during transit, and
+        # prevents WDDM unified-memory paging on Windows.
         if self.model_config.quantize_te:
+            self.print_and_status_update("Keeping Mistral on CPU for quantization")
             self.print_and_status_update("Quantizing Mistral")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
             freeze(text_encoder)
             flush()
+            text_encoder.to(self.te_device_torch)
+        else:
+            text_encoder.to(self.te_device_torch, dtype=dtype)
+
+        flush()
 
         if (
             self.model_config.layer_offloading
@@ -117,7 +130,7 @@ class Flux2Model(BaseModel):
         ):
             MemoryManager.attach(
                 text_encoder,
-                self.device_torch,
+                self.te_device_torch,
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
@@ -163,9 +176,16 @@ class Flux2Model(BaseModel):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
+        elif is_dual_gpu_enabled():
+            # When splitting across two GPUs we distribute modules below.
+            # Skip the single-device .to() to keep the model on CPU until split.
+            pass
         else:
             transformer.to(self.device_torch, dtype=dtype)
         flush()
+
+        if is_dual_gpu_enabled():
+            self.setup_dual_gpu_distribution(transformer, dtype)
 
         if (
             self.model_config.layer_offloading
@@ -177,7 +197,10 @@ class Flux2Model(BaseModel):
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
             )
 
-        if self.model_config.low_vram:
+        if self.model_config.low_vram and not is_dual_gpu_enabled():
+            # With the dual-GPU split active the transformer is statically
+            # distributed and transformer.to() is a no-op for device moves —
+            # low_vram offloading does not apply, so skip the (misleading) move.
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
 
@@ -206,14 +229,14 @@ class Flux2Model(BaseModel):
                 filename=vae_filename,
                 token=HF_TOKEN,
             )
-        
+
         vae_state_dict = load_file(vae_path, device="cpu")
-        
+
         autoencoder_params = AutoEncoderParams()
         if vae_state_dict['decoder.up.0.block.0.conv1.bias'].shape[0] == 96:
             # this is the small decoder version
             autoencoder_params = AutoEncoderSmallDecoderParams()
-        
+
         with torch.device("meta"):
             vae = AutoEncoder(autoencoder_params)
 
@@ -249,11 +272,14 @@ class Flux2Model(BaseModel):
         if self.model_config.low_vram:
             text_encoder[0].to("cpu")
         else:
-            text_encoder[0].to(self.device_torch)
+            text_encoder[0].to(self.te_device_torch)
         text_encoder[0].requires_grad_(False)
         text_encoder[0].eval()
         if self.model_config.low_vram:
             pipe.transformer = pipe.transformer.to("cpu")
+        elif is_dual_gpu_enabled():
+            # transformer is already distributed across cuda:0/cuda:1
+            pass
         else:
             pipe.transformer = pipe.transformer.to(self.device_torch)
         flush()
@@ -464,12 +490,15 @@ class Flux2Model(BaseModel):
         return noise_pred
 
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
-        if self.pipeline.text_encoder.device != self.device_torch:
-            self.pipeline.text_encoder.to(self.device_torch)
+        if self.pipeline.text_encoder.device != self.te_device_torch:
+            self.pipeline.text_encoder.to(self.te_device_torch)
 
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
-            prompt, device=self.device_torch
+            prompt, device=self.te_device_torch
         )
+        # move embeds to the transformer's device for downstream consumption
+        if self.te_device_torch != self.device_torch:
+            prompt_embeds = prompt_embeds.to(self.device_torch)
         pe = PromptEmbeds(prompt_embeds)
         return pe
 
@@ -535,7 +564,7 @@ class Flux2Model(BaseModel):
         latents = self.vae.encode(images)
 
         return latents
-    
+
     def decode_latents(self, latents, device=None, dtype=None):
         if device is None:
             device = self.vae_device_torch

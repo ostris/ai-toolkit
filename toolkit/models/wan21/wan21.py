@@ -350,12 +350,20 @@ class Wan21(BaseModel):
             torch_dtype=dtype,
         ).to(dtype=dtype)
 
-        if self.model_config.split_model_over_gpus:
+        # Dual-GPU model-parallel path is supplied by a subclass mixin
+        # (Wan22DualGPUMixin on Wan225bModel). Activates when WAN_DUAL_GPU=true
+        # in the environment; keeps the transformer on CPU through quantize so
+        # the mixin can distribute modules across cuda:0/cuda:1 afterward.
+        use_dual_gpu = (
+            hasattr(self, 'setup_dual_gpu_distribution')
+            and os.getenv("WAN_DUAL_GPU", "false").lower() == "true"
+        )
+        if self.model_config.split_model_over_gpus and not use_dual_gpu:
             raise ValueError(
                 "Splitting model over gpus is not supported for Wan2.1 models")
 
-        if self.model_config.low_vram:
-            # quantize on the device
+        if self.model_config.low_vram or use_dual_gpu:
+            # quantize on CPU; for dual-GPU, distribution happens post-quant
             transformer.to('cpu', dtype=dtype)
             flush()
         else:
@@ -376,7 +384,11 @@ class Wan21(BaseModel):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
-        
+
+        if use_dual_gpu:
+            self.setup_dual_gpu_distribution(transformer, dtype)
+            flush()
+
         if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
             MemoryManager.attach(
                 transformer,
