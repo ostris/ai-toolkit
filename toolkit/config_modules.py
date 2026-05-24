@@ -503,6 +503,11 @@ class TrainConfig:
         
         # do the loss on a timestep to 0 prediction
         self.t0_loss_target = kwargs.get('t0_loss_target', False)
+        self.t0_velocity_equiv_weight = kwargs.get('t0_velocity_equiv_weight', False)
+        
+        # do additional fft loss
+        self.do_fft_loss = kwargs.get('do_fft_loss', False)
+        self.do_fft_velocity_equiv_weight = kwargs.get('do_fft_velocity_equiv_weight', False)
 
         # scale the prediction by this. Increase for more detail, decrease for less
         self.pred_scaler = kwargs.get('pred_scaler', 1.0)
