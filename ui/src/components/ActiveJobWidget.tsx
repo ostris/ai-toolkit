@@ -52,15 +52,15 @@ export default function ActiveJobWidget() {
                       <div className="bg-gray-700 rounded-full h-1">
                         <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${pct}%` }} />
                       </div>
-                      <div className="flex justify-between mt-0.5">
-                        <span className={`text-[10px] ${statusColor}`}>{job.status}</span>
-                        <span className="text-[10px] text-gray-400">
+                      <div className="flex justify-between gap-2 mt-0.5 min-w-0">
+                        <span className={`text-[10px] truncate min-w-0 ${statusColor}`}>{job.info || job.status}</span>
+                        <span className="text-[10px] text-gray-400 flex-shrink-0">
                           {job.step} / {totalSteps}
                         </span>
                       </div>
                     </div>
                   ) : (
-                    <div className={`text-[10px] mt-0.5 ${statusColor}`}>{job.status}</div>
+                    <div className={`text-[10px] mt-0.5 truncate ${statusColor}`}>{job.info || job.status}</div>
                   )}
                 </Link>
               </li>
