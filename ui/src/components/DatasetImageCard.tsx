@@ -115,7 +115,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   return (
     <div className={`flex flex-col ${className}`}>
       <div className="relative w-full" style={{ paddingBottom: '100%' }}>
-        <div className="absolute inset-0 rounded-t-lg shadow-md">
+        <div
+          className={classNames('absolute inset-0 rounded-t-lg shadow-md bg-gray-900', {
+            'animate-pulse': isItImage && !loaded,
+          })}
+        >
           {isItAVideo && (
             <video
               src={`/api/img/${encodeURIComponent(imageUrl)}`}

@@ -58,10 +58,16 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
   const handleLoad = () => setLoaded(true);
 
+  const isImageType = !isAudio(imageUrl) && !isVideo(imageUrl);
+
   return (
     <div className={`flex flex-col ${className}`}>
       <div ref={cardRef} className="relative w-full cursor-pointer" style={{ paddingBottom: '100%' }} onClick={onClick}>
-        <div className="absolute inset-0 rounded-t-lg shadow-md">
+        <div
+          className={`absolute inset-0 rounded-t-lg shadow-md bg-gray-900 ${
+            isVisible && isImageType && !loaded ? 'animate-pulse' : ''
+          }`}
+        >
           {isVisible ? (
             isAudio(imageUrl) ? (
               <div className="w-full h-full flex items-center justify-center bg-gray-900">
