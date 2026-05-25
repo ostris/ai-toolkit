@@ -401,13 +401,17 @@ class Wan21(BaseModel):
             subfolder = None
             transformer_path = os.path.join(transformer_path, 'transformer')
         
-        te_path = "ai-toolkit/umt5_xxl_encoder"   
-        if os.path.exists(os.path.join(model_path, 'text_encoder')):
-            te_path = model_path
+        te_path = self.model_config.resolve_te_path("ai-toolkit/umt5_xxl_encoder")
         
         vae_path = self.model_config.extras_name_or_path
         if os.path.exists(os.path.join(model_path, 'vae')):
             vae_path = model_path
+        wan_vae_path = self._wan_vae_path
+        if (
+            self.model_config.extras_name_or_path is not None
+            and self.model_config.extras_name_or_path != self.model_config.name_or_path
+        ):
+            wan_vae_path = self.model_config.extras_name_or_path
 
         transformer = self.load_wan_transformer(
             transformer_path,
@@ -451,10 +455,10 @@ class Wan21(BaseModel):
         self.print_and_status_update("Loading VAE")
         # todo, example does float 32? check if quality suffers
         
-        if self._wan_vae_path is not None:
+        if wan_vae_path is not None:
             # load the vae from individual repo
             vae = AutoencoderKLWan.from_pretrained(
-                self._wan_vae_path, torch_dtype=dtype).to(dtype=dtype)
+                wan_vae_path, torch_dtype=dtype).to(dtype=dtype)
         else:
             vae = AutoencoderKLWan.from_pretrained(
                 vae_path, subfolder="vae", torch_dtype=dtype).to(dtype=dtype)
