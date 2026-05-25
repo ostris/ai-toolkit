@@ -16,6 +16,8 @@ interface DatasetImageCardProps {
   onDelete?: () => void;
   onImageClick?: () => void;
   captionRefreshKey?: number;
+  observerRoot?: Element | null;
+  rootMargin?: string;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -27,13 +29,88 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   onDelete = () => {},
   onImageClick,
   captionRefreshKey = 0,
+  observerRoot = null,
+  rootMargin = '200px 0px',
 }) => {
   const [loaded, setLoaded] = useState<boolean>(false);
   const [showAudioPlayer, setShowAudioPlayer] = useState(true);
   const [pollTick, setPollTick] = useState(0);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  const isItAVideo = isVideo(imageUrl);
+  const isItAudio = isAudio(imageUrl);
+  const isItImage = !isItAVideo && !isItAudio;
+
+  // Track actual viewport visibility — Virtuoso keeps a buffer of cards mounted
+  // outside the visible region, so we can't rely on mount/unmount alone.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          if (entry.target === el) {
+            setIsVisible(entry.isIntersecting);
+          }
+        }
+      },
+      {
+        root: observerRoot ?? null,
+        threshold: 0.01,
+        rootMargin,
+      },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [observerRoot, rootMargin]);
+
+  // Drive image loads through fetch + AbortController so scrolling past actually
+  // cancels in-flight requests. Debounced 80ms so fast scroll-throughs never
+  // start a request.
+  useEffect(() => {
+    if (!isItImage) return;
+    if (!isVisible) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const timer = window.setTimeout(() => {
+      fetch(`/api/img/${encodeURIComponent(imageUrl)}`, { signal: controller.signal })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.blob();
+        })
+        .then(blob => {
+          if (cancelled) return;
+          objectUrl = URL.createObjectURL(blob);
+          setBlobUrl(objectUrl);
+          setLoaded(true);
+        })
+        .catch(err => {
+          if (err?.name !== 'AbortError') console.error('Dataset image fetch failed:', err);
+        });
+    }, 80);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      setBlobUrl(null);
+      setLoaded(false);
+    };
+  }, [imageUrl, isItImage, isVisible]);
 
   const combinedRefreshKey = captionRefreshKey + pollTick;
-  const { caption: fetchedCaption, isLoaded: isCaptionLoaded } = useCaptionBatch(imageUrl, combinedRefreshKey);
+  const { caption: fetchedCaption, isLoaded: isCaptionLoaded } = useCaptionBatch(
+    isVisible ? imageUrl : null,
+    combinedRefreshKey,
+  );
 
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
@@ -90,10 +167,6 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
     };
   }, []);
 
-  const handleLoad = (): void => {
-    setLoaded(true);
-  };
-
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -108,12 +181,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
 
   const isCaptionCurrent = caption.trim() === savedCaption;
 
-  const isItAVideo = isVideo(imageUrl);
-  const isItAudio = isAudio(imageUrl);
-  const isItImage = !isItAVideo && !isItAudio;
-
   return (
-    <div className={`flex flex-col ${className}`}>
+    <div ref={cardRef} className={`flex flex-col ${className}`}>
       <div className="relative w-full" style={{ paddingBottom: '100%' }}>
         <div
           className={classNames('absolute inset-0 rounded-t-lg shadow-md bg-gray-900', {
@@ -148,11 +217,11 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
           {isItAudio && showAudioPlayer && (
             <AudioPlayer src={`/api/img/${encodeURIComponent(imageUrl)}`} title={imageUrl.replace(/^.*[\\/]/, '')} />
           )}
-          {isItImage && (
+          {isItImage && blobUrl && (
             <img
-              src={`/api/img/${encodeURIComponent(imageUrl)}`}
+              src={blobUrl}
               alt={alt}
-              onLoad={handleLoad}
+              decoding="async"
               onClick={onImageClick}
               className={classNames('w-full h-full object-contain transition-opacity duration-300', {
                 'opacity-100': loaded,

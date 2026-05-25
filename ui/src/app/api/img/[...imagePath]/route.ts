@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
 import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settings';
 
 const contentTypeMap: { [key: string]: string } = {
@@ -54,6 +55,11 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
       return new NextResponse('Access denied', { status: 403 });
     }
 
+    // Bail out early if the client already gave up
+    if (request.signal.aborted) {
+      return new NextResponse(null, { status: 499 });
+    }
+
     // Stat file (async)
     const stat = await fs.promises.stat(resolved).catch(() => null);
     if (!stat || !stat.isFile()) {
@@ -63,6 +69,40 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     const ext = path.extname(resolved).toLowerCase();
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
 
+    // Weak ETag from inode/size/mtime — cheap and stable enough for revalidation
+    const etag = `W/"${stat.ino.toString(36)}-${stat.size.toString(36)}-${stat.mtimeMs.toString(36)}"`;
+    const cacheControl = 'public, max-age=86400, immutable';
+
+    const ifNoneMatch = request.headers.get('if-none-match');
+    if (ifNoneMatch && ifNoneMatch === etag) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          ETag: etag,
+          'Cache-Control': cacheControl,
+        },
+      });
+    }
+
+    const buildBody = (start?: number, end?: number) => {
+      const nodeStream =
+        start !== undefined && end !== undefined
+          ? fs.createReadStream(resolved, { start, end })
+          : fs.createReadStream(resolved);
+
+      // Wire client disconnect → destroy the file stream so we don't keep
+      // reading bytes for a request the browser has already cancelled.
+      const onAbort = () => nodeStream.destroy();
+      if (request.signal.aborted) {
+        nodeStream.destroy();
+      } else {
+        request.signal.addEventListener('abort', onAbort, { once: true });
+      }
+      nodeStream.once('close', () => request.signal.removeEventListener('abort', onAbort));
+
+      return Readable.toWeb(nodeStream) as unknown as ReadableStream;
+    };
+
     // Support range requests for video/audio seeking
     const rangeHeader = request.headers.get('range');
     if (rangeHeader) {
@@ -71,49 +111,26 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
       const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
       const chunkSize = end - start + 1;
 
-      const stream = fs.createReadStream(resolved, { start, end });
-      const readable = new ReadableStream({
-        start(controller) {
-          stream.on('data', chunk => controller.enqueue(chunk));
-          stream.on('end', () => controller.close());
-          stream.on('error', err => controller.error(err));
-        },
-        cancel() {
-          stream.destroy();
-        },
-      });
-
-      return new NextResponse(readable as any, {
+      return new NextResponse(buildBody(start, end) as any, {
         status: 206,
         headers: {
           'Content-Range': `bytes ${start}-${end}/${stat.size}`,
           'Accept-Ranges': 'bytes',
           'Content-Length': String(chunkSize),
           'Content-Type': contentType,
-          'Cache-Control': 'public, max-age=86400',
+          'Cache-Control': cacheControl,
+          ETag: etag,
         },
       });
     }
 
-    // Stream the file instead of buffering it entirely
-    const stream = fs.createReadStream(resolved);
-    const readable = new ReadableStream({
-      start(controller) {
-        stream.on('data', chunk => controller.enqueue(chunk));
-        stream.on('end', () => controller.close());
-        stream.on('error', err => controller.error(err));
-      },
-      cancel() {
-        stream.destroy();
-      },
-    });
-
-    return new NextResponse(readable as any, {
+    return new NextResponse(buildBody() as any, {
       headers: {
         'Content-Type': contentType,
         'Content-Length': String(stat.size),
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': cacheControl,
         'Accept-Ranges': 'bytes',
+        ETag: etag,
       },
     });
   } catch (error) {

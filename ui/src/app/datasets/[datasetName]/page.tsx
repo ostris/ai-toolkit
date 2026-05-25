@@ -150,6 +150,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   onDelete={() => refreshImageList(datasetName)}
                   onImageClick={() => setSelectedImgPath(img.img_path)}
                   captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
+                  observerRoot={scrollParent}
                 />
               );
             }}

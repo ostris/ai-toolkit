@@ -46,13 +46,33 @@ async function flush() {
   if (pending.size > 0) scheduleFlush();
 }
 
-function requestCaption(path: string): Promise<string> {
+function requestCaption(path: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const resolver: Resolver = { resolve, reject };
     const list = pending.get(path);
     if (list) {
-      list.push({ resolve, reject });
+      list.push(resolver);
     } else {
-      pending.set(path, [{ resolve, reject }]);
+      pending.set(path, [resolver]);
+    }
+    if (signal) {
+      const onAbort = () => {
+        // Remove this resolver from the pending batch. If no other card is
+        // still waiting on the same path, drop the path entirely so the next
+        // batch doesn't include it.
+        const arr = pending.get(path);
+        if (arr) {
+          const idx = arr.indexOf(resolver);
+          if (idx >= 0) arr.splice(idx, 1);
+          if (arr.length === 0) pending.delete(path);
+        }
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
     }
     scheduleFlush();
   });
@@ -91,22 +111,24 @@ export default function useCaptionBatch(imgPath: string | null, refreshKey: numb
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     lastPathRef.current = imgPath;
     setIsLoaded(false);
-    requestCaption(imgPath)
+    requestCaption(imgPath, controller.signal)
       .then(value => {
         if (cancelled || lastPathRef.current !== imgPath) return;
         setCaption(value);
         setIsLoaded(true);
       })
       .catch(err => {
-        if (cancelled) return;
+        if (err?.name === 'AbortError' || cancelled) return;
         console.error('Error fetching caption:', err);
         setIsLoaded(true);
       });
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [imgPath, refreshKey]);
 
