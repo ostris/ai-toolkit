@@ -1,5 +1,6 @@
 from functools import partial
 from collections import OrderedDict
+import math
 import os
 from typing import Any, Dict, Optional, Union, List
 from typing_extensions import Self
@@ -267,6 +268,77 @@ class Wan2214bModel(Wan21):
             return None
 
     @staticmethod
+    def _is_wan22_base_lora_value_set(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip() != ""
+        if isinstance(value, (list, tuple)):
+            return len(value) > 0
+        return True
+
+    @staticmethod
+    def _normalize_wan22_base_lora_strength(
+        strength: Any, default_strength: float, field_name: str
+    ) -> float:
+        if strength is None:
+            strength = default_strength
+        if isinstance(strength, bool):
+            raise ValueError(f"Wan2.2 `{field_name}` strength must be a number, got boolean")
+        try:
+            normalized_strength = float(strength)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Wan2.2 `{field_name}` strength must be numeric. Got: {strength}"
+            )
+        if not math.isfinite(normalized_strength):
+            raise ValueError(
+                f"Wan2.2 `{field_name}` strength must be finite. Got: {strength}"
+            )
+        return normalized_strength
+
+    def _normalize_wan22_base_lora_entries(
+        self, value: Any, default_strength: float, field_name: str
+    ) -> List[Dict[str, Any]]:
+        if value is None:
+            return []
+
+        raw_entries = value if isinstance(value, (list, tuple)) else [value]
+        entries: List[Dict[str, Any]] = []
+
+        for index, entry in enumerate(raw_entries):
+            entry_field_name = f"{field_name}[{index}]" if isinstance(value, (list, tuple)) else field_name
+            if isinstance(entry, str):
+                path = entry.strip()
+                if path == "":
+                    raise ValueError(f"Wan2.2 `{entry_field_name}` must be a non-empty path")
+                strength = default_strength
+            elif isinstance(entry, dict):
+                path = entry.get("path")
+                if not isinstance(path, str) or path.strip() == "":
+                    raise ValueError(
+                        f"Wan2.2 `{entry_field_name}` must include a non-empty `path`"
+                    )
+                path = path.strip()
+                strength = entry.get("strength", default_strength)
+            else:
+                raise ValueError(
+                    f"Wan2.2 `{entry_field_name}` must be a path string or an object "
+                    f"with `path` and optional `strength`. Got: {type(entry).__name__}"
+                )
+
+            entries.append(
+                {
+                    "path": path,
+                    "strength": self._normalize_wan22_base_lora_strength(
+                        strength, default_strength, entry_field_name
+                    ),
+                }
+            )
+
+        return entries
+
+    @staticmethod
     def _is_wan22_stage_qualified_lora_key(key: str) -> bool:
         return (
             ".transformer_1." in key
@@ -419,8 +491,8 @@ class Wan2214bModel(Wan21):
 
     def _has_explicit_wan22_base_lora_paths(self) -> bool:
         return (
-            self.model_config.high_noise_lora_path is not None
-            or self.model_config.low_noise_lora_path is not None
+            self._is_wan22_base_lora_value_set(self.model_config.high_noise_lora_path)
+            or self._is_wan22_base_lora_value_set(self.model_config.low_noise_lora_path)
         )
 
     def _validate_wan22_explicit_stage_state_dict(
@@ -474,30 +546,38 @@ class Wan2214bModel(Wan21):
     def _get_explicit_wan22_base_lora_merge_specs(self) -> List[Dict[str, Any]]:
         merge_specs: List[Dict[str, Any]] = []
 
-        high_noise_path = self.model_config.high_noise_lora_path
-        low_noise_path = self.model_config.low_noise_lora_path
+        high_noise_entries = self._normalize_wan22_base_lora_entries(
+            self.model_config.high_noise_lora_path,
+            self.model_config.high_noise_lora_merge_strength,
+            "high_noise_lora_path",
+        )
+        low_noise_entries = self._normalize_wan22_base_lora_entries(
+            self.model_config.low_noise_lora_path,
+            self.model_config.low_noise_lora_merge_strength,
+            "low_noise_lora_path",
+        )
 
-        if high_noise_path is not None:
-            resolved_path = self._resolve_wan22_base_lora_path(high_noise_path)
+        for entry in high_noise_entries:
+            resolved_path = self._resolve_wan22_base_lora_path(entry["path"])
             merge_specs.append(
                 self._build_wan22_base_lora_merge_spec(
                     state_dict=self._load_explicit_wan22_stage_lora_state_dict_from_resolved_path(
                         resolved_path, "transformer_1"
                     ),
-                    strength=self.model_config.high_noise_lora_merge_strength,
+                    strength=entry["strength"],
                     source_path=resolved_path,
                     stage_name="transformer_1",
                     label="high-noise",
                 )
             )
-        if low_noise_path is not None:
-            resolved_path = self._resolve_wan22_base_lora_path(low_noise_path)
+        for entry in low_noise_entries:
+            resolved_path = self._resolve_wan22_base_lora_path(entry["path"])
             merge_specs.append(
                 self._build_wan22_base_lora_merge_spec(
                     state_dict=self._load_explicit_wan22_stage_lora_state_dict_from_resolved_path(
                         resolved_path, "transformer_2"
                     ),
-                    strength=self.model_config.low_noise_lora_merge_strength,
+                    strength=entry["strength"],
                     source_path=resolved_path,
                     stage_name="transformer_2",
                     label="low-noise",
@@ -512,11 +592,20 @@ class Wan2214bModel(Wan21):
 
         return merge_specs
 
-    def _get_legacy_wan22_base_lora_merge_specs(self, lora_path: str) -> List[Dict[str, Any]]:
+    def _get_legacy_wan22_base_lora_merge_specs(
+        self,
+        lora_path: str,
+        merge_strength: Optional[float] = None,
+        update_model_config_path: bool = True,
+    ) -> List[Dict[str, Any]]:
+        if merge_strength is None:
+            merge_strength = self.model_config.lora_merge_strength
+
         is_split_lora, high_noise_spec, low_noise_spec = self._get_wan22_split_lora_specs(lora_path)
         if not is_split_lora:
             resolved_lora_path = self._resolve_wan22_base_lora_path(lora_path)
-            self.model_config.lora_path = resolved_lora_path
+            if update_model_config_path:
+                self.model_config.lora_path = resolved_lora_path
             state_dict = load_file(resolved_lora_path)
             self._validate_wan22_base_lora_state_dict(state_dict)
             label = "combined"
@@ -534,7 +623,7 @@ class Wan2214bModel(Wan21):
             return [
                 self._build_wan22_base_lora_merge_spec(
                     state_dict=state_dict,
-                    strength=self.model_config.lora_merge_strength,
+                    strength=merge_strength,
                     source_path=resolved_lora_path,
                     stage_name=stage_name,
                     label=label,
@@ -551,7 +640,7 @@ class Wan2214bModel(Wan21):
             merge_specs.append(
                 self._build_wan22_base_lora_merge_spec(
                     state_dict=self._stage_wan22_lora_state_dict(high_noise_lora, "transformer_1"),
-                    strength=self.model_config.lora_merge_strength,
+                    strength=merge_strength,
                     source_path=high_noise_path,
                     stage_name="transformer_1",
                     label="high-noise sibling",
@@ -563,7 +652,7 @@ class Wan2214bModel(Wan21):
             merge_specs.append(
                 self._build_wan22_base_lora_merge_spec(
                     state_dict=self._stage_wan22_lora_state_dict(low_noise_lora, "transformer_2"),
-                    strength=self.model_config.lora_merge_strength,
+                    strength=merge_strength,
                     source_path=low_noise_path,
                     stage_name="transformer_2",
                     label="low-noise sibling",
@@ -576,9 +665,9 @@ class Wan2214bModel(Wan21):
                 f"Expected local files or Hugging Face paths derived from: {lora_path}"
             )
 
-        if high_noise_path is not None:
+        if update_model_config_path and high_noise_path is not None:
             self.model_config.lora_path = high_noise_path
-        elif low_noise_path is not None:
+        elif update_model_config_path and low_noise_path is not None:
             self.model_config.lora_path = low_noise_path
 
         return merge_specs
@@ -586,16 +675,41 @@ class Wan2214bModel(Wan21):
     def _get_wan22_base_lora_merge_specs(self) -> List[Dict[str, Any]]:
         if self._has_explicit_wan22_base_lora_paths():
             return self._get_explicit_wan22_base_lora_merge_specs()
-        if self.model_config.lora_path is None:
+        if not self._is_wan22_base_lora_value_set(self.model_config.lora_path):
             return []
-        return self._get_legacy_wan22_base_lora_merge_specs(self.model_config.lora_path)
 
-    def _load_wan22_base_lora_state_dict(self, lora_path: str) -> OrderedDict:
-        merge_specs = (
-            self._get_explicit_wan22_base_lora_merge_specs()
-            if self._has_explicit_wan22_base_lora_paths()
-            else self._get_legacy_wan22_base_lora_merge_specs(lora_path)
+        lora_path_value = self.model_config.lora_path
+        entries = self._normalize_wan22_base_lora_entries(
+            lora_path_value, self.model_config.lora_merge_strength, "lora_path"
         )
+        update_model_config_path = isinstance(lora_path_value, str) and len(entries) == 1
+        merge_specs: List[Dict[str, Any]] = []
+        for entry in entries:
+            merge_specs.extend(
+                self._get_legacy_wan22_base_lora_merge_specs(
+                    entry["path"],
+                    merge_strength=entry["strength"],
+                    update_model_config_path=update_model_config_path,
+                )
+            )
+        return merge_specs
+
+    def _load_wan22_base_lora_state_dict(self, lora_path: Any) -> OrderedDict:
+        if self._has_explicit_wan22_base_lora_paths():
+            merge_specs = self._get_explicit_wan22_base_lora_merge_specs()
+        else:
+            entries = self._normalize_wan22_base_lora_entries(
+                lora_path, self.model_config.lora_merge_strength, "lora_path"
+            )
+            merge_specs = []
+            for entry in entries:
+                merge_specs.extend(
+                    self._get_legacy_wan22_base_lora_merge_specs(
+                        entry["path"],
+                        merge_strength=entry["strength"],
+                        update_model_config_path=isinstance(lora_path, str) and len(entries) == 1,
+                    )
+                )
         combined_state_dict = OrderedDict()
         for merge_spec in merge_specs:
             combined_state_dict.update(merge_spec["state_dict"])
@@ -687,7 +801,7 @@ class Wan2214bModel(Wan21):
                 stage_label = f"{stage_label} ({merge_spec['stage_name']})"
             self.print_and_status_update(
                 f"Merging Wan2.2 base LoRA into transformers: {stage_label} "
-                f"(strength {merge_strength})"
+                f"from {merge_spec['source_path']} (strength {merge_strength})"
             )
             network = LoRASpecialNetwork(
                 text_encoder=None,

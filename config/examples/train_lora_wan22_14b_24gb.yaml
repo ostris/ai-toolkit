@@ -78,12 +78,27 @@ config:
         # automatically and merge whichever stages are available.
         # lora_path: "user/repo/my_wan_lora_high_noise.safetensors"
         # lora_merge_strength: 1.0
+        # You can also merge multiple LoRAs in order. String entries use lora_merge_strength; object entries
+        # can override the strength per LoRA.
+        # lora_path:
+        #   - "user/repo/base_style_high_noise.safetensors"
+        #   - path: "user/repo/subject_boost_high_noise.safetensors"
+        #     strength: 0.6
         # Explicit high/low base merge flow. Use these when the two Wan stages come from different LoRA files.
         # If either explicit field is set, only the explicit fields are used and lora_path is ignored.
         # high_noise_lora_path: "user/repo/my_high_noise_lora.safetensors"
         # high_noise_lora_merge_strength: 1.0
         # low_noise_lora_path: "user/repo/my_low_noise_lora.safetensors"
         # low_noise_lora_merge_strength: 1.0
+        # Explicit fields also accept lists with per-LoRA strengths.
+        # high_noise_lora_path:
+        #   - path: "user/repo/high_noise_style.safetensors"
+        #     strength: 0.8
+        #   - "user/repo/high_noise_subject.safetensors"
+        # low_noise_lora_path:
+        #   - path: "user/repo/low_noise_style.safetensors"
+        #     strength: 0.8
+        #   - "user/repo/low_noise_subject.safetensors"
         model_kwargs:
           # you can train high noise, low noise, or both. With low vram it will automatically unload the one not being trained.
           train_high_noise: true

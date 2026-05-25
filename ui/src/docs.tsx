@@ -63,15 +63,16 @@ const docs: { [key: string]: ConfigDoc } = {
         fields take precedence and this field is ignored.
         <br />
         <br />
-        This must point to either a combined Wan 2.2 LoRA file with stage-qualified keys or to a
-        <code>_high_noise.safetensors</code> or <code>_low_noise.safetensors</code> file from a Wan 2.2 split pair.
-        If you provide one side of a split pair, the trainer will look for the sibling file automatically and merge
-        whichever stages are available.
+        This can be a single path, a list of paths, or a list of objects like
+        <code>{' { path: "path/to/lora.safetensors", strength: 0.8 } '}</code>. Each path must point to either a
+        combined Wan 2.2 LoRA file with stage-qualified keys or to a <code>_high_noise.safetensors</code> or
+        <code>_low_noise.safetensors</code> file from a Wan 2.2 split pair. If you provide one side of a split pair, the
+        trainer will look for the sibling file automatically and merge whichever stages are available.
         <br />
         <br />
         The merge happens before quantization and layer offloading, so the fused concept becomes part of the base model
-        used for training. This legacy path uses
-        <code>config.process[0].model.lora_merge_strength</code> and defaults to <code>1.0</code>.
+        used for training. This legacy path uses <code>config.process[0].model.lora_merge_strength</code> as the default
+        strength for entries without their own <code>strength</code>.
       </>
     ),
   },
@@ -79,16 +80,16 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Base Merge LoRA Strength',
     description: (
       <>
-        Strength applied when merging the legacy single <code>config.process[0].model.lora_path</code> flow into the
-        Wan 2.2 base model.
+        Default strength applied when merging <code>config.process[0].model.lora_path</code> entries into the Wan 2.2
+        base model.
         <br />
         <br />
         Default is <code>1.0</code>. Values above <code>1.0</code> strengthen the merge, and negative values subtract
-        the LoRA effect.
+        the LoRA effect. List entries can override this with their own <code>strength</code>.
         <br />
         <br />
-        If either explicit high-noise or low-noise path is set, explicit mode is used and this legacy strength field
-        is ignored.
+        If either explicit high-noise or low-noise path is set, explicit mode is used and this legacy strength field is
+        ignored.
       </>
     ),
   },
@@ -103,10 +104,11 @@ const docs: { [key: string]: ConfigDoc } = {
         <code>config.process[0].model.lora_path</code>. Only the explicit fields are used.
         <br />
         <br />
-        Use this when your high-noise and low-noise stages come from different LoRA files. Unqualified single-stage
-        Wan LoRAs will be staged into <code>transformer_1</code>. Already stage-qualified keys are accepted only if
-        they already target the high-noise stage. This path uses
-        <code>config.process[0].model.high_noise_lora_merge_strength</code> and defaults to <code>1.0</code>.
+        Use this when your high-noise and low-noise stages come from different LoRA files. This can be a single path, a
+        list of paths, or a list of objects with <code>path</code> and optional <code>strength</code>. Unqualified
+        single-stage Wan LoRAs will be staged into <code>transformer_1</code>. Already stage-qualified keys are accepted
+        only if they already target the high-noise stage. This path uses
+        <code>config.process[0].model.high_noise_lora_merge_strength</code> as the default strength.
       </>
     ),
   },
@@ -114,12 +116,11 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'High-Noise LoRA Strength',
     description: (
       <>
-        Strength applied when merging <code>config.process[0].model.high_noise_lora_path</code> into the Wan 2.2
-        high-noise stage.
+        Default strength applied when merging <code>config.process[0].model.high_noise_lora_path</code> entries into the
+        Wan 2.2 high-noise stage.
         <br />
         <br />
-        Default is <code>1.0</code>. This is independent from the low-noise strength, so you can blend the two stages
-        with different intensities.
+        Default is <code>1.0</code>. List entries can override this with their own <code>strength</code>.
       </>
     ),
   },
@@ -134,10 +135,11 @@ const docs: { [key: string]: ConfigDoc } = {
         <code>config.process[0].model.lora_path</code>. Only the explicit fields are used.
         <br />
         <br />
-        Use this when your high-noise and low-noise stages come from different LoRA files. Unqualified single-stage
-        Wan LoRAs will be staged into <code>transformer_2</code>. Already stage-qualified keys are accepted only if
-        they already target the low-noise stage. This path uses
-        <code>config.process[0].model.low_noise_lora_merge_strength</code> and defaults to <code>1.0</code>.
+        Use this when your high-noise and low-noise stages come from different LoRA files. This can be a single path, a
+        list of paths, or a list of objects with <code>path</code> and optional <code>strength</code>. Unqualified
+        single-stage Wan LoRAs will be staged into <code>transformer_2</code>. Already stage-qualified keys are accepted
+        only if they already target the low-noise stage. This path uses
+        <code>config.process[0].model.low_noise_lora_merge_strength</code> as the default strength.
       </>
     ),
   },
@@ -145,12 +147,11 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Low-Noise LoRA Strength',
     description: (
       <>
-        Strength applied when merging <code>config.process[0].model.low_noise_lora_path</code> into the Wan 2.2
-        low-noise stage.
+        Default strength applied when merging <code>config.process[0].model.low_noise_lora_path</code> entries into the
+        Wan 2.2 low-noise stage.
         <br />
         <br />
-        Default is <code>1.0</code>. This is independent from the high-noise strength, so you can blend the two
-        stages with different intensities.
+        Default is <code>1.0</code>. List entries can override this with their own <code>strength</code>.
       </>
     ),
   },

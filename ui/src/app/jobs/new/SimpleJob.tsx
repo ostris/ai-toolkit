@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   modelArchs,
   ModelArch,
@@ -10,7 +10,7 @@ import {
   SampleTags,
 } from './options';
 import { defaultDatasetConfig } from './jobConfig';
-import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
+import { GroupedSelectOption, JobConfig, LoraMergePathValue, SelectOption } from '@/types';
 import { objectCopy, tagsToObj, objToTags } from '@/utils/basic';
 import {
   TextInput,
@@ -53,6 +53,164 @@ const resolutionPresets = resolutionPresetGroups.flat();
 
 const normalizeResolutions = (resolutions: number[]) => {
   return Array.from(new Set(resolutions)).sort((a, b) => a - b);
+};
+
+type LoraMergeRow = {
+  path: string;
+  strength: number;
+};
+
+type LoraMergeInputProps = {
+  label: string;
+  pathValue?: LoraMergePathValue;
+  strengthValue?: number;
+  pathKey: string;
+  strengthKey: string;
+  pathDocKey: string;
+  strengthDocKey: string;
+  setJobConfig: (value: any, key: string) => void;
+};
+
+const normalizeLoraMergeStrength = (value?: number | null) => {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 1.0;
+};
+
+const getLoraMergeRows = (value: LoraMergePathValue | undefined, defaultStrength: number): LoraMergeRow[] => {
+  if (Array.isArray(value)) {
+    const rows = value.map(entry => {
+      if (typeof entry === 'string') {
+        return {
+          path: entry,
+          strength: defaultStrength,
+        };
+      }
+      return {
+        path: entry.path ?? '',
+        strength: normalizeLoraMergeStrength(entry.strength ?? defaultStrength),
+      };
+    });
+    return rows.length > 0 ? rows : [{ path: '', strength: defaultStrength }];
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    return [
+      {
+        path: value,
+        strength: defaultStrength,
+      },
+    ];
+  }
+
+  return [{ path: '', strength: defaultStrength }];
+};
+
+const serializeLoraMergeRows = (rows: LoraMergeRow[]): LoraMergePathValue | undefined => {
+  const filledRows = rows
+    .map(row => ({
+      path: row.path.trim(),
+      strength: row.strength,
+    }))
+    .filter(row => row.path !== '');
+
+  if (filledRows.length === 0) {
+    return undefined;
+  }
+
+  if (filledRows.length === 1) {
+    return filledRows[0].path;
+  }
+
+  return filledRows;
+};
+
+const LoraMergeInput = ({
+  label,
+  pathValue,
+  strengthValue,
+  pathKey,
+  strengthKey,
+  pathDocKey,
+  strengthDocKey,
+  setJobConfig,
+}: LoraMergeInputProps) => {
+  const defaultStrength = normalizeLoraMergeStrength(strengthValue);
+  const [rows, setRows] = useState<LoraMergeRow[]>(() => getLoraMergeRows(pathValue, defaultStrength));
+
+  useEffect(() => {
+    setRows(getLoraMergeRows(pathValue, defaultStrength));
+  }, [pathValue, defaultStrength]);
+
+  const commitRows = (nextRows: LoraMergeRow[]) => {
+    const serializedRows = serializeLoraMergeRows(nextRows);
+    setJobConfig(serializedRows, pathKey);
+
+    const filledRows = nextRows.filter(row => row.path.trim() !== '');
+    if (filledRows.length === 1) {
+      setJobConfig(filledRows[0].strength, strengthKey);
+    } else if (filledRows.length > 1) {
+      setJobConfig(undefined, strengthKey);
+    }
+  };
+
+  const updateRow = (index: number, patch: Partial<LoraMergeRow>) => {
+    const nextRows = rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row));
+    setRows(nextRows);
+    commitRows(nextRows);
+  };
+
+  const addRow = () => {
+    setRows([...rows, { path: '', strength: defaultStrength }]);
+  };
+
+  const removeRow = (index: number) => {
+    const nextRows = rows.filter((_, rowIndex) => rowIndex !== index);
+    const displayRows = nextRows.length > 0 ? nextRows : [{ path: '', strength: defaultStrength }];
+    setRows(displayRows);
+    commitRows(nextRows);
+  };
+
+  return (
+    <div className="mt-2">
+      {rows.map((row, index) => (
+        <div key={`${pathKey}-${index}`} className="grid grid-cols-[minmax(0,1fr)_7rem_2.25rem] gap-2 items-end">
+          <TextInput
+            label={index === 0 ? label : undefined}
+            value={row.path}
+            docKey={index === 0 ? pathDocKey : null}
+            onChange={value => updateRow(index, { path: value })}
+            placeholder=""
+          />
+          <NumberInput
+            label={index === 0 ? 'Strength' : undefined}
+            value={row.strength}
+            docKey={index === 0 ? strengthDocKey : null}
+            onChange={value => updateRow(index, { strength: normalizeLoraMergeStrength(value) })}
+            step={0.05}
+          />
+          <button
+            type="button"
+            onClick={() => removeRow(index)}
+            className={`h-[30px] w-[30px] mb-px inline-flex items-center justify-center rounded-sm border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 ${
+              rows.length <= 1 && row.path.trim() === '' ? 'invisible' : ''
+            }`}
+            title={`Remove ${label}`}
+            aria-label={`Remove ${label}`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={addRow}
+        className="mt-2 h-[30px] w-[30px] inline-flex items-center justify-center rounded-sm border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700"
+        title={`Add ${label}`}
+        aria-label={`Add ${label}`}
+      >
+        <Plus className="h-4 w-4" />
+      </button>
+    </div>
+  );
 };
 
 export default function SimpleJob({
@@ -327,80 +485,39 @@ export default function SimpleJob({
             />
             {modelArch?.additionalSections?.includes('model.lora_path') && (
               <>
-                <TextInput
+                <LoraMergeInput
                   label="Base Merge LoRA Path"
-                  value={jobConfig.config.process[0].model.lora_path ?? ''}
-                  docKey="config.process[0].model.lora_path"
-                  onChange={(value: string | undefined) => {
-                    if (value?.trim() === '') {
-                      value = undefined;
-                    }
-                    setJobConfig(value, 'config.process[0].model.lora_path');
-                  }}
-                  placeholder=""
+                  pathValue={jobConfig.config.process[0].model.lora_path}
+                  strengthValue={jobConfig.config.process[0].model.lora_merge_strength}
+                  pathKey="config.process[0].model.lora_path"
+                  strengthKey="config.process[0].model.lora_merge_strength"
+                  pathDocKey="config.process[0].model.lora_path"
+                  strengthDocKey="config.process[0].model.lora_merge_strength"
+                  setJobConfig={setJobConfig}
                 />
-                {modelArch?.additionalSections?.includes('model.lora_merge_strength') && (
-                  <NumberInput
-                    label="Base Merge LoRA Strength"
-                    value={jobConfig.config.process[0].model.lora_merge_strength ?? 1.0}
-                    docKey="config.process[0].model.lora_merge_strength"
-                    onChange={value => setJobConfig(value, 'config.process[0].model.lora_merge_strength')}
-                    step={0.05}
+                {modelArch?.additionalSections?.includes('model.high_noise_lora_path') && (
+                  <LoraMergeInput
+                    label="High-Noise LoRA Path"
+                    pathValue={jobConfig.config.process[0].model.high_noise_lora_path}
+                    strengthValue={jobConfig.config.process[0].model.high_noise_lora_merge_strength}
+                    pathKey="config.process[0].model.high_noise_lora_path"
+                    strengthKey="config.process[0].model.high_noise_lora_merge_strength"
+                    pathDocKey="config.process[0].model.high_noise_lora_path"
+                    strengthDocKey="config.process[0].model.high_noise_lora_merge_strength"
+                    setJobConfig={setJobConfig}
                   />
                 )}
-                {modelArch?.additionalSections?.includes('model.high_noise_lora_path') && (
-                  <>
-                    <TextInput
-                      label="High-Noise LoRA Path"
-                      value={jobConfig.config.process[0].model.high_noise_lora_path ?? ''}
-                      docKey="config.process[0].model.high_noise_lora_path"
-                      onChange={(value: string | undefined) => {
-                        if (value?.trim() === '') {
-                          value = undefined;
-                        }
-                        setJobConfig(value, 'config.process[0].model.high_noise_lora_path');
-                      }}
-                      placeholder=""
-                    />
-                    {modelArch?.additionalSections?.includes('model.high_noise_lora_merge_strength') && (
-                      <NumberInput
-                        label="High-Noise LoRA Strength"
-                        value={jobConfig.config.process[0].model.high_noise_lora_merge_strength ?? 1.0}
-                        docKey="config.process[0].model.high_noise_lora_merge_strength"
-                        onChange={value =>
-                          setJobConfig(value, 'config.process[0].model.high_noise_lora_merge_strength')
-                        }
-                        step={0.05}
-                      />
-                    )}
-                  </>
-                )}
                 {modelArch?.additionalSections?.includes('model.low_noise_lora_path') && (
-                  <>
-                    <TextInput
-                      label="Low-Noise LoRA Path"
-                      value={jobConfig.config.process[0].model.low_noise_lora_path ?? ''}
-                      docKey="config.process[0].model.low_noise_lora_path"
-                      onChange={(value: string | undefined) => {
-                        if (value?.trim() === '') {
-                          value = undefined;
-                        }
-                        setJobConfig(value, 'config.process[0].model.low_noise_lora_path');
-                      }}
-                      placeholder=""
-                    />
-                    {modelArch?.additionalSections?.includes('model.low_noise_lora_merge_strength') && (
-                      <NumberInput
-                        label="Low-Noise LoRA Strength"
-                        value={jobConfig.config.process[0].model.low_noise_lora_merge_strength ?? 1.0}
-                        docKey="config.process[0].model.low_noise_lora_merge_strength"
-                        onChange={value =>
-                          setJobConfig(value, 'config.process[0].model.low_noise_lora_merge_strength')
-                        }
-                        step={0.05}
-                      />
-                    )}
-                  </>
+                  <LoraMergeInput
+                    label="Low-Noise LoRA Path"
+                    pathValue={jobConfig.config.process[0].model.low_noise_lora_path}
+                    strengthValue={jobConfig.config.process[0].model.low_noise_lora_merge_strength}
+                    pathKey="config.process[0].model.low_noise_lora_path"
+                    strengthKey="config.process[0].model.low_noise_lora_merge_strength"
+                    pathDocKey="config.process[0].model.low_noise_lora_path"
+                    strengthDocKey="config.process[0].model.low_noise_lora_merge_strength"
+                    setJobConfig={setJobConfig}
+                  />
                 )}
               </>
             )}

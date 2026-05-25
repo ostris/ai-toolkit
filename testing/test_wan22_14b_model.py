@@ -346,6 +346,114 @@ def test_legacy_combined_lora_uses_legacy_strength(monkeypatch):
     assert list(merge_specs[0]["state_dict"].keys()) == [HIGH_STAGE_LORA_KEY]
 
 
+def test_legacy_lora_path_list_uses_default_strength_in_order(monkeypatch):
+    lora_paths = ["combined_a.safetensors", "combined_b.safetensors"]
+    model = _make_model(lora_path=lora_paths, lora_merge_strength=0.65)
+
+    monkeypatch.setattr(model, "_resolve_wan22_base_lora_path", lambda path: f"/resolved/{path}")
+    monkeypatch.setattr(
+        wan22_module,
+        "load_file",
+        lambda path: _tensor_dict(HIGH_STAGE_LORA_KEY),
+    )
+
+    merge_specs = model._get_wan22_base_lora_merge_specs()
+
+    assert [spec["source_path"] for spec in merge_specs] == [
+        "/resolved/combined_a.safetensors",
+        "/resolved/combined_b.safetensors",
+    ]
+    assert [spec["strength"] for spec in merge_specs] == [0.65, 0.65]
+    assert [list(spec["state_dict"].keys()) for spec in merge_specs] == [
+        [HIGH_STAGE_LORA_KEY],
+        [HIGH_STAGE_LORA_KEY],
+    ]
+    assert model.model_config.lora_path == lora_paths
+
+
+def test_legacy_lora_path_list_item_strength_overrides_default(monkeypatch):
+    model = _make_model(
+        lora_path=[
+            {"path": "combined_a.safetensors", "strength": 0.35},
+            "combined_b.safetensors",
+        ],
+        lora_merge_strength=1.2,
+    )
+
+    monkeypatch.setattr(model, "_resolve_wan22_base_lora_path", lambda path: f"/resolved/{path}")
+    monkeypatch.setattr(
+        wan22_module,
+        "load_file",
+        lambda path: _tensor_dict(HIGH_STAGE_LORA_KEY),
+    )
+
+    merge_specs = model._get_wan22_base_lora_merge_specs()
+
+    assert [spec["source_path"] for spec in merge_specs] == [
+        "/resolved/combined_a.safetensors",
+        "/resolved/combined_b.safetensors",
+    ]
+    assert [spec["strength"] for spec in merge_specs] == [0.35, 1.2]
+
+
+def test_explicit_base_merge_lists_stage_entries_and_strengths(monkeypatch):
+    model = _make_model(
+        lora_path="legacy.safetensors",
+        high_noise_lora_path=[
+            {"path": "high_a.safetensors", "strength": 0.25},
+            "high_b.safetensors",
+        ],
+        high_noise_lora_merge_strength=0.75,
+        low_noise_lora_path=[
+            "low_a.safetensors",
+            {"path": "low_b.safetensors", "strength": 1.35},
+        ],
+        low_noise_lora_merge_strength=1.1,
+    )
+
+    def fake_resolve(path):
+        if path == "legacy.safetensors":
+            raise AssertionError("legacy lora_path should be ignored in explicit stage mode")
+        return f"/resolved/{path}"
+
+    monkeypatch.setattr(model, "_resolve_wan22_base_lora_path", fake_resolve)
+    monkeypatch.setattr(
+        wan22_module,
+        "load_file",
+        lambda path: _tensor_dict(PLAIN_LORA_KEY),
+    )
+
+    merge_specs = model._get_wan22_base_lora_merge_specs()
+
+    assert [spec["source_path"] for spec in merge_specs] == [
+        "/resolved/high_a.safetensors",
+        "/resolved/high_b.safetensors",
+        "/resolved/low_a.safetensors",
+        "/resolved/low_b.safetensors",
+    ]
+    assert [spec["strength"] for spec in merge_specs] == [0.25, 0.75, 1.1, 1.35]
+    assert [list(spec["state_dict"].keys()) for spec in merge_specs] == [
+        [HIGH_STAGE_LORA_KEY],
+        [HIGH_STAGE_LORA_KEY],
+        [LOW_STAGE_LORA_KEY],
+        [LOW_STAGE_LORA_KEY],
+    ]
+
+
+def test_lora_path_list_rejects_malformed_entries():
+    missing_path = _make_model(lora_path=[{"strength": 0.5}])
+    with pytest.raises(ValueError, match="must include a non-empty `path`"):
+        missing_path._get_wan22_base_lora_merge_specs()
+
+    bad_strength = _make_model(lora_path=[{"path": "combined.safetensors", "strength": "heavy"}])
+    with pytest.raises(ValueError, match="strength must be numeric"):
+        bad_strength._get_wan22_base_lora_merge_specs()
+
+    bad_entry = _make_model(high_noise_lora_path=[123])
+    with pytest.raises(ValueError, match="must be a path string or an object"):
+        bad_entry._get_wan22_base_lora_merge_specs()
+
+
 def test_explicit_mode_ignores_legacy_path_and_strength(monkeypatch):
     model = _make_model(
         lora_path="legacy.safetensors",

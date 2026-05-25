@@ -155,6 +155,15 @@ export interface QuantizeKwargsConfig {
   exclude: string[];
 }
 
+export type LoraMergePathEntry =
+  | string
+  | {
+      path: string;
+      strength?: number;
+    };
+
+export type LoraMergePathValue = string | LoraMergePathEntry[];
+
 export interface ModelConfig {
   name_or_path: string;
   quantize: boolean;
@@ -168,11 +177,11 @@ export interface ModelConfig {
   layer_offloading?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
-  lora_path?: string;
+  lora_path?: LoraMergePathValue;
   lora_merge_strength?: number;
-  high_noise_lora_path?: string;
+  high_noise_lora_path?: LoraMergePathValue;
   high_noise_lora_merge_strength?: number;
-  low_noise_lora_path?: string;
+  low_noise_lora_path?: LoraMergePathValue;
   low_noise_lora_merge_strength?: number;
   assistant_lora_path?: string;
 }
@@ -275,7 +284,7 @@ export interface CaptionProcessConfig {
     caption_prompt?: string;
     max_res?: number;
     max_new_tokens?: number;
-  }
+  };
 }
 
 export interface CaptionConfigObject {
