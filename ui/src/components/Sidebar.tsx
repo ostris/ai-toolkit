@@ -75,24 +75,29 @@ const Sidebar = () => {
           ))}
         </ul>
       </nav>
-      <a
-        href="https://ostris.com/support"
-        target="_blank"
-        rel="noreferrer"
-        className="flex items-center space-x-2 px-4 py-3"
-      >
-        <div className="min-w-[26px] min-h-[26px]">
-          <svg height="24" version="1.1" width="24" xmlns="http://www.w3.org/2000/svg">
-            <g transform="translate(0 -1028.4)">
-              <path
-                d="m7 1031.4c-1.5355 0-3.0784 0.5-4.25 1.7-2.3431 2.4-2.2788 6.1 0 8.5l9.25 9.8 9.25-9.8c2.279-2.4 2.343-6.1 0-8.5-2.343-2.3-6.157-2.3-8.5 0l-0.75 0.8-0.75-0.8c-1.172-1.2-2.7145-1.7-4.25-1.7z"
-                fill="#c0392b"
-              />
-            </g>
+      <div className="px-3 py-3">
+        <a
+          href="https://ostris.com/support"
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center justify-center space-x-2 px-4 py-2.5 rounded-full bg-gray-800 hover:bg-gray-700 shadow-md hover:shadow-lg ring-1 ring-gray-700 hover:ring-gray-600 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 active:shadow-sm"
+        >
+          <svg
+            height="20"
+            width="20"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            style={{ overflow: 'visible' }}
+          >
+            <path
+              className="animate-heartbeat"
+              d="m7 3c-1.5355 0-3.0784 0.5-4.25 1.7-2.3431 2.4-2.2788 6.1 0 8.5l9.25 9.8 9.25-9.8c2.279-2.4 2.343-6.1 0-8.5-2.343-2.3-6.157-2.3-8.5 0l-0.75 0.8-0.75-0.8c-1.172-1.2-2.7145-1.7-4.25-1.7z"
+              fill="#c0392b"
+            />
           </svg>
-        </div>
-        <div className="uppercase text-gray-500 text-sm mb-2 flex-1 pt-2 pl-0">Support AI-Toolkit</div>
-      </a>
+          <span className="uppercase text-gray-200 text-sm font-semibold tracking-wide">Support AI-Toolkit</span>
+        </a>
+      </div>
 
       {/* Social links grid */}
       <div className="px-1 py-1 border-t border-gray-800">
