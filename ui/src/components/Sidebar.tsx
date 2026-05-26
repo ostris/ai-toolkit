@@ -114,6 +114,9 @@ const Sidebar = () => {
           <ThemeToggle />
         </div>
       </div>
+      <div className="text-center text-[10px] text-gray-400 py-1 bg-gray-800">
+        Ostris AI-Toolkit v{process.env.NEXT_PUBLIC_APP_VERSION}
+      </div>
     </>
   );
 
