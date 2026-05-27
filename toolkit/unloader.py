@@ -39,26 +39,38 @@ def unload_text_encoder(model: "BaseModel"):
     # to functions and what not will work.
 
     if model.text_encoder is not None:
+        pipe = getattr(model, "pipeline", None)
         if isinstance(model.text_encoder, list):
             text_encoder_list = []
-            pipe = model.pipeline
 
             # the pipeline stores text encoders like text_encoder, text_encoder_2, text_encoder_3, etc.
             if hasattr(pipe, "text_encoder"):
                 te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
                 text_encoder_list.append(te)
-                pipe.text_encoder.to('cpu')
+                if pipe.text_encoder is not None:
+                    pipe.text_encoder.to('cpu')
                 pipe.text_encoder = te
 
             i = 2
             while hasattr(pipe, f"text_encoder_{i}"):
                 te = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
                 text_encoder_list.append(te)
+                text_encoder = getattr(pipe, f"text_encoder_{i}")
+                if text_encoder is not None:
+                    text_encoder.to('cpu')
                 setattr(pipe, f"text_encoder_{i}", te)
                 i += 1
             model.text_encoder = text_encoder_list
         else:
             # only has a single text encoder
-            model.text_encoder = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
+            real_text_encoder = model.text_encoder
+            real_text_encoder.to('cpu')
+            fake_text_encoder = FakeTextEncoder(device=model.device_torch, dtype=model.torch_dtype)
+            model.text_encoder = fake_text_encoder
+            if pipe is not None and hasattr(pipe, "text_encoder"):
+                pipe_text_encoder = pipe.text_encoder
+                if pipe_text_encoder is not None and pipe_text_encoder is not real_text_encoder:
+                    pipe_text_encoder.to('cpu')
+                pipe.text_encoder = fake_text_encoder
 
     flush()

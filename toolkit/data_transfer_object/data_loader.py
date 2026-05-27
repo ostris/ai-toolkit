@@ -469,6 +469,7 @@ class DataLoaderBatchDTO:
         del self.audio_pred
         del self.first_frame_latents
         del self.audio_latents
+        del self.prompt_embeds
         for file_item in self.file_items:
             file_item.cleanup()
 
