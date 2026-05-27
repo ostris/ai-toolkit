@@ -2058,58 +2058,68 @@ class TextEmbeddingCachingMixin:
             
             did_move = False
 
-            # use tqdm to show progress
-            i = 0
-            for file_item in tqdm(self.file_list, desc='Caching text embeddings to disk'):
-                file_item.latent_load_device = self.sd.device
+            try:
+                # use tqdm to show progress
+                i = 0
+                for file_item in tqdm(self.file_list, desc='Caching text embeddings to disk'):
+                    file_item.latent_load_device = self.sd.device
 
-                text_embedding_path = file_item.get_text_embedding_path(recalculate=True)
-                # only process if not saved to disk
-                if not os.path.exists(text_embedding_path):
-                    # load if not loaded
-                    if not did_move:
-                        self.sd.set_device_state_preset('cache_text_encoder')
-                        did_move = True
-                        
-                    if file_item.encode_control_in_text_embeddings:
-                        if file_item.control_path is None:
-                            raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
-                        ctrl_img_list = []
-                        control_path_list = file_item.control_path
-                        if not isinstance(file_item.control_path, list):
-                            control_path_list = [control_path_list]
-                        for i in range(len(control_path_list)):
-                            try:
-                                img = Image.open(control_path_list[i]).convert("RGB")
-                                img = exif_transpose(img)
-                                # convert to 0 to 1 tensor
-                                img = (
-                                    TF.to_tensor(img)
-                                    .unsqueeze(0)
-                                    .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
-                                )
-                                ctrl_img_list.append(img)
-                            except Exception as e:
-                                print_acc(f"Error: {e}")
-                                print_acc(f"Error loading control image: {control_path_list[i]}")
-                        
-                        if len(ctrl_img_list) == 0:
-                            ctrl_img = None
-                        elif not self.sd.has_multiple_control_images:
-                            ctrl_img = ctrl_img_list[0]
+                    text_embedding_path = file_item.get_text_embedding_path(recalculate=True)
+                    # only process if not saved to disk
+                    if not os.path.exists(text_embedding_path):
+                        # load if not loaded
+                        if not did_move:
+                            self.sd.set_device_state_preset('cache_text_encoder')
+                            did_move = True
+                            
+                        if file_item.encode_control_in_text_embeddings:
+                            if file_item.control_path is None:
+                                raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
+                            ctrl_img_list = []
+                            control_path_list = file_item.control_path
+                            if not isinstance(file_item.control_path, list):
+                                control_path_list = [control_path_list]
+                            for i in range(len(control_path_list)):
+                                try:
+                                    img = Image.open(control_path_list[i]).convert("RGB")
+                                    img = exif_transpose(img)
+                                    # convert to 0 to 1 tensor
+                                    img = (
+                                        TF.to_tensor(img)
+                                        .unsqueeze(0)
+                                        .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                                    )
+                                    ctrl_img_list.append(img)
+                                except Exception as e:
+                                    print_acc(f"Error: {e}")
+                                    print_acc(f"Error loading control image: {control_path_list[i]}")
+                            
+                            if len(ctrl_img_list) == 0:
+                                ctrl_img = None
+                            elif not self.sd.has_multiple_control_images:
+                                ctrl_img = ctrl_img_list[0]
+                            else:
+                                ctrl_img = ctrl_img_list
+                            prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
                         else:
-                            ctrl_img = ctrl_img_list
-                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
-                    else:
-                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
-                    # save it
-                    prompt_embeds.save(text_embedding_path)
-                    del prompt_embeds
-                file_item.is_text_embedding_cached = True
-                i += 1
-            # restore device state
-            # if did_move:
-            #     self.sd.restore_device_state()
+                            prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
+                        # save it
+                        prompt_embeds.save(text_embedding_path)
+                        del prompt_embeds
+                    file_item.is_text_embedding_cached = True
+                    i += 1
+            finally:
+                if did_move:
+                    # cache_text_embeddings should leave the TE offloaded, just like unload_text_encoder.
+                    if hasattr(self.sd, "text_encoder_to"):
+                        self.sd.text_encoder_to("cpu")
+                    elif getattr(self.sd, "text_encoder", None) is not None:
+                        if isinstance(self.sd.text_encoder, list):
+                            for text_encoder in self.sd.text_encoder:
+                                text_encoder.to("cpu")
+                        else:
+                            self.sd.text_encoder.to("cpu")
+                    flush()
 
 
 class CLIPCachingMixin:
