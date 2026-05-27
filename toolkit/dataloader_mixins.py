@@ -2071,7 +2071,7 @@ class TextEmbeddingCachingMixin:
                         if not did_move:
                             self.sd.set_device_state_preset('cache_text_encoder')
                             did_move = True
-                            
+
                         if file_item.encode_control_in_text_embeddings:
                             if file_item.control_path is None:
                                 raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
@@ -2093,7 +2093,7 @@ class TextEmbeddingCachingMixin:
                                 except Exception as e:
                                     print_acc(f"Error: {e}")
                                     print_acc(f"Error loading control image: {control_path_list[i]}")
-                            
+
                             if len(ctrl_img_list) == 0:
                                 ctrl_img = None
                             elif not self.sd.has_multiple_control_images:
@@ -2109,16 +2109,16 @@ class TextEmbeddingCachingMixin:
                     file_item.is_text_embedding_cached = True
                     i += 1
             finally:
-                if did_move:
-                    # cache_text_embeddings should leave the TE offloaded, just like unload_text_encoder.
+                # cache_text_embeddings should leave the TE offloaded, just like unload_text_encoder.
+                text_encoder = getattr(self.sd, "text_encoder", None)
+                if text_encoder is not None:
                     if hasattr(self.sd, "text_encoder_to"):
                         self.sd.text_encoder_to("cpu")
-                    elif getattr(self.sd, "text_encoder", None) is not None:
-                        if isinstance(self.sd.text_encoder, list):
-                            for text_encoder in self.sd.text_encoder:
-                                text_encoder.to("cpu")
-                        else:
-                            self.sd.text_encoder.to("cpu")
+                    elif isinstance(text_encoder, list):
+                        for text_encoder_item in text_encoder:
+                            text_encoder_item.to("cpu")
+                    else:
+                        text_encoder.to("cpu")
                     flush()
 
 
