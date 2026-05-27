@@ -190,6 +190,7 @@ class DataLoaderBatchDTO:
             self.unaugmented_tensor: Union[torch.Tensor, None] = None
             self.unconditional_tensor: Union[torch.Tensor, None] = None
             self.unconditional_latents: Union[torch.Tensor, None] = None
+            self.i2v_condition_tensor: Union[torch.Tensor, None] = None
             self.clip_image_embeds: Union[List[dict], None] = None
             self.clip_image_embeds_unconditional: Union[List[dict], None] = None
             self.sigmas: Union[torch.Tensor, None] = (

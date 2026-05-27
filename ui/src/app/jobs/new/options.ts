@@ -37,15 +37,16 @@ type AdditionalSections =
   | 'model.low_noise_lora_path'
   | 'model.low_noise_lora_merge_strength'
   | 'model.assistant_lora_path'
-  | 'model.image_i2v_conditioning';
+  | 'model.image_i2v_conditioning'
+  | 'model.image_i2v_clip_training';
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
 
 export type SampleTag = {
   title: string;
-  type: 'text' | 'multiline' | 'number'
+  type: 'text' | 'multiline' | 'number';
   full?: boolean;
-}
+};
 
 export interface SampleTags {
   [key: string]: SampleTag;
@@ -66,7 +67,7 @@ export interface ModelArch {
 }
 
 const defaultNameOrPath = '';
-const defaultLinearRank = 32
+const defaultLinearRank = 32;
 
 export const modelArchs: ModelArch[] = [
   {
@@ -162,7 +163,10 @@ export const modelArchs: ModelArch[] = [
     group: 'experimental',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors', defaultNameOrPath],
+      'config.process[0].model.name_or_path': [
+        'lodestones/Zeta-Chroma/zeta-chroma-base-x0-pixel-dino-distance.safetensors',
+        defaultNameOrPath,
+      ],
       'config.process[0].model.extras_name_or_path': ['Tongyi-MAI/Z-Image-Turbo', undefined],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
@@ -313,6 +317,11 @@ export const modelArchs: ModelArch[] = [
         {
           train_high_noise: true,
           train_low_noise: true,
+          image_i2v_clip_training: false,
+          image_i2v_clip_training_prob: 0.25,
+          image_i2v_clip_num_frames: 5,
+          image_i2v_clip_blur_sigma: 24.0,
+          image_i2v_clip_downscale_factor: 0.0625,
         },
         {},
       ],
@@ -331,6 +340,7 @@ export const modelArchs: ModelArch[] = [
       'model.low_noise_lora_path',
       'model.low_noise_lora_merge_strength',
       'model.image_i2v_conditioning',
+      'model.image_i2v_clip_training',
     ],
     accuracyRecoveryAdapters: {
       '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_i2v_torchao_uint4.safetensors',
@@ -715,7 +725,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
+    additionalSections: [
+      'sample.ctrl_img',
+      'datasets.num_frames',
+      'model.layer_offloading',
+      'model.low_vram',
+      'datasets.do_audio',
+      'datasets.audio_normalize',
+      'datasets.audio_preserve_pitch',
+      'datasets.do_i2v',
+      'train.audio_loss_multiplier',
+      'datasets.auto_frame_count',
+    ],
   },
   {
     name: 'ltx2.3',
@@ -743,7 +764,18 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
+    additionalSections: [
+      'sample.ctrl_img',
+      'datasets.num_frames',
+      'model.layer_offloading',
+      'model.low_vram',
+      'datasets.do_audio',
+      'datasets.audio_normalize',
+      'datasets.audio_preserve_pitch',
+      'datasets.do_i2v',
+      'train.audio_loss_multiplier',
+      'datasets.auto_frame_count',
+    ],
   },
   {
     name: 'flux2_klein_4b',
@@ -795,10 +827,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'model.low_vram',
-      'model.layer_offloading',
-    ],
+    additionalSections: ['model.low_vram', 'model.layer_offloading'],
   },
   {
     name: 'flux2_klein_9b',
@@ -839,7 +868,10 @@ export const modelArchs: ModelArch[] = [
     group: 'audio',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_xl_base_aio.safetensors', defaultNameOrPath],
+      'config.process[0].model.name_or_path': [
+        'ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_xl_base_aio.safetensors',
+        defaultNameOrPath,
+      ],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
@@ -850,43 +882,39 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
     },
     sampleTags: {
-      "CAPTION": {
-        title: "Audio Prompt",
-        type: "text",
+      CAPTION: {
+        title: 'Audio Prompt',
+        type: 'text',
         full: true,
       },
-      "LYRICS": {
-        title: "Lyrics",
-        type: "multiline",
+      LYRICS: {
+        title: 'Lyrics',
+        type: 'multiline',
         full: true,
       },
-      "BPM": {
-        title: "BPM",
-        type: "number",
+      BPM: {
+        title: 'BPM',
+        type: 'number',
       },
-      "KEYSCALE": {
-        title: "Key Scale",
-        type: "text",
+      KEYSCALE: {
+        title: 'Key Scale',
+        type: 'text',
       },
-      "TIMESIGNATURE": {
-        title: "Time Signature",
-        type: "text",
+      TIMESIGNATURE: {
+        title: 'Time Signature',
+        type: 'text',
       },
-      "DURATION": {
-        title: "Duration (sec)",
-        type: "number",
+      DURATION: {
+        title: 'Duration (sec)',
+        type: 'number',
       },
-      "LANGUAGE": {
-        title: "Language",
-        type: "text",
+      LANGUAGE: {
+        title: 'Language',
+        type: 'text',
       },
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.multi_ctrl_imgs',
-      'model.low_vram',
-      'model.layer_offloading',
-    ],
+    additionalSections: ['sample.multi_ctrl_imgs', 'model.low_vram', 'model.layer_offloading'],
   },
   {
     name: 'ace_step_15',
@@ -894,7 +922,10 @@ export const modelArchs: ModelArch[] = [
     group: 'audio',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors', defaultNameOrPath],
+      'config.process[0].model.name_or_path': [
+        'ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors',
+        defaultNameOrPath,
+      ],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
@@ -905,43 +936,39 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
     },
     sampleTags: {
-      "CAPTION": {
-        title: "Audio Prompt",
-        type: "text",
+      CAPTION: {
+        title: 'Audio Prompt',
+        type: 'text',
         full: true,
       },
-      "LYRICS": {
-        title: "Lyrics",
-        type: "multiline",
+      LYRICS: {
+        title: 'Lyrics',
+        type: 'multiline',
         full: true,
       },
-      "BPM": {
-        title: "BPM",
-        type: "number",
+      BPM: {
+        title: 'BPM',
+        type: 'number',
       },
-      "KEYSCALE": {
-        title: "Key Scale",
-        type: "text",
+      KEYSCALE: {
+        title: 'Key Scale',
+        type: 'text',
       },
-      "TIMESIGNATURE": {
-        title: "Time Signature",
-        type: "text",
+      TIMESIGNATURE: {
+        title: 'Time Signature',
+        type: 'text',
       },
-      "DURATION": {
-        title: "Duration (sec)",
-        type: "number",
+      DURATION: {
+        title: 'Duration (sec)',
+        type: 'number',
       },
-      "LANGUAGE": {
-        title: "Language",
-        type: "text",
+      LANGUAGE: {
+        title: 'Language',
+        type: 'text',
       },
     },
     disableSections: ['network.conv'],
-    additionalSections: [
-      'sample.multi_ctrl_imgs',
-      'model.low_vram',
-      'model.layer_offloading',
-    ],
+    additionalSections: ['sample.multi_ctrl_imgs', 'model.low_vram', 'model.layer_offloading'],
   },
   {
     name: 'nucleus_image',

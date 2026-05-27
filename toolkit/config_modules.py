@@ -579,7 +579,11 @@ class TrainConfig:
         self.audio_loss_multiplier = kwargs.get("audio_loss_multiplier", 1.0)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal[
+    'sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow',
+    'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21',
+    'wan22_5b', 'wan22_14b', 'wan22_14b_i2v',
+]
 
 
 class ModelConfig:

@@ -155,6 +155,56 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'config.process[0].model.model_kwargs.image_i2v_clip_training': {
+    title: 'Image Clip Training',
+    description: (
+      <>
+        Wan 2.2 I2V only. When enabled, some single-image batches are expanded into short clean static clips while a
+        separate heavily blurred copy of the image is used as the I2V first-frame condition. This avoids training with
+        the exact target image as the condition.
+        <br />
+        <br />
+        Do not use latent caching with this mode. It is useful for still-image subject or style LoRAs, but it does not
+        teach motion.
+      </>
+    ),
+  },
+  'config.process[0].model.model_kwargs.image_i2v_clip_training_prob': {
+    title: 'Image Clip Steps',
+    description: (
+      <>
+        Percentage of single-image batches that are converted into synthetic I2V clips. Lower values reduce the static
+        video bias and keep more normal single-image training steps.
+      </>
+    ),
+  },
+  'config.process[0].model.model_kwargs.image_i2v_clip_num_frames': {
+    title: 'Image Clip Frames',
+    description: (
+      <>
+        Number of frames in each synthetic clip. Wan requires frame counts of <code>4n + 1</code>. The minimum useful
+        video value is <code>5</code>, which is the default for faster training.
+      </>
+    ),
+  },
+  'config.process[0].model.model_kwargs.image_i2v_clip_blur_sigma': {
+    title: 'Image Clip Blur',
+    description: (
+      <>
+        Gaussian blur strength for the conditioning image. Higher values make the first-frame condition less like the
+        clean target frame.
+      </>
+    ),
+  },
+  'config.process[0].model.model_kwargs.image_i2v_clip_downscale_factor': {
+    title: 'Image Clip Downscale',
+    description: (
+      <>
+        Downscale factor applied before upscaling and blurring the conditioning image. Smaller values remove more target
+        detail from the condition. Use a value from <code>0</code> to <code>1</code>.
+      </>
+    ),
+  },
   'datasets.control_path': {
     title: 'Control Dataset',
     description: (

@@ -910,6 +910,8 @@ class SDTrainer(BaseSDTrainProcess):
         return loss + additional_loss
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
+        if hasattr(self.sd, "preprocess_training_batch"):
+            return self.sd.preprocess_training_batch(batch)
         return batch
 
     def get_guided_loss(

@@ -1,0 +1,75 @@
+# Train Wan2.2 I2V from still images by making occasional clean static clips and
+# using a heavily blurred version of the source image as first-frame conditioning.
+---
+job: extension
+config:
+  name: "my_first_wan22_14b_i2v_image_clip_lora_v1"
+  process:
+    - type: 'sd_trainer'
+      training_folder: "output"
+      device: cuda:0
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+      save:
+        dtype: float16
+        save_every: 250
+        max_step_saves_to_keep: 4
+      datasets:
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          # Keep this at 1 for still-image datasets. Do not enable latent caching
+          # with image_i2v_clip_training; clips are built dynamically per batch.
+          num_frames: 1
+          resolution: [512, 768, 1024]
+      train:
+        batch_size: 1
+        steps: 2000
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        timestep_type: 'linear'
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        optimizer_params:
+          weight_decay: 1e-4
+        dtype: bf16
+        switch_boundary_every: 10
+        cache_text_embeddings: true
+      model:
+        name_or_path: "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+        arch: 'wan22_14b_i2v'
+        quantize: true
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: true
+        model_kwargs:
+          train_high_noise: true
+          train_low_noise: true
+          image_i2v_clip_training: true
+          image_i2v_clip_training_prob: 0.25
+          image_i2v_clip_num_frames: 5
+          image_i2v_clip_blur_sigma: 24.0
+          image_i2v_clip_downscale_factor: 0.0625
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        width: 1024
+        height: 1024
+        num_frames: 5
+        fps: 16
+        prompts:
+          - "woman with red hair, playing chess at the park --ctrl_img /path/to/sample_start.jpg"
+          - "a person wearing a denim jacket, cinematic lighting --ctrl_img /path/to/sample_start.jpg"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 3.5
+        sample_steps: 25
+meta:
+  name: "[name]"
+  version: '1.0'

@@ -1,5 +1,6 @@
 import random
 import torch
+import torch.nn.functional as F
 from toolkit.models.wan21.wan_utils import add_first_frame_conditioning
 from toolkit.prompt_utils import PromptEmbeds
 from PIL import Image
@@ -9,17 +10,22 @@ from .wan22_pipeline import Wan22Pipeline
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 from torchvision.transforms import functional as TF
 
-from .wan22_14b_model import Wan2214bModel
+from .wan22_14b_model import Wan2214bModel, boundary_ratio_i2v
 
 class Wan2214bI2VModel(Wan2214bModel):
     arch = "wan22_14b_i2v"
+    _wan_boundary_ratio = boundary_ratio_i2v
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         model_config = kwargs.get("model_config", None)
         if model_config is None and len(args) > 1:
             model_config = args[1]
-        model_kwargs = getattr(model_config, "model_kwargs", {}) if model_config is not None else {}
+        model_kwargs = (
+            getattr(model_config, "model_kwargs", {})
+            if model_config is not None
+            else {}
+        )
         self.image_i2v_conditioning = model_kwargs.get("image_i2v_conditioning", False)
         self.image_i2v_conditioning_prob = float(
             model_kwargs.get("image_i2v_conditioning_prob", 0.2)
@@ -27,6 +33,49 @@ class Wan2214bI2VModel(Wan2214bModel):
         self.image_i2v_conditioning_prob = max(
             0.0, min(1.0, self.image_i2v_conditioning_prob)
         )
+        self.image_i2v_clip_training = model_kwargs.get(
+            "image_i2v_clip_training", False
+        )
+        self.image_i2v_clip_training_prob = self._clamp_probability(
+            model_kwargs.get("image_i2v_clip_training_prob", 0.25)
+        )
+        self.image_i2v_clip_num_frames = self._normalize_clip_num_frames(
+            model_kwargs.get("image_i2v_clip_num_frames", 5)
+        )
+        self.image_i2v_clip_blur_sigma = max(
+            0.0, float(model_kwargs.get("image_i2v_clip_blur_sigma", 24.0))
+        )
+        self.image_i2v_clip_downscale_factor = max(
+            0.0,
+            min(
+                1.0,
+                float(model_kwargs.get("image_i2v_clip_downscale_factor", 0.0625)),
+            ),
+        )
+
+    @staticmethod
+    def _clamp_probability(value) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @staticmethod
+    def _normalize_clip_num_frames(value) -> int:
+        num_frames = max(1, int(value))
+        if num_frames % 4 != 1:
+            num_frames = (num_frames // 4) * 4 + 1
+        return max(1, num_frames)
+
+    @staticmethod
+    def _get_blur_kernel_size(length: int, sigma: float) -> int:
+        if length < 3 or sigma <= 0:
+            return 1
+
+        desired = int(round(sigma * 6.0))
+        if desired % 2 == 0:
+            desired += 1
+        desired = max(3, desired)
+
+        max_kernel = length if length % 2 == 1 else length - 1
+        return max(1, min(desired, max_kernel))
 
     @staticmethod
     def degrade_image_i2v_conditioning(first_frames: torch.Tensor) -> torch.Tensor:
@@ -45,8 +94,52 @@ class Wan2214bI2VModel(Wan2214bModel):
 
         return degraded.clamp(-1.0, 1.0)
 
+    @classmethod
+    def make_image_i2v_clip_conditioning(
+        cls,
+        images: torch.Tensor,
+        blur_sigma: float = 24.0,
+        downscale_factor: float = 0.0625,
+    ) -> torch.Tensor:
+        condition = images.to(dtype=torch.float32)
+        source_dtype = images.dtype
+        _, _, height, width = condition.shape
+
+        downscale_factor = max(0.0, min(1.0, float(downscale_factor)))
+        if downscale_factor > 0.0 and downscale_factor < 1.0:
+            low_height = max(1, int(round(height * downscale_factor)))
+            low_width = max(1, int(round(width * downscale_factor)))
+            condition = F.interpolate(
+                condition,
+                size=(low_height, low_width),
+                mode="bilinear",
+                align_corners=False,
+            )
+            condition = F.interpolate(
+                condition,
+                size=(height, width),
+                mode="bilinear",
+                align_corners=False,
+            )
+
+        blur_sigma = max(0.0, float(blur_sigma))
+        kernel_height = cls._get_blur_kernel_size(height, blur_sigma)
+        kernel_width = cls._get_blur_kernel_size(width, blur_sigma)
+        if kernel_height >= 3 and kernel_width >= 3:
+            condition = TF.gaussian_blur(
+                condition,
+                kernel_size=[kernel_height, kernel_width],
+                sigma=[blur_sigma, blur_sigma],
+            )
+
+        return condition.clamp(-1.0, 1.0).to(dtype=source_dtype)
+
     @staticmethod
     def _get_first_frames_from_batch(batch: DataLoaderBatchDTO) -> torch.Tensor:
+        i2v_condition_tensor = getattr(batch, "i2v_condition_tensor", None)
+        if i2v_condition_tensor is not None:
+            return i2v_condition_tensor
+
         frames = batch.tensor
         if len(frames.shape) == 4:
             return frames
@@ -77,8 +170,55 @@ class Wan2214bI2VModel(Wan2214bModel):
             getattr(self, "image_i2v_conditioning", False)
             and random.random() < getattr(self, "image_i2v_conditioning_prob", 0.2)
         )
-    
-    
+
+    def _should_use_image_i2v_clip_training(self) -> bool:
+        return (
+            getattr(self, "image_i2v_clip_training", False)
+            and random.random()
+            < getattr(self, "image_i2v_clip_training_prob", 0.25)
+        )
+
+    def preprocess_training_batch(self, batch: DataLoaderBatchDTO) -> DataLoaderBatchDTO:
+        if not getattr(self, "image_i2v_clip_training", False):
+            return batch
+
+        if not self._is_single_frame_batch(batch):
+            return batch
+
+        if getattr(batch, "latents", None) is not None:
+            raise ValueError(
+                "Wan2.2 I2V image_i2v_clip_training cannot be used with cached latents. "
+                "Disable cache_latents/cache_latents_to_disk for image datasets using this mode."
+            )
+
+        images = getattr(batch, "tensor", None)
+        if images is None:
+            return batch
+        if len(images.shape) == 5:
+            images = images[:, 0]
+        elif len(images.shape) != 4:
+            raise ValueError(f"Unknown frame shape {images.shape}")
+
+        if not self._should_use_image_i2v_clip_training():
+            return batch
+
+        batch.i2v_condition_tensor = self.make_image_i2v_clip_conditioning(
+            images,
+            blur_sigma=getattr(self, "image_i2v_clip_blur_sigma", 24.0),
+            downscale_factor=getattr(
+                self, "image_i2v_clip_downscale_factor", 0.0625
+            ),
+        )
+        batch.tensor = images.unsqueeze(1).repeat(
+            1,
+            getattr(self, "image_i2v_clip_num_frames", 5),
+            1,
+            1,
+            1,
+        )
+        batch.num_frames = getattr(self, "image_i2v_clip_num_frames", 5)
+        return batch
+
     def generate_single_image(
         self,
         pipeline: Wan22Pipeline,
@@ -186,6 +326,7 @@ class Wan2214bI2VModel(Wan2214bModel):
         should_use_degraded_image_conditioning = (
             is_single_frame_batch
             and not force_t2i_single_frame
+            and not getattr(self, "image_i2v_clip_training", False)
             and self._should_use_image_i2v_conditioning()
         )
 

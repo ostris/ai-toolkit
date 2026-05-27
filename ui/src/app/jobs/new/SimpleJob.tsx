@@ -172,7 +172,7 @@ const LoraMergeInput = ({
   return (
     <div className="mt-2">
       {rows.map((row, index) => (
-        <div key={`${pathKey}-${index}`} className="grid grid-cols-[minmax(0,1fr)_7rem_2.25rem] gap-2 items-end">
+        <div key={`${pathKey}-${index}`} className="space-y-2">
           <TextInput
             label={index === 0 ? label : undefined}
             value={row.path}
@@ -180,24 +180,26 @@ const LoraMergeInput = ({
             onChange={value => updateRow(index, { path: value })}
             placeholder=""
           />
-          <NumberInput
-            label={index === 0 ? 'Strength' : undefined}
-            value={row.strength}
-            docKey={index === 0 ? strengthDocKey : null}
-            onChange={value => updateRow(index, { strength: normalizeLoraMergeStrength(value) })}
-            step={0.05}
-          />
-          <button
-            type="button"
-            onClick={() => removeRow(index)}
-            className={`h-[30px] w-[30px] mb-px inline-flex items-center justify-center rounded-sm border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 ${
-              rows.length <= 1 && row.path.trim() === '' ? 'invisible' : ''
-            }`}
-            title={`Remove ${label}`}
-            aria-label={`Remove ${label}`}
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="grid grid-cols-[minmax(0,7rem)_2.25rem] items-end gap-2">
+            <NumberInput
+              label={index === 0 ? 'Strength' : undefined}
+              value={row.strength}
+              docKey={index === 0 ? strengthDocKey : null}
+              onChange={value => updateRow(index, { strength: normalizeLoraMergeStrength(value) })}
+              step={0.05}
+            />
+            <button
+              type="button"
+              onClick={() => removeRow(index)}
+              className={`mb-px inline-flex h-[30px] w-[30px] items-center justify-center self-end rounded-sm border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 ${
+                rows.length <= 1 && row.path.trim() === '' ? 'invisible' : ''
+              }`}
+              title={`Remove ${label}`}
+              aria-label={`Remove ${label}`}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       ))}
       <button
@@ -309,28 +311,11 @@ export default function SimpleJob({
     return sections.length > 0 ? sections : null;
   }, [modelArch]);
 
-  const numTopCards = useMemo(() => {
-    let count = 4; // job settings, model config, target config, save config
-    if (modelArch?.additionalSections?.includes('model.multistage')) {
-      count += 1; // add multistage card
-    }
-    if (!disableSections.includes('model.quantize')) {
-      count += 1; // add quantization card
-    }
-    if (!disableSections.includes('slider')) {
-      count += 1; // add slider card
-    }
-    return count;
-  }, [modelArch, disableSections]);
-
-  let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
-
-  if (numTopCards == 5) {
-    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6';
-  }
-  if (numTopCards == 6) {
-    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6 gap-6';
-  }
+  const topBarClass = 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-6';
+  const hasHelperLoraFields = modelArch?.additionalSections?.includes('model.lora_path') || false;
+  const topCardClass = 'xl:col-span-3';
+  const modelCardClass = hasHelperLoraFields ? 'xl:col-span-6' : topCardClass;
+  const secondaryTopCardClass = hasHelperLoraFields ? 'xl:col-span-4' : topCardClass;
 
   const numTrainingCols = useMemo(() => {
     let count = 4;
@@ -424,7 +409,7 @@ export default function SimpleJob({
           </div>
         )}
         <div className={topBarClass}>
-          <Card title="Job">
+          <Card title="Job" className={topCardClass}>
             <TextInput
               label="Training Name"
               value={jobConfig.config.name}
@@ -461,7 +446,7 @@ export default function SimpleJob({
           </Card>
 
           {/* Model Configuration Section */}
-          <Card title="Model">
+          <Card title="Model" className={modelCardClass}>
             <SelectInput
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
@@ -486,7 +471,7 @@ export default function SimpleJob({
             {modelArch?.additionalSections?.includes('model.lora_path') && (
               <>
                 <LoraMergeInput
-                  label="Base Merge LoRA Path"
+                  label="Base LoRA"
                   pathValue={jobConfig.config.process[0].model.lora_path}
                   strengthValue={jobConfig.config.process[0].model.lora_merge_strength}
                   pathKey="config.process[0].model.lora_path"
@@ -497,7 +482,7 @@ export default function SimpleJob({
                 />
                 {modelArch?.additionalSections?.includes('model.high_noise_lora_path') && (
                   <LoraMergeInput
-                    label="High-Noise LoRA Path"
+                    label="High-Noise LoRA"
                     pathValue={jobConfig.config.process[0].model.high_noise_lora_path}
                     strengthValue={jobConfig.config.process[0].model.high_noise_lora_merge_strength}
                     pathKey="config.process[0].model.high_noise_lora_path"
@@ -509,7 +494,7 @@ export default function SimpleJob({
                 )}
                 {modelArch?.additionalSections?.includes('model.low_noise_lora_path') && (
                   <LoraMergeInput
-                    label="Low-Noise LoRA Path"
+                    label="Low-Noise LoRA"
                     pathValue={jobConfig.config.process[0].model.low_noise_lora_path}
                     strengthValue={jobConfig.config.process[0].model.low_noise_lora_merge_strength}
                     pathKey="config.process[0].model.low_noise_lora_path"
@@ -596,7 +581,7 @@ export default function SimpleJob({
             )}
           </Card>
           {disableSections.includes('model.quantize') ? null : (
-            <Card title="Quantization">
+            <Card title="Quantization" className={topCardClass}>
               <SelectInput
                 label="Transformer"
                 value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
@@ -628,7 +613,7 @@ export default function SimpleJob({
             </Card>
           )}
           {modelArch?.additionalSections?.includes('model.multistage') && (
-            <Card title="Multistage">
+            <Card title="Multistage" className={secondaryTopCardClass}>
               <FormGroup label="Stages to Train" docKey={'model.multistage'}>
                 <Checkbox
                   label="High Noise"
@@ -675,9 +660,88 @@ export default function SimpleJob({
                   )}
                 </FormGroup>
               )}
+              {modelArch?.additionalSections?.includes('model.image_i2v_clip_training') && (
+                <FormGroup
+                  label="Image Clip Training"
+                  className="pt-2"
+                  docKey="config.process[0].model.model_kwargs.image_i2v_clip_training"
+                >
+                  <Checkbox
+                    label="Synthetic Clips"
+                    checked={jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_training || false}
+                    onChange={value => {
+                      setJobConfig(value, 'config.process[0].model.model_kwargs.image_i2v_clip_training');
+                      if (value) {
+                        const clipFrames =
+                          jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_num_frames ?? 5;
+                        setJobConfig(clipFrames, 'config.process[0].sample.num_frames');
+                        jobConfig.config.process[0].datasets.forEach((_, i) => {
+                          setJobConfig(1, `config.process[0].datasets[${i}].num_frames`);
+                          setJobConfig(false, `config.process[0].datasets[${i}].cache_latents_to_disk`);
+                        });
+                      }
+                    }}
+                    docKey="config.process[0].model.model_kwargs.image_i2v_clip_training"
+                  />
+                  {jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_training && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <SliderInput
+                        label="Clip Steps %"
+                        value={Math.round(
+                          (jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_training_prob ?? 0.25) * 100,
+                        )}
+                        onChange={value =>
+                          setJobConfig(
+                            value * 0.01,
+                            'config.process[0].model.model_kwargs.image_i2v_clip_training_prob',
+                          )
+                        }
+                        min={0}
+                        max={100}
+                        step={1}
+                        docKey="config.process[0].model.model_kwargs.image_i2v_clip_training_prob"
+                      />
+                      <NumberInput
+                        label="Clip Frames"
+                        value={jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_num_frames ?? 5}
+                        onChange={value => {
+                          setJobConfig(value, 'config.process[0].model.model_kwargs.image_i2v_clip_num_frames');
+                          setJobConfig(value, 'config.process[0].sample.num_frames');
+                        }}
+                        min={5}
+                        step={4}
+                        docKey="config.process[0].model.model_kwargs.image_i2v_clip_num_frames"
+                      />
+                      <NumberInput
+                        label="Blur Sigma"
+                        value={jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_blur_sigma ?? 24.0}
+                        onChange={value =>
+                          setJobConfig(value, 'config.process[0].model.model_kwargs.image_i2v_clip_blur_sigma')
+                        }
+                        min={0}
+                        step={0.5}
+                        docKey="config.process[0].model.model_kwargs.image_i2v_clip_blur_sigma"
+                      />
+                      <NumberInput
+                        label="Downscale Factor"
+                        value={
+                          jobConfig.config.process[0].model.model_kwargs?.image_i2v_clip_downscale_factor ?? 0.0625
+                        }
+                        onChange={value =>
+                          setJobConfig(value, 'config.process[0].model.model_kwargs.image_i2v_clip_downscale_factor')
+                        }
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        docKey="config.process[0].model.model_kwargs.image_i2v_clip_downscale_factor"
+                      />
+                    </div>
+                  )}
+                </FormGroup>
+              )}
             </Card>
           )}
-          <Card title="Target">
+          <Card title="Target" className={secondaryTopCardClass}>
             <SelectInput
               label="Target Type"
               value={jobConfig.config.process[0].network?.type ?? 'lora'}
@@ -734,7 +798,7 @@ export default function SimpleJob({
             )}
           </Card>
           {!disableSections.includes('slider') && (
-            <Card title="Slider">
+            <Card title="Slider" className={secondaryTopCardClass}>
               <TextInput
                 label="Target Class"
                 className=""
@@ -765,7 +829,7 @@ export default function SimpleJob({
               />
             </Card>
           )}
-          <Card title="Save">
+          <Card title="Save" className={secondaryTopCardClass}>
             <SelectInput
               label="Data Type"
               value={jobConfig.config.process[0].save.dtype}

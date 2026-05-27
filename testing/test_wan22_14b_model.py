@@ -10,7 +10,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import extensions_built_in.diffusion_models.wan22.wan22_14b_model as wan22_module
 
-from extensions_built_in.diffusion_models.wan22.wan22_14b_model import Wan2214bModel
+from extensions_built_in.diffusion_models.wan22.wan22_14b_model import (
+    Wan2214bModel,
+    boundary_ratio_t2v,
+)
 
 
 PLAIN_LORA_KEY = "diffusion_model.layers.0.attention.to_k.lora_A.weight"
@@ -44,6 +47,12 @@ def _make_model(
 
 def _tensor_dict(key):
     return {key: torch.zeros(1)}
+
+
+def test_t2v_multistage_boundaries_use_t2v_boundary():
+    model = object.__new__(Wan2214bModel)
+
+    assert model._get_wan22_multistage_boundaries() == [boundary_ratio_t2v, 0.0]
 
 
 def test_single_stage_inference_ignores_directory_names():

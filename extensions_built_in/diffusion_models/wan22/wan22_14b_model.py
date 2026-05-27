@@ -168,6 +168,7 @@ class Wan2214bModel(Wan21):
     arch = "wan22_14b"
     _wan_generation_scheduler_config = scheduler_configUniPC
     _wan_expand_timesteps = False
+    _wan_boundary_ratio = boundary_ratio_t2v
     _wan_vae_path = "ai-toolkit/wan2.1-vae"
 
     def __init__(
@@ -193,8 +194,11 @@ class Wan2214bModel(Wan21):
 
         self.is_multistage = True
         # multistage boundaries split the models up when sampling timesteps
-        # for wan 2.2 14b. the timesteps are 1000-875 for transformer 1 and 875-0 for transformer 2
-        self.multistage_boundaries: List[float] = [0.875, 0.0]
+        # for wan 2.2 14b. the timesteps are 1000-boundary for transformer 1
+        # and boundary-0 for transformer 2. T2V and I2V use different boundaries.
+        self.multistage_boundaries: List[float] = (
+            self._get_wan22_multistage_boundaries()
+        )
 
         self.train_high_noise = model_config.model_kwargs.get("train_high_noise", True)
         self.train_low_noise = model_config.model_kwargs.get("train_low_noise", True)
@@ -213,6 +217,9 @@ class Wan2214bModel(Wan21):
         # if we are only training one or the other, the target LoRA modules will be the wan transformer class
         if not self.train_high_noise or not self.train_low_noise:
             self.target_lora_modules = ["WanTransformer3DModel"]
+
+    def _get_wan22_multistage_boundaries(self) -> List[float]:
+        return [self._wan_boundary_ratio, 0.0]
 
     @property
     def max_step_saves_to_keep_multiplier(self):
@@ -904,7 +911,7 @@ class Wan2214bModel(Wan21):
             transformer_2=transformer_2,
             torch_dtype=self.torch_dtype,
             device=self.device_torch,
-            boundary_ratio=boundary_ratio_t2v,
+            boundary_ratio=self._wan_boundary_ratio,
             low_vram=self.model_config.low_vram,
         )
 
@@ -965,8 +972,7 @@ class Wan2214bModel(Wan21):
             expand_timesteps=self._wan_expand_timesteps,
             device=self.device_torch,
             aggressive_offload=self.model_config.low_vram,
-            # todo detect if it is i2v or t2v
-            boundary_ratio=boundary_ratio_t2v,
+            boundary_ratio=self._wan_boundary_ratio,
         )
 
         # pipeline = pipeline.to(self.device_torch)

@@ -84,7 +84,9 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
         // ignore
       }
     } catch (error) {
-      console.warn('macstats not available:', error);
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'MODULE_NOT_FOUND') {
+        console.warn('macstats failed:', error);
+      }
     }
 
     return { name: gpuName, memUsed, memTotal, gpuLoad, temperature, fanSpeed, powerDraw };
@@ -248,4 +250,3 @@ async function getGpuStats(isWindows: boolean) {
 
   return gpus;
 }
-
