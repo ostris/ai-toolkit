@@ -22,7 +22,7 @@ def get_bucket_for_image_size(
 
     target_pixels = min(total_pixels, max_pixels)
 
-    scaler = target_pixels / total_pixels
+    scaler = (target_pixels / total_pixels) ** 0.5
     w_raw = (width * scaler) / divisibility
     h_raw = (height * scaler) / divisibility
 
