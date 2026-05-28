@@ -199,14 +199,15 @@ class Wan2214bI2VModel(Wan2214bModel):
             return {}
 
         images = images.to(self.device_torch, dtype=self.torch_dtype)
-        clip_tensor = images.unsqueeze(1).repeat(
-            1,
+        clip_tensor = images.unsqueeze(1).expand(
+            -1,
             self.image_i2v_clip_num_frames,
-            1,
-            1,
-            1,
+            -1,
+            -1,
+            -1,
         )
         clip_latent = self.encode_images(clip_tensor)
+        del clip_tensor
         condition = self.make_image_i2v_clip_conditioning(
             images,
             blur_sigma=self.image_i2v_clip_blur_sigma,
@@ -218,6 +219,7 @@ class Wan2214bI2VModel(Wan2214bModel):
             first_frame=condition,
             vae=self.vae,
         )
+        del condition
         self._offload_vae_after_encode()
         return {
             "i2v_clip_latent": clip_latent,

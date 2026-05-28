@@ -1952,10 +1952,15 @@ class LatentCachingMixin:
                         latent = self.sd.encode_images(imgs).squeeze(0)
                         if to_disk:
                             state_dict['latent'] = latent.clone().detach().cpu()
+                        if not to_memory:
+                            del latent
+                            latent = None
+                            flush()
                         if hasattr(self.sd, "get_image_i2v_clip_cache_tensors"):
                             i2v_clip_tensors = self.sd.get_image_i2v_clip_cache_tensors(imgs)
                             i2v_clip_latent = i2v_clip_tensors.get('i2v_clip_latent', None)
                             i2v_clip_condition_latent = i2v_clip_tensors.get('i2v_clip_condition_latent', None)
+                            del i2v_clip_tensors
                             if i2v_clip_latent is not None:
                                 i2v_clip_latent = i2v_clip_latent.squeeze(0)
                             if i2v_clip_condition_latent is not None:
@@ -1964,6 +1969,12 @@ class LatentCachingMixin:
                                 state_dict['i2v_clip_latent'] = i2v_clip_latent.clone().detach().cpu()
                             if to_disk and i2v_clip_condition_latent is not None:
                                 state_dict['i2v_clip_condition_latent'] = i2v_clip_condition_latent.clone().detach().cpu()
+                            if not to_memory:
+                                del i2v_clip_latent
+                                del i2v_clip_condition_latent
+                                i2v_clip_latent = None
+                                i2v_clip_condition_latent = None
+                                flush()
                     except Exception as e:
                         print_acc(f"Error processing image: {file_item.path}")
                         print_acc(f"Error: {str(e)}")
