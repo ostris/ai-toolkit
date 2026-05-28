@@ -60,26 +60,39 @@ class DiffusionTrainer(SDTrainer):
         while True:
             try:
                 if self.should_stop():
-                    # Mark and update status (non-blocking; uses existing infra)
-                    self.is_stopping = True
-                    self._run_async_operation(
-                        self._update_status("stopped", "Job stopped (remote)")
-                    )
-                    # Best-effort flush pending async ops
-                    try:
-                        asyncio.run(self.wait_for_all_async())
-                    except RuntimeError:
-                        pass
-                    # Try to stop DB thread pool quickly
-                    try:
-                        self.thread_pool.shutdown(wait=False, cancel_futures=True)
-                    except TypeError:
-                        self.thread_pool.shutdown(wait=False)
-                    print("")
-                    print("****************************************************")
-                    print("    Stop signal received; terminating process.      ")
-                    print("****************************************************")
-                    os.kill(os.getpid(), signal.SIGINT)
+                    # Check if save_now is also set — if so, DON'T send SIGINT
+                    # Let end_step_hook handle the stop naturally at step end
+                    if self.should_save():
+                        # save_now is set: let the training loop complete the current step,
+                        # save checkpoint via maybe_save(), then stop via maybe_stop()
+                        print("")
+                        print("****************************************************")
+                        print("    Save+Stop requested — waiting for step end.     ")
+                        print("****************************************************")
+                        # Just mark stopping, don't send SIGINT
+                        self.is_stopping = True
+                        self._run_async_operation(
+                            self._update_status("running", "Saving checkpoint...")
+                        )
+                    else:
+                        # Normal stop (no checkpoint save needed) — send SIGINT for quick termination
+                        self.is_stopping = True
+                        self._run_async_operation(
+                            self._update_status("stopped", "Job stopped (remote)")
+                        )
+                        try:
+                            asyncio.run(self.wait_for_all_async())
+                        except RuntimeError:
+                            pass
+                        try:
+                            self.thread_pool.shutdown(wait=False, cancel_futures=True)
+                        except TypeError:
+                            self.thread_pool.shutdown(wait=False)
+                        print("")
+                        print("****************************************************")
+                        print("    Stop signal received; terminating process.      ")
+                        print("****************************************************")
+                        os.kill(os.getpid(), signal.SIGINT)
                 time.sleep(interval_sec)
             except Exception:
                 time.sleep(interval_sec)
@@ -318,8 +331,8 @@ class DiffusionTrainer(SDTrainer):
         super(DiffusionTrainer, self).end_step_hook()
         if self.is_ui_trainer:
             self.update_step()
-            self.maybe_stop()
             self.maybe_save()
+            self.maybe_stop()
 
     def hook_before_model_load(self):
         super().hook_before_model_load()
@@ -366,7 +379,7 @@ class DiffusionTrainer(SDTrainer):
         self.update_status("running", "Training")
 
     def save(self, step=None):
-        self.maybe_stop()
+        # Always let the save complete — don't check stop before saving
         self.update_status("running", "Saving model")
         super().save(step)
         self.maybe_stop()

@@ -52,26 +52,42 @@ class UITrainer(SDTrainer):
         while True:
             try:
                 if self.should_stop():
-                    # Mark and update status (non-blocking; uses existing infra)
-                    self.is_stopping = True
-                    self._run_async_operation(
-                        self._update_status("stopped", "Job stopped (remote)")
-                    )
-                    # Best-effort flush pending async ops
+                    # Check if save_now is set by querying the DB directly
+                    save_now = False
                     try:
-                        asyncio.run(self.wait_for_all_async())
-                    except RuntimeError:
-                        pass
-                    # Try to stop DB thread pool quickly
-                    try:
-                        self.thread_pool.shutdown(wait=False, cancel_futures=True)
-                    except TypeError:
-                        self.thread_pool.shutdown(wait=False)
-                    print("")
-                    print("****************************************************")
-                    print("    Stop signal received; terminating process.      ")
-                    print("****************************************************")
-                    os.kill(os.getpid(), signal.SIGINT)
+                        with self._db_connect() as conn:
+                            cur = conn.cursor()
+                            cur.execute("SELECT save_now FROM Job WHERE id = ?", (self.job_id,))
+                            row = cur.fetchone()
+                            save_now = row is not None and row[0] == 1
+                    except Exception:
+                        save_now = False
+
+                    if save_now:
+                        # save_now is set: let end_step_hook handle it naturally
+                        self.is_stopping = True
+                        self._run_async_operation(
+                            self._update_status("running", "Saving checkpoint...")
+                        )
+                    else:
+                        # Normal stop (no checkpoint save needed) — send SIGINT for quick termination
+                        self.is_stopping = True
+                        self._run_async_operation(
+                            self._update_status("stopped", "Job stopped (remote)")
+                        )
+                        try:
+                            asyncio.run(self.wait_for_all_async())
+                        except RuntimeError:
+                            pass
+                        try:
+                            self.thread_pool.shutdown(wait=False, cancel_futures=True)
+                        except TypeError:
+                            self.thread_pool.shutdown(wait=False)
+                        print("")
+                        print("****************************************************")
+                        print("    Stop signal received; terminating process.      ")
+                        print("****************************************************")
+                        os.kill(os.getpid(), signal.SIGINT)
                 time.sleep(interval_sec)
             except Exception:
                 time.sleep(interval_sec)
