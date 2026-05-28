@@ -62,7 +62,7 @@ class ZImageModel(BaseModel):
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
     def get_bucket_divisibility(self):
-        return 16 * 2  # 16 for the VAE, 2 for patch size
+        return 8 * 2  # 8 for the VAE, 2 for patch size
 
     def load_training_adapter(self, transformer: ZImageTransformer2DModel):
         self.print_and_status_update("Loading assistant LoRA")
