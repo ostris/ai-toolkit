@@ -1,3 +1,4 @@
+import math
 from typing import TypedDict
 
 
@@ -22,7 +23,26 @@ def get_bucket_for_image_size(
     target_pixels = min(total_pixels, max_pixels)
 
     scaler = target_pixels / total_pixels
-    new_width = int(round((width * scaler) / divisibility) * divisibility)
-    new_height = int(round((height * scaler) / divisibility) * divisibility)
+    w_raw = (width * scaler) / divisibility
+    h_raw = (height * scaler) / divisibility
+
+    candidates = [
+        (math.floor(w_raw) * divisibility, math.floor(h_raw) * divisibility),
+        (math.floor(w_raw) * divisibility, math.ceil(h_raw) * divisibility),
+        (math.ceil(w_raw) * divisibility, math.floor(h_raw) * divisibility),
+        (math.ceil(w_raw) * divisibility, math.ceil(h_raw) * divisibility),
+    ]
+    capped = [(w, h) for w, h in candidates if w > 0 and h > 0 and w * h <= max_pixels]
+    if not capped:
+        capped = [
+            (
+                max(divisibility, math.floor(w_raw) * divisibility),
+                max(divisibility, math.floor(h_raw) * divisibility),
+            )
+        ]
+
+    new_width, new_height = min(
+        capped, key=lambda wh: abs(wh[0] * wh[1] - target_pixels)
+    )
 
     return {"width": new_width, "height": new_height}
