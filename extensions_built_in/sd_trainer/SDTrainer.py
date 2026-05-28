@@ -268,7 +268,11 @@ class SDTrainer(BaseSDTrainProcess):
         # move vae to device if we did not cache latents
         if not self.is_latents_cached:
             self.sd.vae.eval()
-            self.sd.vae.to(self.device_torch)
+            if self.model_config.low_vram:
+                self.sd.vae.to("cpu")
+                flush()
+            else:
+                self.sd.vae.to(self.device_torch)
         else:
             # offload it. Already cached
             self.sd.vae.to('cpu')
@@ -1532,22 +1536,22 @@ class SDTrainer(BaseSDTrainProcess):
                         with torch.set_grad_enabled(False):
                             if batch.prompt_embeds is not None:
                                 # use the cached embeds
-                                conditional_embeds = batch.prompt_embeds.clone().detach().to(
+                                conditional_embeds = batch.prompt_embeds.detach().to(
                                     self.device_torch, dtype=dtype
                                 )
                             else:
-                                embeds_to_use = self.cached_blank_embeds.clone().detach().to(
+                                embeds_to_use = self.cached_blank_embeds.detach().to(
                                     self.device_torch, dtype=dtype
                                 )
                                 if self.cached_trigger_embeds is not None and not is_reg:
-                                    embeds_to_use = self.cached_trigger_embeds.clone().detach().to(
+                                    embeds_to_use = self.cached_trigger_embeds.detach().to(
                                         self.device_torch, dtype=dtype
                                     )
                                 conditional_embeds = concat_prompt_embeds(
                                     [embeds_to_use] * noisy_latents.shape[0]
                                 )
                             if self.train_config.do_cfg:
-                                unconditional_embeds = self.cached_blank_embeds.clone().detach().to(
+                                unconditional_embeds = self.cached_blank_embeds.detach().to(
                                     self.device_torch, dtype=dtype
                                 )
                                 unconditional_embeds = concat_prompt_embeds(
@@ -1818,7 +1822,7 @@ class SDTrainer(BaseSDTrainProcess):
                             prior_embeds_to_use = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
                         
                         if self.train_config.blank_prompt_preservation:
-                            blank_embeds = self.cached_blank_embeds.clone().detach().to(
+                            blank_embeds = self.cached_blank_embeds.detach().to(
                                 self.device_torch, dtype=dtype
                             )
                             prior_embeds_to_use = concat_prompt_embeds(
@@ -2023,7 +2027,7 @@ class SDTrainer(BaseSDTrainProcess):
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
                             elif self.train_config.blank_prompt_preservation:
-                                blank_embeds = self.cached_blank_embeds.clone().detach().to(
+                                blank_embeds = self.cached_blank_embeds.detach().to(
                                     self.device_torch, dtype=dtype
                                 )
                                 preservation_embeds = concat_prompt_embeds(

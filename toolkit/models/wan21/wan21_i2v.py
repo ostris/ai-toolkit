@@ -505,13 +505,18 @@ class Wan21I2V(Wan21):
             image_embeds_full = self.image_encoder(preprocessed_frames, output_hidden_states=True)
             image_embeds = image_embeds_full.hidden_states[-2]
             image_embeds = image_embeds.to(self.device_torch, dtype=self.torch_dtype)
+            if self.model_config.low_vram:
+                self.image_encoder.to("cpu")
+                flush()
             
             # Add conditioning using the standalone function
+            self._ensure_vae_on_device(latent_model_input.device)
             conditioned_latent = add_first_frame_conditioning(
                 latent_model_input=latent_model_input,
                 first_frame=first_frames,
                 vae=self.vae
             )
+            self._offload_vae_after_encode()
         
         noise_pred = self.model(
             hidden_states=conditioned_latent,

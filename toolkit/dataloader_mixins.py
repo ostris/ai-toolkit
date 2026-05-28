@@ -1776,11 +1776,14 @@ class LatentCachingFileItemDTOMixin:
         self._encoded_latent: Union[torch.Tensor, None] = None
         self._cached_first_frame_latent: Union[torch.Tensor, None] = None
         self._cached_audio_latent: Union[torch.Tensor, None] = None
+        self._cached_i2v_clip_latent: Union[torch.Tensor, None] = None
+        self._cached_i2v_clip_condition_latent: Union[torch.Tensor, None] = None
         self._latent_path: Union[str, None] = None
         self.is_latent_cached = False
         self.is_caching_to_disk = False
         self.is_caching_to_memory = False
         self.latent_load_device = 'cpu'
+        self.latent_cache_extra = kwargs.get('latent_cache_extra', None)
         # todo, increment this if we change the latent format to invalidate cache
         self.latent_version = 1
 
@@ -1820,6 +1823,8 @@ class LatentCachingFileItemDTOMixin:
                 item["audio_normalize"] = True
             if self.dataset_config.audio_preserve_pitch:
                 item["audio_preserve_pitch"] = True
+        if self.latent_cache_extra:
+            item["latent_cache_extra"] = self.latent_cache_extra
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
@@ -1846,6 +1851,8 @@ class LatentCachingFileItemDTOMixin:
                 self._encoded_latent = None
                 self._cached_first_frame_latent = None
                 self._cached_audio_latent = None
+                self._cached_i2v_clip_latent = None
+                self._cached_i2v_clip_condition_latent = None
             else:
                 # move it back to cpu
                 self._encoded_latent = self._encoded_latent.to('cpu')
@@ -1853,6 +1860,10 @@ class LatentCachingFileItemDTOMixin:
                     self._cached_first_frame_latent = self._cached_first_frame_latent.to('cpu')
                 if self._cached_audio_latent is not None:
                     self._cached_audio_latent = self._cached_audio_latent.to('cpu')
+                if self._cached_i2v_clip_latent is not None:
+                    self._cached_i2v_clip_latent = self._cached_i2v_clip_latent.to('cpu')
+                if self._cached_i2v_clip_condition_latent is not None:
+                    self._cached_i2v_clip_condition_latent = self._cached_i2v_clip_condition_latent.to('cpu')
 
     def get_latent(self, device=None):
         if not self.is_latent_cached:
@@ -1869,6 +1880,10 @@ class LatentCachingFileItemDTOMixin:
                 self._cached_first_frame_latent = state_dict['first_frame_latent']
             if 'audio_latent' in state_dict:
                 self._cached_audio_latent = state_dict['audio_latent']
+            if 'i2v_clip_latent' in state_dict:
+                self._cached_i2v_clip_latent = state_dict['i2v_clip_latent']
+            if 'i2v_clip_condition_latent' in state_dict:
+                self._cached_i2v_clip_condition_latent = state_dict['i2v_clip_condition_latent']
             if 'num_frames' in state_dict:
                 self.num_frames = int(state_dict['num_frames'].item())
         return self._encoded_latent
@@ -1915,6 +1930,10 @@ class LatentCachingMixin:
                             file_item._cached_first_frame_latent = state_dict['first_frame_latent'].to('cpu', dtype=self.sd.torch_dtype)
                         if 'audio_latent' in state_dict:
                             file_item._cached_audio_latent = state_dict['audio_latent'].to('cpu', dtype=self.sd.torch_dtype)
+                        if 'i2v_clip_latent' in state_dict:
+                            file_item._cached_i2v_clip_latent = state_dict['i2v_clip_latent'].to('cpu', dtype=self.sd.torch_dtype)
+                        if 'i2v_clip_condition_latent' in state_dict:
+                            file_item._cached_i2v_clip_condition_latent = state_dict['i2v_clip_condition_latent'].to('cpu', dtype=self.sd.torch_dtype)
                 else:
                     # not saved to disk, calculate
                     # load the image first
@@ -1924,6 +1943,8 @@ class LatentCachingMixin:
                     state_dict = OrderedDict()
                     first_frame_latent = None
                     audio_latent = None
+                    i2v_clip_latent = None
+                    i2v_clip_condition_latent = None
                     frames = None
                     # add batch dimension
                     try:
@@ -1931,6 +1952,18 @@ class LatentCachingMixin:
                         latent = self.sd.encode_images(imgs).squeeze(0)
                         if to_disk:
                             state_dict['latent'] = latent.clone().detach().cpu()
+                        if hasattr(self.sd, "get_image_i2v_clip_cache_tensors"):
+                            i2v_clip_tensors = self.sd.get_image_i2v_clip_cache_tensors(imgs)
+                            i2v_clip_latent = i2v_clip_tensors.get('i2v_clip_latent', None)
+                            i2v_clip_condition_latent = i2v_clip_tensors.get('i2v_clip_condition_latent', None)
+                            if i2v_clip_latent is not None:
+                                i2v_clip_latent = i2v_clip_latent.squeeze(0)
+                            if i2v_clip_condition_latent is not None:
+                                i2v_clip_condition_latent = i2v_clip_condition_latent.squeeze(0)
+                            if to_disk and i2v_clip_latent is not None:
+                                state_dict['i2v_clip_latent'] = i2v_clip_latent.clone().detach().cpu()
+                            if to_disk and i2v_clip_condition_latent is not None:
+                                state_dict['i2v_clip_condition_latent'] = i2v_clip_condition_latent.clone().detach().cpu()
                     except Exception as e:
                         print_acc(f"Error processing image: {file_item.path}")
                         print_acc(f"Error: {str(e)}")
@@ -1972,6 +2005,10 @@ class LatentCachingMixin:
                             file_item._cached_first_frame_latent = first_frame_latent.to('cpu', dtype=self.sd.torch_dtype)
                         if audio_latent is not None:
                             file_item._cached_audio_latent = audio_latent.to('cpu', dtype=self.sd.torch_dtype)
+                        if i2v_clip_latent is not None:
+                            file_item._cached_i2v_clip_latent = i2v_clip_latent.to('cpu', dtype=self.sd.torch_dtype)
+                        if i2v_clip_condition_latent is not None:
+                            file_item._cached_i2v_clip_condition_latent = i2v_clip_condition_latent.to('cpu', dtype=self.sd.torch_dtype)
 
                     del imgs
                     del latent
@@ -1980,6 +2017,8 @@ class LatentCachingMixin:
                     del state_dict
                     del first_frame_latent
                     del audio_latent
+                    del i2v_clip_latent
+                    del i2v_clip_condition_latent
                     file_item.cleanup()
 
                 file_item.is_latent_cached = True

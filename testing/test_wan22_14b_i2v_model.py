@@ -366,7 +366,7 @@ def test_image_clip_num_frames_normalizes_to_wan_frame_count():
     assert Wan2214bI2VModel._normalize_clip_num_frames(81) == 81
 
 
-def test_image_clip_training_rejects_cached_single_image_latents():
+def test_image_clip_training_rejects_cached_single_image_latents_without_clip_cache():
     model = _make_i2v_model()
     model.image_i2v_clip_training = True
     model.image_i2v_clip_training_prob = 1.0
@@ -377,8 +377,32 @@ def test_image_clip_training_rejects_cached_single_image_latents():
         dataset_config=SimpleNamespace(num_frames=1),
     )
 
-    with pytest.raises(ValueError, match="image_i2v_clip_training cannot be used"):
+    with pytest.raises(ValueError, match="needs refreshed cached latents"):
         model.preprocess_training_batch(batch)
+
+
+def test_image_clip_training_uses_cached_clip_latents():
+    model = _make_i2v_model()
+    model.image_i2v_clip_training = True
+    model.image_i2v_clip_training_prob = 1.0
+    model.image_i2v_clip_num_frames = 9
+    clip_latents = torch.randn(1, 16, 3, 2, 2)
+    clip_condition_latents = torch.randn(1, 20, 3, 2, 2)
+    batch = SimpleNamespace(
+        tensor=None,
+        latents=torch.randn(1, 16, 1, 2, 2),
+        i2v_clip_latents=clip_latents,
+        i2v_clip_condition_latents=clip_condition_latents,
+        i2v_condition_latents=None,
+        num_frames=1,
+        dataset_config=SimpleNamespace(num_frames=1),
+    )
+
+    processed = model.preprocess_training_batch(batch)
+
+    assert processed.latents is clip_latents
+    assert processed.i2v_condition_latents is clip_condition_latents
+    assert processed.num_frames == 9
 
 
 def test_image_clip_training_leaves_video_latents_alone():

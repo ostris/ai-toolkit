@@ -520,6 +520,10 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 temporal_compression = self.sd.vae.config.scale_factor_temporal
             if hasattr(self.sd.unet, 'config') and hasattr(self.sd.unet.config, 'temporal_compression_ratio'):
                 temporal_compression = self.sd.unet.config.temporal_compression_ratio
+
+        latent_cache_extra = None
+        if self.sd is not None and hasattr(self.sd, "get_latent_cache_extra"):
+            latent_cache_extra = self.sd.get_latent_cache_extra()
         
         bad_count = 0
         for file in tqdm(file_list):
@@ -536,6 +540,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     text_embedding_space_version=self.sd.model_config.arch if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
+                    latent_cache_extra=latent_cache_extra,
                     temporal_compression=temporal_compression,
                     sample_rate=self.sd.sample_rate if self.is_audio_model and self.sd is not None else 48000,
                 )

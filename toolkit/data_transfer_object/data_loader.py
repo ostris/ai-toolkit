@@ -191,6 +191,9 @@ class DataLoaderBatchDTO:
             self.unconditional_tensor: Union[torch.Tensor, None] = None
             self.unconditional_latents: Union[torch.Tensor, None] = None
             self.i2v_condition_tensor: Union[torch.Tensor, None] = None
+            self.i2v_condition_latents: Union[torch.Tensor, None] = None
+            self.i2v_clip_latents: Union[torch.Tensor, None] = None
+            self.i2v_clip_condition_latents: Union[torch.Tensor, None] = None
             self.clip_image_embeds: Union[List[dict], None] = None
             self.clip_image_embeds_unconditional: Union[List[dict], None] = None
             self.sigmas: Union[torch.Tensor, None] = (
@@ -248,6 +251,28 @@ class DataLoaderBatchDTO:
                             if x._cached_audio_latent is not None
                             else torch.zeros_like(
                                 self.file_items[0]._cached_audio_latent
+                            ).unsqueeze(0)
+                            for x in self.file_items
+                        ]
+                    )
+                if any([x._cached_i2v_clip_latent is not None for x in self.file_items]):
+                    self.i2v_clip_latents = torch.cat(
+                        [
+                            x._cached_i2v_clip_latent.unsqueeze(0)
+                            if x._cached_i2v_clip_latent is not None
+                            else torch.zeros_like(
+                                self.file_items[0]._cached_i2v_clip_latent
+                            ).unsqueeze(0)
+                            for x in self.file_items
+                        ]
+                    )
+                if any([x._cached_i2v_clip_condition_latent is not None for x in self.file_items]):
+                    self.i2v_clip_condition_latents = torch.cat(
+                        [
+                            x._cached_i2v_clip_condition_latent.unsqueeze(0)
+                            if x._cached_i2v_clip_condition_latent is not None
+                            else torch.zeros_like(
+                                self.file_items[0]._cached_i2v_clip_condition_latent
                             ).unsqueeze(0)
                             for x in self.file_items
                         ]
@@ -470,6 +495,10 @@ class DataLoaderBatchDTO:
         del self.first_frame_latents
         del self.audio_latents
         del self.prompt_embeds
+        del self.i2v_condition_tensor
+        del self.i2v_condition_latents
+        del self.i2v_clip_latents
+        del self.i2v_clip_condition_latents
         for file_item in self.file_items:
             file_item.cleanup()
 

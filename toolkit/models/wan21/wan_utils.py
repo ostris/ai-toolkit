@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 
-def add_first_frame_conditioning(
+def get_first_frame_conditioning(
     latent_model_input,
     first_frame,
     vae
@@ -16,7 +16,7 @@ def add_first_frame_conditioning(
         vae: VAE model for encoding the conditioning
 
     Returns:
-        conditioned_latent: The complete conditioned latent input (bs, 36, num_frames, height, width)
+        first_frame_condition: The I2V conditioning channels (bs, 20, num_frames, height, width)
     """
     device = latent_model_input.device
     dtype = latent_model_input.dtype
@@ -107,6 +107,31 @@ def add_first_frame_conditioning(
     # Combine conditioning with latent input
     first_frame_condition = torch.concat(
         [mask_lat_size, latent_condition], dim=1)
+
+    return first_frame_condition
+
+
+def add_first_frame_conditioning(
+    latent_model_input,
+    first_frame,
+    vae
+):
+    """
+    Adds first frame conditioning to a video diffusion model input.
+
+    Args:
+        latent_model_input: Original latent input (bs, channels, num_frames, height, width)
+        first_frame: Tensor of first frame to condition on (bs, channels, height, width)
+        vae: VAE model for encoding the conditioning
+
+    Returns:
+        conditioned_latent: The complete conditioned latent input (bs, 36, num_frames, height, width)
+    """
+    first_frame_condition = get_first_frame_conditioning(
+        latent_model_input=latent_model_input,
+        first_frame=first_frame,
+        vae=vae
+    )
     conditioned_latent = torch.cat(
         [latent_model_input, first_frame_condition], dim=1)
 

@@ -1,7 +1,10 @@
 import random
 import torch
 import torch.nn.functional as F
-from toolkit.models.wan21.wan_utils import add_first_frame_conditioning
+from toolkit.models.wan21.wan_utils import (
+    add_first_frame_conditioning,
+    get_first_frame_conditioning,
+)
 from toolkit.prompt_utils import PromptEmbeds
 from PIL import Image
 from toolkit.config_modules import GenerateImageConfig
@@ -178,6 +181,49 @@ class Wan2214bI2VModel(Wan2214bModel):
             < getattr(self, "image_i2v_clip_training_prob", 0.25)
         )
 
+    def get_latent_cache_extra(self) -> dict:
+        if not getattr(self, "image_i2v_clip_training", False):
+            return {}
+        return {
+            "image_i2v_clip_training": True,
+            "image_i2v_clip_num_frames": self.image_i2v_clip_num_frames,
+            "image_i2v_clip_blur_sigma": self.image_i2v_clip_blur_sigma,
+            "image_i2v_clip_downscale_factor": self.image_i2v_clip_downscale_factor,
+        }
+
+    @torch.no_grad()
+    def get_image_i2v_clip_cache_tensors(self, images: torch.Tensor) -> dict:
+        if not getattr(self, "image_i2v_clip_training", False):
+            return {}
+        if len(images.shape) != 4:
+            return {}
+
+        images = images.to(self.device_torch, dtype=self.torch_dtype)
+        clip_tensor = images.unsqueeze(1).repeat(
+            1,
+            self.image_i2v_clip_num_frames,
+            1,
+            1,
+            1,
+        )
+        clip_latent = self.encode_images(clip_tensor)
+        condition = self.make_image_i2v_clip_conditioning(
+            images,
+            blur_sigma=self.image_i2v_clip_blur_sigma,
+            downscale_factor=self.image_i2v_clip_downscale_factor,
+        )
+        self._ensure_vae_on_device(clip_latent.device)
+        condition_latent = get_first_frame_conditioning(
+            latent_model_input=clip_latent,
+            first_frame=condition,
+            vae=self.vae,
+        )
+        self._offload_vae_after_encode()
+        return {
+            "i2v_clip_latent": clip_latent,
+            "i2v_clip_condition_latent": condition_latent,
+        }
+
     def preprocess_training_batch(self, batch: DataLoaderBatchDTO) -> DataLoaderBatchDTO:
         if not getattr(self, "image_i2v_clip_training", False):
             return batch
@@ -185,11 +231,22 @@ class Wan2214bI2VModel(Wan2214bModel):
         if not self._is_single_frame_batch(batch):
             return batch
 
+        if not self._should_use_image_i2v_clip_training():
+            return batch
+
         if getattr(batch, "latents", None) is not None:
-            raise ValueError(
-                "Wan2.2 I2V image_i2v_clip_training cannot be used with cached latents. "
-                "Disable cache_latents/cache_latents_to_disk for image datasets using this mode."
-            )
+            if (
+                getattr(batch, "i2v_clip_latents", None) is None
+                or getattr(batch, "i2v_clip_condition_latents", None) is None
+            ):
+                raise ValueError(
+                    "Wan2.2 I2V image_i2v_clip_training needs refreshed cached latents. "
+                    "Delete the old _latent_cache entries and recache this dataset."
+                )
+            batch.latents = batch.i2v_clip_latents
+            batch.i2v_condition_latents = batch.i2v_clip_condition_latents
+            batch.num_frames = self.image_i2v_clip_num_frames
+            return batch
 
         images = getattr(batch, "tensor", None)
         if images is None:
@@ -198,9 +255,6 @@ class Wan2214bI2VModel(Wan2214bModel):
             images = images[:, 0]
         elif len(images.shape) != 4:
             raise ValueError(f"Unknown frame shape {images.shape}")
-
-        if not self._should_use_image_i2v_clip_training():
-            return batch
 
         batch.i2v_condition_tensor = self.make_image_i2v_clip_conditioning(
             images,
@@ -277,30 +331,34 @@ class Wan2214bI2VModel(Wan2214bModel):
             )  # normalize to [-1, 1]
             
             # Add conditioning using the standalone function
+            self._ensure_vae_on_device(latents.device)
             gen_config.latents = add_first_frame_conditioning(
                 latent_model_input=latents,
                 first_frame=first_frame_n1p1,
                 vae=self.vae
             )
 
-        output = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            height=height,
-            width=width,
-            num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            num_frames=gen_config.num_frames,
-            generator=generator,
-            return_dict=False,
-            output_type="pil",
-            **extra,
-        )[0]
+        try:
+            output = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                height=height,
+                width=width,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="pil",
+                **extra,
+            )[0]
+        finally:
+            self._offload_vae_after_encode()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
@@ -323,6 +381,7 @@ class Wan2214bI2VModel(Wan2214bModel):
         # videos come in (bs, num_frames, channels, height, width)
         # images come in (bs, channels, height, width)
         is_single_frame_batch = self._is_single_frame_batch(batch)
+        cached_condition_latents = getattr(batch, "i2v_condition_latents", None)
         should_use_degraded_image_conditioning = (
             is_single_frame_batch
             and not force_t2i_single_frame
@@ -330,7 +389,18 @@ class Wan2214bI2VModel(Wan2214bModel):
             and self._should_use_image_i2v_conditioning()
         )
 
-        if is_single_frame_batch and not should_use_degraded_image_conditioning:
+        if cached_condition_latents is not None:
+            conditioned_latent = torch.cat(
+                [
+                    latent_model_input,
+                    cached_condition_latents.to(
+                        latent_model_input.device,
+                        dtype=latent_model_input.dtype,
+                    ),
+                ],
+                dim=1,
+            )
+        elif is_single_frame_batch and not should_use_degraded_image_conditioning:
             target_in_channels = getattr(
                 getattr(self.model, "patch_embedding", None), "in_channels", None
             )
@@ -362,11 +432,13 @@ class Wan2214bI2VModel(Wan2214bModel):
                     first_frames = self.degrade_image_i2v_conditioning(first_frames)
 
                 # Add conditioning using the standalone function
+                self._ensure_vae_on_device(latent_model_input.device)
                 conditioned_latent = add_first_frame_conditioning(
                     latent_model_input=latent_model_input,
                     first_frame=first_frames,
                     vae=self.vae
                 )
+                self._offload_vae_after_encode()
 
         noise_pred = self.model(
             hidden_states=conditioned_latent,

@@ -198,29 +198,33 @@ class Wan225bModel(Wan21):
                 - 1.0
             )  # normalize to [-1, 1]
 
+            self._ensure_vae_on_device(latents.device)
             gen_config.latents, noise_mask = add_first_frame_conditioning_v22(
                 latent_model_input=latents, first_frame=first_frame_n1p1, vae=self.vae
             )
 
-        output = pipeline(
-            prompt_embeds=conditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            negative_prompt_embeds=unconditional_embeds.text_embeds.to(
-                self.device_torch, dtype=self.torch_dtype
-            ),
-            height=height,
-            width=width,
-            num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
-            latents=gen_config.latents,
-            num_frames=gen_config.num_frames,
-            generator=generator,
-            return_dict=False,
-            output_type="pil",
-            noise_mask=noise_mask,
-            **extra,
-        )[0]
+        try:
+            output = pipeline(
+                prompt_embeds=conditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                negative_prompt_embeds=unconditional_embeds.text_embeds.to(
+                    self.device_torch, dtype=self.torch_dtype
+                ),
+                height=height,
+                width=width,
+                num_inference_steps=gen_config.num_inference_steps,
+                guidance_scale=gen_config.guidance_scale,
+                latents=gen_config.latents,
+                num_frames=gen_config.num_frames,
+                generator=generator,
+                return_dict=False,
+                output_type="pil",
+                noise_mask=noise_mask,
+                **extra,
+            )[0]
+        finally:
+            self._offload_vae_after_encode()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
@@ -254,6 +258,7 @@ class Wan225bModel(Wan21):
                 elif len(frames.shape) == 5:
                     first_frames = frames[:, 0]
                     # Add conditioning using the standalone function
+                    self._ensure_vae_on_device(latent_model_input.device)
                     conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
                         latent_model_input=latent_model_input.to(
                             self.device_torch, self.torch_dtype
@@ -261,6 +266,7 @@ class Wan225bModel(Wan21):
                         first_frame=first_frames.to(self.device_torch, self.torch_dtype),
                         vae=self.vae,
                     )
+                    self._offload_vae_after_encode()
                 else:
                     raise ValueError(f"Unknown frame shape {frames.shape}")
 

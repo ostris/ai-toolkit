@@ -586,6 +586,17 @@ class Wan21(BaseModel):
         )[0]
         return noise_pred
 
+    def _ensure_vae_on_device(self, device=None):
+        if device is None:
+            device = self.vae_device_torch
+        if self.vae.device != torch.device(device):
+            self.vae.to(device)
+
+    def _offload_vae_after_encode(self):
+        if self.model_config.low_vram and self.vae.device != torch.device("cpu"):
+            self.vae.to("cpu")
+            flush()
+
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
@@ -610,8 +621,7 @@ class Wan21(BaseModel):
         if dtype is None:
             dtype = self.vae_torch_dtype
 
-        if self.vae.device == torch.device('cpu'):
-            self.vae.to(device)
+        self._ensure_vae_on_device(device)
         self.vae.eval()
         self.vae.requires_grad_(False)
 
@@ -652,8 +662,11 @@ class Wan21(BaseModel):
             latents.device, latents.dtype
         )
         latents = (latents - latents_mean) * latents_std
+        latents = latents.to(device, dtype=dtype)
 
-        return latents.to(device, dtype=dtype)
+        self._offload_vae_after_encode()
+
+        return latents
 
     def get_model_has_grad(self):
         return False
