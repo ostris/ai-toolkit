@@ -22,7 +22,7 @@ def get_bucket_for_image_size(
     target_pixels = min(total_pixels, max_pixels)
 
     scaler = target_pixels / total_pixels
-    new_width = int((width * scaler) // divisibility * divisibility)
-    new_height = int((height * scaler) // divisibility * divisibility)
+    new_width = int(round((width * scaler) / divisibility) * divisibility)
+    new_height = int(round((height * scaler) / divisibility) * divisibility)
 
     return {"width": new_width, "height": new_height}
