@@ -44,5 +44,15 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     };
   });
 
+  // include the optimizer state if it exists
+  const optimizerPath = path.join(jobFolder, 'optimizer.pt');
+  if (fs.existsSync(optimizerPath)) {
+    const stats = fs.statSync(optimizerPath);
+    fileObjects.push({
+      path: optimizerPath,
+      size: stats.size,
+    });
+  }
+
   return NextResponse.json({ files: fileObjects });
 }
