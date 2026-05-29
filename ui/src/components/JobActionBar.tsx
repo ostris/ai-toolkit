@@ -3,7 +3,7 @@ import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX } from 'luc
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, saveJobNow } from '@/utils/jobs';
+import { startJob, stopJob, saveAndStopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, saveJobNow } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
@@ -79,6 +79,26 @@ export default function JobActionBar({
           className={`ml-1 sm:ml-2 opacity-100`}
         >
           <Pause className={iconSizeClass} />
+        </Button>
+      )}
+      {canStop && (
+        <Button
+          onClick={() => {
+            if (!canStop) return;
+            openConfirm({
+              title: 'Stop & Save Checkpoint',
+              message: `This will stop the job "${job.name}" and save a checkpoint before terminating.`,
+              type: 'info',
+              confirmText: 'Stop & Save',
+              onConfirm: async () => {
+                await saveAndStopJob(job.id);
+                if (onRefresh) onRefresh();
+              },
+            });
+          }}
+          className={`ml-1 sm:ml-2 opacity-100`}
+        >
+          <Save className={iconSizeClass} />
         </Button>
       )}
       {!hideView && (
