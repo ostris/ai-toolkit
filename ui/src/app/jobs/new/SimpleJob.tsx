@@ -232,7 +232,7 @@ export default function SimpleJob({
         )}
         <div className={topBarClass}>
           <Card title="Job">
-            <TextInput
+            <TextAreaInput
               label="Training Name"
               value={jobConfig.config.name}
               docKey="config.name"
