@@ -133,14 +133,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                 controls={false}
               />
             ) : blobUrl ? (
-              <img
-                src={blobUrl}
-                alt={alt}
-                decoding="async"
-                className={`w-full h-full object-cover transition-opacity duration-300 ${
-                  loaded ? 'opacity-100' : 'opacity-0'
-                }`}
-              />
+              <img src={blobUrl} alt={alt} className="w-full h-full object-cover" />
             ) : null
           ) : null}
 

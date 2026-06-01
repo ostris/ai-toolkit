@@ -221,11 +221,8 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
             <img
               src={blobUrl}
               alt={alt}
-              decoding="async"
               onClick={onImageClick}
-              className={classNames('w-full h-full object-contain transition-opacity duration-300', {
-                'opacity-100': loaded,
-                'opacity-0': !loaded,
+              className={classNames('w-full h-full object-contain', {
                 'cursor-zoom-in': !!onImageClick,
               })}
             />
