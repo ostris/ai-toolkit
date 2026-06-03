@@ -12,7 +12,7 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install update uninstall _check-dest _deploy-new-files
+.PHONY: help install update uninstall zip _check-dest _deploy-new-files
 
 # ── Help ─────────────────────────────────────────────────
 help:
@@ -22,7 +22,21 @@ help:
 	@echo "  install     Installa la funzionalità export/import job"
 	@echo "  update      Aggiorna la funzionalità export/import job"
 	@echo "  uninstall   Rimuove la funzionalità export/import job"
+	@echo "  zip         Crea importexport-dist.zip con i file necessari all'installazione"
 	@echo ""
+
+# ── Zip ───────────────────────────────────────────────────
+zip:
+	@zip -r importexport-dist.zip \
+		Makefile \
+		patches/BaseSDTrainProcess.patch \
+		patches/next_config.patch \
+		patches/jobs_page.patch \
+		patches/JobActionBar.patch \
+		"ui/src/app/api/jobs/[jobID]/export/route.ts" \
+		"ui/src/app/api/jobs/import/route.ts" \
+		"ui/src/components/ImportJobModal.tsx"
+	@echo "✓ importexport-dist.zip creato"
 
 # ── Validazione percorso ──────────────────────────────────
 _check-dest:
