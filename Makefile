@@ -25,9 +25,11 @@ help:
 	@echo "  zip         Crea importexport-dist.zip con i file necessari all'installazione"
 	@echo ""
 
+OUT ?= .
+
 # ── Zip ───────────────────────────────────────────────────
 zip:
-	@zip -r importexport-dist.zip \
+	@zip -r "$(OUT)/importexport-dist.zip" \
 		Makefile \
 		patches/BaseSDTrainProcess.patch \
 		patches/next_config.patch \
@@ -36,7 +38,7 @@ zip:
 		"ui/src/app/api/jobs/[jobID]/export/route.ts" \
 		"ui/src/app/api/jobs/import/route.ts" \
 		"ui/src/components/ImportJobModal.tsx"
-	@echo "✓ importexport-dist.zip creato"
+	@echo "✓ $(OUT)/importexport-dist.zip creato"
 
 # ── Validazione percorso ──────────────────────────────────
 _check-dest:
