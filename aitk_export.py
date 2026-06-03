@@ -3,6 +3,7 @@
 Export an ai-toolkit job to a zip file (same format as the UI export).
 
 Usage:
+    python3 aitk_export.py                          # interactive: scegli il job da lista
     python3 aitk_export.py <job_name_or_id> [--out /path/to/output.zip] [--db /path/to/aitk_db.db]
 """
 
@@ -28,9 +29,33 @@ def find_job(conn, name_or_id):
     return row
 
 
+def pick_job_interactively(conn):
+    jobs = conn.execute(
+        "SELECT id, name, status, step FROM job ORDER BY rowid DESC"
+    ).fetchall()
+    if not jobs:
+        print("Nessun job trovato nel database.", file=sys.stderr)
+        sys.exit(1)
+    print()
+    print(f"  {'#':<4} {'Nome':<50} {'Stato':<12} {'Step'}")
+    print("  " + "-" * 80)
+    for i, j in enumerate(jobs, 1):
+        print(f"  {i:<4} {j['name']:<50} {j['status'] or '':<12} {j['step'] or 0}")
+    print()
+    while True:
+        try:
+            choice = input("Scegli il numero del job da esportare: ").strip()
+            idx = int(choice) - 1
+            if 0 <= idx < len(jobs):
+                return jobs[idx]
+            print(f"  Inserisci un numero tra 1 e {len(jobs)}")
+        except (ValueError, EOFError):
+            print("  Numero non valido.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Export an ai-toolkit job to zip")
-    parser.add_argument("job", help="Job name or ID")
+    parser.add_argument("job", nargs="?", help="Job name or ID (ometti per selezione interattiva)")
     parser.add_argument("--out", help="Output zip path (default: <job_name>_export.zip)")
     parser.add_argument("--db", help="Path to aitk_db.db", default=None)
     args = parser.parse_args()
@@ -51,10 +76,13 @@ def main():
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    job = find_job(conn, args.job)
-    if not job:
-        print(f"ERROR: job '{args.job}' not found.", file=sys.stderr)
-        sys.exit(1)
+    if args.job:
+        job = find_job(conn, args.job)
+        if not job:
+            print(f"ERROR: job '{args.job}' not found.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        job = pick_job_interactively(conn)
 
     training_folder = get_setting(conn, "TRAINING_FOLDER") or str(Path(db_path).parent / "output")
     datasets_root = get_setting(conn, "DATASETS_FOLDER") or str(Path(db_path).parent / "datasets")
