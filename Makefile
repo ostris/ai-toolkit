@@ -35,7 +35,8 @@ ZIP_FILES := Makefile \
 	ui/src/app/api/jobs/[jobID]/export/route.ts \
 	ui/src/app/api/jobs/import/route.ts \
 	ui/src/components/ImportJobModal.tsx \
-	aitk_export.py
+	aitk_export.py \
+	aitk_import.py
 
 # ── Zip ───────────────────────────────────────────────────
 zip:
