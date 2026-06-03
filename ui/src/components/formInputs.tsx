@@ -284,6 +284,8 @@ export const SelectInput = (props: SelectInputProps) => {
         isMulti={multiple}
         className="aitk-react-select-container"
         classNamePrefix="aitk-react-select"
+        menuPosition="fixed"
+        menuPlacement="auto"
         onChange={selected => {
           if (multiple) {
             const arr = (selected as { value: string }[] | null) ?? [];
