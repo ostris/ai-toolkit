@@ -110,17 +110,22 @@ def main():
     except Exception:
         pass
 
+    keys = job.keys()
+
+    def col(name, default=None):
+        return job[name] if name in keys else default
+
     manifest = {
         "version": 1,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "job": {
             "name": job["name"],
-            "gpu_ids": job["gpu_ids"],
+            "gpu_ids": col("gpu_ids"),
             "job_config": json.loads(job["job_config"]),
             "status": "stopped",
-            "step": job["step"],
-            "job_type": job["job_type"],
-            "job_ref": job["job_ref"] if "job_ref" in job.keys() else None,
+            "step": col("step", 0),
+            "job_type": col("job_type", "train"),
+            "job_ref": col("job_ref"),
         },
         "paths": {
             "outputFolder": job["name"] if has_output else None,
