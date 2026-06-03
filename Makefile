@@ -34,7 +34,8 @@ ZIP_FILES := Makefile \
 	patches/JobActionBar.patch \
 	ui/src/app/api/jobs/[jobID]/export/route.ts \
 	ui/src/app/api/jobs/import/route.ts \
-	ui/src/components/ImportJobModal.tsx
+	ui/src/components/ImportJobModal.tsx \
+	aitk_export.py
 
 # ── Zip ───────────────────────────────────────────────────
 zip:
