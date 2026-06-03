@@ -26,19 +26,25 @@ help:
 	@echo ""
 
 OUT ?= .
+ZIP_FILE := $(OUT)/importexport-dist.zip
+ZIP_FILES := Makefile \
+	patches/BaseSDTrainProcess.patch \
+	patches/next_config.patch \
+	patches/jobs_page.patch \
+	patches/JobActionBar.patch \
+	ui/src/app/api/jobs/[jobID]/export/route.ts \
+	ui/src/app/api/jobs/import/route.ts \
+	ui/src/components/ImportJobModal.tsx
 
 # ── Zip ───────────────────────────────────────────────────
 zip:
-	@zip -r "$(OUT)/importexport-dist.zip" \
-		Makefile \
-		patches/BaseSDTrainProcess.patch \
-		patches/next_config.patch \
-		patches/jobs_page.patch \
-		patches/JobActionBar.patch \
-		"ui/src/app/api/jobs/[jobID]/export/route.ts" \
-		"ui/src/app/api/jobs/import/route.ts" \
-		"ui/src/components/ImportJobModal.tsx"
-	@echo "✓ $(OUT)/importexport-dist.zip creato"
+	@if command -v zip > /dev/null 2>&1; then \
+		zip -r "$(ZIP_FILE)" $(ZIP_FILES); \
+	else \
+		python3 -c "import zipfile,sys; files=sys.argv[1:]; z=zipfile.ZipFile(files[0],'w',zipfile.ZIP_DEFLATED); [z.write(f) for f in files[1:]]; z.close()" \
+			"$(ZIP_FILE)" $(ZIP_FILES); \
+	fi
+	@echo "✓ $(ZIP_FILE) creato"
 
 # ── Validazione percorso ──────────────────────────────────
 _check-dest:
