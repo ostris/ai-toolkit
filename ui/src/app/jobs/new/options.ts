@@ -1,6 +1,6 @@
 import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
 import { defaultSliderConfig } from './jobConfig';
-import { defaultAudioSampleConfig, defaultSampleConfig } from '@/helpers/defaultSamples';
+import { defaultAudioSampleConfig, defaultSampleConfig, defaultIdeogramSamplesConfig } from '@/helpers/defaultSamples';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
@@ -935,7 +935,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv': [undefined, 16],
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].train.max_loss': [1.0, undefined],
-      'config.process[0].network.network_kwargs.ignore_if_contains': [['lm_head','patch_embed', 'visual'], []],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['lm_head', 'patch_embed', 'visual'], []],
       'config.process[0].network.transformer_only': [false, undefined],
       'config.process[0].sample.width': [2048, 1024],
       'config.process[0].sample.height': [2048, 1024],
@@ -978,6 +978,29 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
     ],
+  },
+  {
+    name: 'ideogram4',
+    label: 'Ideogram4',
+    group: 'experimental',
+    defaults: {
+      'config.process[0].model.name_or_path': ['ideogram-ai/ideogram-4-fp8', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample': [defaultIdeogramSamplesConfig, defaultSampleConfig],
+    },
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+    hasMultiLinePrompts: true,
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
