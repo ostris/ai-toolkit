@@ -412,52 +412,40 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A red-haired woman calmly playing chess at a wooden table in a sunlit public park during late afternoon, while a violent orange explosion erupts among distant trees behind her, creating a surreal contrast between serene focus and sudden chaos.",
-  "style_description": {
-    "aesthetics": "moody cinematic realism, sharp foreground focus with hazy atmospheric background, dramatic contrast",
-    "lighting": "warm low-angle afternoon sun from the right, intense orange glow from the distant blast adding a secondary warm rim light, long soft shadows",
-    "photo": "full-frame DSLR, 50mm lens, f/2.0, shallow depth of field with motion blur in the background blast",
-    "medium": "photography",
-    "color_palette": ["#1F3D1A", "#C9521E", "#E8B14C", "#9FB37A", "#3A2A1F", "#D9C9A8"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A 35mm film photograph of a red-haired woman in a green jacket playing chess at an outdoor park table, mid-move over a wooden board, while a fiery explosion erupts from a building in the distant background.",
   "compositional_deconstruction": {
-    "background": "An open green park in late afternoon, mown grass receding into the distance, a gravel path curving away to the right, scattered mature trees along the horizon under a hazy pale-blue sky. Atmospheric haze and drifting smoke soften the far distance, with sunlight filtering warmly across the open space to create depth between the near table and the far tree line.",
+    "background": "An urban public park on an overcast afternoon under a pale grey-blue sky, cool-neutral white balance. A grassy lawn with scattered fallen leaves stretches behind the foreground table, bordered by a paved walking path and a row of bare-branched trees. In the far distance, a multi-story stone building erupts in a large orange-and-yellow fireball with a thick black smoke plume rising and rolling outward, sending a faint haze across the upper sky. The blast is out of focus and far off, framed between the tree trunks.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [560, 120, 880, 430],
-        "desc": "A large explosion erupting among the distant trees in the upper-right background, a billowing fireball of orange and yellow flame with a rising column of dark grey-black smoke and debris flung outward. Soft-focused and motion-blurred to read as far away, casting a warm glow that bleeds into the surrounding haze.",
-        "color_palette": ["#C9521E", "#E8B14C", "#3A2A1F", "#7A6A55"]
+        "bbox": [
+          180,
+          90,
+          760,
+          520
+        ],
+        "desc": "Woman seated at a park chess table, leaning slightly forward mid-move. Long wavy red hair falling past her shoulders, fair skin with light freckles, focused expression looking down at the board. Olive-green canvas jacket over a cream knit top, dark jeans. Right hand reaching toward a chess piece, left hand resting on the table edge."
       },
       {
         "type": "obj",
-        "bbox": [40, 300, 360, 470],
-        "desc": "A cluster of mid-distance park trees along the left horizon, full green canopies catching warm afternoon light on their right edges, partially obscured by drifting smoke from the blast. Slightly soft-focused to sit in the midground behind the table.",
-        "color_palette": ["#1F3D1A", "#9FB37A", "#5C7A3A"]
+        "bbox": [
+          520,
+          300,
+          830,
+          720
+        ],
+        "desc": "Square wooden chessboard on a round concrete park table, set with a full arrangement of carved boxwood chess pieces in natural and dark-stained wood. A few captured pieces sit off to the side near the board's right edge, one black knight tipped on its side."
       },
       {
         "type": "obj",
-        "bbox": [180, 560, 820, 1000],
-        "desc": "A weathered wooden park table occupying the lower portion of the frame, viewed slightly from the side, grain and knots visible on the planks, warm sunlight raking across the surface from the right and casting a long shadow to the left. Sharp focus as the anchoring foreground surface.",
-        "color_palette": ["#5A3A22", "#8A6038", "#D9C9A8"]
-      },
-      {
-        "type": "obj",
-        "bbox": [340, 600, 680, 760],
-        "desc": "A checkered chessboard resting flat on the table in the lower-center of the frame, mid-game with carved wooden pieces casting small crisp shadows in the afternoon light, a few captured pieces set off to one side. Tilted slightly toward the viewer, in sharp focus.",
-        "color_palette": ["#E8E0CC", "#3A2A1F", "#8A6038"]
-      },
-      {
-        "type": "obj",
-        "bbox": [330, 250, 640, 760],
-        "desc": "A woman with vivid red hair seated at the far side of the table, center-left, leaning forward with one hand resting near a chess piece, her gaze fixed calmly downward on the board, fully absorbed and unaware of the chaos behind her. Wavy shoulder-length hair catching warm light and a faint glow from the distant fire, wearing a simple olive jacket, rendered in sharp focus as the primary subject.",
-        "color_palette": ["#B0301F", "#C9521E", "#6E7A4A", "#E2C2A0"]
-      },
-      {
-        "type": "obj",
-        "bbox": [680, 540, 880, 900],
-        "desc": "An empty weathered wooden chair on the near right side of the table, angled slightly outward as if its occupant just left, sunlight warming its right edge and a long shadow falling across the grass beside it. Slightly softer focus than the woman, in the right foreground.",
-        "color_palette": ["#5A3A22", "#8A6038", "#3A2A1F"]
+        "bbox": [
+          300,
+          540,
+          720,
+          760
+        ],
+        "desc": "Empty green-painted metal park chair with a slatted backrest on the far side of the chess table, facing the woman, slightly angled to the right."
       }
     ]
   }
@@ -467,46 +455,61 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A young woman in a knit beanie sits at a cozy café table on an overcast morning, cradling a warm coffee cup in both hands and gazing thoughtfully toward the window light, evoking a calm, intimate, contemplative mood.",
-  "style_description": {
-    "aesthetics": "moody cinematic lifestyle photography, sharp focus on subject, shallow depth of field with creamy bokeh",
-    "lighting": "soft diffused natural window light from the left, gentle cool daylight key with warm ambient fill from interior tungsten",
-    "photo": "50mm prime lens, f/1.8, slight film grain, DSLR full-frame",
-    "medium": "photography",
-    "color_palette": ["#3E2C20", "#A9876B", "#D8C4A8", "#6E5A48", "#C24A2E", "#E9E2D6"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A 35mm film photograph of a woman in a grey beanie holding a coffee cup while sitting at a wooden cafe table by a window, with a blurred cafe interior behind her.",
   "compositional_deconstruction": {
-    "background": "The blurred interior of a rustic café: warm wooden wall paneling and a softly out-of-focus window on the left spilling pale daylight, with hanging pendant lights and shelves of jars receding into a hazy bokeh on the right, creating a sense of warm enclosed depth.",
+    "background": "Interior of a small cafe shot in natural daylight with cool-neutral white balance. A large window occupies the left portion of the frame, soft diffused daylight falling across the scene. Exposed brick wall in warm reddish-brown tones runs along the back, partly out of focus. A wooden shelf mounted on the back wall holds a row of white ceramic mugs and a small potted trailing plant. Pendant lights with matte black shades hang from the ceiling, slightly blurred. The floor is wide-plank weathered oak. Distant blurred tables and chairs recede into the soft-focus background on the right side.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [40, 110, 360, 640],
-        "desc": "A tall frosted café window in the midground left, glowing with diffuse overcast daylight, condensation faintly softening its surface and acting as the primary light source washing across the scene.",
-        "color_palette": ["#E9E2D6", "#C9C0B2", "#9AA0A0"]
+        "bbox": [
+          180,
+          300,
+          820,
+          720
+        ],
+        "desc": "Woman sitting at a cafe table, facing slightly left toward the window. Light-medium skin tone, shoulder-length wavy auburn hair tucked under a ribbed grey wool beanie. Wearing a cream chunky-knit sweater with sleeves pushed to the forearms. Both hands wrapped around a coffee cup held near chest height, relaxed half-smile, gaze directed out the window."
       },
       {
         "type": "obj",
-        "bbox": [560, 230, 940, 600],
-        "desc": "A weathered wooden shelf along the back wall on the right, holding a few out-of-focus glass jars and a small potted plant, rendered as soft warm bokeh that anchors the depth behind the subject.",
-        "color_palette": ["#6E5A48", "#8B7152", "#4A3A2C"]
+        "bbox": [
+          460,
+          400,
+          640,
+          580
+        ],
+        "desc": "White ceramic cappuccino cup with a thin handle, held in the woman's hands near chest height. Pale foam visible at the rim with a simple leaf latte-art pattern."
       },
       {
         "type": "obj",
-        "bbox": [240, 250, 760, 1000],
-        "desc": "A young woman seated at the table, occupying the central-lower frame and turned slightly toward the window at left, wearing a chunky cream-and-rust knit beanie pushed back over wavy hair, an oversized oatmeal sweater, her shoulders relaxed and her gaze directed softly off-frame left, catching the cool window light along her cheek and jaw.",
-        "color_palette": ["#A9876B", "#D8C4A8", "#C24A2E", "#3E2C20"]
+        "bbox": [
+          700,
+          140,
+          1000,
+          900
+        ],
+        "desc": "Rectangular wooden cafe table in warm honey-toned oak, occupying the lower foreground. Visible grain along the surface, one rounded corner facing the camera."
       },
       {
         "type": "obj",
-        "bbox": [400, 600, 640, 850],
-        "desc": "A rounded ceramic coffee cup held in both of the woman's hands near her chest, foreground center, thin curl of steam rising from the dark surface, the warm interior light catching the glazed rim and her fingers wrapped snugly around it.",
-        "color_palette": ["#3E2C20", "#C9BBA6", "#7A5A40"]
+        "bbox": [
+          760,
+          180,
+          940,
+          420
+        ],
+        "desc": "Small folded paper menu card standing upright on the table to the lower left, plain off-white stock with a thin printed border."
       },
       {
-        "type": "obj",
-        "bbox": [180, 780, 880, 1000],
-        "desc": "A rustic dark-wood café table filling the foreground edge, its grain catching a soft sheen, with a faint coffee ring and a folded napkin resting near the bottom corner, grounding the composition.",
-        "color_palette": ["#4A3526", "#6E5238", "#2C1F16"]
+        "type": "text",
+        "bbox": [
+          800,
+          210,
+          910,
+          400
+        ],
+        "text": "MENU",
+        "desc": "Single word in small upright serif capitals, dark grey ink, centered on the front of the folded paper menu card on the table."
       }
     ]
   }
@@ -516,52 +519,94 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A confident horse works the decks as a DJ in a packed underground night club at peak hour, surrounded by laser beams and rolling fog, holding a martini glass in one hoof while the crowd glows in the haze.",
-  "style_description": {
-    "aesthetics": "high-energy nightlife photography, surreal and playful, deep shadows with neon punch, slight chromatic aberration",
-    "lighting": "low ambient darkness cut by saturated laser beams and colored wash from above, strobing key light on the subject, cool magenta and cyan rim light with warm amber spill",
-    "photo": "fisheye lens, ~8mm, exaggerated barrel distortion, f/2.8, slight motion blur in the haze, faint sensor grain",
-    "medium": "photography",
-    "color_palette": ["#0A0410", "#E0146E", "#16D6E8", "#7A1FB0", "#F2B705", "#1B0A2E"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A fish-eye lens photograph of a horse DJing behind turntables at a packed night club, holding a martini glass, surrounded by laser lights and drifting smoke-machine haze on a glowing dance floor.",
   "compositional_deconstruction": {
-    "background": "A dark, cavernous club interior with a low ceiling rig of moving heads and laser projectors, distant blurred crowd silhouettes packed toward a back bar, dense low-lying fog drifting across the floor, the whole space curved and stretched by the fisheye so vertical lines bow outward toward the frame edges.",
+    "background": "Interior of a dark night club shot through a fish-eye lens with strong barrel distortion bowing the edges of the frame. Black walls and low ceiling studded with mounted laser-light fixtures throwing crisscrossing green and magenta beams that cut through thick drifting haze from a smoke machine. Ambient lighting is dim with cool magenta and cyan washes pooling across a glossy black dance floor that reflects fragmented colored beams. A blurred simplified crowd of clubgoers fills the mid-distance, hands raised, rendered as dark silhouettes against the colored glow.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [0, 30, 1000, 520],
-        "desc": "Crisscrossing green and magenta laser beams fanning out from ceiling projectors at the top of the frame, splaying across the upper third and bending along the fisheye curve, catching in the fog to form bright volumetric sheets and dotted scatter planes.",
-        "color_palette": ["#16D6E8", "#E0146E", "#3DF27A", "#7A1FB0"]
+        "bbox": [
+          120,
+          250,
+          720,
+          760
+        ],
+        "desc": "A brown horse standing upright behind a DJ booth in the role of a club DJ, head and long muzzle tilted slightly down toward the equipment, dark mane falling along the neck, alert ears pricked forward. One front hoof rests on a turntable while the other holds aloft a martini glass. Wears large black over-ear headphones around the neck and ears."
       },
       {
         "type": "obj",
-        "bbox": [120, 380, 880, 820],
-        "desc": "Thick rolling smoke-machine fog blanketing the midground and floor, lit through by colored beams, denser at center where it glows and thinning toward the warped edges, partially veiling the lower body of the subject.",
-        "color_palette": ["#2A1140", "#7A1FB0", "#16D6E8", "#1B0A2E"]
+        "bbox": [
+          600,
+          180,
+          860,
+          840
+        ],
+        "desc": "A black DJ booth console spanning the lower foreground, fitted with two silver turntables flanking a central mixer with glowing knobs, faders and small green and red LED indicators. Front panel faces the viewer, exaggerated and curved by the fish-eye distortion."
       },
       {
         "type": "obj",
-        "bbox": [310, 250, 760, 640],
-        "desc": "A glossy black DJ booth and mixer console set across the lower-center foreground, twin turntables and a lit channel mixer with glowing faders and knobs, front edge bulging toward the viewer from the fisheye distortion, reflective surface catching pink and cyan highlights.",
-        "color_palette": ["#0A0410", "#E0146E", "#16D6E8", "#F2B705"]
+        "bbox": [
+          300,
+          560,
+          470,
+          690
+        ],
+        "desc": "A clear martini glass with a thin stem held aloft, containing pale yellow liquid and a single green olive on a cocktail pick, catching small highlights from the colored club lighting."
+      },
+      {
+        "type": "text",
+        "bbox": [
+          640,
+          360,
+          720,
+          640
+        ],
+        "text": "NEON\nSTABLE",
+        "desc": "Illuminated club logo on the front face of the DJ booth in a bold sans-serif display typeface, glowing magenta, slightly warped by the fish-eye curvature."
+      }
+    ]
+  }
+`,
+    },
+    {
+      prompt: `
+{
+  "aspect_ratio": "1:1",
+  "high_level_description": "A 35mm film photograph of a smiling man proudly showing off his graphic t-shirt on a sandy beach, with a great white shark leaping out of the ocean in the background.",
+  "compositional_deconstruction": {
+    "background": "Sandy beach scene under a bright overcast sky with cool-neutral white balance. Pale tan sand stretches across the lower portion, slightly damp and packed near the waterline with scattered footprints. Behind the man, the open ocean fills the midground, deep blue-green with choppy whitecaps and rolling waves breaking toward the shore. The horizon line sits high in the frame where the sea meets a hazy pale sky with thin diffuse clouds. Soft even daylight, no harsh shadows, accurate natural color.",
+    "elements": [
+      {
+        "type": "obj",
+        "bbox": [
+          180,
+          540,
+          720,
+          860
+        ],
+        "desc": "Great white shark mid-leap, fully breaching the ocean surface in the background, body angled diagonally with mouth open and rows of teeth visible. Grey dorsal surface, white underbelly, water cascading and spraying off its body. Smaller in scale due to distance behind the man."
       },
       {
         "type": "obj",
-        "bbox": [270, 90, 720, 560],
-        "desc": "A chestnut-brown horse standing as the DJ behind the booth, head and torso filling the center frame, leaning into one turntable with a front hoof, mane catching colored rim light, ears forward and gaze toward the crowd, slight beam glare across its glossy coat.",
-        "color_palette": ["#7A4B2A", "#3A2414", "#E0146E", "#16D6E8"]
+        "bbox": [
+          150,
+          260,
+          950,
+          640
+        ],
+        "desc": "Man standing on the beach facing the camera, medium-tall build, light-medium skin tone, short brown hair. Grinning widely with a proud expression, gripping the hem of his t-shirt with both hands and pulling it outward to display the front print. Wearing teal swim shorts. Slightly off-center to the left."
       },
       {
-        "type": "obj",
-        "bbox": [640, 300, 820, 560],
-        "desc": "A classic martini glass held aloft in the horse's raised right hoof on the mid-right, pale liquid with an olive on a pick, the glass rim and surface flashing cyan and magenta laser glints.",
-        "color_palette": ["#E8E2C0", "#16D6E8", "#E0146E", "#9BAF3A"]
-      },
-      {
-        "type": "obj",
-        "bbox": [0, 560, 1000, 1000],
-        "desc": "Foreground crowd of raised hands and blurred dancing silhouettes along the bottom edge, backlit into dark shapes rimmed by neon, hands reaching up into the fog and beams, heavily curved by the fisheye at the frame's lower corners.",
-        "color_palette": ["#1B0A2E", "#E0146E", "#16D6E8", "#7A1FB0"]
+        "type": "text",
+        "bbox": [
+          360,
+          330,
+          540,
+          560
+        ],
+        "text": "BEACH\nVIBES",
+        "desc": "Bold sans-serif print across the chest of the man's white t-shirt, stacked on two lines in navy blue, slightly curved with the fabric as he stretches it toward the camera."
       }
     ]
   }
@@ -571,40 +616,50 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A cheerful man stands on a sunny beach proudly showing off his new graphic t-shirt while a large shark breaches the ocean surface behind him, blending a relaxed summer mood with a playful jolt of drama.",
-  "style_description": {
-    "aesthetics": "vibrant lifestyle photography, sharp focus on the subject with a softly blurred background, candid summer energy",
-    "lighting": "bright natural midday sunlight from the upper right, warm and slightly hard, with strong highlights on skin and water and gentle fill from sand bounce",
-    "photo": "DSLR, 50mm lens, f/4, fast shutter to freeze the breaching shark",
-    "medium": "photography",
-    "color_palette": ["#3FA9D6", "#F2E2B6", "#1C6E8C", "#E8B04B", "#2B3A42"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A brown grizzly bear standing upright on its hind legs, lifting a wooden log onto a half-built log cabin in a snow-covered mountain clearing, with snowy pine forest and peaks behind, rendered as a 35mm film photograph.",
   "compositional_deconstruction": {
-    "background": "A wide stretch of bright tropical beach under a clear blue sky with scattered wispy clouds near the horizon; turquoise ocean water fills the middle band of the frame, transitioning to pale golden wet sand in the lower foreground, with soft heat haze and shimmering reflections suggesting strong midday sun and open depth toward the horizon.",
+    "background": "Snow-covered alpine clearing under a pale overcast winter sky with soft diffused daylight and cool-neutral white balance. Thick fresh snow blankets the ground, undisturbed except around the build site. A dense forest of snow-laden evergreen pines fills the midground, their branches drooping under powder. Jagged grey-and-white granite mountain peaks rise across the distant horizon, partly veiled in light haze. Faint snowflakes drift through the air. The light is even and shadowless across the scene.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [560, 300, 800, 470],
-        "desc": "A large gray shark breaching upward out of the ocean in the midground right, body angled diagonally with its head clearing the surface and tail still in the water, mouth slightly open, spraying a burst of white sea foam and droplets around it; smaller in scale due to its distance, creating a dramatic but slightly comedic focal accent behind the man.",
-        "color_palette": ["#6B7C85", "#9FB3BC", "#FFFFFF", "#1C6E8C"]
+        "bbox": [
+          180,
+          120,
+          760,
+          560
+        ],
+        "desc": "Large brown grizzly bear standing upright on its hind legs, thick shaggy fur with darker brown legs and a lighter tan muzzle. Front paws gripping a debarked pine log, raising it toward the cabin wall. Head turned in profile, small rounded ears, focused expression, breath fogging in the cold air."
       },
       {
         "type": "obj",
-        "bbox": [230, 250, 560, 940],
-        "desc": "A smiling man standing center-left in the foreground, facing the camera, tugging the hem of his t-shirt outward with both hands to show it off, weight on one leg in a relaxed casual stance; tanned skin catching warm sunlight, wind lightly moving his hair, gaze directed at the viewer with an enthusiastic expression, occupying the dominant vertical mass of the frame.",
-        "color_palette": ["#D9A66C", "#3B3027", "#2B3A42", "#F2E2B6"]
+        "bbox": [
+          480,
+          520,
+          880,
+          940
+        ],
+        "desc": "Half-built log cabin made of stacked horizontal debarked pine logs notched and interlocked at the corners. Roughly four log courses high with an open doorway gap on the front face, snow dusting the topmost logs and a small pile of unused logs leaning against the right wall."
       },
       {
         "type": "obj",
-        "bbox": [290, 470, 510, 700],
-        "desc": "The man's new graphic t-shirt, a vivid printed cotton tee stretched outward by his hands to display its bold front design, fabric slightly creased from being pulled, catching crisp highlights along the folds and reading as the proud centerpiece of his pose.",
-        "color_palette": ["#E84C3D", "#FFFFFF", "#2B3A42", "#E8B04B"]
+        "bbox": [
+          700,
+          60,
+          880,
+          320
+        ],
+        "desc": "Loose stack of cut pine logs lying on the snowy ground in the lower-left foreground, debarked pale tan wood with sawn ends, partially dusted with fresh snow, ready for building."
       },
       {
         "type": "obj",
-        "bbox": [0, 760, 1000, 1000],
-        "desc": "A band of damp golden beach sand sweeping across the lower foreground, dotted with faint footprints and tiny shell fragments, surface glinting where the wet sheen reflects the bright sky, anchoring the man and adding tactile depth at the bottom of the frame.",
-        "color_palette": ["#E8D6A6", "#C9A86A", "#F5EBD0"]
+        "bbox": [
+          600,
+          400,
+          760,
+          520
+        ],
+        "desc": "Rusted double-bit felling axe with a worn wooden handle stuck blade-first into a flat-topped tree stump near the bear's feet, snow gathered on the stump's top surface."
       }
     ]
   }
@@ -614,52 +669,61 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A large brown bear works on constructing a half-built log cabin in a snow-covered mountain valley on a crisp, overcast winter morning, conveying a cozy yet industrious, slightly whimsical wilderness mood.",
-  "style_description": {
-    "aesthetics": "warm storybook digital illustration, painterly textures, gentle stylization with soft edges and rich detail",
-    "lighting": "soft diffused overcast daylight from the upper left, cool ambient shadows with subtle warm bounce from the wood",
-    "photo": "",
-    "medium": "digital illustration",
-    "color_palette": ["#E8EEF2", "#A9C0D0", "#7A5230", "#3D5A4C", "#C8895A", "#2E3A44"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A punk rocker woman mid-performance on a concert stage, playing an electric guitar and singing into a microphone, with laser lights cutting through haze in a 35mm concert photograph.",
   "compositional_deconstruction": {
-    "background": "Towering snow-capped mountain peaks recede into a pale grey-blue winter sky, partially veiled by drifting mist. A dense stand of frosted evergreen pines blankets the mid-slope, and an unbroken sheet of fresh snow covers the valley floor, broken only by faint drifts and gentle undulations that establish depth toward the distant ridgeline.",
+    "background": "A dark concert stage shell with a black back wall and exposed steel truss rigging overhead holding stage fixtures. Green and magenta laser beams fan out across the upper space, cutting through a light haze that fills the air and scatters the beams into visible shafts. The stage floor is matte black with scuffed gaffer-tape marks. Distant blurred crowd silhouettes fill the lower foreground edge, lit faintly by stage spill. 35mm concert photograph with cool-neutral white balance and deep shadow contrast.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [60, 230, 420, 540],
-        "desc": "A cluster of tall frosted pine trees standing in the midground left, their dark green boughs heavy with clumps of snow, slightly out of focus to push them back in depth and frame the construction scene.",
-        "color_palette": ["#3D5A4C", "#2E3A44", "#E8EEF2"]
+        "bbox": [
+          180,
+          280,
+          860,
+          720
+        ],
+        "desc": "Punk rocker woman standing center stage mid-song, pale skin, spiked bleached-blonde hair with shaved sides, dark smudged eyeliner, mouth open singing with intense expression. Black sleeveless band tee, studded leather choker, ripped black skinny jeans, fingerless gloves. Right hand strumming, left hand on the fretboard, body leaning forward toward the mic."
       },
       {
         "type": "obj",
-        "bbox": [380, 420, 880, 760],
-        "desc": "A half-finished log cabin occupying the center-right midground, built of stacked honey-brown timber logs about four courses high with notched corner joints, an open doorway gap on the left side, and a dusting of snow along the top logs; freshly hewn and inviting.",
-        "color_palette": ["#7A5230", "#C8895A", "#5A3C22", "#E8EEF2"]
+        "bbox": [
+          420,
+          200,
+          820,
+          560
+        ],
+        "desc": "Black electric guitar with a glossy solid body, white pickguard, chrome hardware and visible strings, slung low across the woman's torso on a studded leather strap, neck angled up toward the upper left."
       },
       {
         "type": "obj",
-        "bbox": [520, 280, 700, 480],
-        "desc": "A large brown bear standing upright on its hind legs in the right midground beside the cabin, gripping a heavy log between its forepaws as it lifts it into place, fur thick and shaggy with snowflakes caught in it, head tilted toward its work with a focused expression.",
-        "color_palette": ["#5A3C22", "#3A2818", "#8A6038", "#E8EEF2"]
+        "bbox": [
+          300,
+          560,
+          520,
+          660
+        ],
+        "desc": "Black wired stage microphone on a slim chrome boom stand, positioned directly in front of the woman's open mouth, mesh head catching a small highlight from the stage light."
       },
       {
         "type": "obj",
-        "bbox": [150, 700, 470, 850],
-        "desc": "A small stack of cut logs and a couple of fresh wood shavings resting on the snow in the foreground left, the sawn ends showing pale concentric rings, a few flecks of sawdust scattered across the surrounding snow.",
-        "color_palette": ["#C8895A", "#7A5230", "#EDE3D2"]
+        "bbox": [
+          760,
+          40,
+          980,
+          300
+        ],
+        "desc": "Black foldback stage monitor wedge angled up toward the performer, sitting on the front edge of the stage floor, scuffed casing with a metal grille front."
       },
       {
-        "type": "obj",
-        "bbox": [600, 760, 760, 880],
-        "desc": "A worn steel axe embedded blade-down in a chopping stump in the lower foreground right, its wooden handle angled up and to the right, light snow gathered on the stump's flat top.",
-        "color_palette": ["#6B7178", "#4A3320", "#E8EEF2"]
-      },
-      {
-        "type": "obj",
-        "bbox": [0, 0, 1000, 220],
-        "desc": "Faint drifting snowflakes and a soft mist layer across the upper portion of the frame, thinning the distant peaks and adding cold atmospheric depth without obscuring the foreground.",
-        "color_palette": ["#E8EEF2", "#A9C0D0", "#C4D4DE"]
+        "type": "text",
+        "bbox": [
+          600,
+          720,
+          720,
+          940
+        ],
+        "text": "RIOT",
+        "desc": "Bold uppercase condensed sans-serif band logo in white spray-paint style stenciled across the front of the black speaker stack at lower right, slightly distressed edges."
       }
     ]
   }
@@ -669,58 +733,61 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A punk rock woman performs alone on a dark stage at night, mid-song with her guitar, surrounded by sweeping laser lights and haze that cut through the darkness, charged with raw, electric energy.",
-  "style_description": {
-    "aesthetics": "moody cinematic concert photography, high contrast, gritty and energetic with motion in the lights",
-    "lighting": "dramatic stage lighting from above and behind, vivid colored laser beams cutting through atmospheric haze, hard rim light on the performer, deep shadows",
-    "photo": "DSLR concert photograph, 85mm, f/2.0, slight motion blur on the lasers, ISO grain",
-    "medium": "photography",
-    "color_palette": ["#0B0B12", "#E0204A", "#1FB6C9", "#7A2BD4", "#F2E9D8", "#101830"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A 35mm film photograph of a bearded hipster man assembling a wooden chair on a workbench in a cluttered woodworking shop, surrounded by hand tools and lumber.",
   "compositional_deconstruction": {
-    "background": "A deep, near-black stage interior at night, dense with atmospheric haze that catches the light. Vertical truss rigging and dim silhouettes of speaker stacks recede into darkness at the edges. The far depth dissolves into a smoky void that gives the colored beams room to glow.",
+    "background": "Interior of a small woodworking workshop with weathered exposed-brick walls on the left and unfinished plywood-panel walls on the right. Sawdust-dusted concrete floor. A pegboard mounted on the rear wall holds rows of hanging hand tools. A single industrial window high on the left wall lets in diffused overcast daylight with a cool-neutral white balance. Fine sawdust haze drifts in the air. Coils of wood shavings and scattered offcuts rest near the wall base. Shot on 35mm film.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [0, 20, 1000, 620],
-        "desc": "A web of vivid laser beams fanning out from rigging high in the frame, sweeping diagonally across the upper two-thirds of the scene. Sharp magenta, cyan, and violet lines pierce the haze, some converging toward the performer, others splaying outward, with slight motion blur conveying their sweep.",
-        "color_palette": ["#E0204A", "#1FB6C9", "#7A2BD4", "#F2E9D8"]
+        "bbox": [
+          150,
+          300,
+          720,
+          680
+        ],
+        "desc": "Bearded hipster man in his mid-thirties, medium-fair skin, full reddish-brown beard and short slicked-back dark hair. Wearing a rolled-sleeve olive flannel shirt, brown leather apron, and dark jeans. Leaning forward over the bench, both hands gripping a wooden chair leg, focused downward expression."
       },
       {
         "type": "obj",
-        "bbox": [120, 80, 360, 520],
-        "desc": "A tall stage spotlight rig at midground left, its lens flaring a hot magenta glow that bleeds into the surrounding haze. Partially silhouetted metal housing, angled down toward center stage.",
-        "color_palette": ["#E0204A", "#101830", "#0B0B12"]
+        "bbox": [
+          420,
+          250,
+          820,
+          760
+        ],
+        "desc": "Partially assembled wooden chair made of light oak, seat and two back slats attached, one rear leg detached and held in the man's hands. Raw unfinished surface with visible grain, clamped at one joint with a small metal bar clamp."
       },
       {
         "type": "obj",
-        "bbox": [650, 90, 880, 500],
-        "desc": "A cluster of cyan-tinted backlights at midground right mounted on dark truss, throwing a cool teal wash and lens flares through the smoke, balancing the warm magenta on the opposite side.",
-        "color_palette": ["#1FB6C9", "#101830", "#0B0B12"]
+        "bbox": [
+          600,
+          80,
+          900,
+          920
+        ],
+        "desc": "Heavy wooden workbench with a thick scarred top, vise mounted on the front-left edge. Surface cluttered with a hand plane, two chisels, a wooden mallet, and a coiled tape measure scattered across the right side."
       },
       {
         "type": "obj",
-        "bbox": [355, 180, 660, 940],
-        "desc": "The punk rocker woman, full-bodied and slightly right of center, captured mid-song. She leans into a microphone on a stand, mouth open singing, eyes intense. Spiked, brightly dyed hair, ripped band tee, studded leather, and torn jeans. Her body is rim-lit by colored stage light against the dark haze, sweat catching highlights, in a dynamic forward-leaning stance.",
-        "color_palette": ["#E0204A", "#F2E9D8", "#0B0B12", "#7A2BD4"]
+        "bbox": [
+          640,
+          40,
+          860,
+          200
+        ],
+        "desc": "Cordless drill resting on its side on the bench top near the front-left corner, black and orange body with a chuck-mounted bit."
       },
       {
-        "type": "obj",
-        "bbox": [330, 440, 690, 820],
-        "desc": "An electric guitar slung across the woman's torso, held mid-strum with her right hand near the strings and left hand on the fretboard. Glossy body catching sharp magenta and cyan reflections, chrome hardware flaring, positioned diagonally across her lower body.",
-        "color_palette": ["#101830", "#1FB6C9", "#E0204A", "#F2E9D8"]
-      },
-      {
-        "type": "obj",
-        "bbox": [430, 250, 545, 560],
-        "desc": "A chrome microphone on a slim stand directly in front of the singer's face at center frame, catching a bright specular highlight from the stage lights, slightly haloed by the haze.",
-        "color_palette": ["#F2E9D8", "#0B0B12", "#1FB6C9"]
-      },
-      {
-        "type": "obj",
-        "bbox": [0, 780, 1000, 1000],
-        "desc": "The dark, glossy stage floor across the foreground, reflecting smeared streaks of magenta, cyan, and violet from the lasers and the performer above, fading to black at the front edge.",
-        "color_palette": ["#0B0B12", "#E0204A", "#1FB6C9", "#7A2BD4"]
+        "type": "text",
+        "bbox": [
+          700,
+          520,
+          760,
+          700
+        ],
+        "text": "OAKWELL\nWORKS",
+        "desc": "Small stamped logo branded into the leather apron's chest panel, two stacked lines in a condensed serif font, dark burnt-brown tone on tan leather."
       }
     ]
   }
@@ -730,46 +797,20 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A bearded hipster craftsman in a sunlit woodworking shop, focused intently as he assembles a wooden chair surrounded by tools and sawdust, evoking a warm, artisanal, hands-on mood.",
-  "style_description": {
-    "aesthetics": "warm documentary photography, sharp focus on subject, shallow depth of field, authentic artisanal feel",
-    "lighting": "soft natural light streaming from a large window on the left, warm afternoon color temperature with gentle dust particles catching the light",
-    "photo": "35mm DSLR, 50mm lens, f/2.0, slight film grain",
-    "medium": "photography",
-    "color_palette": ["#6B4A2E", "#C9A36B", "#E8D5B0", "#3A2C1F", "#8C7355", "#D9C2A0"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A studio fashion photograph of a man in a medium shot modeling a casual outfit against a seamless white backdrop, lit with even studio lighting.",
   "compositional_deconstruction": {
-    "background": "A rustic woodworking shop interior with weathered plank walls, a large window on the left admitting bright afternoon light, blurred shelves of tools and lumber stacked in the soft-focus depth, faint sawdust haze drifting through the air, warm earthy tones throughout.",
+    "background": "Seamless white studio backdrop, smoothly lit with even diffused studio lighting from soft boxes on both sides, producing a clean bright cyclorama with no visible seams, corners, or shadows behind the subject. Neutral white balance.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [40, 120, 320, 520],
-        "desc": "A pegboard and tool rack mounted on the back wall, upper-left of frame, slightly out of focus, holding hand saws, chisels, and clamps hanging in rows, midground depth, muted in the soft background light.",
-        "color_palette": ["#5A4630", "#8C7355", "#3A2C1F"]
-      },
-      {
-        "type": "obj",
-        "bbox": [620, 250, 980, 720],
-        "desc": "A heavy wooden workbench occupying the right side of the frame, its surface scattered with hand tools, wood shavings, and a coffee mug, warm light grazing the worn timber grain, midground to foreground.",
-        "color_palette": ["#6B4A2E", "#C9A36B", "#4A3622"]
-      },
-      {
-        "type": "obj",
-        "bbox": [300, 160, 640, 760],
-        "desc": "A bearded hipster man in his early thirties, center-left of frame, wearing a rolled-sleeve flannel shirt and a leather apron, leaning forward with focused concentration as he works, hair tied back, forearms tensed, side-lit by the window so highlights catch his beard and the dust around him.",
-        "color_palette": ["#8C5A3A", "#C9A36B", "#5A3B28", "#E8D5B0"]
-      },
-      {
-        "type": "obj",
-        "bbox": [380, 520, 760, 920],
-        "desc": "A partially assembled solid-wood chair in the lower-center foreground, frame and three legs joined with a fourth resting nearby, freshly planed pale timber showing clean tool marks, the man's hands fitting a joint, sharply in focus.",
-        "color_palette": ["#D9C2A0", "#C9A36B", "#9C7A4E"]
-      },
-      {
-        "type": "obj",
-        "bbox": [620, 780, 940, 980],
-        "desc": "A scatter of wood shavings and sawdust across the shop floor in the immediate foreground, curled pale ribbons of planed wood catching warm light, slightly blurred at the bottom edge.",
-        "color_palette": ["#E8D5B0", "#C9A36B", "#8C7355"]
+        "bbox": [
+          80,
+          300,
+          950,
+          720
+        ],
+        "desc": "Man standing in a medium shot, facing the camera at a slight three-quarter angle. Short dark brown hair neatly styled, light-medium skin tone, clean-shaven, calm neutral expression with a soft closed-mouth look directed at the camera. Wears a fitted heather-grey crewneck t-shirt and dark navy slim chino trousers. Arms relaxed at his sides, shoulders squared. Off-center to the left following rule-of-thirds framing."
       }
     ]
   }
@@ -779,52 +820,41 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A whimsical low-light photograph of an anthropomorphic cat whose face and body are split vertically into a black half and an orange tabby half, wearing a blue tophat and holding a yarn-filled martini glass in one paw and a movie DVD case in the other, set inside a crowded, neon-lit nightclub where a giant mushroom man dances with a bear.",
-  "style_description": {
-    "aesthetics": "playful surreal portrait photography, sharp focus on the subject with a softly blurred background, shallow depth of field, vivid saturated color",
-    "lighting": "moody nightclub ambiance with colorful neon key light, magenta and cyan rim accents, a warm spotlight catching the cat from front-left",
-    "photo": "DSLR portrait, 50mm lens, f/2.0, slight motion blur in the background crowd",
-    "medium": "photography",
-    "color_palette": ["#101012", "#E8741C", "#2E63C9", "#E84B8A", "#3FB55C", "#C9A227"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A 35mm film photograph of a man standing on a city sidewalk holding a white cardboard sign reading 'this is a sign', shot at eye-level with neutral daylight.",
   "compositional_deconstruction": {
-    "background": "Interior of a busy, dimly lit nightclub seen at night, packed with a blurred dancing crowd, hazy atmosphere thick with colored light beams, glowing magenta and cyan neon signage along the walls, a distant illuminated bar and DJ glow, reflective dark floor scattering specular highlights into bokeh.",
+    "background": "An urban sidewalk scene under overcast daylight with cool-neutral white balance. A grey concrete pavement runs along the bottom, bordered by the brick facade of a low storefront building with large plate-glass windows. A few out-of-focus pedestrians and a parked dark sedan sit in the blurred mid-distance. Pale grey sky visible above the rooflines.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [110, 180, 400, 760],
-        "desc": "A giant mushroom man towering in the midground left, with a broad spotted red-and-cream cap for a head and a plump pale stalk body, arms thrown up mid-dance, slightly motion-blurred and softened by depth of field, lit by shifting neon so its cap glows magenta and cyan at the edges.",
-        "color_palette": ["#D24B4B", "#EDE3CF", "#B0457F", "#3A8FC4"]
+        "bbox": [
+          180,
+          330,
+          880,
+          680
+        ],
+        "desc": "Man standing facing the camera, medium build, light skin tone, short brown hair and a trimmed beard. Wearing a charcoal-grey crew-neck shirt and dark blue jeans, relaxed neutral expression looking toward the lens. Both hands raised at chest height gripping the top edge of a cardboard sign held in front of his torso."
       },
       {
         "type": "obj",
-        "bbox": [360, 240, 650, 780],
-        "desc": "A large shaggy brown bear standing on its hind legs in the midground right of center, dancing face-to-face with the mushroom man, one paw raised, fur catching cyan rim light, blurred by the shallow focus to read as a joyful background partner.",
-        "color_palette": ["#5A3A22", "#7A4B2A", "#2E8FB0", "#1B1A1C"]
+        "bbox": [
+          400,
+          360,
+          640,
+          660
+        ],
+        "desc": "Rectangular white cardboard sign with slightly worn edges, held upright in front of the man's chest, plain matte surface with hand-written black marker lettering across the center."
       },
       {
-        "type": "obj",
-        "bbox": [290, 250, 720, 950],
-        "desc": "The main subject, an upright anthropomorphic cat filling the foreground center, its entire body split cleanly down the vertical midline: the left half solid glossy black, the right half warm orange tabby with darker stripes, the seam running straight through nose, chest and belly. It sits tall and forward-facing, both front paws raised to hold props, eyes catching the front spotlight with bright reflective pupils, fur crisply in focus against the soft crowd behind.",
-        "color_palette": ["#141414", "#E8741C", "#B85416", "#F0E2C8"]
-      },
-      {
-        "type": "obj",
-        "bbox": [395, 175, 625, 360],
-        "desc": "A tall royal-blue tophat perched on the cat's head in the upper-center of the frame, with a satin sheen, a slim darker band around the base and a stiff curled brim, neon highlights skating across its smooth surface.",
-        "color_palette": ["#2E63C9", "#1A3C8A", "#5C8BE0", "#0E1F4A"]
-      },
-      {
-        "type": "obj",
-        "bbox": [225, 540, 430, 825],
-        "desc": "A clear martini glass gripped in the cat's right paw (viewer's left, lower-left of frame), tilted slightly, holding a round ball of bright pink yarn instead of a drink, with two slender green knitting needles poking up and out at angles from the yarn; glass rim and stem flash sharp neon specular highlights.",
-        "color_palette": ["#E84B8A", "#3FB55C", "#D8E4EC", "#A8285F"]
-      },
-      {
-        "type": "obj",
-        "bbox": [615, 560, 835, 835],
-        "desc": "A glossy DVD case held flat-faced toward the camera in the cat's left paw (viewer's right, lower-right of frame), its cover showing a standing golden robot rendered in metallic sheen and the bold title text 'This is a test' across the top, plastic surface reflecting magenta and cyan club light.",
-        "color_palette": ["#C9A227", "#E8C95A", "#1B1B22", "#E8741C"]
+        "type": "text",
+        "bbox": [
+          460,
+          380,
+          580,
+          640
+        ],
+        "text": "this is a sign",
+        "desc": "Hand-written black marker lettering in a casual sans-serif lowercase style, single line centered across the white cardboard sign."
       }
     ]
   }
@@ -834,77 +864,40 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "high_level_description": "A man stands in a relaxed pose holding up a plain handheld sign reading 'this is a sign' in clear hand-lettered text, photographed in a bright neutral studio setting with a candid, mildly amused mood.",
-  "style_description": {
-    "aesthetics": "clean editorial portrait photography, sharp focus on the subject, gentle background falloff",
-    "lighting": "soft diffused key from the upper left with a subtle fill, neutral-to-slightly-warm color temperature, gentle shadows",
-    "photo": "85mm portrait lens, f/4, full-frame DSLR, slight depth of field separating subject from backdrop",
-    "medium": "photography",
-    "color_palette": ["#E8E2D8", "#C9B79C", "#4A4038", "#8A6F52", "#F5F2EC"]
-  },
+  "aspect_ratio": "1:1",
+  "high_level_description": "A 35mm film photograph of a muscular bulldog in a worn leather jacket standing beside a battered motorcycle in a post-apocalyptic desert, gripping a sawed-off shotgun, with a hazy ruined skyline on the horizon.",
   "compositional_deconstruction": {
-    "background": "A smooth, evenly lit seamless studio backdrop in a warm off-white tone, fading to a marginally darker gradient toward the edges, with soft out-of-focus texture and no distinct objects, creating shallow depth behind the subject.",
+    "background": "A sun-scorched post-apocalyptic desert under a pale dust-choked sky, cool-neutral white balance with a thin haze of airborne grit softening the light. Cracked sandy hardpan stretches to a distant horizon where the silhouettes of half-collapsed buildings, a leaning radio tower, and rusted girders rise out of the heat shimmer. Scattered scrub brush and faint tire tracks mark the packed dirt, and a thin band of overcast cloud sits low over the ruined skyline.",
     "elements": [
       {
         "type": "obj",
-        "bbox": [300, 180, 720, 1000],
-        "desc": "A man of average build standing centered-slightly-left and facing the camera, occupying most of the vertical frame from mid-thigh upward, wearing a casual crew-neck sweater and simple trousers; his left arm is raised to grip the bottom of the sign while his right hand steadies its side, head tilted with a faint knowing half-smile and direct eye contact toward the viewer, softly lit from the upper left with a clean catchlight in his eyes.",
-        "color_palette": ["#5A4B3A", "#9C8266", "#E2D4C2", "#3A3128"]
+        "bbox": [
+          280,
+          330,
+          820,
+          720
+        ],
+        "desc": "Muscular English bulldog standing upright on its hind legs in a confident pose, fawn-and-white coat, broad wrinkled face with an underbite and alert dark eyes. Wears a scuffed brown leather biker jacket with a popped collar, frayed cuffs, and a worn metal zipper. Front paws grip a sawed-off double-barrel shotgun held across the chest."
       },
       {
         "type": "obj",
-        "bbox": [360, 250, 700, 470],
-        "desc": "A rectangular flat handheld sign held up at chest-to-shoulder height in the upper-middle of the frame, tilted just slightly off-level, made of plain matte white poster board with a thin neutral border; across its face in bold, evenly spaced hand-lettered black marker reads the phrase 'this is a sign', legible and centered, catching the soft key light with a faint even sheen and casting a gentle shadow onto the man's chest.",
-        "color_palette": ["#F7F4EE", "#1E1B17", "#C8C0B2"]
-      }
-    ]
-  }
-}
-`,
-    },
-    {
-      prompt: `
-{
-  "high_level_description": "A grizzled bulldog clad in a battered leather jacket stands guard with a sawed-off shotgun beside his motorcycle in a sun-scorched post-apocalyptic desert at harsh late afternoon, exuding a gritty, defiant survivor mood.",
-  "style_description": {
-    "aesthetics": "moody cinematic, gritty post-apocalyptic realism, high detail with weathered textures, shallow depth of field on the subject",
-    "lighting": "harsh low-angle late afternoon sun from the right, long shadows, warm golden key with dusty haze and faint cool fill in the shadows",
-    "photo": "full-frame DSLR, 50mm lens, f/2.8, slight atmospheric grain",
-    "medium": "photography",
-    "color_palette": ["#C8923F", "#7A4B2A", "#3A2E22", "#D9C49A", "#5A6B5E", "#2B2520"]
-  },
-  "compositional_deconstruction": {
-    "background": "A vast cracked desert wasteland stretching to a hazy horizon, dunes and dry parched earth underfoot, rusted debris and a skeletal collapsed structure faintly visible in the far distance, blown dust and heat shimmer thickening the air, pale washed-out sky tinged amber by airborne particulates and the low sun.",
-    "elements": [
-      {
-        "type": "obj",
-        "bbox": [40, 360, 360, 620],
-        "desc": "Rusted skeletal remains of a collapsed structure in the far background midground-left, sun-bleached metal girders and corrugated sheeting half-buried in sand, small in the frame to establish scale and ruin, partially obscured by dust haze.",
-        "color_palette": ["#8A6A45", "#5A4632", "#B8A079"]
+        "bbox": [
+          480,
+          40,
+          880,
+          420
+        ],
+        "desc": "Battered chopper-style motorcycle parked at an angle just left of the bulldog, matte-black fuel tank with chipped paint, rusted chrome exhaust pipes, cracked leather seat, and dusty spoked wheels. Handlebars wrapped in worn tape, a small dented headlamp at the front."
       },
       {
         "type": "obj",
-        "bbox": [480, 380, 880, 760],
-        "desc": "A heavily weathered chopper-style motorcycle parked at a three-quarter angle on the right side of the frame just behind the dog, chrome dulled and pitted, leather seat cracked, dust-caked tank and rust streaks, kickstand down, long shadow cast leftward across the cracked earth.",
-        "color_palette": ["#3A2E22", "#7A5A38", "#9A9088", "#2B2520"]
-      },
-      {
-        "type": "obj",
-        "bbox": [250, 300, 640, 920],
-        "desc": "A muscular English bulldog standing upright and front-and-center slightly left, broad wrinkled jowls and stocky frame facing the viewer with a determined glaring gaze, wearing a scuffed brown leather jacket with frayed collar and metal studs, warm rim light catching the right edge of his face and shoulders, the dominant subject in sharp focus.",
-        "color_palette": ["#C8923F", "#6B4528", "#3A2A1E", "#E0C9A0"]
-      },
-      {
-        "type": "obj",
-        "bbox": [360, 540, 700, 780],
-        "desc": "A sawed-off double-barrel shotgun gripped across the bulldog's body in the lower midground, weathered steel barrels with surface rust and a worn wooden stock, held at a downward diagonal angle catching a glint of the warm sun on the metal.",
-        "color_palette": ["#4A4038", "#6B4A2E", "#8A7460"]
-      },
-      {
-        "type": "obj",
-        "bbox": [120, 760, 900, 960],
-        "desc": "Foreground cracked desert floor in the lower frame, parched fissured clay and scattered sand with small pebbles, dust kicked up faintly, raking warm light emphasizing the deep crack texture and the long shadows of the subject and motorcycle.",
-        "color_palette": ["#D9C49A", "#A8895C", "#6B5A40"]
+        "bbox": [
+          760,
+          300,
+          900,
+          760
+        ],
+        "desc": "Scattered debris on the desert floor in front of the bulldog: a crushed metal fuel can, a few spent brass shotgun shells, and a broken length of rusted pipe half-buried in the sand."
       }
     ]
   }
