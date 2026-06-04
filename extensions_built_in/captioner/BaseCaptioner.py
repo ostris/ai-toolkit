@@ -167,7 +167,11 @@ class BaseCaptioner(BaseExtensionProcess):
                 caption_file_path = (
                     f"{filename_no_ext}.{self.caption_config.caption_extension}"
                 )
-                if not os.path.exists(caption_file_path):
+                has_caption = False
+                if os.path.exists(caption_file_path):
+                    with open(caption_file_path, "r", encoding="utf-8") as f:
+                        has_caption = f.read().strip() != ""
+                if not has_caption:
                     filtered_file_paths.append(file_path)
             print(
                 f"Found {len(self.file_paths)} files. {len(filtered_file_paths)} need captioning."

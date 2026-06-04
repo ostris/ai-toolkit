@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
-import { Cog } from 'lucide-react';
+import { Cog, SquareDashed } from 'lucide-react';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import classNames from 'classnames';
 import { openConfirm } from './ConfirmModal';
@@ -10,6 +10,42 @@ import { apiClient } from '@/utils/api';
 import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+
+// A single bbox parsed from an Ideogram-style caption. Stored coords are
+// normalized 0-1000 in [y1, x1, y2, x2] order (top-left origin).
+interface OverlayBox {
+  y1: number;
+  x1: number;
+  y2: number;
+  x2: number;
+  label: string;
+  type: 'obj' | 'text';
+}
+
+// Returns the list of boxes if the caption is an Ideogram bbox-JSON caption with
+// at least one bbox, otherwise null (normal captions get no overlay).
+function parseBoundingBoxes(caption: string): OverlayBox[] | null {
+  const trimmed = caption.trim();
+  if (!trimmed.startsWith('{')) return null;
+  let data: any;
+  try {
+    data = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  const elements = data?.compositional_deconstruction?.elements;
+  if (!Array.isArray(elements)) return null;
+  const boxes: OverlayBox[] = [];
+  for (const el of elements) {
+    const bb = el?.bbox;
+    if (Array.isArray(bb) && bb.length === 4 && bb.every((n: any) => typeof n === 'number')) {
+      const isText = el.type === 'text';
+      const label = (isText ? el.text : el.desc) ?? '';
+      boxes.push({ y1: bb[0], x1: bb[1], y2: bb[2], x2: bb[3], label: `${label}`, type: isText ? 'text' : 'obj' });
+    }
+  }
+  return boxes.length > 0 ? boxes : null;
+}
 
 interface Props {
   imgPath: string | null; // current image path
@@ -25,6 +61,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
   const [caption, setCaption] = useState<string>('');
   const [savedCaption, setSavedCaption] = useState<string>('');
   const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
+  const [showBoxes, setShowBoxes] = useState<boolean>(false);
   const captionRef = useRef<string>('');
   const savedCaptionRef = useRef<string>('');
   const currentImgPathRef = useRef<string | null>(null);
@@ -114,11 +151,14 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
     setSavedCaption('');
 
     apiClient
-      .post('/api/caption/get', { imgPath }, { signal: controller.signal })
+      // transformResponse identity: keep the caption as a raw string. Axios's
+      // default parses any JSON-looking body into an object (our bbox captions
+      // are JSON), which would render as "[object Object]".
+      .post('/api/caption/get', { imgPath }, { signal: controller.signal, transformResponse: [d => d] })
       .then(res => res.data)
       .then(data => {
         if (controller.signal.aborted) return;
-        const text = data ? `${data}` : '';
+        const text = typeof data === 'string' ? data : data ? `${data}` : '';
         setCaption(text);
         setSavedCaption(text);
         setIsCaptionLoaded(true);
@@ -277,6 +317,8 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
   };
 
   const isCaptionCurrent = caption.trim() === savedCaption.trim();
+  const boundingBoxes = useMemo(() => parseBoundingBoxes(caption), [caption]);
+  const canShowBoxes = Boolean(boundingBoxes && imgPath && !isAudio(imgPath) && !isVideo(imgPath));
 
   if (!mounted) return null;
 
@@ -324,12 +366,48 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                     }}
                   >
                     <TransformComponent>
-                      <img
-                        src={`/api/img/${encodeURIComponent(imgPath)}`}
-                        alt="Dataset Image"
-                        draggable={false}
-                        className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[70vh] object-contain select-none !pointer-events-auto"
-                      />
+                      <div className="relative">
+                        <img
+                          src={`/api/img/${encodeURIComponent(imgPath)}`}
+                          alt="Dataset Image"
+                          draggable={false}
+                          className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[70vh] object-contain select-none !pointer-events-auto"
+                        />
+                        {showBoxes && boundingBoxes && (
+                          <div className="absolute inset-0 pointer-events-none">
+                            {boundingBoxes.map((b, i) => (
+                              <div
+                                key={i}
+                                className={classNames('absolute border', {
+                                  'border-cyan-400': b.type === 'obj',
+                                  'border-amber-400': b.type === 'text',
+                                })}
+                                style={{
+                                  left: `${b.x1 / 10}%`,
+                                  top: `${b.y1 / 10}%`,
+                                  width: `${(b.x2 - b.x1) / 10}%`,
+                                  height: `${(b.y2 - b.y1) / 10}%`,
+                                }}
+                              >
+                                {b.label && (
+                                  <span
+                                    title={b.label}
+                                    className={classNames(
+                                      'absolute top-0 left-0 max-w-full px-1 py-0.5 text-[9px] leading-tight font-medium whitespace-pre-line break-words line-clamp-3 text-gray-900',
+                                      {
+                                        'bg-cyan-400/90': b.type === 'obj',
+                                        'bg-amber-400/90': b.type === 'text',
+                                      },
+                                    )}
+                                  >
+                                    {b.label}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </TransformComponent>
                   </TransformWrapper>
                 ))}
@@ -362,33 +440,48 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                 />
               </div>
             </div>
-            <div className="absolute top-2 right-2 bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100 z-20">
-              <Menu>
-                <MenuButton>
-                  <Cog />
-                </MenuButton>
-                <MenuItems
-                  anchor="bottom end"
-                  className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
+            <div className="absolute top-2 right-2 flex items-center gap-2 z-20">
+              {canShowBoxes && (
+                <button
+                  type="button"
+                  onClick={() => setShowBoxes(v => !v)}
+                  title={showBoxes ? 'Hide bounding boxes' : 'Show bounding boxes'}
+                  className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
+                    'opacity-100 text-blue-400': showBoxes,
+                    'opacity-50': !showBoxes,
+                  })}
                 >
-                  {imgPath && isAudio(imgPath) && (
+                  <SquareDashed />
+                </button>
+              )}
+              <div className="bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100">
+                <Menu>
+                  <MenuButton>
+                    <Cog />
+                  </MenuButton>
+                  <MenuItems
+                    anchor="bottom end"
+                    className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
+                  >
+                    {imgPath && isAudio(imgPath) && (
+                      <MenuItem>
+                        <a
+                          className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
+                          href={`/api/img/${encodeURIComponent(imgPath)}`}
+                          download={filename}
+                        >
+                          Download
+                        </a>
+                      </MenuItem>
+                    )}
                     <MenuItem>
-                      <a
-                        className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
-                        href={`/api/img/${encodeURIComponent(imgPath)}`}
-                        download={filename}
-                      >
-                        Download
-                      </a>
+                      <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
+                        Delete Image
+                      </div>
                     </MenuItem>
-                  )}
-                  <MenuItem>
-                    <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
-                      Delete Image
-                    </div>
-                  </MenuItem>
-                </MenuItems>
-              </Menu>
+                  </MenuItems>
+                </Menu>
+              </div>
             </div>
           </DialogPanel>
         </div>
