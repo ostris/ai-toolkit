@@ -123,6 +123,32 @@ def get_qwen3_vl_features(
 # ---------------------------------------------------------------------------
 
 
+def pad_text_features(
+    features_list: List[torch.Tensor],
+    device: torch.device,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Right-pad a list of per-sample (Lt_i, D) features into a batch.
+
+    Captions are stored at their natural length (one tensor per batch item) and
+    only padded to the batch max here, right before the model call. Returns
+    ``(features (B, Lt, D), attention_mask (B, Lt))``; the mask is 1 for real
+    tokens and 0 for padding (which the transformer masks out anyway).
+    """
+    lengths = [f.shape[0] for f in features_list]
+    max_len = max(lengths)
+    dim = features_list[0].shape[-1]
+    batch_size = len(features_list)
+
+    features = torch.zeros(batch_size, max_len, dim, device=device, dtype=dtype)
+    mask = torch.zeros(batch_size, max_len, dtype=torch.long, device=device)
+    for i, f in enumerate(features_list):
+        n = f.shape[0]
+        features[i, :n] = f.to(device, dtype)
+        mask[i, :n] = 1
+    return features, mask
+
+
 def predict_velocity(
     transformer: Ideogram4Transformer2DModel,
     latents: torch.Tensor,  # (B, 128, gh, gw)
@@ -281,11 +307,13 @@ class Ideogram4Pipeline:
         latents = latents.to(device, dtype=torch.float32)
         latents = latents * scheduler.init_noise_sigma
 
-        cond_feats = conditional_embeds.text_embeds.to(device, dtype=dtype)
-        cond_mask = conditional_embeds.attention_mask.to(device)
+        cond_feats, cond_mask = pad_text_features(
+            conditional_embeds.text_embeds, device, dtype
+        )
         if do_cfg:
-            uncond_feats = unconditional_embeds.text_embeds.to(device, dtype=dtype)
-            uncond_mask = unconditional_embeds.attention_mask.to(device)
+            uncond_feats, uncond_mask = pad_text_features(
+                unconditional_embeds.text_embeds, device, dtype
+            )
 
         for t in timesteps:
             t01 = (t / 1000.0).to(device).expand(latents.shape[0])

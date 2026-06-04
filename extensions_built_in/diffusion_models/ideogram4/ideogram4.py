@@ -9,7 +9,7 @@ from toolkit.config_modules import GenerateImageConfig, ModelConfig
 from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
 from toolkit.print import print_acc
-from toolkit.prompt_utils import PromptEmbeds
+from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -29,6 +29,7 @@ from .src.latent_norm import get_latent_norm
 from .src.pipeline import (
     Ideogram4Pipeline,
     get_qwen3_vl_features,
+    pad_text_features,
     patchify_latents,
     predict_velocity,
     unpatchify_latents,
@@ -176,14 +177,20 @@ class Ideogram4Model(BaseModel):
 
         self.patch_size = 2
         self.vae_scale_factor = 8
-        # Length the Qwen3-VL caption is padded/truncated to. Fixed so cached and
-        # batched embeddings always share a sequence length.
+        # Safety cap on caption token length (truncation only). Captions are stored
+        # per-sample at their natural length and padded to the batch max at the
+        # model call, so this is just an upper bound for very long JSON prompts.
         self.max_text_length = int(
-            self.model_config.model_kwargs.get("max_text_length", 512)
+            self.model_config.model_kwargs.get("max_text_length", 3072)
         )
 
         self._latent_shift = None
         self._latent_scale = None
+
+    @property
+    def text_embedding_space_version(self):
+        # we changed the embeddings. invalidate cache.
+        return self.arch + "_te_v2"
 
     @staticmethod
     def get_train_scheduler():
@@ -340,8 +347,8 @@ class Ideogram4Model(BaseModel):
         self,
         pipeline: Ideogram4Pipeline,
         gen_config: GenerateImageConfig,
-        conditional_embeds: PromptEmbeds,
-        unconditional_embeds: PromptEmbeds,
+        conditional_embeds: AdvancedPromptEmbeds,
+        unconditional_embeds: AdvancedPromptEmbeds,
         generator: torch.Generator,
         extra: dict,
     ):
@@ -371,7 +378,7 @@ class Ideogram4Model(BaseModel):
         self,
         latent_model_input: torch.Tensor,  # (B, 128, gh, gw)
         timestep: torch.Tensor,  # 0 to 1000 scale
-        text_embeddings: PromptEmbeds,
+        text_embeddings: AdvancedPromptEmbeds,
         **kwargs,
     ):
         if self.model.device == torch.device("cpu"):
@@ -383,8 +390,10 @@ class Ideogram4Model(BaseModel):
         if t01.shape[0] != latent_model_input.shape[0]:
             t01 = t01.expand(latent_model_input.shape[0])
 
-        llm_features = text_embeddings.text_embeds.to(self.device_torch)
-        text_mask = text_embeddings.attention_mask.to(self.device_torch)
+        # Pad the per-sample caption features to the batch max here.
+        llm_features, text_mask = pad_text_features(
+            text_embeddings.text_embeds, self.device_torch, self.torch_dtype
+        )
 
         pred = predict_velocity(
             self.transformer,
@@ -395,7 +404,7 @@ class Ideogram4Model(BaseModel):
         )
         return pred
 
-    def get_prompt_embeds(self, prompt) -> PromptEmbeds:
+    def get_prompt_embeds(self, prompt) -> AdvancedPromptEmbeds:
         if isinstance(prompt, str):
             prompt = [prompt]
 
@@ -403,11 +412,11 @@ class Ideogram4Model(BaseModel):
             self.text_encoder.to(self.device_torch)
         device = self.text_encoder.device
 
-        pad_id = self.tokenizer.pad_token_id
-        if pad_id is None:
-            pad_id = self.tokenizer.eos_token_id or 0
-
-        token_id_list = []
+        # Encode each caption at its natural length (no cross-sample padding) and
+        # store one feature tensor per batch item. Padding to a common length is
+        # deferred to the model call, so caching a prompt only stores its real
+        # length -- important for the long structured (JSON) captions.
+        features_list = []
         for p in prompt:
             messages = [{"role": "user", "content": [{"type": "text", "text": p}]}]
             text = self.tokenizer.apply_chat_template(
@@ -419,29 +428,19 @@ class Ideogram4Model(BaseModel):
                 truncation=True,
                 max_length=self.max_text_length,
             )["input_ids"]
-            token_id_list.append(ids)
+            if len(ids) == 0:
+                ids = [self.tokenizer.eos_token_id or 0]
 
-        seq_len = self.max_text_length
-        batch_size = len(token_id_list)
-        token_ids = torch.full((batch_size, seq_len), pad_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, seq_len), dtype=torch.long)
-        for b, ids in enumerate(token_id_list):
-            n = min(len(ids), seq_len)
-            # left pad
-            token_ids[b, seq_len - n :] = torch.tensor(ids[:n], dtype=torch.long)
-            attention_mask[b, seq_len - n :] = 1
+            token_ids = torch.tensor([ids], dtype=torch.long, device=device)
+            attention_mask = torch.ones_like(token_ids)
+            pos_2d = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0).to(torch.long)
 
-        token_ids = token_ids.to(device)
-        attention_mask = attention_mask.to(device)
-        pos_2d = (attention_mask.cumsum(dim=-1) - 1).clamp(min=0).to(torch.long)
+            features = get_qwen3_vl_features(
+                self.text_encoder, token_ids, attention_mask, pos_2d
+            )  # (1, Lt, D)
+            features_list.append(features[0].to(self.torch_dtype))
 
-        features = get_qwen3_vl_features(
-            self.text_encoder, token_ids, attention_mask, pos_2d
-        )
-
-        pe = PromptEmbeds(features.to(self.torch_dtype))
-        pe.attention_mask = attention_mask
-        return pe
+        return AdvancedPromptEmbeds(text_embeds=features_list)
 
     def get_model_has_grad(self):
         return False
