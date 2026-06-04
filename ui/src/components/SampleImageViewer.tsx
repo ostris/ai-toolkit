@@ -3,13 +3,15 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
 import { SampleConfig, SampleItem } from '@/types';
-import { Cog } from 'lucide-react';
+import { Cog, SquareDashed } from 'lucide-react';
+import classNames from 'classnames';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
 import { apiClient } from '@/utils/api';
 import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
+import BoundingBoxOverlay, { parseBoundingBoxes } from './BoundingBoxOverlay';
 
 interface Props {
   imgPath: string | null; // current image path
@@ -31,6 +33,7 @@ export default function SampleImageViewer({
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
   const [showingControlIdx, setShowingControlIdx] = useState<number | null>(null);
+  const [showBoxes, setShowBoxes] = useState<boolean>(false);
 
   useEffect(() => setMounted(true), []);
 
@@ -196,6 +199,20 @@ export default function SampleImageViewer({
     return imgPath;
   }, [showingControlIdx, controlImages, imgPath]);
 
+  // The sample's prompt is what generated it; if it's an Ideogram bbox-JSON we can
+  // overlay the boxes on the generated image. Only on the main image (not controls).
+  const boundingBoxes = useMemo(
+    () => (sampleItem?.prompt ? parseBoundingBoxes(sampleItem.prompt) : null),
+    [sampleItem],
+  );
+  const canShowBoxes = Boolean(
+    boundingBoxes &&
+      showingControlIdx === null &&
+      displayedImgPath &&
+      !isAudio(displayedImgPath) &&
+      !isVideo(displayedImgPath),
+  );
+
   // keyboard events while open
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -326,12 +343,15 @@ export default function SampleImageViewer({
                     }}
                   >
                     <TransformComponent>
-                      <img
-                        src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
-                        alt="Sample Image"
-                        draggable={false}
-                        className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none !pointer-events-auto"
-                      />
+                      <div className="relative">
+                        <img
+                          src={`/api/img/${encodeURIComponent(displayedImgPath)}`}
+                          alt="Sample Image"
+                          draggable={false}
+                          className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[82vh] object-contain select-none !pointer-events-auto"
+                        />
+                        {showBoxes && canShowBoxes && boundingBoxes && <BoundingBoxOverlay boxes={boundingBoxes} />}
+                      </div>
                     </TransformComponent>
                   </TransformWrapper>
                 ))}
@@ -386,33 +406,48 @@ export default function SampleImageViewer({
                 </div>
               </div>
             </div>
-            <div className="absolute top-2 right-2 bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100 z-20">
-              <Menu>
-                <MenuButton>
-                  <Cog />
-                </MenuButton>
-                <MenuItems
-                  anchor="bottom end"
-                  className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
+            <div className="absolute top-2 right-2 flex items-center gap-2 z-20">
+              {canShowBoxes && (
+                <button
+                  type="button"
+                  onClick={() => setShowBoxes(v => !v)}
+                  title={showBoxes ? 'Hide bounding boxes' : 'Show bounding boxes'}
+                  className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
+                    'opacity-100 text-blue-400': showBoxes,
+                    'opacity-50': !showBoxes,
+                  })}
                 >
-                  {imgPath && isAudio(imgPath) && (
+                  <SquareDashed />
+                </button>
+              )}
+              <div className="bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100">
+                <Menu>
+                  <MenuButton>
+                    <Cog />
+                  </MenuButton>
+                  <MenuItems
+                    anchor="bottom end"
+                    className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
+                  >
+                    {imgPath && isAudio(imgPath) && (
+                      <MenuItem>
+                        <a
+                          className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
+                          href={`/api/img/${encodeURIComponent(imgPath)}`}
+                          download={imgPath.replace(/^.*[\\/]/, '')}
+                        >
+                          Download
+                        </a>
+                      </MenuItem>
+                    )}
                     <MenuItem>
-                      <a
-                        className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
-                        href={`/api/img/${encodeURIComponent(imgPath)}`}
-                        download={imgPath.replace(/^.*[\\/]/, '')}
-                      >
-                        Download
-                      </a>
+                      <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
+                        Delete Sample
+                      </div>
                     </MenuItem>
-                  )}
-                  <MenuItem>
-                    <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
-                      Delete Sample
-                    </div>
-                  </MenuItem>
-                </MenuItems>
-              </Menu>
+                  </MenuItems>
+                </Menu>
+              </div>
             </div>
           </DialogPanel>
         </div>

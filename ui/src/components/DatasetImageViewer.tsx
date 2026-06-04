@@ -10,42 +10,7 @@ import { apiClient } from '@/utils/api';
 import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
-
-// A single bbox parsed from an Ideogram-style caption. Stored coords are
-// normalized 0-1000 in [y1, x1, y2, x2] order (top-left origin).
-interface OverlayBox {
-  y1: number;
-  x1: number;
-  y2: number;
-  x2: number;
-  label: string;
-  type: 'obj' | 'text';
-}
-
-// Returns the list of boxes if the caption is an Ideogram bbox-JSON caption with
-// at least one bbox, otherwise null (normal captions get no overlay).
-function parseBoundingBoxes(caption: string): OverlayBox[] | null {
-  const trimmed = caption.trim();
-  if (!trimmed.startsWith('{')) return null;
-  let data: any;
-  try {
-    data = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
-  const elements = data?.compositional_deconstruction?.elements;
-  if (!Array.isArray(elements)) return null;
-  const boxes: OverlayBox[] = [];
-  for (const el of elements) {
-    const bb = el?.bbox;
-    if (Array.isArray(bb) && bb.length === 4 && bb.every((n: any) => typeof n === 'number')) {
-      const isText = el.type === 'text';
-      const label = (isText ? el.text : el.desc) ?? '';
-      boxes.push({ y1: bb[0], x1: bb[1], y2: bb[2], x2: bb[3], label: `${label}`, type: isText ? 'text' : 'obj' });
-    }
-  }
-  return boxes.length > 0 ? boxes : null;
-}
+import BoundingBoxOverlay, { parseBoundingBoxes } from './BoundingBoxOverlay';
 
 interface Props {
   imgPath: string | null; // current image path
@@ -373,40 +338,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                           draggable={false}
                           className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[70vh] object-contain select-none !pointer-events-auto"
                         />
-                        {showBoxes && boundingBoxes && (
-                          <div className="absolute inset-0 pointer-events-none">
-                            {boundingBoxes.map((b, i) => (
-                              <div
-                                key={i}
-                                className={classNames('absolute border', {
-                                  'border-cyan-400': b.type === 'obj',
-                                  'border-amber-400': b.type === 'text',
-                                })}
-                                style={{
-                                  left: `${b.x1 / 10}%`,
-                                  top: `${b.y1 / 10}%`,
-                                  width: `${(b.x2 - b.x1) / 10}%`,
-                                  height: `${(b.y2 - b.y1) / 10}%`,
-                                }}
-                              >
-                                {b.label && (
-                                  <span
-                                    title={b.label}
-                                    className={classNames(
-                                      'absolute top-0 left-0 max-w-full px-1 py-0.5 text-[9px] leading-tight font-medium whitespace-pre-line break-words line-clamp-3 text-gray-900',
-                                      {
-                                        'bg-cyan-400/90': b.type === 'obj',
-                                        'bg-amber-400/90': b.type === 'text',
-                                      },
-                                    )}
-                                  >
-                                    {b.label}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        {showBoxes && boundingBoxes && <BoundingBoxOverlay boxes={boundingBoxes} />}
                       </div>
                     </TransformComponent>
                   </TransformWrapper>
