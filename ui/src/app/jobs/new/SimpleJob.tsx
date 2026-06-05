@@ -22,7 +22,8 @@ import {
   SliderInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X, Copy } from 'lucide-react';
+import { X, Copy, Wand2 } from 'lucide-react';
+import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -1263,9 +1264,35 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
             </div>
-            <FormGroup label={`Sample Prompts (${jobConfig.config.process[0].sample.samples.length})`} className="pt-2">
-              <div></div>
-            </FormGroup>
+            <div className="pt-2 mb-2 flex items-center justify-between">
+              <label className="block text-xs text-gray-300">
+                Sample Prompts ({jobConfig.config.process[0].sample.samples.length})
+              </label>
+              {modelArch?.additionalSections?.includes('upsample_prompts') && (
+                <button
+                  type="button"
+                  disabled={jobConfig.config.process[0].sample.samples.length === 0}
+                  onClick={() => {
+                    const sampleCfg = jobConfig.config.process[0].sample;
+                    const items = sampleCfg.samples
+                      .map((s, i) => ({
+                        index: i,
+                        prompt: s.prompt || '',
+                        aspectRatio: toAspectRatio(s.width || sampleCfg.width, s.height || sampleCfg.height),
+                      }))
+                      .filter(it => it.prompt.trim() !== '');
+                    if (items.length === 0) return;
+                    openUpsamplePromptsModal(items, (index, newPrompt) => {
+                      setJobConfig(newPrompt, `config.process[0].sample.samples[${index}].prompt`);
+                    });
+                  }}
+                  className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md inline-flex items-center gap-2"
+                >
+                  <Wand2 className="w-4 h-4" />
+                  Upsample Prompts
+                </button>
+              )}
+            </div>
             {jobConfig.config.process[0].sample.samples.map((sample, i) => (
               <div key={i} className="rounded-lg pl-4 pr-1 mb-4 bg-gray-950">
                 <div className="flex items-center space-x-2">
