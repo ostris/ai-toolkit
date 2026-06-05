@@ -22,8 +22,9 @@ import {
   SliderInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X, Copy, Wand2 } from 'lucide-react';
+import { X, Copy, Wand2, SquareDashed } from 'lucide-react';
 import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
+import { openPromptBoxEditor } from '@/components/PromptBoxEditorModal';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -1268,7 +1269,7 @@ export default function SimpleJob({
               <label className="block text-xs text-gray-300">
                 Sample Prompts ({jobConfig.config.process[0].sample.samples.length})
               </label>
-              {modelArch?.additionalSections?.includes('upsample_prompts') && (
+              {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
                 <button
                   type="button"
                   disabled={jobConfig.config.process[0].sample.samples.length === 0}
@@ -1375,6 +1376,31 @@ export default function SimpleJob({
                               />
                             )}
                           </>
+                        )}
+
+                        {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const sampleCfg = jobConfig.config.process[0].sample;
+                                openPromptBoxEditor({
+                                  prompt: sample.prompt || '',
+                                  aspectRatio: toAspectRatio(
+                                    sample.width || sampleCfg.width,
+                                    sample.height || sampleCfg.height,
+                                  ),
+                                  title: `Prompt #${i + 1}`,
+                                  onApply: newPrompt =>
+                                    setJobConfig(newPrompt, `config.process[0].sample.samples[${i}].prompt`),
+                                });
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800 transition-colors"
+                            >
+                              <SquareDashed className="w-3.5 h-3.5" />
+                              Edit caption &amp; boxes
+                            </button>
+                          </div>
                         )}
 
                         <div className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">
