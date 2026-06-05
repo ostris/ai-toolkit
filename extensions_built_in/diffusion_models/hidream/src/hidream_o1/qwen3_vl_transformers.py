@@ -1740,35 +1740,6 @@ class Qwen3VLModel(Qwen3VLPreTrainedModel):
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
             )
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-        elif torch.is_grad_enabled():
-            # t2i task: no pixel_values, but we must run the vision encoder with a
-            # tiny dummy input so that EVERY rank has non-None (zero) gradients for
-            # vision-encoder parameters.  This keeps the FSDP reduce-scatter and the
-            # replicate-group all-reduce symmetric across t2i and ref-task ranks,
-            # preventing collective hangs at backward / clip_grad_norm_.
-            # The dummy output is zeroed out before being added to inputs_embeds, so
-            # the forward result is numerically identical to the no-pixel_values path.
-            pe = self.visual.patch_embed  # PatchEmbed
-            t_sz = pe.temporal_patch_size  # e.g. 2
-            m_sz = self.visual.spatial_merge_size  # e.g. 2
-            n_patches = t_sz * m_sz * m_sz
-            patch_dim = pe.in_channels * t_sz * pe.patch_size * pe.patch_size
-            fake_pv = torch.zeros(
-                n_patches,
-                patch_dim,
-                device=inputs_embeds.device,
-                dtype=pe.proj.weight.dtype,
-            )
-            fake_grid = torch.tensor(
-                [[t_sz, m_sz, m_sz]], dtype=torch.long, device=inputs_embeds.device
-            )
-            fake_embs, _ = self.get_image_features(fake_pv, fake_grid)
-            fake_embs = torch.cat(fake_embs, dim=0).to(inputs_embeds.dtype)
-            # Multiply by a zero tensor (same dtype/device) so the gradient path
-            # through the vision encoder is live but the numerical contribution is 0.
-            inputs_embeds = inputs_embeds + fake_embs.sum() * inputs_embeds.new_zeros(
-                []
-            )
 
         if pixel_values_videos is not None:
             video_embeds, _ = self.get_video_features(

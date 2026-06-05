@@ -36,6 +36,16 @@ export const objToTags = (obj: Record<string, any>): string => {
     .join('\n');
 };
 
+export const getFilename = (filePath: string) => {
+  const idx = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return idx === -1 ? filePath : filePath.slice(idx + 1);
+};
+
+export const getFoldername = (filePath: string) => {
+  const idx = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return idx === -1 ? '' : filePath.slice(0, idx);
+};
+
 export const pathJoin = (...parts: string[]) => {
   const sep = parts.length > 0 && parts[0].includes('\\') ? '\\' : '/';
   const leadingTrailing = sep === '\\' ? /^\\+|\\+$/g : /^\/+|\/+$/g;

@@ -30,6 +30,8 @@ type Props = {
 const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, setGpuIDs, gpuList, showGPUSelect }) => {
   const selectedCaptionOption = captionerTypes.find(option => option.name === jobConfig.config.process[0].type);
   const additionalSections = selectedCaptionOption?.additionalSections || [];
+  const minNewTokens = selectedCaptionOption?.minNewTokens ?? 0;
+  const newTokensOptions = maxNewTokensOptions.filter(option => parseInt(option.value) >= minNewTokens);
 
   return (
     <div className="text-sm text-gray-400">
@@ -145,7 +147,7 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
                     setJobConfig(intVal, 'config.process[0].caption.max_new_tokens');
                   }
                 }}
-                options={maxNewTokensOptions}
+                options={newTokensOptions}
               />
             </div>
           )}

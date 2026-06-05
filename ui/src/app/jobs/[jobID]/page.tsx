@@ -79,13 +79,13 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
     <>
       {/* Fixed top bar */}
       <TopBar>
-        <div>
-          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => redirect('/jobs')}>
+        <div className="flex-shrink-0">
+          <Button className="text-gray-500 dark:text-gray-300 pl-0 pr-1 sm:px-3 mt-1" onClick={() => redirect('/jobs')}>
             <FaChevronLeft />
           </Button>
         </div>
-        <div>
-          <h1 className="text-lg">{title}</h1>
+        <div className="min-w-0 flex-shrink">
+          <h1 className="text-base sm:text-lg truncate">{title}</h1>
         </div>
         <div className="flex-1"></div>
         {job && (
@@ -112,7 +112,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
           </>
         )}
       </MainContent>
-      <div className="bg-gray-800 absolute top-12 left-0 w-full h-8 flex items-center px-2 text-sm">
+      <div className="bg-gray-800 absolute top-12 left-0 w-full h-8 flex items-center px-0 sm:px-2 text-sm sm:overflow-x-auto whitespace-nowrap">
         {pages.map(page => {
           if (page.jobTypes && !page.jobTypes.includes(jobType)) {
             return null;
@@ -121,16 +121,16 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             <Button
               key={page.value}
               onClick={() => setPageKey(page.value)}
-              className={`px-4 py-1 h-8 flex items-center gap-1.5 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700 text-white' : ''}`}
+              className={`flex-1 sm:flex-initial justify-center px-2 sm:px-4 py-1 h-8 flex items-center gap-1.5 sm:flex-shrink-0 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700 text-white' : ''}`}
             >
               <page.icon className="text-sm" />
-              {page.name}
+              <span className="hidden sm:inline">{page.name}</span>
             </Button>
           );
         })}
         {page?.menuItem && (
           <>
-            <div className="flex-grow"></div>
+            <div className="hidden sm:block flex-grow"></div>
             <page.menuItem job={job} />
           </>
         )}

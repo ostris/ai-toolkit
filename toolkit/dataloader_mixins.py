@@ -2297,7 +2297,7 @@ class ControlCachingMixin:
         if control_type == 'inpaint':
             file_item.inpaint_path = control_path
             file_item.has_inpaint_image = True
-        elif control_type == 'mask':
+        elif control_type == 'mask' or control_type == 'sapiens2_mask':
             file_item.mask_path = control_path
             file_item.has_mask_image = True
         else:

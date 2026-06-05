@@ -574,13 +574,27 @@ class _DPTHeadBase(nn.Module):
         )
         self.fusion_blocks = _build_fusion_stack(channels)
         self.project = nn.Conv2d(channels, channels, 3, padding=1, bias=True)
+        self.gradient_checkpointing = False
+
+    def gradient_checkpointing_enable(self, **_kwargs) -> None:
+        self.gradient_checkpointing = True
+
+    def gradient_checkpointing_disable(self) -> None:
+        self.gradient_checkpointing = False
+
+    def _ckpt(self, module, *args):
+        # Checkpoint only when grads are actually being tracked, so the no_grad
+        # target pass doesn't pay for wasted recompute.
+        if self.gradient_checkpointing and torch.is_grad_enabled():
+            return torch.utils.checkpoint.checkpoint(module, *args, use_reentrant=False)
+        return module(*args)
 
     def _trunk(self, intermediate_features) -> torch.Tensor:
         x = self.reassemble(intermediate_features)
         x = [self.convs[i](feat) for i, feat in enumerate(x)]
-        out = self.fusion_blocks[0](x[-1])
+        out = self._ckpt(self.fusion_blocks[0], x[-1])
         for i in range(1, 4):
-            out = self.fusion_blocks[i](out, residual=x[-(i + 1)])
+            out = self._ckpt(self.fusion_blocks[i], out, x[-(i + 1)])
         return self.project(out)
 
 
@@ -763,11 +777,15 @@ class TIPSv2DPTModel(nn.Module):
         return next(self.parameters()).dtype
 
     def gradient_checkpointing_enable(self, **kwargs) -> None:
-        """Enable gradient checkpointing on the vision transformer blocks."""
+        """Enable gradient checkpointing on the vision transformer blocks and DPT heads."""
         self.vision_encoder.gradient_checkpointing_enable(**kwargs)
+        for head in (self.depth_head, self.normals_head, self.segmentation_head):
+            head.gradient_checkpointing_enable(**kwargs)
 
     def gradient_checkpointing_disable(self) -> None:
         self.vision_encoder.gradient_checkpointing_disable()
+        for head in (self.depth_head, self.normals_head, self.segmentation_head):
+            head.gradient_checkpointing_disable()
 
     enable_gradient_checkpointing = gradient_checkpointing_enable
     disable_gradient_checkpointing = gradient_checkpointing_disable

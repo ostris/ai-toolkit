@@ -14,18 +14,22 @@ export default function Dashboard() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Queue</h1>
+          <h1 className="text-base sm:text-lg">Queue</h1>
         </div>
         <div className="flex-1"></div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center text-sm sm:text-base">
           <button
             onClick={() => setImportOpen(true)}
-            className="text-white bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-md"
+            className="text-white bg-slate-700 hover:bg-slate-600 px-3 py-1 rounded-md whitespace-nowrap"
           >
             Import Job
           </button>
-          <Link href="/jobs/new" className="text-white bg-slate-600 hover:bg-slate-500 px-3 py-1 rounded-md">
-            New Training Job
+          <Link
+            href="/jobs/new"
+            className="text-white bg-slate-600 hover:bg-slate-500 px-3 py-1 rounded-md whitespace-nowrap"
+          >
+            <span className="sm:hidden">+ New Job</span>
+            <span className="hidden sm:inline">New Training Job</span>
           </Link>
         </div>
       </TopBar>

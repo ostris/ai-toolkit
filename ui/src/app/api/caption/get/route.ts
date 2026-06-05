@@ -4,6 +4,11 @@ import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot } from '@/server/settings';
 
+function isUnderRoot(filepath: string, root: string): boolean {
+  const resolved = path.resolve(filepath);
+  return resolved === root || resolved.startsWith(root + path.sep);
+}
+
 export async function POST(request: NextRequest) {
   let body;
   try {
@@ -30,8 +35,10 @@ export async function POST(request: NextRequest) {
     // Get allowed directories
     const allowedDir = await getDatasetsRoot();
 
-    // Security check: Ensure path is in allowed directory
-    const isAllowed = filepath.startsWith(allowedDir) && !filepath.includes('..');
+    // Security check: resolve so `..` segments collapse, then verify it's still
+    // under the allowed root. Substring `.includes('..')` would false-positive
+    // on filenames that contain `..` as text (e.g. an ellipsis in a filename).
+    const isAllowed = isUnderRoot(filepath, allowedDir);
 
     if (!isAllowed) {
       console.warn(`Access denied: ${filepath} not in ${allowedDir}`);
