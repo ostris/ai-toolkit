@@ -127,21 +127,61 @@ def sanitize_bbox(bbox):
     return [y1, x1, y2, x2]
 
 
-def sanitize_caption(data: dict, aspect_ratio: str) -> dict:
-    """Light cleanup: force a concrete aspect ratio (never echo 'auto') and clean
-    each bbox. Leaves prose untouched."""
-    if aspect_ratio.lower() != "auto":
-        data["aspect_ratio"] = aspect_ratio
+HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def sanitize_palette(palette, max_len):
+    """Keep unique, valid hex colors in order, capped to max_len. Returns the
+    cleaned list, or None if nothing valid remains (drop the key)."""
+    if not isinstance(palette, (list, tuple)):
+        return None
+    seen = set()
+    out = []
+    for c in palette:
+        if not isinstance(c, str):
+            continue
+        c = c.strip()
+        if not HEX_COLOR_RE.match(c):
+            continue
+        key = c.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(c)
+        if len(out) >= max_len:
+            break
+    return out or None
+
+
+def sanitize_caption(data: dict) -> dict:
+    """Light cleanup: drop any aspect_ratio key (input-only context, not output),
+    clean each bbox, and cap color palettes (16 per image, 5 per element)."""
+    data.pop("aspect_ratio", None)
+    style = data.get("style_description")
+    if isinstance(style, dict) and "color_palette" in style:
+        pal = sanitize_palette(style["color_palette"], 16)
+        if pal is None:
+            style.pop("color_palette", None)
+        else:
+            style["color_palette"] = pal
     decon = data.get("compositional_deconstruction", {})
     elements = decon.get("elements", [])
     if isinstance(elements, list):
         for el in elements:
-            if isinstance(el, dict) and "bbox" in el:
+            if not isinstance(el, dict):
+                continue
+            if "bbox" in el:
                 cleaned = sanitize_bbox(el["bbox"])
                 if cleaned is None:
                     el.pop("bbox", None)
                 else:
                     el["bbox"] = cleaned
+            if "color_palette" in el:
+                pal = sanitize_palette(el["color_palette"], 5)
+                if pal is None:
+                    el.pop("color_palette", None)
+                else:
+                    el["color_palette"] = pal
     return data
 
 
@@ -184,7 +224,7 @@ def upsample_one(
         log("Failed to parse JSON from model output. Raw output follows:")
         log(output_text)
         return None
-    return sanitize_caption(data, aspect_ratio)
+    return sanitize_caption(data)
 
 
 def normalize_item(item, default_aspect_ratio):

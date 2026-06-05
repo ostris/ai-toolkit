@@ -19,16 +19,16 @@ You are CAPTIONING a real image, not imagining one. Describe ONLY what is visibl
 ## OUTPUT CONTRACT — exactly three top-level keys, in this order:
 
 ```json
-{"aspect_ratio":"W:H","high_level_description":"...","compositional_deconstruction":{"background":"...","elements":[ ... ]}}
+{"high_level_description":"...","style_description":{"aesthetics":"...","lighting":"...","photo":"...","medium":"...","color_palette":["#RRGGBB"]},"compositional_deconstruction":{"background":"...","elements":[ ... ]}}
 ```
 
 - Emit a SINGLE-LINE MINIFIED JSON object — no markdown fences, no commentary, no other top-level keys.
 - Preserve non-ASCII characters as-is (CJK, Cyrillic, Devanagari, Arabic, accented Latin). Never escape with `\\uNNNN`, transliterate, or replace `café` with `cafe`.
 - Use SINGLE quotes for embedded text references in prose fields (`'Joe's Diner'`, not `\\"Joe's Diner\\"`). The `text` field of text elements is the exception — that field holds the verbatim characters visible in the image, may use any characters, and follows QUOTED SPAN FIDELITY below.
 
-### `aspect_ratio` (first field, always required)
+### Target aspect ratio (input only — never emit it)
 
-The exact target aspect ratio is GIVEN to you in the user message as `W:H`. Echo it VERBATIM. Never recompute it, never emit `auto`, never override it from your own reading of the frame. Every bbox you emit is normalized to THIS aspect ratio.
+The user message gives the image's aspect ratio as `W:H`. Use it ONLY to size your bounding boxes correctly (a box is square only on a square frame). Do NOT emit an `aspect_ratio` key — it is not part of the output.
 
 ### `high_level_description` — observational summary (50-word hard cap)
 
@@ -42,19 +42,24 @@ The exact target aspect ratio is GIVEN to you in the user message as `W:H`. Echo
 GOOD: `A full-action shot of a male soccer player in a red kit and black Adidas cleats kicking a soccer ball on a green turf field, with a blurred crowd in the stadium background.`
 BAD (over-specifies): `A male soccer player captured mid-kick on a bright green grass pitch, right leg fully extended through the follow-through at the precise moment his black-and-white studded boot makes contact with a white-and-black size-5 ball...`
 
-## IDENTIFY THE MEDIUM
+## STYLE DESCRIPTION — the `style_description` block (always required)
 
-State the medium accurately in HLD/background prose as natural framing: `photograph | illustration | 3D render | graphic design` (and the specific style when obvious — `35mm film photograph`, `flat vector illustration`, `Pixar-style 3D render`, `watercolor illustration`). Read it from the image; do not impose a default. Name a recognizable style ONCE, briefly — do not append invented technique detail.
+A nested object capturing the image's overall look, OBSERVED from the image (never invented). Exactly these five keys:
+- `aesthetics` — the overall mood/aesthetic in a short phrase (`Cinematic, minimal, serene.` / `Bright, playful, high-energy.`).
+- `lighting` — the actual lighting: direction, quality, contrast, and the colour of the light. Describe a warm-coloured source concretely (`amber pool from a candle`) but never use the bare word `warm` as a grade.
+- `photo` — the medium-specific capture/render spec. Photograph → camera/film look, framing, grain, focus (`35mm film still, 16:9 framing, subtle grain, shallow depth of field`). Other media → the rendering technique (`flat vector, clean edges` / `octane 3D render, soft global illumination` / `loose watercolor on textured paper`).
+- `medium` — one short phrase: `Photograph.` / `Illustration.` / `3D render.` / `Graphic design.` Read it from the image; do not impose a default.
+- `color_palette` — an array of the image's DOMINANT colours as hex strings (`"#1B3A5C"`), up to 16, ordered most → least dominant. Sample the colours actually present; do not invent colours that are not there.
 
 ## ELEMENTS — what they are, what they're not
 
 Each element is one of:
 ```
-{"type":"obj","bbox":[x1,y1,x2,y2],"desc":"..."}
-{"type":"text","bbox":[x1,y1,x2,y2],"text":"LINE ONE\\nLINE TWO","desc":"..."}
+{"type":"obj","bbox":[x1,y1,x2,y2],"color_palette":["#RRGGBB"],"desc":"..."}
+{"type":"text","bbox":[x1,y1,x2,y2],"color_palette":["#RRGGBB"],"text":"LINE ONE\\nLINE TWO","desc":"..."}
 ```
 
-`bbox` is optional per-element (see BBOX section below).
+`bbox` and `color_palette` are both OPTIONAL per-element. `bbox`: see BBOX section below. `color_palette`: up to 5 hex strings of that element's own dominant colours — include it when the element has distinctive colours worth pinning (a red jacket, a brand logo, coloured text), omit it for colour-neutral elements.
 
 ### SINGLE SUBJECT = SINGLE ELEMENT
 

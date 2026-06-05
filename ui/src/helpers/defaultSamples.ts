@@ -412,8 +412,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A 35mm film photograph of a red-haired woman in a green jacket playing chess at an outdoor park table, mid-move over a wooden board, while a fiery explosion erupts from a building in the distant background.",
+  "style_description": {
+    "aesthetics": "Cinematic, tense, candid realism.",
+    "lighting": "Overcast afternoon daylight, soft and low-contrast, cool-neutral white balance.",
+    "photo": "35mm film still, subtle grain, natural depth of field.",
+    "medium": "Photograph.",
+    "color_palette": ["#8C9B82", "#B7402A", "#5A5F57", "#9AA7AE", "#D98A3D"]
+  },
   "compositional_deconstruction": {
     "background": "An urban public park on an overcast afternoon under a pale grey-blue sky, cool-neutral white balance. A grassy lawn with scattered fallen leaves stretches behind the foreground table, bordered by a paved walking path and a row of bare-branched trees. In the far distance, a multi-story stone building erupts in a large orange-and-yellow fireball with a thick black smoke plume rising and rolling outward, sending a faint haze across the upper sky. The blast is out of focus and far off, framed between the tree trunks.",
     "elements": [
@@ -455,8 +461,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A 35mm film photograph of a woman in a grey beanie holding a coffee cup while sitting at a wooden cafe table by a window, with a blurred cafe interior behind her.",
+  "style_description": {
+    "aesthetics": "Cozy, relaxed, intimate.",
+    "lighting": "Soft diffused window daylight, cool-neutral white balance, low contrast.",
+    "photo": "35mm film still, shallow depth of field, subtle grain.",
+    "medium": "Photograph.",
+    "color_palette": ["#9A5A3E", "#E0D2BA", "#7C7872", "#B07C45", "#33312D"]
+  },
   "compositional_deconstruction": {
     "background": "Interior of a small cafe shot in natural daylight with cool-neutral white balance. A large window occupies the left portion of the frame, soft diffused daylight falling across the scene. Exposed brick wall in warm reddish-brown tones runs along the back, partly out of focus. A wooden shelf mounted on the back wall holds a row of white ceramic mugs and a small potted trailing plant. Pendant lights with matte black shades hang from the ceiling, slightly blurred. The floor is wide-plank weathered oak. Distant blurred tables and chairs recede into the soft-focus background on the right side.",
     "elements": [
@@ -519,8 +531,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A fish-eye lens photograph of a horse DJing behind turntables at a packed night club, holding a martini glass, surrounded by laser lights and drifting smoke-machine haze on a glowing dance floor.",
+  "style_description": {
+    "aesthetics": "High-energy, surreal, neon nightlife.",
+    "lighting": "Dim club lighting with magenta and cyan washes and crisscrossing green and magenta laser beams cutting through haze.",
+    "photo": "Fish-eye lens with strong barrel distortion, deep shadow contrast.",
+    "medium": "Photograph.",
+    "color_palette": ["#0B0B12", "#D81E8F", "#1FB6C9", "#37C46A", "#6A4A2E"]
+  },
   "compositional_deconstruction": {
     "background": "Interior of a dark night club shot through a fish-eye lens with strong barrel distortion bowing the edges of the frame. Black walls and low ceiling studded with mounted laser-light fixtures throwing crisscrossing green and magenta beams that cut through thick drifting haze from a smoke machine. Ambient lighting is dim with cool magenta and cyan washes pooling across a glossy black dance floor that reflects fragmented colored beams. A blurred simplified crowd of clubgoers fills the mid-distance, hands raised, rendered as dark silhouettes against the colored glow.",
     "elements": [
@@ -567,13 +585,20 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
       }
     ]
   }
+}
 `,
     },
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A 35mm film photograph of a smiling man proudly showing off his graphic t-shirt on a sandy beach, with a great white shark leaping out of the ocean in the background.",
+  "style_description": {
+    "aesthetics": "Bright, playful, candid.",
+    "lighting": "Bright overcast daylight, soft and shadowless, cool-neutral white balance.",
+    "photo": "35mm film still, natural depth of field, subtle grain.",
+    "medium": "Photograph.",
+    "color_palette": ["#C9B68C", "#2E6B7A", "#9FB7BE", "#1B3A5C", "#E7E2D6"]
+  },
   "compositional_deconstruction": {
     "background": "Sandy beach scene under a bright overcast sky with cool-neutral white balance. Pale tan sand stretches across the lower portion, slightly damp and packed near the waterline with scattered footprints. Behind the man, the open ocean fills the midground, deep blue-green with choppy whitecaps and rolling waves breaking toward the shore. The horizon line sits high in the frame where the sea meets a hazy pale sky with thin diffuse clouds. Soft even daylight, no harsh shadows, accurate natural color.",
     "elements": [
@@ -616,8 +641,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A brown grizzly bear standing upright on its hind legs, lifting a wooden log onto a half-built log cabin in a snow-covered mountain clearing, with snowy pine forest and peaks behind, rendered as a 35mm film photograph.",
+  "style_description": {
+    "aesthetics": "Serene, rugged, wintry.",
+    "lighting": "Pale overcast winter daylight, even and shadowless, cool-neutral white balance.",
+    "photo": "35mm film still, subtle grain, soft natural focus.",
+    "medium": "Photograph.",
+    "color_palette": ["#E8EDF0", "#6B4A30", "#3C5240", "#9AA6AD", "#C8A877"]
+  },
   "compositional_deconstruction": {
     "background": "Snow-covered alpine clearing under a pale overcast winter sky with soft diffused daylight and cool-neutral white balance. Thick fresh snow blankets the ground, undisturbed except around the build site. A dense forest of snow-laden evergreen pines fills the midground, their branches drooping under powder. Jagged grey-and-white granite mountain peaks rise across the distant horizon, partly veiled in light haze. Faint snowflakes drift through the air. The light is even and shadowless across the scene.",
     "elements": [
@@ -669,8 +700,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A punk rocker woman mid-performance on a concert stage, playing an electric guitar and singing into a microphone, with laser lights cutting through haze in a 35mm concert photograph.",
+  "style_description": {
+    "aesthetics": "Gritty, energetic, high-contrast.",
+    "lighting": "Dark stage lit by green and magenta laser beams through haze, deep shadow contrast, cool-neutral white balance.",
+    "photo": "35mm concert photograph, subtle grain, deep contrast.",
+    "medium": "Photograph.",
+    "color_palette": ["#0C0C10", "#37C46A", "#D81E8F", "#C9C9C9", "#5A4633"]
+  },
   "compositional_deconstruction": {
     "background": "A dark concert stage shell with a black back wall and exposed steel truss rigging overhead holding stage fixtures. Green and magenta laser beams fan out across the upper space, cutting through a light haze that fills the air and scatters the beams into visible shafts. The stage floor is matte black with scuffed gaffer-tape marks. Distant blurred crowd silhouettes fill the lower foreground edge, lit faintly by stage spill. 35mm concert photograph with cool-neutral white balance and deep shadow contrast.",
     "elements": [
@@ -733,8 +770,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A 35mm film photograph of a bearded hipster man assembling a wooden chair on a workbench in a cluttered woodworking shop, surrounded by hand tools and lumber.",
+  "style_description": {
+    "aesthetics": "Rustic, focused, artisanal.",
+    "lighting": "Diffused overcast daylight from a high window, cool-neutral white balance, low contrast.",
+    "photo": "35mm film still, subtle grain, natural depth of field.",
+    "medium": "Photograph.",
+    "color_palette": ["#8A5A3C", "#6E4327", "#9A9488", "#4A5340", "#C7B299"]
+  },
   "compositional_deconstruction": {
     "background": "Interior of a small woodworking workshop with weathered exposed-brick walls on the left and unfinished plywood-panel walls on the right. Sawdust-dusted concrete floor. A pegboard mounted on the rear wall holds rows of hanging hand tools. A single industrial window high on the left wall lets in diffused overcast daylight with a cool-neutral white balance. Fine sawdust haze drifts in the air. Coils of wood shavings and scattered offcuts rest near the wall base. Shot on 35mm film.",
     "elements": [
@@ -797,8 +840,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A studio fashion photograph of a man in a medium shot modeling a casual outfit against a seamless white backdrop, lit with even studio lighting.",
+  "style_description": {
+    "aesthetics": "Clean, minimal, editorial.",
+    "lighting": "Even diffused studio softbox lighting, neutral white balance, shadowless.",
+    "photo": "Studio fashion photograph, sharp focus, seamless white cyclorama.",
+    "medium": "Photograph.",
+    "color_palette": ["#F2F2F0", "#9A9CA0", "#2A2F3C", "#5B5E66", "#D8D8D6"]
+  },
   "compositional_deconstruction": {
     "background": "Seamless white studio backdrop, smoothly lit with even diffused studio lighting from soft boxes on both sides, producing a clean bright cyclorama with no visible seams, corners, or shadows behind the subject. Neutral white balance.",
     "elements": [
@@ -820,8 +869,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A 35mm film photograph of a man standing on a city sidewalk holding a white cardboard sign reading 'this is a sign', shot at eye-level with neutral daylight.",
+  "style_description": {
+    "aesthetics": "Plain, candid, documentary.",
+    "lighting": "Overcast daylight, soft and even, cool-neutral white balance.",
+    "photo": "35mm film still, eye-level, subtle grain.",
+    "medium": "Photograph.",
+    "color_palette": ["#9AA0A4", "#7C4A38", "#3A3D44", "#1E3A66", "#E8E6E0"]
+  },
   "compositional_deconstruction": {
     "background": "An urban sidewalk scene under overcast daylight with cool-neutral white balance. A grey concrete pavement runs along the bottom, bordered by the brick facade of a low storefront building with large plate-glass windows. A few out-of-focus pedestrians and a parked dark sedan sit in the blurred mid-distance. Pale grey sky visible above the rooflines.",
     "elements": [
@@ -864,8 +919,14 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     {
       prompt: `
 {
-  "aspect_ratio": "1:1",
   "high_level_description": "A 35mm film photograph of a muscular bulldog in a worn leather jacket standing beside a battered motorcycle in a post-apocalyptic desert, gripping a sawed-off shotgun, with a hazy ruined skyline on the horizon.",
+  "style_description": {
+    "aesthetics": "Rugged, cinematic, post-apocalyptic.",
+    "lighting": "Pale dust-choked daylight softened by airborne grit, cool-neutral white balance, low contrast.",
+    "photo": "35mm film still, subtle grain, hazy distance.",
+    "medium": "Photograph.",
+    "color_palette": ["#C2A878", "#6B4A2E", "#3A352E", "#9A8A6C", "#B5562A"]
+  },
   "compositional_deconstruction": {
     "background": "A sun-scorched post-apocalyptic desert under a pale dust-choked sky, cool-neutral white balance with a thin haze of airborne grit softening the light. Cracked sandy hardpan stretches to a distant horizon where the silhouettes of half-collapsed buildings, a leaning radio tower, and rusted girders rise out of the heat shimmer. Scattered scrub brush and faint tire tracks mark the packed dirt, and a thin band of overcast cloud sits low over the ruined skyline.",
     "elements": [
