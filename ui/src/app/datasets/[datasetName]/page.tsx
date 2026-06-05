@@ -18,7 +18,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
   const [isAutoCaptioning, setIsAutoCaptioning] = useState(false);
   const usableParams = use(params as any) as { datasetName: string };
-  const datasetName = usableParams.datasetName;
+  const datasetName = decodeURIComponent(usableParams.datasetName);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const { settings, isSettingsLoaded } = useSettings();
   const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
