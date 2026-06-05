@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
-import { Cog, SquareDashed, Pencil } from 'lucide-react';
+import { Cog, SquareDashed } from 'lucide-react';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import classNames from 'classnames';
 import { openConfirm } from './ConfirmModal';
@@ -10,7 +10,7 @@ import { apiClient } from '@/utils/api';
 import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
-import BoundingBoxOverlay, { BoundingBoxEditor, parseBoundingBoxes, extractBoxes } from './BoundingBoxOverlay';
+import { BoundingBoxEditor, parseBoundingBoxes, extractBoxes } from './BoundingBoxOverlay';
 
 function safeParse(text: string): any {
   try {
@@ -35,7 +35,6 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
   const [savedCaption, setSavedCaption] = useState<string>('');
   const [isCaptionLoaded, setIsCaptionLoaded] = useState<boolean>(false);
   const [showBoxes, setShowBoxes] = useState<boolean>(false);
-  const [isEditingBoxes, setIsEditingBoxes] = useState<boolean>(false);
   const [selectedBoxIndex, setSelectedBoxIndex] = useState<number | null>(null);
   const [isDrawing, setIsDrawing] = useState<boolean>(false);
   const captionRef = useRef<string>('');
@@ -45,9 +44,8 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
 
   useEffect(() => setMounted(true), []);
 
-  // Leave box-edit mode whenever the image changes, to avoid accidental edits.
+  // Clear box selection / draw mode whenever the image changes.
   useEffect(() => {
-    setIsEditingBoxes(false);
     setSelectedBoxIndex(null);
     setIsDrawing(false);
   }, [imgPath]);
@@ -321,8 +319,8 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
           break;
         case 'Delete':
         case 'Backspace':
-          // While editing boxes, Delete removes the selected box (never the image).
-          if (isEditingBoxes) {
+          // With boxes shown, Delete removes the selected box (never the image).
+          if (showBoxes) {
             if (selectedBoxIndex != null) handleDeleteBox(selectedBoxIndex);
           } else {
             handleDelete();
@@ -334,7 +332,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onCancel, handlePrev, handleNext, handleDelete, isEditingBoxes, selectedBoxIndex, handleDeleteBox]);
+  }, [isOpen, onCancel, handlePrev, handleNext, handleDelete, showBoxes, selectedBoxIndex, handleDeleteBox]);
 
   // Touch swipe navigation
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -413,18 +411,19 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
             transition
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
-            className="relative transform rounded-none sm:rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in w-full sm:w-auto sm:max-w-[95%] sm:max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col overflow-hidden touch-pan-y"
+            className="relative transform rounded-none sm:rounded-lg bg-gray-800 text-left shadow-xl transition-all data-closed:translate-y-4 data-closed:opacity-0 data-enter:duration-300 data-enter:ease-out data-leave:duration-200 data-leave:ease-in w-full sm:w-auto sm:max-w-[95vw] sm:max-h-[95vh] data-closed:sm:translate-y-0 data-closed:sm:scale-95 flex flex-col sm:flex-row overflow-hidden touch-pan-y"
           >
-            <div className="overflow-hidden flex items-center justify-center">
+            {/* Image / media area */}
+            <div className="relative flex-1 min-w-0 flex items-center justify-center bg-gray-900 overflow-hidden">
               {imgPath &&
                 (isAudio(imgPath) ? (
-                  <div className="w-[500px] h-[500px] max-w-full sm:max-w-[95vw] max-h-[70vh]">
+                  <div className="w-[500px] h-[500px] max-w-full max-h-[50vh] sm:max-h-[90vh]">
                     <AudioPlayer src={`/api/img/${encodeURIComponent(imgPath)}`} title={filename} autoPlay />
                   </div>
                 ) : isVideo(imgPath) ? (
                   <video
                     src={`/api/img/${encodeURIComponent(imgPath)}`}
-                    className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[70vh] object-contain"
+                    className="w-auto h-auto max-w-full max-h-[50vh] sm:max-h-[90vh] object-contain"
                     preload="none"
                     playsInline
                     loop
@@ -437,9 +436,9 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                     initialScale={1}
                     minScale={1}
                     maxScale={6}
-                    doubleClick={{ mode: 'toggle', step: 2, disabled: isEditingBoxes }}
-                    wheel={{ step: 0.2, disabled: isEditingBoxes }}
-                    panning={{ disabled: isEditingBoxes, allowRightClickPan: false }}
+                    doubleClick={{ mode: 'toggle', step: 2, disabled: showBoxes }}
+                    wheel={{ step: 0.2 }}
+                    panning={{ disabled: showBoxes, allowRightClickPan: false }}
                     onTransform={(_ref, state) => {
                       zoomedRef.current = state.scale > 1.01;
                     }}
@@ -450,9 +449,9 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                           src={`/api/img/${encodeURIComponent(imgPath)}`}
                           alt="Dataset Image"
                           draggable={false}
-                          className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[70vh] object-contain select-none !pointer-events-auto"
+                          className="w-auto h-auto max-w-full max-h-[50vh] sm:max-h-[90vh] object-contain select-none !pointer-events-auto"
                         />
-                        {isEditingBoxes ? (
+                        {showBoxes && (
                           <BoundingBoxEditor
                             boxes={editBoxes}
                             selectedIndex={selectedBoxIndex}
@@ -461,16 +460,68 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                             onChangeBox={handleBoxChange}
                             onCreateBox={handleCreateBox}
                           />
-                        ) : (
-                          showBoxes && boundingBoxes && <BoundingBoxOverlay boxes={boundingBoxes} />
                         )}
                       </div>
                     </TransformComponent>
                   </TransformWrapper>
                 ))}
+
+              {/* Controls over the image */}
+              <div className="absolute top-2 right-2 flex items-center gap-2 z-20">
+                {canShowBoxes && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !showBoxes;
+                      setShowBoxes(next);
+                      if (!next) {
+                        setSelectedBoxIndex(null);
+                        setIsDrawing(false);
+                      }
+                    }}
+                    title={showBoxes ? 'Hide bounding boxes' : 'Show & edit bounding boxes'}
+                    className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
+                      'opacity-100 text-blue-400': showBoxes,
+                      'opacity-50': !showBoxes,
+                    })}
+                  >
+                    <SquareDashed />
+                  </button>
+                )}
+                <div className="bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100">
+                  <Menu>
+                    <MenuButton>
+                      <Cog />
+                    </MenuButton>
+                    <MenuItems
+                      anchor="bottom end"
+                      className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
+                    >
+                      {imgPath && isAudio(imgPath) && (
+                        <MenuItem>
+                          <a
+                            className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
+                            href={`/api/img/${encodeURIComponent(imgPath)}`}
+                            download={filename}
+                          >
+                            Download
+                          </a>
+                        </MenuItem>
+                      )}
+                      <MenuItem>
+                        <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
+                          Delete Image
+                        </div>
+                      </MenuItem>
+                    </MenuItems>
+                  </Menu>
+                </div>
+              </div>
             </div>
-            <div className="bg-gray-950 text-sm flex flex-col px-4 py-2 gap-2">
-              <div className="flex items-center justify-between gap-4">
+
+            {/* Right sidebar: file info + caption + box editor */}
+            <div className="bg-gray-950 w-full sm:w-96 shrink-0 flex flex-col gap-2 p-3 overflow-y-auto text-sm">
+              <div className="flex items-center justify-between gap-2">
                 <div className="text-xs text-gray-400 truncate min-w-0">
                   <span className="text-gray-500 mr-1">File:</span>
                   <span className="text-gray-300">{filename}</span>
@@ -480,23 +531,22 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                 </div>
               </div>
               <div
-                className={classNames('rounded border-2 bg-gray-900 transition-colors', {
+                className={classNames('flex-1 min-h-[8rem] rounded border-2 bg-gray-900 transition-colors', {
                   'border-blue-500': !isCaptionCurrent,
                   'border-gray-700': isCaptionCurrent,
                 })}
               >
                 <textarea
-                  className="w-full bg-transparent text-gray-100 text-sm p-2 resize-none outline-none focus:ring-0 focus:outline-none"
+                  className="w-full h-full bg-transparent text-gray-100 text-sm p-2 resize-none outline-none focus:ring-0 focus:outline-none"
                   placeholder={isCaptionLoaded ? 'Add a caption...' : 'Loading caption...'}
                   value={caption}
-                  rows={3}
                   onChange={e => setCaption(e.target.value)}
                   onKeyDown={handleCaptionKeyDown}
                   onBlur={saveCaption}
                   disabled={!isCaptionLoaded}
                 />
               </div>
-              {isEditingBoxes && (
+              {showBoxes && (
                 <div className="rounded border border-gray-700 bg-gray-900 p-2 flex flex-col gap-2 text-xs">
                   <div className="flex items-center gap-2">
                     <button
@@ -509,11 +559,6 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                     >
                       {isDrawing ? 'Cancel' : '+ Add Box'}
                     </button>
-                    <span className="text-gray-500">
-                      {isDrawing
-                        ? 'Drag on the image to draw a new box'
-                        : 'Click a box to select; drag to move, handles to resize'}
-                    </span>
                     <button
                       type="button"
                       onClick={saveCaption}
@@ -526,6 +571,11 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                       {isCaptionCurrent ? 'Saved' : 'Save'}
                     </button>
                   </div>
+                  <span className="text-gray-500">
+                    {isDrawing
+                      ? 'Drag on the image to draw a new box'
+                      : 'Click a box to select; drag to move, handles to resize'}
+                  </span>
                   {selectedElement && (
                     <div className="flex flex-col gap-2 border-t border-gray-700 pt-2">
                       <div className="flex items-center gap-2">
@@ -573,7 +623,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                         <span className="text-gray-400">Description</span>
                         <textarea
                           className="w-full bg-gray-950 text-gray-100 rounded border border-gray-700 p-1 resize-none outline-none focus:border-blue-500"
-                          rows={2}
+                          rows={3}
                           value={selectedElement.desc ?? ''}
                           onChange={e => handleFieldChange('desc', e.target.value)}
                         />
@@ -582,77 +632,6 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                   )}
                 </div>
               )}
-            </div>
-            <div className="absolute top-2 right-2 flex items-center gap-2 z-20">
-              {canShowBoxes && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !showBoxes;
-                    setShowBoxes(next);
-                    if (!next) {
-                      setIsEditingBoxes(false);
-                      setSelectedBoxIndex(null);
-                      setIsDrawing(false);
-                    }
-                  }}
-                  title={showBoxes ? 'Hide bounding boxes' : 'Show bounding boxes'}
-                  className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
-                    'opacity-100 text-blue-400': showBoxes,
-                    'opacity-50': !showBoxes,
-                  })}
-                >
-                  <SquareDashed />
-                </button>
-              )}
-              {((canShowBoxes && showBoxes) || isEditingBoxes) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isEditingBoxes;
-                    setIsEditingBoxes(next);
-                    if (!next) {
-                      setSelectedBoxIndex(null);
-                      setIsDrawing(false);
-                    }
-                  }}
-                  title={isEditingBoxes ? 'Done editing boxes' : 'Edit bounding boxes'}
-                  className={classNames('bg-gray-900 rounded-full p-1 leading-[0px] hover:opacity-100', {
-                    'opacity-100 text-blue-400': isEditingBoxes,
-                    'opacity-50': !isEditingBoxes,
-                  })}
-                >
-                  <Pencil />
-                </button>
-              )}
-              <div className="bg-gray-900 rounded-full p-1 leading-[0px] opacity-50 hover:opacity-100">
-                <Menu>
-                  <MenuButton>
-                    <Cog />
-                  </MenuButton>
-                  <MenuItems
-                    anchor="bottom end"
-                    className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
-                  >
-                    {imgPath && isAudio(imgPath) && (
-                      <MenuItem>
-                        <a
-                          className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
-                          href={`/api/img/${encodeURIComponent(imgPath)}`}
-                          download={filename}
-                        >
-                          Download
-                        </a>
-                      </MenuItem>
-                    )}
-                    <MenuItem>
-                      <div className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded" onClick={handleDelete}>
-                        Delete Image
-                      </div>
-                    </MenuItem>
-                  </MenuItems>
-                </Menu>
-              </div>
             </div>
           </DialogPanel>
         </div>
