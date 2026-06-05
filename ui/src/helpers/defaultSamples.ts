@@ -580,7 +580,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
           720,
           640
         ],
-        "text": "NEON\nSTABLE",
+        "text": "NEON\\nSTABLE",
         "desc": "Illuminated club logo on the front face of the DJ booth in a bold sans-serif display typeface, glowing magenta, slightly warped by the fish-eye curvature."
       }
     ]
@@ -630,7 +630,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
           540,
           560
         ],
-        "text": "BEACH\nVIBES",
+        "text": "BEACH\\nVIBES",
         "desc": "Bold sans-serif print across the chest of the man's white t-shirt, stacked on two lines in navy blue, slightly curved with the fabric as he stretches it toward the camera."
       }
     ]
@@ -829,7 +829,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
           760,
           700
         ],
-        "text": "OAKWELL\nWORKS",
+        "text": "OAKWELL\\nWORKS",
         "desc": "Small stamped logo branded into the leather apron's chest panel, two stacked lines in a condensed serif font, dark burnt-brown tone on tan leather."
       }
     ]
