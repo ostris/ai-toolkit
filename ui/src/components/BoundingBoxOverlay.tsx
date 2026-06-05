@@ -1,6 +1,22 @@
 import { useRef, useState } from 'react';
 import classNames from 'classnames';
 
+// Per-box color so multiple boxes are individually distinguishable (not all one
+// color). Hue is spread by the golden-angle so adjacent indices look distinct;
+// stable per index so the same box keeps its color across the editor/overlay and
+// matches its #n chip in the sidebar.
+export function boxColor(index: number): string {
+  const hue = (index * 137.508) % 360;
+  return `hsl(${hue.toFixed(1)}, 80%, 60%)`;
+}
+
+// Same hue as boxColor but with an alpha, for tinting backgrounds (e.g. the
+// sidebar element cards) so they visually match their box on the image.
+export function boxColorAlpha(index: number, alpha: number): string {
+  const hue = (index * 137.508) % 360;
+  return `hsla(${hue.toFixed(1)}, 80%, 60%, ${alpha})`;
+}
+
 // A single bbox parsed from an Ideogram-style caption/prompt. Stored coords are
 // normalized 0-1000 in [y1, x1, y2, x2] order (top-left origin).
 export interface OverlayBox {
@@ -227,8 +243,9 @@ export function BoundingBoxEditor({
     >
       {boxes.map(box => {
         const pos = draft && draft.index === box.elementIndex ? draft.box : box;
-        const isObj = box.type === 'obj';
         const selected = selectedIndex === box.elementIndex;
+        const showSelected = selected && !drawing;
+        const color = boxColor(box.elementIndex);
         return (
           <div
             key={box.elementIndex}
@@ -236,24 +253,21 @@ export function BoundingBoxEditor({
             className={classNames('absolute border-2', {
               'pointer-events-none': drawing,
               'cursor-move touch-none': !drawing,
-              'border-white ring-2 ring-blue-400': selected && !drawing,
-              'border-cyan-400': isObj && !(selected && !drawing),
-              'border-amber-400': !isObj && !(selected && !drawing),
+              'ring-2 ring-blue-400': showSelected,
             })}
             style={{
               left: `${pos.x1 / 10}%`,
               top: `${pos.y1 / 10}%`,
               width: `${(pos.x2 - pos.x1) / 10}%`,
               height: `${(pos.y2 - pos.y1) / 10}%`,
+              borderColor: showSelected ? '#ffffff' : color,
             }}
           >
             {box.label && (
               <span
                 title={box.label}
-                className={classNames(
-                  'absolute top-0 left-0 max-w-full px-1 py-0.5 text-[9px] leading-tight font-medium whitespace-pre-line break-words line-clamp-2 text-gray-900 pointer-events-none',
-                  { 'bg-cyan-400/90': isObj, 'bg-amber-400/90': !isObj },
-                )}
+                className="absolute top-0 left-0 max-w-full px-1 py-0.5 text-[9px] leading-tight font-medium whitespace-pre-line break-words line-clamp-2 text-gray-900 pointer-events-none"
+                style={{ backgroundColor: color }}
               >
                 {box.label}
               </span>
@@ -295,36 +309,32 @@ export function BoundingBoxEditor({
 export default function BoundingBoxOverlay({ boxes }: { boxes: OverlayBox[] }) {
   return (
     <div className="absolute inset-0 pointer-events-none">
-      {boxes.map((b, i) => (
-        <div
-          key={i}
-          className={classNames('absolute border', {
-            'border-cyan-400': b.type === 'obj',
-            'border-amber-400': b.type === 'text',
-          })}
-          style={{
-            left: `${b.x1 / 10}%`,
-            top: `${b.y1 / 10}%`,
-            width: `${(b.x2 - b.x1) / 10}%`,
-            height: `${(b.y2 - b.y1) / 10}%`,
-          }}
-        >
-          {b.label && (
-            <span
-              title={b.label}
-              className={classNames(
-                'absolute top-0 left-0 max-w-full px-1 py-0.5 text-[9px] leading-tight font-medium whitespace-pre-line break-words line-clamp-3 text-gray-900',
-                {
-                  'bg-cyan-400/90': b.type === 'obj',
-                  'bg-amber-400/90': b.type === 'text',
-                },
-              )}
-            >
-              {b.label}
-            </span>
-          )}
-        </div>
-      ))}
+      {boxes.map((b, i) => {
+        const color = boxColor(i);
+        return (
+          <div
+            key={i}
+            className="absolute border-2"
+            style={{
+              left: `${b.x1 / 10}%`,
+              top: `${b.y1 / 10}%`,
+              width: `${(b.x2 - b.x1) / 10}%`,
+              height: `${(b.y2 - b.y1) / 10}%`,
+              borderColor: color,
+            }}
+          >
+            {b.label && (
+              <span
+                title={b.label}
+                className="absolute top-0 left-0 max-w-full px-1 py-0.5 text-[9px] leading-tight font-medium whitespace-pre-line break-words line-clamp-3 text-gray-900"
+                style={{ backgroundColor: color }}
+              >
+                {b.label}
+              </span>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

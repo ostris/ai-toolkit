@@ -11,6 +11,7 @@ import { isVideo, isAudio } from '@/utils/basic';
 import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { BoundingBoxEditor, parseBoundingBoxes, extractBoxes } from './BoundingBoxOverlay';
+import IdeogramCaptionSidebar, { isIdeogramCaption } from './IdeogramCaptionSidebar';
 
 function safeParse(text: string): any {
   try {
@@ -42,6 +43,8 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
   const currentImgPathRef = useRef<string | null>(null);
   const captionAbortRef = useRef<AbortController | null>(null);
 
+  const isIdeogram = useMemo(() => isIdeogramCaption(caption), [caption]);
+
   useEffect(() => setMounted(true), []);
 
   // Clear box selection / draw mode whenever the image changes.
@@ -49,6 +52,11 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
     setSelectedBoxIndex(null);
     setIsDrawing(false);
   }, [imgPath]);
+
+  // Default to showing the editable boxes when an Ideogram caption is present.
+  useEffect(() => {
+    setShowBoxes(isIdeogram);
+  }, [isIdeogram, imgPath]);
 
   // open/close based on external value
   useEffect(() => {
@@ -269,31 +277,6 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
     [editCaption],
   );
 
-  const handleFieldChange = useCallback(
-    (field: 'desc' | 'text', value: string) => {
-      editCaption(els => {
-        if (selectedBoxIndex != null && els[selectedBoxIndex]) els[selectedBoxIndex][field] = value;
-      });
-    },
-    [editCaption, selectedBoxIndex],
-  );
-
-  const handleTypeChange = useCallback(
-    (type: 'obj' | 'text') => {
-      editCaption(els => {
-        const el = selectedBoxIndex != null ? els[selectedBoxIndex] : null;
-        if (!el) return;
-        el.type = type;
-        if (type === 'text') {
-          if (el.text == null) el.text = '';
-        } else {
-          delete el.text;
-        }
-      });
-    },
-    [editCaption, selectedBoxIndex],
-  );
-
   // keyboard events while open — skip nav while caption textarea is focused
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -390,12 +373,8 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
   const boundingBoxes = useMemo(() => parseBoundingBoxes(caption), [caption]);
   const canShowBoxes = Boolean(boundingBoxes && imgPath && !isAudio(imgPath) && !isVideo(imgPath));
 
-  // Boxes and the selected element are derived from the (locally edited) caption.
+  // Boxes are derived from the (locally edited) caption for the image overlay.
   const editBoxes = useMemo(() => extractBoxes(safeParse(caption)), [caption]);
-  const selectedElement = useMemo(() => {
-    if (selectedBoxIndex == null) return null;
-    return safeParse(caption)?.compositional_deconstruction?.elements?.[selectedBoxIndex] ?? null;
-  }, [caption, selectedBoxIndex]);
 
   if (!mounted) return null;
 
@@ -530,106 +509,36 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                   {currentIndex >= 0 ? `${currentIndex + 1} / ${imageList.length}` : ''}
                 </div>
               </div>
-              <div
-                className={classNames('flex-1 min-h-[8rem] rounded border-2 bg-gray-900 transition-colors', {
-                  'border-blue-500': !isCaptionCurrent,
-                  'border-gray-700': isCaptionCurrent,
-                })}
-              >
-                <textarea
-                  className="w-full h-full bg-transparent text-gray-100 text-sm p-2 resize-none outline-none focus:ring-0 focus:outline-none"
-                  placeholder={isCaptionLoaded ? 'Add a caption...' : 'Loading caption...'}
-                  value={caption}
-                  onChange={e => setCaption(e.target.value)}
-                  onKeyDown={handleCaptionKeyDown}
-                  onBlur={saveCaption}
-                  disabled={!isCaptionLoaded}
+              {isIdeogram ? (
+                <IdeogramCaptionSidebar
+                  caption={caption}
+                  onChange={setCaption}
+                  selectedIndex={selectedBoxIndex}
+                  onSelectIndex={i => {
+                    setSelectedBoxIndex(i);
+                    if (i != null) setShowBoxes(true);
+                  }}
+                  isDrawing={isDrawing}
+                  onToggleDrawing={() => setIsDrawing(d => !d)}
+                  onSave={saveCaption}
+                  isDirty={!isCaptionCurrent}
                 />
-              </div>
-              {showBoxes && (
-                <div className="rounded border border-gray-700 bg-gray-900 p-2 flex flex-col gap-2 text-xs">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsDrawing(d => !d)}
-                      className={classNames('px-2 py-1 rounded border', {
-                        'bg-blue-600 border-blue-500 text-white': isDrawing,
-                        'border-gray-600 text-gray-300 hover:bg-gray-800': !isDrawing,
-                      })}
-                    >
-                      {isDrawing ? 'Cancel' : '+ Add Box'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={saveCaption}
-                      disabled={isCaptionCurrent}
-                      className={classNames('ml-auto px-3 py-1 rounded border', {
-                        'bg-green-600 border-green-500 text-white hover:bg-green-500': !isCaptionCurrent,
-                        'border-gray-700 text-gray-500 cursor-default': isCaptionCurrent,
-                      })}
-                    >
-                      {isCaptionCurrent ? 'Saved' : 'Save'}
-                    </button>
-                  </div>
-                  <span className="text-gray-500">
-                    {isDrawing
-                      ? 'Drag on the image to draw a new box'
-                      : 'Click a box to select; drag to move, handles to resize'}
-                  </span>
-                  {selectedElement && (
-                    <div className="flex flex-col gap-2 border-t border-gray-700 pt-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-400">Type:</span>
-                        <button
-                          type="button"
-                          onClick={() => handleTypeChange('obj')}
-                          className={classNames('px-2 py-0.5 rounded border', {
-                            'bg-cyan-600 border-cyan-500 text-white': selectedElement.type !== 'text',
-                            'border-gray-600 text-gray-300 hover:bg-gray-800': selectedElement.type === 'text',
-                          })}
-                        >
-                          Object
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleTypeChange('text')}
-                          className={classNames('px-2 py-0.5 rounded border', {
-                            'bg-amber-600 border-amber-500 text-white': selectedElement.type === 'text',
-                            'border-gray-600 text-gray-300 hover:bg-gray-800': selectedElement.type !== 'text',
-                          })}
-                        >
-                          Text
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteBox(selectedBoxIndex!)}
-                          className="ml-auto px-2 py-0.5 rounded border border-red-700 text-red-400 hover:bg-red-900/40"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      {selectedElement.type === 'text' && (
-                        <label className="flex flex-col gap-1">
-                          <span className="text-gray-400">Text (shown in image)</span>
-                          <textarea
-                            className="w-full bg-gray-950 text-gray-100 rounded border border-gray-700 p-1 resize-none outline-none focus:border-blue-500"
-                            rows={2}
-                            value={selectedElement.text ?? ''}
-                            onChange={e => handleFieldChange('text', e.target.value)}
-                          />
-                        </label>
-                      )}
-                      <label className="flex flex-col gap-1">
-                        <span className="text-gray-400">Description</span>
-                        <textarea
-                          className="w-full bg-gray-950 text-gray-100 rounded border border-gray-700 p-1 resize-none outline-none focus:border-blue-500"
-                          rows={3}
-                          value={selectedElement.desc ?? ''}
-                          onChange={e => handleFieldChange('desc', e.target.value)}
-                        />
-                      </label>
-                    </div>
-                  )}
+              ) : (
+                <div
+                  className={classNames('flex-1 min-h-[8rem] rounded border-2 bg-gray-900 transition-colors', {
+                    'border-blue-500': !isCaptionCurrent,
+                    'border-gray-700': isCaptionCurrent,
+                  })}
+                >
+                  <textarea
+                    className="w-full h-full bg-transparent text-gray-100 text-sm p-2 resize-none outline-none focus:ring-0 focus:outline-none"
+                    placeholder={isCaptionLoaded ? 'Add a caption...' : 'Loading caption...'}
+                    value={caption}
+                    onChange={e => setCaption(e.target.value)}
+                    onKeyDown={handleCaptionKeyDown}
+                    onBlur={saveCaption}
+                    disabled={!isCaptionLoaded}
+                  />
                 </div>
               )}
             </div>
