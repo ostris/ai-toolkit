@@ -2053,13 +2053,161 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ### HOOK ###
         self.hook_before_train_loop()
 
-        # compile the model if needed (must be after LoRA/adapter injection AND accelerator.prepare)
+        # ============================================================
+        # MODE 1: compile: true (block-level compile)
+        # ============================================================
         if self.model_config.compile:
             try:
-                # make sure it is on the gpu
-                self.sd.unet.to(self.device_torch)
-                print_acc("Compiling model with torch.compile. The first forward will hang for a while using this. This is normal.")
-                self.sd.unet = torch.compile(self.sd.unet)
+                inner_unet_check = unwrap_model(self.sd.unet)
+                is_unet_offloaded = hasattr(inner_unet_check, '_memory_manager')
+                is_quantized = getattr(self.model_config, 'quantize', False) or \
+                               getattr(self.model_config, 'quantize_te', False)
+
+                if is_quantized and is_unet_offloaded:
+                    print_acc("WARNING: compile is disabled.")
+                    print_acc("Quantized models with Transformer offloading are incompatible.")
+                    print_acc("Disable Transformer offload to use compile or qcompile.")
+                    print_acc("Continuing without compilation.")
+                else:
+                    self.sd.unet.to(self.device_torch)
+
+                    torch._dynamo.config.cache_size_limit = 8
+                    torch._dynamo.config.suppress_errors = False
+
+                    compile_mode      = getattr(self.model_config, 'compile_mode', 'default')
+                    compile_fullgraph = getattr(self.model_config, 'compile_fullgraph', True)
+                    compile_dynamic   = getattr(self.model_config, 'compile_dynamic', True)
+
+                    inner_unet = unwrap_model(self.sd.unet)
+
+                    BLOCK_LIST_ATTRS = [
+                        'layers',                    # Z-Image: transformer.layers[0..29]
+                        'transformer_blocks',        # Flux double-stream, DiT, HiDream
+                        'single_transformer_blocks', # Flux single-stream
+                        'double_stream_blocks',      # HiDream alias
+                        'single_stream_blocks',      # HiDream single-stream alias
+                        'double_blocks',             # Flux2 custom transformer
+                        'single_blocks',             # Flux2 custom single
+                        'blocks',                    # Wan, LTX2, generic
+                    ]
+
+                    compiled_block_count = 0
+
+                    for attr_name in BLOCK_LIST_ATTRS:
+                        block_list = getattr(inner_unet, attr_name, None)
+                        if block_list is None:
+                            continue
+                        if not hasattr(block_list, '__len__'):
+                            continue
+
+                        for i, block in enumerate(block_list):
+                            if not isinstance(block, torch.nn.Module):
+                                continue
+                            if hasattr(block, '_hf_hook'):
+                                continue
+
+                            block_list[i] = torch.compile(
+                                block,
+                                mode=compile_mode,
+                                dynamic=compile_dynamic,
+                                fullgraph=compile_fullgraph,
+                            )
+                            compiled_block_count += 1
+
+                    if compiled_block_count == 0:
+                        for module in inner_unet.modules():
+                            if module.__class__.__name__ in (
+                                'BasicTransformerBlock',
+                                'TemporalBasicTransformerBlock',
+                                'Transformer2DModel',
+                            ):
+                                if hasattr(module, '_hf_hook'):
+                                    continue
+
+                                parent, attr = None, None
+                                for name, child in inner_unet.named_modules():
+                                    if child is module:
+                                        parts = name.rsplit('.', 1)
+                                        if len(parts) == 2:
+                                            parent_name, attr = parts
+                                            parent = inner_unet.get_submodule(parent_name)
+
+                                if parent is not None and attr is not None:
+                                    setattr(
+                                        parent,
+                                        attr,
+                                        torch.compile(
+                                            module,
+                                            mode=compile_mode,
+                                            dynamic=compile_dynamic,
+                                            fullgraph=compile_fullgraph,
+                                        ),
+                                    )
+                                    compiled_block_count += 1
+
+                    compile_kwargs_str = (
+                        f"mode='{compile_mode}', fullgraph={compile_fullgraph}, dynamic={compile_dynamic}"
+                    )
+
+                    if compiled_block_count > 0:
+                        print_acc(f"Compiled {compiled_block_count} transformer block(s) with torch.compile ({compile_kwargs_str}).")
+                        print_acc("The first forward pass will be slow during compile. This is normal.")
+                        print_acc("If you are experiencing issues, try qcompile: true instead.")
+                    else:
+                        print_acc(f"No individual transformer blocks found; falling back to whole-model torch.compile ({compile_kwargs_str}).")
+                        print_acc("The first forward pass will hang for a while. This is normal.")
+                        print_acc("If you are experiencing issues, try qcompile: true instead.")
+                        self.sd.unet = torch.compile(
+                            self.sd.unet,
+                            mode=compile_mode,
+                            dynamic=compile_dynamic,
+                            fullgraph=compile_fullgraph,
+                        )
+
+            except Exception as e:
+                print_acc(f"Failed to compile model: {e}")
+                print_acc("Continuing without compilation")
+
+        # ============================================================
+        # MODE 2: qcompile: true (whole-model compile)
+        # ============================================================
+        elif getattr(self.model_config, 'qcompile', False):
+            try:
+                inner_unet_check = unwrap_model(self.sd.unet)
+                is_unet_offloaded = hasattr(inner_unet_check, '_memory_manager')
+                is_quantized = getattr(self.model_config, 'quantize', False) or \
+                               getattr(self.model_config, 'quantize_te', False)
+                if is_quantized and is_unet_offloaded:
+                    print_acc("WARNING: qcompile is disabled.")
+                    print_acc("Quantized models with Transformer offloading are incompatible.")
+                    print_acc("Disable Transformer offload to use compile or qcompile.")
+                    print_acc("Continuing without compilation.")
+                else:
+                    self.sd.unet.to(self.device_torch)
+                    print_acc("Compiling model with qcompile (whole-model torch.compile).")
+                    print_acc("The first forward pass will hang for a while. This is normal.")
+                    torch._dynamo.config.cache_size_limit = 8
+                    torch._dynamo.config.suppress_errors = False
+                    compile_dynamic   = getattr(self.model_config, 'compile_dynamic',   True)
+                    compile_fullgraph = getattr(self.model_config, 'compile_fullgraph', True)
+                    compile_mode      = getattr(self.model_config, 'compile_mode',      'default')
+                    if is_quantized and compile_fullgraph:
+                        print_acc("Quantized model detected: fullgraph=True is incompatible, switching to fullgraph=False.")
+                        compile_fullgraph = False
+                    print_acc(f"Using torch.compile settings: mode={compile_mode}, dynamic={compile_dynamic}, fullgraph={compile_fullgraph}")
+                    if compile_mode == 'default':
+                        self.sd.unet = torch.compile(
+                            self.sd.unet,
+                            dynamic=compile_dynamic,
+                            fullgraph=compile_fullgraph,
+                        )
+                    else:
+                        self.sd.unet = torch.compile(
+                            self.sd.unet,
+                            mode=compile_mode,
+                            dynamic=compile_dynamic,
+                            fullgraph=compile_fullgraph,
+                        )
             except Exception as e:
                 print_acc(f"Failed to compile model: {e}")
                 print_acc("Continuing without compilation")

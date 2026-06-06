@@ -706,10 +706,14 @@ class ModelConfig:
 
         # compile the model with torch compile
         self.compile = kwargs.get("compile", False)
-        
+
         if self.compile and self.quantize:
-            print("Warning: You cannot compile a quantized model. Disabling compile.")
-            self.compile = False
+            print("⚠️ Quantized model detected - allowing torch.compile (experimental)")
+            # self.compile = False
+        self.qcompile = kwargs.get("qcompile", False)
+        self.compile_mode = kwargs.get("compile_mode", "default")
+        self.compile_fullgraph = kwargs.get("compile_fullgraph", True)
+        self.compile_dynamic = kwargs.get("compile_dynamic", True)
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
