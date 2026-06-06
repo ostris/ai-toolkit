@@ -21,11 +21,12 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 499 });
   }
 
-  const { imgPaths } = body as { imgPaths?: string[] };
+  const { imgPaths, ext } = body as { imgPaths?: string[]; ext?: string };
   if (!Array.isArray(imgPaths)) {
     return NextResponse.json({ error: 'imgPaths must be an array' }, { status: 400 });
   }
 
+  const captionExt = ((ext || 'txt') as string).replace(/^\.+/, '').trim() || 'txt';
   const allowedDir = await getDatasetsRoot();
   const captions: Record<string, string> = {};
 
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     if (typeof imgPath !== 'string') continue;
     if (!isUnderRoot(imgPath, allowedDir)) continue;
 
-    const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.txt';
+    const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
     try {
       captions[imgPath] = fs.existsSync(captionPath) ? fs.readFileSync(captionPath, 'utf-8') : '';
     } catch {

@@ -13,6 +13,7 @@ import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import { CreatableSelectInput } from '@/components/formInputs';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -22,6 +23,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const { settings, isSettingsLoaded } = useSettings();
   const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
+  const [captionExt, setCaptionExt] = useState<string>('txt');
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
@@ -118,9 +120,23 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
         <div className="flex-1"></div>
         <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
+          <div className="flex items-center gap-1">
+            <label className="text-xs text-gray-400 hidden sm:inline whitespace-nowrap">Caption ext</label>
+            <CreatableSelectInput
+              className="w-44"
+              value={captionExt}
+              onChange={value => setCaptionExt(value)}
+              options={[
+                { value: 'txt', label: 'txt' },
+                { value: 'json', label: 'json' },
+                { value: 'caption', label: 'caption' },
+              ]}
+            />
+          </div>
           <AutoCaptionButton
             datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
             setIsAutoCaptioning={setIsAutoCaptioning}
+            captionExt={captionExt}
           />
           <Button
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md text-sm sm:text-base whitespace-nowrap"
@@ -151,6 +167,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   onImageClick={() => setSelectedImgPath(img.img_path)}
                   captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
                   observerRoot={scrollParent}
+                  captionExt={captionExt}
                 />
               );
             }}
@@ -165,6 +182,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         onChange={setSelectedImgPath}
         refreshImages={() => refreshImageList(datasetName)}
         onCaptionSaved={path => setCaptionRefreshKeys(prev => ({ ...prev, [path]: (prev[path] || 0) + 1 }))}
+        captionExt={captionExt}
       />
     </>
   );

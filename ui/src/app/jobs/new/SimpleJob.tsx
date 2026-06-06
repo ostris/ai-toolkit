@@ -20,6 +20,7 @@ import {
   FormGroup,
   NumberInput,
   SliderInput,
+  CreatableSelectInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X, Copy, Wand2, SquareDashed } from 'lucide-react';
@@ -959,6 +960,18 @@ export default function SimpleJob({
                         min={0}
                         required
                       />
+                      <CreatableSelectInput
+                        label="Caption Extension"
+                        className="pt-2"
+                        value={dataset.caption_ext || 'txt'}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].caption_ext`)}
+                        options={[
+                          { value: 'txt', label: 'txt' },
+                          { value: 'json', label: 'json' },
+                          { value: 'caption', label: 'caption' },
+                        ]}
+                      />
+
                       {modelArch?.additionalSections?.includes('datasets.num_frames') && !dataset.auto_frame_count && (
                         <NumberInput
                           label="Num Frames"

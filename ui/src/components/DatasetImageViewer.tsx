@@ -12,6 +12,7 @@ import AudioPlayer from './AudioPlayer';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { BoundingBoxEditor, parseBoundingBoxes, extractBoxes } from './BoundingBoxOverlay';
 import IdeogramCaptionSidebar, { isIdeogramCaption } from './IdeogramCaptionSidebar';
+import datasetTemplates from '@/helpers/datasetTemplates';
 
 function safeParse(text: string): any {
   try {
@@ -27,9 +28,17 @@ interface Props {
   onChange: (nextPath: string | null) => void; // parent setter
   refreshImages?: () => void;
   onCaptionSaved?: (imgPath: string, caption: string) => void;
+  captionExt?: string;
 }
 
-export default function DatasetImageViewer({ imgPath, imageList, onChange, refreshImages, onCaptionSaved }: Props) {
+export default function DatasetImageViewer({
+  imgPath,
+  imageList,
+  onChange,
+  refreshImages,
+  onCaptionSaved,
+  captionExt = 'txt',
+}: Props) {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
   const [caption, setCaption] = useState<string>('');
@@ -98,7 +107,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
       const trimmed = value.trim();
       if (trimmed === prevSaved.trim()) return;
       apiClient
-        .post('/api/img/caption', { imgPath: path, caption: trimmed })
+        .post('/api/img/caption', { imgPath: path, caption: trimmed, ext: captionExt })
         .then(() => {
           if (currentImgPathRef.current === path) {
             setSavedCaption(trimmed);
@@ -109,7 +118,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
           console.error('Error saving caption:', error);
         });
     },
-    [onCaptionSaved],
+    [onCaptionSaved, captionExt],
   );
 
   // Stable handle to the latest saveCaptionForPath so the fetch effect doesn't
@@ -151,7 +160,11 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
       // transformResponse identity: keep the caption as a raw string. Axios's
       // default parses any JSON-looking body into an object (our bbox captions
       // are JSON), which would render as "[object Object]".
-      .post('/api/caption/get', { imgPath }, { signal: controller.signal, transformResponse: [d => d] })
+      .post(
+        '/api/caption/get',
+        { imgPath, ext: captionExt },
+        { signal: controller.signal, transformResponse: [d => d] },
+      )
       .then(res => res.data)
       .then(data => {
         if (controller.signal.aborted) return;
@@ -169,7 +182,7 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
     return () => {
       controller.abort();
     };
-  }, [imgPath]);
+  }, [imgPath, captionExt]);
 
   // Save any pending caption when the viewer fully unmounts
   useEffect(() => {
@@ -509,6 +522,23 @@ export default function DatasetImageViewer({ imgPath, imageList, onChange, refre
                   {currentIndex >= 0 ? `${currentIndex + 1} / ${imageList.length}` : ''}
                 </div>
               </div>
+              {isCaptionLoaded && caption.trim() === '' && (
+                <select
+                  className="w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm rounded p-2 outline-none focus:ring-0 focus:outline-none"
+                  value=""
+                  onChange={e => {
+                    const template = datasetTemplates[e.target.value];
+                    if (template) setCaption(template.trim());
+                  }}
+                >
+                  <option value="">Templates...</option>
+                  {Object.keys(datasetTemplates).map(key => (
+                    <option key={key} value={key}>
+                      {key}
+                    </option>
+                  ))}
+                </select>
+              )}
               {isIdeogram ? (
                 <IdeogramCaptionSidebar
                   caption={caption}

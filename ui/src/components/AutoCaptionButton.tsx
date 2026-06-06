@@ -8,9 +8,10 @@ import { Loader2 } from 'lucide-react';
 type AutoCaptionButtonProps = {
   datasetPath: string;
   setIsAutoCaptioning?: (isAutoCaptioning: boolean) => void;
+  captionExt?: string;
 };
 
-export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning }: AutoCaptionButtonProps) {
+export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning, captionExt }: AutoCaptionButtonProps) {
   const { job, status, refreshJob } = useJobByRef(datasetPath, 5000);
   useEffect(() => {
     if (setIsAutoCaptioning) {
@@ -34,9 +35,13 @@ export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning }: 
     <Button
       className="text-white bg-blue-600 px-2 sm:px-3 py-1 rounded-md mr-1 sm:mr-2 text-sm sm:text-base whitespace-nowrap"
       onClick={() =>
-        openCaptionDatasetModal(datasetPath, () => {
-          refreshJob();
-        })
+        openCaptionDatasetModal(
+          datasetPath,
+          () => {
+            refreshJob();
+          },
+          { defaultCaptionExt: captionExt },
+        )
       }
     >
       <span className="hidden sm:inline">Auto Caption</span>

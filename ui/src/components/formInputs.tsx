@@ -363,13 +363,15 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
         </label>
       )}
       <div className="flex gap-2">
-        <div className={isCustom ? 'w-1/3' : 'w-full'}>
+        <div className={isCustom ? 'w-20 shrink-0' : 'w-full'}>
           <Select
             value={selectedOption}
             options={selectOptions}
             isDisabled={props.disabled}
             className="aitk-react-select-container"
             classNamePrefix="aitk-react-select"
+            menuPosition="fixed"
+            menuPlacement="auto"
             formatOptionLabel={(option: unknown) => {
               const opt = option as SelectOption;
               return opt.value === CUSTOM_SELECT_VALUE ? (
@@ -397,7 +399,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
             type="text"
             value={value}
             onChange={e => onChange(e.target.value)}
-            className={`${inputClasses} w-2/3`}
+            className={`${inputClasses} flex-1 min-w-0`}
             placeholder={props.placeholder ?? 'Enter custom value'}
             disabled={props.disabled}
             autoFocus

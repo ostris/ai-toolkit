@@ -121,6 +121,20 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
             }}
             options={quantizationOptions}
           />
+          <div className="mt-4">
+            <CreatableSelectInput
+              label="Caption Extension"
+              value={jobConfig.config.process[0].caption.caption_extension || 'txt'}
+              onChange={value => {
+                setJobConfig(value, 'config.process[0].caption.caption_extension');
+              }}
+              options={[
+                { value: 'txt', label: 'txt' },
+                { value: 'json', label: 'json' },
+                { value: 'caption', label: 'caption' },
+              ]}
+            />
+          </div>
           {additionalSections.includes('caption.max_res') && (
             <div className="mt-4">
               <SelectInput
