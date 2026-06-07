@@ -117,11 +117,23 @@ def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
 def _move_params_to_cpu_and_pin(module: nn.Module):
     """Force parameters to CPU (+pinned) so we can 'bounce' them per forward/backward."""
     with torch.no_grad():
-        if hasattr(module, "weight") and isinstance(module.weight, nn.Parameter):
-            module.weight.data = _ensure_cpu_pinned(module.weight.data).detach()
-        if hasattr(module, "bias") and isinstance(module.bias, nn.Parameter):
-            if module.bias is not None:
-                module.bias.data = _ensure_cpu_pinned(module.bias.data).detach()
+        for name in ("weight", "bias"):
+            param = getattr(module, name, None)
+            if not isinstance(param, nn.Parameter):
+                continue
+            cpu_data = _ensure_cpu_pinned(param.data).detach()
+            if _is_quantized_tensor(param.data):
+                # Tensor-subclass weights (e.g. torchao float8 AffineQuantizedTensor)
+                # ignore `param.data = ...`: the wrapper reports CPU but its inner
+                # storage stays on the GPU, so the weight never actually offloads.
+                # Replace the whole Parameter so the device move sticks.
+                setattr(
+                    module,
+                    name,
+                    nn.Parameter(cpu_data, requires_grad=param.requires_grad),
+                )
+            else:
+                param.data = cpu_data
 
 
 # ==========================
