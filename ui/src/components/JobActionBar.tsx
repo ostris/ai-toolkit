@@ -1,0 +1,194 @@
+import Link from 'next/link';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX } from 'lucide-react';
+import { Button } from '@headlessui/react';
+import { openConfirm } from '@/components/ConfirmModal';
+import { Job } from '@prisma/client';
+import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, saveJobNow } from '@/utils/jobs';
+import { startQueue } from '@/utils/queue';
+import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
+import { redirect } from 'next/navigation';
+import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+
+interface JobActionBarProps {
+  job: Job;
+  onRefresh?: () => void;
+  afterDelete?: () => void;
+  hideView?: boolean;
+  className?: string;
+  autoStartQueue?: boolean;
+}
+
+export default function JobActionBar({
+  job,
+  onRefresh,
+  afterDelete,
+  className,
+  hideView,
+  autoStartQueue = false,
+}: JobActionBarProps) {
+  const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
+
+  if (!afterDelete) afterDelete = onRefresh;
+
+  const iconSizeClass = 'w-5 h-5 sm:w-6 sm:h-6';
+  return (
+    <div className={`flex items-center flex-shrink-0 ${className ?? ''}`}>
+      {canStart && (
+        <Button
+          onClick={async () => {
+            if (!canStart) return;
+            await startJob(job.id);
+            // start the queue as well
+            if (autoStartQueue) {
+              await startQueue(job.gpu_ids);
+            }
+            if (onRefresh) onRefresh();
+          }}
+          className={`ml-1 sm:ml-2 opacity-100`}
+        >
+          <Play className={iconSizeClass} />
+        </Button>
+      )}
+      {canRemoveFromQueue && (
+        <Button
+          onClick={async () => {
+            if (!canRemoveFromQueue) return;
+            await markJobAsStopped(job.id);
+            if (onRefresh) onRefresh();
+          }}
+          className={`ml-1 sm:ml-2 opacity-100`}
+        >
+          <X className={iconSizeClass} />
+        </Button>
+      )}
+      {canStop && (
+        <Button
+          onClick={() => {
+            if (!canStop) return;
+            openConfirm({
+              title: 'Stop Job',
+              message: `Are you sure you want to stop the job "${job.name}"? You CAN resume later.`,
+              type: 'info',
+              confirmText: 'Stop',
+              onConfirm: async () => {
+                await stopJob(job.id);
+                if (onRefresh) onRefresh();
+              },
+            });
+          }}
+          className={`ml-1 sm:ml-2 opacity-100`}
+        >
+          <Pause className={iconSizeClass} />
+        </Button>
+      )}
+      {!hideView && (
+        <Link href={`/jobs/${job.id}`} className="ml-1 sm:ml-2 text-gray-200 hover:text-gray-100 inline-block">
+          <Eye className={iconSizeClass} />
+        </Link>
+      )}
+      {job.job_type === 'caption' && canEdit && (
+        <div
+          className="ml-1 sm:ml-2 hover:text-gray-100 inline-block cursor-pointer"
+          onClick={() =>
+            openCaptionDatasetModal(
+              job.job_ref || '',
+              () => {
+                if (onRefresh) onRefresh();
+              },
+              { jobId: job.id },
+            )
+          }
+        >
+          <Pen className={iconSizeClass} />
+        </div>
+      )}
+      {job.job_type === 'train' && canEdit && (
+        <Link href={`/jobs/new?id=${job.id}`} className="ml-1 sm:ml-2 hover:text-gray-100 inline-block">
+          <Pen className={iconSizeClass} />
+        </Link>
+      )}
+      <Button
+        onClick={() => {
+          let message = `Are you sure you want to delete the job "${job.name}"? This will also permanently remove it from your disk.`;
+          if (job.status === 'running') {
+            message += ' WARNING: The job is currently running. You should stop it first if you can.';
+          }
+          openConfirm({
+            title: 'Delete Job',
+            message: message,
+            type: 'warning',
+            confirmText: 'Delete',
+            onConfirm: async () => {
+              if (job.status === 'running') {
+                try {
+                  await stopJob(job.id);
+                } catch (e) {
+                  console.error('Error stopping job before deleting:', e);
+                }
+              }
+              await deleteJob(job.id);
+              if (afterDelete) afterDelete();
+            },
+          });
+        }}
+        className={`ml-1 sm:ml-2 opacity-100`}
+      >
+        <Trash2 className={iconSizeClass} />
+      </Button>
+      <div className="border-r border-1 border-gray-700 ml-1 sm:ml-2 inline"></div>
+      <Menu>
+        <MenuButton className={'ml-1 sm:ml-2'}>
+          <Cog className={iconSizeClass} />
+        </MenuButton>
+        <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 mt-4">
+          {job.job_type === 'train' && (
+            <MenuItem>
+              <Link
+                href={`/jobs/new?cloneId=${job.id}`}
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+              >
+                <Copy className="w-4 h-4" />
+                Clone Job
+              </Link>
+            </MenuItem>
+          )}
+          {canStop && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+                onClick={async () => {
+                  await saveJobNow(job.id);
+                  if (onRefresh) onRefresh();
+                }}
+              >
+                <Save className="w-4 h-4" />
+                Save Next Step
+              </div>
+            </MenuItem>
+          )}
+          <MenuItem>
+            <div
+              className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+              onClick={() => {
+                let message = `Are you sure you want to mark this job as stopped? This will set the job status to 'stopped' if the status is hung. Only do this if you are 100% sure the job is stopped. This will NOT stop the job.`;
+                openConfirm({
+                  title: 'Mark Job as Stopped',
+                  message: message,
+                  type: 'warning',
+                  confirmText: 'Mark as Stopped',
+                  onConfirm: async () => {
+                    await markJobAsStopped(job.id);
+                    onRefresh && onRefresh();
+                  },
+                });
+              }}
+            >
+              <OctagonX className="w-4 h-4" />
+              Mark as Stopped
+            </div>
+          </MenuItem>
+        </MenuItems>
+      </Menu>
+    </div>
+  );
+}

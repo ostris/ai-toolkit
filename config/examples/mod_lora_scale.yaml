@@ -1,0 +1,48 @@
+---
+job: mod
+config:
+  name: name_of_your_model_v1
+  process:
+    - type: rescale_lora
+      # path to your current lora model
+      input_path: "/path/to/lora/lora.safetensors"
+      # output path for your new lora model, can be the same as input_path to replace
+      output_path: "/path/to/lora/output_lora_v1.safetensors"
+      # replaces meta with the meta below (plus minimum meta fields)
+      # if false, we will leave the meta alone except for updating hashes (sd-script hashes)
+      replace_meta: true
+      # how to adjust, we can scale the up_down weights or the alpha
+      # up_down is the default and probably the best, they will both net the same outputs
+      # would only affect rare NaN cases and maybe merging with old merge tools
+      scale_target: 'up_down'
+      # precision to save, fp16 is the default and standard
+      save_dtype: fp16
+      # current_weight is the ideal weight you use as a multiplier when using the lora
+      # IE in automatic1111 <lora:my_lora:6.0> the 6.0 is the current_weight
+      # you can do negatives here too if you want to flip the lora
+      current_weight: 6.0
+      # target_weight is the ideal weight you use as a multiplier when using the lora
+      # instead of the one above. IE in automatic1111 instead of using <lora:my_lora:6.0>
+      # we want to use <lora:my_lora:1.0> so 1.0 is the target_weight
+      target_weight: 1.0
+
+      # base model for the lora
+      # this is just used to add meta so automatic111 knows which model it is for
+      # assume v1.5 if these are not set
+      is_xl: false
+      is_v2: false
+meta:
+  # this is only used if you set replace_meta to true above
+  name: "[name]"  # [name] gets replaced with the name above
+  description: A short description of your lora
+  trigger_words:
+  - put
+  - trigger
+  - words
+  - here
+  version: '0.1'
+  creator:
+    name: Your Name
+    email: your@email.com
+    website: https://yourwebsite.com
+  any: All meta data above is arbitrary, it can be whatever you want.

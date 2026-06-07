@@ -1,0 +1,35 @@
+{
+    "ldm": {
+        "conditioner.embedders.0.transformer.text_model.embeddings.position_ids": {
+            "shape": [
+                1,
+                77
+            ],
+            "min": 0.0,
+            "max": 76.0
+        },
+        "conditioner.embedders.1.model.logit_scale": {
+            "shape": [],
+            "min": 4.60546875,
+            "max": 4.60546875
+        },
+        "conditioner.embedders.1.model.text_projection": {
+            "shape": [
+                1280,
+                1280
+            ],
+            "min": -0.15966796875,
+            "max": 0.230712890625
+        }
+    },
+    "diffusers": {
+        "te1_text_projection.weight": {
+            "shape": [
+                1280,
+                1280
+            ],
+            "min": -0.15966796875,
+            "max": 0.230712890625
+        }
+    }
+}

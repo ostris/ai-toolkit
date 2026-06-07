@@ -1,0 +1,230 @@
+---
+# This is in yaml format. You can use json if you prefer
+# I like both but yaml is easier to write
+# Plus it has comments which is nice for documentation
+# This is the config I use on my sliders, It is solid and tested
+job: train
+config:
+  # the name will be used to create a folder in the output folder
+  # it will also replace any [name] token in the rest of this config
+  name: detail_slider_v1
+  # folder will be created with name above in folder below
+  # it can be relative to the project root or absolute
+  training_folder: "output/LoRA"
+  device: cuda:0 # cpu, cuda:0, etc
+  # for tensorboard logging, we will make a subfolder for this job
+  log_dir: "output/.tensorboard"
+  # you can stack processes for other jobs, It is not tested with sliders though
+  # just use one for now
+  process:
+    - type: slider # tells runner to run the slider process
+      # network is the LoRA network for a slider, I recommend to leave this be
+      network:
+        # network type lierla is traditional LoRA that works everywhere, only linear layers
+        type: "lierla"
+        # rank / dim of the network. Bigger is not always better. Especially for sliders. 8 is good
+        linear: 8
+        linear_alpha: 4 # Do about half of rank
+      # training config
+      train:
+        # this is also used in sampling. Stick with ddpm unless you know what you are doing
+        noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
+        # how many steps to train. More is not always better. I rarely go over 1000
+        steps: 500
+        # I have had good results with 4e-4 to 1e-4 at 500 steps
+        lr: 2e-4
+        # enables gradient checkpoint, saves vram, leave it on
+        gradient_checkpointing: true
+        # train the unet. I recommend leaving this true
+        train_unet: true
+        # train the text encoder. I don't recommend this unless you have a special use case
+        # for sliders we are adjusting representation of the concept (unet),
+        # not the description of it (text encoder)
+        train_text_encoder: false
+        # same as from sd-scripts, not fully tested but should speed up training
+        min_snr_gamma: 5.0
+        # just leave unless you know what you are doing
+        # also supports "dadaptation" but set lr to 1 if you use that,
+        # but it learns too fast and I don't recommend it
+        optimizer: "adamw"
+        # only constant for now
+        lr_scheduler: "constant"
+        # we randomly denoise random num of steps form 1 to this number
+        # while training. Just leave it
+        max_denoising_steps: 40
+        # works great at 1. I do 1 even with my 4090.
+        # higher may not work right with newer single batch stacking code anyway
+        batch_size: 1
+        # bf16 works best if your GPU supports it (modern)
+        dtype: bf16  # fp32, bf16, fp16
+        # if you have it, use it. It is faster and better
+        # torch 2.0 doesnt need xformers anymore, only use if you have lower version
+#        xformers: true
+        # I don't recommend using unless you are trying to make a darker lora. Then do 0.1 MAX
+        # although, the way we train sliders is comparative, so it probably won't work anyway
+        noise_offset: 0.0
+#        noise_offset: 0.0357  # SDXL was trained with offset of 0.0357. So use that when training on SDXL
+
+      # the model to train the LoRA network on
+      model:
+        # huggingface name, relative prom project path, or absolute path to .safetensors or .ckpt
+        name_or_path: "runwayml/stable-diffusion-v1-5"
+        is_v2: false  # for v2 models
+        is_v_pred: false # for v-prediction models (most v2 models)
+        # has some issues with the dual text encoder and the way we train sliders
+        # it works bit weights need to probably be higher to see it.
+        is_xl: false  # for SDXL models
+
+      # saving config
+      save:
+        dtype: float16 # precision to save. I recommend float16
+        save_every: 50 # save every this many steps
+        # this will remove step counts more than this number
+        # allows you to save more often in case of a crash without filling up your drive
+        max_step_saves_to_keep: 2
+
+      # sampling config
+      sample:
+        # must match train.noise_scheduler, this is not used here
+        # but may be in future and in other processes
+        sampler: "ddpm"
+        # sample every this many steps
+        sample_every: 20
+        # image size
+        width: 512
+        height: 512
+        # prompts to use for sampling. Do as many as you want, but it slows down training
+        # pick ones that will best represent the concept you are trying to adjust
+        # allows some flags after the prompt
+        #  --m [number]  # network multiplier. LoRA weight. -3 for the negative slide, 3 for the positive
+        #      slide are good tests. will inherit sample.network_multiplier if not set
+        #  --n [string]  # negative prompt, will inherit sample.neg if not set
+        # Only 75 tokens allowed currently
+        # I like to do a wide positive and negative spread so I can see a good range and stop
+        # early if the network is braking down
+        prompts:
+          - "a woman in a coffee shop, black hat, blonde hair, blue jacket --m -5"
+          - "a woman in a coffee shop, black hat, blonde hair, blue jacket --m -3"
+          - "a woman in a coffee shop, black hat, blonde hair, blue jacket --m 3"
+          - "a woman in a coffee shop, black hat, blonde hair, blue jacket --m 5"
+          - "a golden retriever sitting on a leather couch, --m -5"
+          - "a golden retriever sitting on a leather couch --m -3"
+          - "a golden retriever sitting on a leather couch --m 3"
+          - "a golden retriever sitting on a leather couch --m 5"
+          - "a man with a beard and red flannel shirt, wearing vr goggles, walking into traffic --m -5"
+          - "a man with a beard and red flannel shirt, wearing vr goggles, walking into traffic --m -3"
+          - "a man with a beard and red flannel shirt, wearing vr goggles, walking into traffic --m 3"
+          - "a man with a beard and red flannel shirt, wearing vr goggles, walking into traffic --m 5"
+        # negative prompt used on all prompts above as default if they don't have one
+        neg: "cartoon, fake, drawing, illustration, cgi, animated, anime, monochrome"
+        # seed for sampling. 42 is the answer for everything
+        seed: 42
+        # walks the seed so s1 is 42, s2 is 43, s3 is 44, etc
+        # will start over on next sample_every so s1 is always seed
+        # works well if you use same prompt but want different results
+        walk_seed: false
+        # cfg scale (4 to 10 is good)
+        guidance_scale: 7
+        # sampler steps (20 to 30 is good)
+        sample_steps: 20
+        # default network multiplier for all prompts
+        # since we are training a slider, I recommend overriding this with --m [number]
+        # in the prompts above to get both sides of the slider
+        network_multiplier: 1.0
+
+      # logging information
+      logging:
+        log_every: 10 # log every this many steps
+        use_wandb: false # not supported yet
+        verbose: false # probably done need unless you are debugging
+
+      # slider training config, best for last
+      slider:
+        # resolutions to train on. [ width, height ]. This is less important for sliders
+        # as we are not teaching the model anything it doesn't already know
+        # but must be a size it understands [ 512, 512 ] for sd_v1.5  and [ 768, 768 ] for sd_v2.1
+        # and [ 1024, 1024 ] for sd_xl
+        # you can do as many as you want here
+        resolutions:
+          - [ 512, 512 ]
+#          - [ 512, 768 ]
+#          - [ 768, 768 ]
+        # slider training uses 4 combined steps for a single round. This will do it in one gradient
+        # step. It is highly optimized and shouldn't take anymore vram than doing without it,
+        # since we break down batches for gradient accumulation now. so just leave it on.
+        batch_full_slide: true
+        # These are the concepts to train on. You can do as many as you want here,
+        # but they can conflict outweigh each other. Other than experimenting, I recommend
+        # just doing one for good results
+        targets:
+            # target_class is the base concept we are adjusting the representation of
+            # for example, if we are adjusting the representation of a person, we would use "person"
+            # if we are adjusting the representation of a cat, we would use "cat" It is not
+            # a keyword necessarily but what the model understands the concept to represent.
+            # "person" will affect men, women, children, etc but will not affect cats, dogs, etc
+            # it is the models base general understanding of the concept and everything it represents
+            # you can leave it blank to affect everything. In this example, we are adjusting
+            # detail, so we will leave it blank to affect everything
+          - target_class: ""
+            # positive is the prompt for the positive side of the slider.
+            # It is the concept that will be excited and amplified in the model when we slide the slider
+            # to the positive side and forgotten / inverted when we slide
+            # the slider to the negative side. It is generally best to include the target_class in
+            # the prompt. You want it to be the extreme of what you want to train on. For example,
+            # if you want to train on fat people, you would use "an extremely fat, morbidly obese person"
+            # as the prompt. Not just "fat person"
+            # max 75 tokens for now
+            positive: "high detail, 8k, intricate, detailed, high resolution, high res, high quality"
+            # negative is the prompt for the negative side of the slider and works the same as positive
+            # it does not necessarily work the same as a negative prompt when generating images
+            # these need to be polar opposites.
+            # max 76 tokens for now
+            negative: "blurry, boring, fuzzy, low detail, low resolution, low res, low quality"
+            # the loss for this target is multiplied by this number.
+            # if you are doing more than one target it may be good to set less important ones
+            # to a lower number like 0.1 so they don't outweigh the primary target
+            weight: 1.0
+            # shuffle the prompts split by the comma. We will run every combination randomly
+            # this will make the LoRA more robust. You probably want this on unless prompt order
+            # is important for some reason
+            shuffle: true
+
+
+        # anchors are prompts that we will try to hold on to while training the slider
+        # these are NOT necessary and can prevent the slider from converging if not done right
+        # leave them off if you are having issues, but they can help lock the network
+        # on certain concepts to help prevent catastrophic forgetting
+        # you want these to generate an image that is not your target_class, but close to it
+        # is fine as long as it does not directly overlap it.
+        # For example, if you are training on a person smiling,
+        # you could use "a person with a face mask" as an anchor. It is a person, the image is the same
+        # regardless if they are smiling or not, however, the closer the concept is to the target_class
+        # the less the multiplier needs to be. Keep multipliers less than 1.0 for anchors usually
+        # for close concepts, you want to be closer to 0.1 or 0.2
+        # these will slow down training. I am leaving them off for the demo
+
+#        anchors:
+#          - prompt: "a woman"
+#            neg_prompt: "animal"
+#            # the multiplier applied to the LoRA when this is run.
+#            # higher will give it more weight but also help keep the lora from collapsing
+#            multiplier: 1.0
+#          - prompt: "a man"
+#            neg_prompt: "animal"
+#            multiplier: 1.0
+#          - prompt: "a person"
+#            neg_prompt: "animal"
+#            multiplier: 1.0
+
+# You can put any information you want here, and it will be saved in the model.
+# The below is an example, but you can put your grocery list in it if you want.
+# It is saved in the model so be aware of that. The software will include this
+# plus some other information for you automatically
+meta:
+  # [name] gets replaced with the name above
+  name: "[name]"
+#  version: '1.0'
+#  creator:
+#    name: Your Name
+#    email: your@gmail.com
+#    website: https://your.website

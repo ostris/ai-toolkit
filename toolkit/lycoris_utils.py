@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import torch.linalg as linalg
 
 from tqdm import tqdm
+from collections import OrderedDict
 
 
 def make_sparse(t: torch.Tensor, sparsity=0.95):
@@ -119,9 +120,12 @@ def extract_diff(
         extract_device='cpu',
         use_bias=False,
         sparsity=0.98,
-        small_conv=True
+        small_conv=True,
+        linear_only=False,
+        extract_unet=True,
+        extract_text_encoder=True,
 ):
-    meta = {}
+    meta = OrderedDict()
 
     UNET_TARGET_REPLACE_MODULE = [
         "Transformer2DModel",
@@ -136,7 +140,22 @@ def extract_diff(
         "time_embedding.linear_1",
         "time_embedding.linear_2",
     ]
+    if linear_only:
+        UNET_TARGET_REPLACE_MODULE = ["Transformer2DModel", "Attention"]
+        UNET_TARGET_REPLACE_NAME = [
+            "conv_in",
+            "conv_out",
+        ]
+
+    if not extract_unet:
+        UNET_TARGET_REPLACE_MODULE = []
+        UNET_TARGET_REPLACE_NAME = []
+
     TEXT_ENCODER_TARGET_REPLACE_MODULE = ["CLIPAttention", "CLIPMLP"]
+
+    if not extract_text_encoder:
+        TEXT_ENCODER_TARGET_REPLACE_MODULE = []
+
     LORA_PREFIX_UNET = 'lora_unet'
     LORA_PREFIX_TEXT_ENCODER = 'lora_te'
 
@@ -155,7 +174,7 @@ def extract_diff(
             if module.__class__.__name__ in target_replace_modules:
                 temp[name] = {}
                 for child_name, child_module in module.named_modules():
-                    if child_module.__class__.__name__ not in {'Linear', 'Conv2d'}:
+                    if child_module.__class__.__name__ not in {'Linear', 'LoRACompatibleLinear', 'Conv2d', 'LoRACompatibleConv'}:
                         continue
                     temp[name][child_name] = child_module.weight
             elif name in target_replace_names:
@@ -168,12 +187,12 @@ def extract_diff(
                     lora_name = prefix + '.' + name + '.' + child_name
                     lora_name = lora_name.replace('.', '_')
                     layer = child_module.__class__.__name__
-                    if layer in {'Linear', 'Conv2d'}:
+                    if layer in {'Linear', 'LoRACompatibleLinear', 'Conv2d', 'LoRACompatibleConv'}:
                         root_weight = child_module.weight
                         if torch.allclose(root_weight, weights[child_name]):
                             continue
 
-                    if layer == 'Linear':
+                    if layer == 'Linear' or layer == 'LoRACompatibleLinear':
                         weight, decompose_mode = extract_linear(
                             (child_module.weight - weights[child_name]),
                             mode,
@@ -182,9 +201,11 @@ def extract_diff(
                         )
                         if decompose_mode == 'low rank':
                             extract_a, extract_b, diff = weight
-                    elif layer == 'Conv2d':
+                    elif layer == 'Conv2d' or layer == 'LoRACompatibleConv':
                         is_linear = (child_module.weight.shape[2] == 1
                                      and child_module.weight.shape[3] == 1)
+                        if not is_linear and linear_only:
+                            continue
                         weight, decompose_mode = extract_conv(
                             (child_module.weight - weights[child_name]),
                             mode,
@@ -234,12 +255,12 @@ def extract_diff(
                 lora_name = lora_name.replace('.', '_')
                 layer = module.__class__.__name__
 
-                if layer in {'Linear', 'Conv2d'}:
+                if layer in {'Linear', 'LoRACompatibleLinear', 'Conv2d', 'LoRACompatibleConv'}:
                     root_weight = module.weight
                     if torch.allclose(root_weight, weights):
                         continue
 
-                if layer == 'Linear':
+                if layer == 'Linear' or layer == 'LoRACompatibleLinear':
                     weight, decompose_mode = extract_linear(
                         (root_weight - weights),
                         mode,
@@ -248,11 +269,13 @@ def extract_diff(
                     )
                     if decompose_mode == 'low rank':
                         extract_a, extract_b, diff = weight
-                elif layer == 'Conv2d':
+                elif layer == 'Conv2d' or layer == 'LoRACompatibleConv':
                     is_linear = (
                             root_weight.shape[2] == 1
                             and root_weight.shape[3] == 1
                     )
+                    if not is_linear and linear_only:
+                        continue
                     weight, decompose_mode = extract_conv(
                         (root_weight - weights),
                         mode,
@@ -467,7 +490,8 @@ def merge(
         for name, module in tqdm(list(root_module.named_modules()), desc=f'Merging {prefix}'):
             if module.__class__.__name__ in target_replace_modules:
                 for child_name, child_module in module.named_modules():
-                    if child_module.__class__.__name__ not in {'Linear', 'Conv2d'}:
+                    if child_module.__class__.__name__ not in {'Linear', 'LoRACompatibleLinear', 'Conv2d',
+                                                               'LoRACompatibleConv'}:
                         continue
                     lora_name = prefix + '.' + name + '.' + child_name
                     lora_name = lora_name.replace('.', '_')

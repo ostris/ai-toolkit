@@ -122,6 +122,8 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.python
+.node
 env/
 venv/
 ENV/
@@ -161,6 +163,7 @@ cython_debug/
 
 /env.sh
 /models
+/datasets
 /custom/*
 !/custom/.gitkeep
 /.tmp
@@ -169,3 +172,16 @@ cython_debug/
 /config/*
 !/config/examples
 !/config/_PUT_YOUR_CONFIGS_HERE).txt
+/output/*
+!/output/.gitkeep
+/extensions/*
+!/extensions/example
+/temp
+/wandb
+.vscode/settings.json
+.DS_Store
+._.DS_Store
+aitk_db.db
+/notes.md
+/data
+.claude

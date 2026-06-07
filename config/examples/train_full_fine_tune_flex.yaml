@@ -1,0 +1,107 @@
+---
+# This configuration requires 48GB of VRAM or more to operate
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_flex_finetune_v1"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+      # performance_log_every: 1000
+      device: cuda:0
+      # if a trigger word is specified, it will be added to captions of training data if it does not already exist
+      # alternatively, in your captions you can add [trigger] and it will be replaced with the trigger word
+      # trigger_word: "p3r5on"
+      save:
+        dtype: bf16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 2 # how many intermittent saves to keep
+        save_format: 'diffusers' # 'diffusers'
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          shuffle_tokens: false  # shuffle caption order, split by commas
+          # cache_latents_to_disk: true  # leave this true unless you know what you're doing
+          resolution: [ 512, 768, 1024 ]  # flex enjoys multiple resolutions
+      train:
+        batch_size: 1
+        # IMPORTANT! For Flex, you must bypass the guidance embedder during training
+        bypass_guidance_embedding: true
+
+        # can be 'sigmoid', 'linear', or 'lognorm_blend'
+        timestep_type: 'sigmoid' 
+        
+        steps: 2000  # total number of steps to train 500 - 4000 is a good range
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false  # probably won't work with flex
+        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        noise_scheduler: "flowmatch" # for training only
+        optimizer: "adafactor"
+        lr: 3e-5
+
+        # Paramiter swapping can reduce vram requirements. Set factor from 1.0 to 0.0. 
+        # 0.1 is 10% of paramiters active at easc step. Only works with adafactor
+
+        # do_paramiter_swapping: true
+        # paramiter_swapping_factor: 0.9
+
+        # uncomment this to skip the pre training sample
+        # skip_first_sample: true
+        # uncomment to completely disable sampling
+        # disable_sampling: true
+
+        # ema will smooth out learning, but could slow it down. Recommended to leave on if you have the vram
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+
+        # will probably need this if gpu supports it for flex, other dtypes may not work correctly
+        dtype: bf16
+      model:
+        # huggingface model name or path
+        name_or_path: "ostris/Flex.1-alpha"
+        is_flux: true # flex is flux architecture
+        # full finetuning quantized models is a crapshoot and results in subpar outputs
+        # quantize: true
+        # you can quantize just the T5 text encoder here to save vram
+        quantize_te: true
+        # only train the transformer blocks
+        only_if_contains: 
+          - "transformer.transformer_blocks."
+          - "transformer.single_transformer_blocks."
+      sample:
+        sampler: "flowmatch" # must match train.noise_scheduler
+        sample_every: 250 # sample every this many steps
+        width: 1024
+        height: 1024
+        prompts:
+          # you can add [trigger] to the prompts here and it will be replaced with the trigger word
+          # - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "hipster man with a beard, building a chair, in a wood shop"
+          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+          - "a man holding a sign that says, 'this is a sign'"
+          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+        neg: ""  # not used on flex
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 25
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

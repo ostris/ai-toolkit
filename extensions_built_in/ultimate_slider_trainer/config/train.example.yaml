@@ -1,0 +1,107 @@
+---
+job: extension
+config:
+  name: example_name
+  process:
+    - type: 'image_reference_slider_trainer'
+      training_folder: "/mnt/Train/out/LoRA"
+      device: cuda:0
+      # for tensorboard logging
+      log_dir: "/home/jaret/Dev/.tensorboard"
+      network:
+        type: "lora"
+        linear: 8
+        linear_alpha: 8
+      train:
+        noise_scheduler: "ddpm" # or "ddpm", "lms", "euler_a"
+        steps: 5000
+        lr: 1e-4
+        train_unet: true
+        gradient_checkpointing: true
+        train_text_encoder: true
+        optimizer: "adamw"
+        optimizer_params:
+          weight_decay: 1e-2
+        lr_scheduler: "constant"
+        max_denoising_steps: 1000
+        batch_size: 1
+        dtype: bf16
+        xformers: true
+        skip_first_sample: true
+        noise_offset: 0.0
+      model:
+        name_or_path: "/path/to/model.safetensors"
+        is_v2: false  # for v2 models
+        is_xl: false  # for SDXL models
+        is_v_pred: false # for v-prediction models (most v2 models)
+      save:
+        dtype: float16 # precision to save
+        save_every: 1000 # save every this many steps
+        max_step_saves_to_keep: 2 # only affects step counts
+      sample:
+        sampler: "ddpm" # must match train.noise_scheduler
+        sample_every: 100 # sample every this many steps
+        width: 512
+        height: 512
+        prompts:
+          - "photo of a woman with red hair taking a selfie --m -3"
+          - "photo of a woman with red hair taking a selfie --m -1"
+          - "photo of a woman with red hair taking a selfie --m 1"
+          - "photo of a woman with red hair taking a selfie --m 3"
+          - "close up photo of a man smiling at the camera, in a tank top --m -3"
+          - "close up photo of a man smiling at the camera, in a tank top--m -1"
+          - "close up photo of a man smiling at the camera, in a tank top --m 1"
+          - "close up photo of a man smiling at the camera, in a tank top --m 3"
+          - "photo of a blonde woman smiling, barista --m -3"
+          - "photo of a blonde woman smiling, barista --m -1"
+          - "photo of a blonde woman smiling, barista --m 1"
+          - "photo of a blonde woman smiling, barista --m 3"
+          - "photo of a Christina Hendricks --m -1"
+          - "photo of a Christina Hendricks --m -1"
+          - "photo of a Christina Hendricks --m 1"
+          - "photo of a Christina Hendricks --m 3"
+          - "photo of a Christina Ricci --m -3"
+          - "photo of a Christina Ricci --m -1"
+          - "photo of a Christina Ricci --m 1"
+          - "photo of a Christina Ricci --m 3"
+        neg: "cartoon, fake, drawing, illustration, cgi, animated, anime"
+        seed: 42
+        walk_seed: false
+        guidance_scale: 7
+        sample_steps: 20
+        network_multiplier: 1.0
+
+      logging:
+        log_every: 10 # log every this many steps
+        use_wandb: false # not supported yet
+        verbose: false
+
+      slider:
+        datasets:
+          - pair_folder: "/path/to/folder/side/by/side/images"
+            network_weight: 2.0
+            target_class: "" # only used as default if caption txt are not present
+            size: 512
+          - pair_folder: "/path/to/folder/side/by/side/images"
+            network_weight: 4.0
+            target_class: "" # only used as default if caption txt are not present
+            size: 512
+
+
+# you can put any information you want here, and it will be saved in the model
+# the below is an example. I recommend doing trigger words at a minimum
+# in the metadata. The software will include this plus some other information
+meta:
+  name: "[name]"  # [name] gets replaced with the name above
+  description: A short description of your model
+  trigger_words:
+  - put
+  - trigger
+  - words
+  - here
+  version: '0.1'
+  creator:
+    name: Your Name
+    email: your@email.com
+    website: https://yourwebsite.com
+  any: All meta data above is arbitrary, it can be whatever you want.

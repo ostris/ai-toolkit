@@ -1,6 +1,2 @@
-torch
-safetensors
-diffusers
-transformers
-lycoris_lora
-flatten_json
+-r requirements_base.txt
+scipy==1.12.0

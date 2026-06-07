@@ -1,0 +1,1392 @@
+import math
+import torch
+import os
+from torch import nn
+from safetensors.torch import load_file
+import torch.nn.functional as F
+import torch.utils.checkpoint as ckpt
+from diffusers import AutoencoderTiny
+from transformers import AutoImageProcessor, AutoModel, SiglipImageProcessor, SiglipVisionModel
+import lpips
+import weakref
+from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
+from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
+from toolkit.models.base_model import BaseModel
+from toolkit.models.sapiens2 import Sapiens2
+import huggingface_hub
+
+
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        self.norm1 = nn.GroupNorm(8, out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.norm2 = nn.GroupNorm(8, out_channels)
+        self.skip = nn.Conv2d(in_channels, out_channels,
+                              1) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x):
+        identity = self.skip(x)
+        x = self.conv1(x)
+        x = self.norm1(x)
+        x = F.silu(x)
+        x = self.conv2(x)
+        x = self.norm2(x)
+        x = F.silu(x + identity)
+        return x
+
+
+class DiffusionFeatureExtractor2(nn.Module):
+    def __init__(self, in_channels=32):
+        super().__init__()
+        self.version = 2
+
+        # Path 1: Upsample to 512x512 (1, 64, 512, 512)
+        self.up_path = nn.ModuleList([
+            nn.Conv2d(in_channels, 64, 3, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            ResBlock(64, 64),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            ResBlock(64, 64),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            ResBlock(64, 64),
+            nn.Conv2d(64, 64, 3, padding=1),
+        ])
+
+        # Path 2: Upsample to 256x256 (1, 128, 256, 256)
+        self.path2 = nn.ModuleList([
+            nn.Conv2d(in_channels, 128, 3, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            ResBlock(128, 128),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            ResBlock(128, 128),
+            nn.Conv2d(128, 128, 3, padding=1),
+        ])
+
+        # Path 3: Upsample to 128x128 (1, 256, 128, 128)
+        self.path3 = nn.ModuleList([
+            nn.Conv2d(in_channels, 256, 3, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            ResBlock(256, 256),
+            nn.Conv2d(256, 256, 3, padding=1)
+        ])
+
+        # Path 4: Original size (1, 512, 64, 64)
+        self.path4 = nn.ModuleList([
+            nn.Conv2d(in_channels, 512, 3, padding=1),
+            ResBlock(512, 512),
+            ResBlock(512, 512),
+            nn.Conv2d(512, 512, 3, padding=1)
+        ])
+
+        # Path 5: Downsample to 32x32 (1, 512, 32, 32)
+        self.path5 = nn.ModuleList([
+            nn.Conv2d(in_channels, 512, 3, padding=1),
+            ResBlock(512, 512),
+            nn.AvgPool2d(2),
+            ResBlock(512, 512),
+            nn.Conv2d(512, 512, 3, padding=1)
+        ])
+
+    def forward(self, x):
+        outputs = []
+
+        # Path 1: 512x512
+        x1 = x
+        for layer in self.up_path:
+            x1 = layer(x1)
+        outputs.append(x1)  # [1, 64, 512, 512]
+
+        # Path 2: 256x256
+        x2 = x
+        for layer in self.path2:
+            x2 = layer(x2)
+        outputs.append(x2)  # [1, 128, 256, 256]
+
+        # Path 3: 128x128
+        x3 = x
+        for layer in self.path3:
+            x3 = layer(x3)
+        outputs.append(x3)  # [1, 256, 128, 128]
+
+        # Path 4: 64x64
+        x4 = x
+        for layer in self.path4:
+            x4 = layer(x4)
+        outputs.append(x4)  # [1, 512, 64, 64]
+
+        # Path 5: 32x32
+        x5 = x
+        for layer in self.path5:
+            x5 = layer(x5)
+        outputs.append(x5)  # [1, 512, 32, 32]
+
+        return outputs
+
+
+class DFEBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.act = nn.GELU()
+        self.proj = nn.Conv2d(channels, channels, 1)
+
+    def forward(self, x):
+        x_in = x
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.act(x)
+        x = self.proj(x)
+        x = x + x_in
+        return x
+
+
+class DiffusionFeatureExtractor(nn.Module):
+    def __init__(self, in_channels=16, out_channels=512):
+        super().__init__()
+        self.version = 1
+        num_blocks = 6
+        self.conv_in = nn.Conv2d(in_channels, 512, 1)
+        self.blocks = nn.ModuleList([DFEBlock(512) for _ in range(num_blocks)])
+        self.conv_out = nn.Conv2d(512, out_channels, 1)
+
+    def forward(self, x):
+        x = self.conv_in(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.conv_out(x)
+        return x
+
+
+class DiffusionFeatureExtractor3(nn.Module):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+        super().__init__()
+        self.version = 3
+        if vae is None:
+            vae = AutoencoderTiny.from_pretrained(
+                "madebyollin/taef1", torch_dtype=torch.bfloat16)
+        self.vae = vae
+        # image_encoder_path = "google/siglip-so400m-patch14-384"
+        image_encoder_path = "google/siglip2-so400m-patch16-512"
+        try:
+            self.image_processor = SiglipImageProcessor.from_pretrained(
+                image_encoder_path)
+        except EnvironmentError:
+            self.image_processor = SiglipImageProcessor()
+        self.vision_encoder = SiglipVisionModel.from_pretrained(
+            image_encoder_path,
+            ignore_mismatched_sizes=True
+        ).to(device, dtype=dtype)
+
+        self.lpips_model = lpips_model = lpips.LPIPS(net='vgg')
+        self.lpips_model = lpips_model.to(device, dtype=torch.float32)
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        
+    def get_siglip_features(self, tensors_0_1):
+        dtype = torch.bfloat16
+        device = self.vae.device
+        # resize to 384x384
+        if 'height' in self.image_processor.size:
+            size = self.image_processor.size['height']
+        else:
+            size = self.image_processor.crop_size['height']
+        images = F.interpolate(tensors_0_1, size=(size, size),
+                               mode='bicubic', align_corners=False)
+
+        mean = torch.tensor(self.image_processor.image_mean).to(
+            device, dtype=dtype
+        ).detach()
+        std = torch.tensor(self.image_processor.image_std).to(
+            device, dtype=dtype
+        ).detach()
+        # tensors_0_1 = torch.clip((255. * tensors_0_1), 0, 255).round() / 255.0
+        clip_image = (
+            images - mean.view([1, 3, 1, 1])) / std.view([1, 3, 1, 1])
+        id_embeds = self.vision_encoder(
+            clip_image,
+            output_hidden_states=True,
+        )
+
+        last_hidden_state = id_embeds['last_hidden_state']
+        return last_hidden_state
+    
+    def get_lpips_features(self, tensors_0_1):
+        device = self.vae.device
+        tensors_n1p1 = (tensors_0_1 * 2) - 1
+        def get_lpips_features(img):  # -1 to 1
+            in0_input = self.lpips_model.scaling_layer(img)
+            outs0 = self.lpips_model.net.forward(in0_input)
+
+            feats0 = {}
+
+            feats_list = []
+            for kk in range(self.lpips_model.L):
+                feats0[kk] = lpips.normalize_tensor(outs0[kk])
+                feats_list.append(feats0[kk])
+
+            # 512 in
+            # vgg
+            # 0 torch.Size([1, 64, 512, 512])
+            # 1 torch.Size([1, 128, 256, 256])
+            # 2 torch.Size([1, 256, 128, 128])
+            # 3 torch.Size([1, 512, 64, 64])
+            # 4 torch.Size([1, 512, 32, 32])
+
+            return feats_list
+
+        # do lpips
+        lpips_feat_list = [x for x in get_lpips_features(
+            tensors_n1p1.to(device, dtype=torch.float32))]
+        
+        return lpips_feat_list
+        
+
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        # lpips_weight=1.0,
+        lpips_weight=10.0,
+        clip_weight=0.1,
+        pixel_weight=0.1,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.vae.device
+        
+        
+        if model is not None and hasattr(model, 'get_stepped_pred'):
+            stepped_latents = model.get_stepped_pred(noise_pred, noise)
+        else:
+            # stepped_latents = noise - noise_pred
+            # first we step the scheduler from current timestep to the very end for a full denoise
+            bs = noise_pred.shape[0]
+            noise_pred_chunks = torch.chunk(noise_pred, bs)
+            timestep_chunks = torch.chunk(timesteps, bs)
+            noisy_latent_chunks = torch.chunk(noisy_latents, bs)
+            stepped_chunks = []
+            for idx in range(bs):
+                model_output = noise_pred_chunks[idx]
+                timestep = timestep_chunks[idx]
+                scheduler._step_index = None
+                scheduler._init_step_index(timestep)
+                sample = noisy_latent_chunks[idx].to(torch.float32)
+                
+                sigma = scheduler.sigmas[scheduler.step_index]
+                sigma_next = scheduler.sigmas[-1] # use last sigma for final step
+                prev_sample = sample + (sigma_next - sigma) * model_output
+                stepped_chunks.append(prev_sample)
+            
+            stepped_latents = torch.cat(stepped_chunks, dim=0)
+            
+        latents = stepped_latents.to(self.vae.device, dtype=self.vae.dtype)
+        
+        scaling_factor = self.vae.config.scaling_factor if hasattr(self.vae.config, 'scaling_factor') else 1.0
+        shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, 'shift_factor') else 0.0
+        latents = (latents / scaling_factor) + shift_factor
+        tensors_n1p1 = self.vae.decode(latents)  # -1 to 1
+        if hasattr(tensors_n1p1, 'sample'):
+            tensors_n1p1 = tensors_n1p1.sample
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+        
+        lpips_feat_list_pred = self.get_lpips_features(pred_images.float())
+        
+        total_loss = 0
+        
+        with torch.no_grad():
+            target_img = batch.tensor.to(device, dtype=dtype)
+            # go from -1 to 1 to 0 to 1
+            target_img = (target_img + 1) / 2
+            lpips_feat_list_target = self.get_lpips_features(target_img.float())
+            if clip_weight > 0:
+                target_clip_output = self.get_siglip_features(target_img).detach()
+        if clip_weight > 0:
+            pred_clip_output = self.get_siglip_features(pred_images)
+            clip_loss = torch.nn.functional.mse_loss(
+                pred_clip_output.float(), target_clip_output.float()
+            ) * clip_weight
+            
+            if 'clip_loss' not in self.losses:
+                self.losses['clip_loss'] = clip_loss.item()
+            else:
+                self.losses['clip_loss'] += clip_loss.item()
+            
+            total_loss += clip_loss
+        
+        skip_lpips_layers = []
+        
+        lpips_loss = 0
+        for idx, lpips_feat in enumerate(lpips_feat_list_pred):
+            if idx in skip_lpips_layers:
+                continue
+            lpips_loss += torch.nn.functional.mse_loss(
+                lpips_feat.float(), lpips_feat_list_target[idx].float()
+            ) * lpips_weight
+            
+            if f'lpips_loss_{idx}' not in self.losses:
+                self.losses[f'lpips_loss_{idx}'] = lpips_loss.item()
+            else:
+                self.losses[f'lpips_loss_{idx}'] += lpips_loss.item()
+            
+        total_loss += lpips_loss
+            
+        # mse_loss = torch.nn.functional.mse_loss(
+        #     stepped_latents.float(), batch.latents.float()
+        # ) * pixel_weight
+        
+        # if 'pixel_loss' not in self.losses:
+        #     self.losses['pixel_loss'] = mse_loss.item()
+        # else:
+        #     self.losses['pixel_loss'] += mse_loss.item()
+            
+        if self.step % self.log_every == 0 and self.step > 0:
+            print(f"DFE losses:")
+            for key in self.losses:
+                self.losses[key] /= self.log_every
+                # print in 2.000e-01 format
+                print(f" - {key}: {self.losses[key]:.3e}")
+            self.losses[key] = 0.0
+        
+        # total_loss += mse_loss
+        self.step += 1
+        
+        return total_loss
+
+class DiffusionFeatureExtractor4(nn.Module):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+        super().__init__()
+        self.version = 4
+        if vae is None:
+            raise ValueError("vae must be provided for DFE4")
+        self.vae = vae
+        # image_encoder_path = "google/siglip-so400m-patch14-384"
+        image_encoder_path = "google/siglip2-so400m-patch16-naflex"
+        from transformers import Siglip2ImageProcessor, Siglip2VisionModel
+        try:
+            self.image_processor = Siglip2ImageProcessor.from_pretrained(
+                image_encoder_path)
+        except EnvironmentError:
+            self.image_processor = Siglip2ImageProcessor()
+        
+        self.image_processor.max_num_patches = 1024
+            
+        self.vision_encoder = Siglip2VisionModel.from_pretrained(
+            image_encoder_path,
+            ignore_mismatched_sizes=True
+        ).to(device, dtype=dtype)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+    
+    def _target_hw(self, h, w, patch, max_patches, eps: float = 1e-5):
+        def _snap(x, s):
+            x = math.ceil((x * s) / patch) * patch
+            return max(patch, int(x))
+
+        lo, hi = eps / 10, 1.0
+        while hi - lo >= eps:
+            mid = (lo + hi) / 2
+            th, tw = _snap(h, mid), _snap(w, mid)
+            if (th // patch) * (tw // patch) <= max_patches:
+                lo = mid
+            else:
+                hi = mid
+        return _snap(h, lo), _snap(w, lo)
+
+
+    def tensors_to_siglip_like_features(self, batch: torch.Tensor):
+        """
+        Args:
+            batch: (bs, 3, H, W) tensor already in the desired value range
+                   (e.g. [-1, 1] or [0, 1]); no extra rescale / normalize here.
+
+        Returns:
+            dict(
+                pixel_values        – (bs, L, P) where L = n_h*n_w, P = 3*patch*patch
+                pixel_attention_mask– (L,)  all-ones
+                spatial_shapes      – (n_h, n_w)
+            )
+        """
+        if batch.ndim != 4:
+            raise ValueError("Expected (bs, 3, H, W) tensor")
+
+        bs, c, H, W = batch.shape
+        proc        = self.image_processor
+        patch       = proc.patch_size
+        max_patches = proc.max_num_patches
+
+        # One shared resize for the whole batch
+        tgt_h, tgt_w = self._target_hw(H, W, patch, max_patches)
+        batch = torch.nn.functional.interpolate(
+            batch, size=(tgt_h, tgt_w), mode="bilinear", align_corners=False
+        )
+
+        n_h, n_w = tgt_h // patch, tgt_w // patch
+        # flat_dim = c * patch * patch
+        num_p    = n_h * n_w
+
+        # unfold → (bs, flat_dim, num_p)  → (bs, num_p, flat_dim)
+        patches = (
+            torch.nn.functional.unfold(batch, kernel_size=patch, stride=patch)
+            .transpose(1, 2)
+        )
+
+        attn_mask = torch.ones(num_p, dtype=torch.long, device=batch.device)
+        spatial   = torch.tensor((n_h, n_w), device=batch.device, dtype=torch.int32)
+        
+        # repeat attn_mask for each batch element
+        attn_mask = attn_mask.unsqueeze(0).repeat(bs, 1)
+        spatial = spatial.unsqueeze(0).repeat(bs, 1)
+
+        return {
+            "pixel_values": patches,            # (bs, num_patches, patch_dim)
+            "pixel_attention_mask": attn_mask,  # (num_patches,)
+            "spatial_shapes": spatial
+        }
+        
+    def get_siglip_features(self, tensors_0_1):
+        dtype = torch.bfloat16
+        device = self.vae.device
+        
+        tensors_0_1 = torch.clamp(tensors_0_1, 0.0, 1.0)
+
+        mean = torch.tensor(self.image_processor.image_mean).to(
+            device, dtype=dtype
+        ).detach()
+        std = torch.tensor(self.image_processor.image_std).to(
+            device, dtype=dtype
+        ).detach()
+        # tensors_0_1 = torch.clip((255. * tensors_0_1), 0, 255).round() / 255.0
+        clip_image = (tensors_0_1 - mean.view([1, 3, 1, 1])) / std.view([1, 3, 1, 1])
+        
+        encoder_kwargs = self.tensors_to_siglip_like_features(clip_image)
+        id_embeds = self.vision_encoder(
+            pixel_values=encoder_kwargs['pixel_values'],
+            pixel_attention_mask=encoder_kwargs['pixel_attention_mask'],
+            spatial_shapes=encoder_kwargs['spatial_shapes'],
+            output_hidden_states=True,
+        )
+
+        image_embeds = id_embeds['hidden_states'][-2]  # penultimate layer
+        # image_embeds = id_embeds['pooler_output']
+        # image_embeds = image_embeds / image_embeds.norm(p=2, dim=-1, keepdim=True)
+        return image_embeds
+    
+    def step_latents(self, noise, noise_pred, noisy_latents, timesteps, scheduler):
+        bs = noise_pred.shape[0]
+        noise_pred_chunks = torch.chunk(noise_pred, bs)
+        timestep_chunks = torch.chunk(timesteps, bs)
+        noisy_latent_chunks = torch.chunk(noisy_latents, bs)
+        stepped_chunks = []
+        for idx in range(bs):
+            model_output = noise_pred_chunks[idx]
+            timestep = timestep_chunks[idx]
+            scheduler._step_index = None
+            scheduler._init_step_index(timestep)
+            sample = noisy_latent_chunks[idx].to(torch.float32)
+            
+            sigma = scheduler.sigmas[scheduler.step_index]
+            sigma_next = scheduler.sigmas[-1] # use last sigma for final step
+            prev_sample = sample + (sigma_next - sigma) * model_output
+            stepped_chunks.append(prev_sample)
+        
+        stepped_latents = torch.cat(stepped_chunks, dim=0)
+        return stepped_latents
+
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        clip_weight=1.0,
+        mse_weight=0.0,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+        
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+            
+        if model is not None and hasattr(model, 'get_stepped_pred'):
+            stepped_latents = model.get_stepped_pred(noise_pred, noise)
+        else:
+            stepped_latents = self.step_latents(noise, noise_pred, noisy_latents, timesteps, scheduler)
+            
+        latents = stepped_latents.to(self.vae.device, dtype=self.vae.dtype)
+
+        scaling_factor = self.vae.config.scaling_factor if hasattr(self.vae.config, 'scaling_factor') else 1.0
+        shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, 'shift_factor') else 0.0
+        latents = (latents / scaling_factor) + shift_factor
+        if is_video:
+            # if video, we need to unsqueeze the latents to match the vae input shape
+            latents = latents.unsqueeze(2)
+        tensors_n1p1 = self.vae.decode(latents)  # -1 to 1
+        if hasattr(tensors_n1p1, 'sample'):
+            tensors_n1p1 = tensors_n1p1.sample
+        
+        if is_video:
+            # if video, we need to squeeze the tensors to match the output shape
+            tensors_n1p1 = tensors_n1p1.squeeze(2)
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+        
+        total_loss = 0
+        
+        with torch.no_grad():
+            target_img = tensors.to(device, dtype=dtype)
+            # go from -1 to 1 to 0 to 1
+            target_img = (target_img + 1) / 2
+            if clip_weight > 0:
+                target_clip_output = self.get_siglip_features(target_img).detach()
+        if clip_weight > 0:
+            pred_clip_output = self.get_siglip_features(pred_images)
+            clip_loss = torch.nn.functional.mse_loss(
+                pred_clip_output.float(), target_clip_output.float()
+            ) * clip_weight
+            
+            if 'clip_loss' not in self.losses:
+                self.losses['clip_loss'] = clip_loss.item()
+            else:
+                self.losses['clip_loss'] += clip_loss.item()
+            
+            total_loss += clip_loss
+        if mse_weight > 0:
+            mse_loss = torch.nn.functional.mse_loss(
+                pred_images.float(), target_img.float()
+            ) * mse_weight
+            
+            if 'mse_loss' not in self.losses:
+                self.losses['mse_loss'] = mse_loss.item()
+            else:
+                self.losses['mse_loss'] += mse_loss.item()
+            
+            total_loss += mse_loss
+
+        if self.step % self.log_every == 0 and self.step > 0:
+            print(f"DFE losses:")
+            for key in self.losses:
+                self.losses[key] /= self.log_every
+                # print in 2.000e-01 format
+                print(f" - {key}: {self.losses[key]:.3e}")
+            self.losses[key] = 0.0
+        
+        # total_loss += mse_loss
+        self.step += 1
+        
+        return total_loss
+    
+class DiffusionFeatureExtractor5(DiffusionFeatureExtractor4):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+        super().__init__(device=device, dtype=dtype, vae=vae)
+        self.version = 5
+    
+    def step_latents(self, noise, noise_pred, noisy_latents, timesteps, scheduler, total_steps: int = 1000, eps: float = 1e-6):
+        bs = noise_pred.shape[0]
+
+        # Chunk inputs per-sample (keeps existing structure)
+        noise_pred_chunks   = torch.chunk(noise_pred,   bs)
+        timestep_chunks     = torch.chunk(timesteps,    bs)
+        noisy_latent_chunks = torch.chunk(noisy_latents, bs)
+        noise_chunks        = torch.chunk(noise,        bs)
+
+        stepped_chunks = []
+        x0_pred_chunks = []
+
+        for idx in range(bs):
+            model_output = noise_pred_chunks[idx]              # predicted noise (same shape as latent)
+            timestep     = timestep_chunks[idx]                # scalar tensor per sample (e.g., [t])
+            sample       = noisy_latent_chunks[idx].to(torch.float32)
+            noise_i      = noise_chunks[idx].to(sample.dtype).to(sample.device)
+
+            # Initialize scheduler step index for this sample
+            scheduler._step_index = None
+            scheduler._init_step_index(timestep)
+
+            # ---- Step +50 indices (or to the end) in sigma-space ----
+            sigma      = scheduler.sigmas[scheduler.step_index]
+            target_idx = min(scheduler.step_index + 50, len(scheduler.sigmas) - 1)
+            sigma_next = scheduler.sigmas[target_idx]
+
+            # One-step update along the model-predicted direction
+            stepped = sample + (sigma_next - sigma) * model_output
+            stepped_chunks.append(stepped)
+
+            # ---- Inverse-Gaussian recovery at the target timestep ----
+            t_01 = (scheduler.sigmas[target_idx]).to(stepped.device).to(stepped.dtype)
+            original_samples = (stepped - t_01 * noise_i) / (1.0 - t_01)
+            x0_pred_chunks.append(original_samples)
+
+        # stepped_latents   = torch.cat(stepped_chunks, dim=0)
+        predicted_images  = torch.cat(x0_pred_chunks, dim=0)
+        # return stepped_latents, predicted_images
+        return predicted_images
+
+
+class DiffusionFeatureExtractor6(nn.Module):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None):
+        super().__init__()
+        self.version = 6
+        if vae is None:
+            raise ValueError("vae must be provided for DFE4")
+        self.vae = vae
+        # pretrained_model_name = "facebook/dinov3-vits16-pretrain-lvd1689m"
+        # pretrained_model_name = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+        pretrained_model_name = "facebook/dinov3-vith16plus-pretrain-lvd1689m"
+        # pretrained_model_name = "facebook/dinov3-vit7b16-pretrain-lvd1689m"
+        self.processor = AutoImageProcessor.from_pretrained(pretrained_model_name)
+        self.model = AutoModel.from_pretrained(
+            pretrained_model_name, 
+            device_map=device,
+            dtype=dtype,
+        ).to(device, dtype=dtype)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+    
+    def prepare_inputs(self, tensor_0_1: torch.Tensor):
+        """
+        tensor_0_1: (bs, 3, h, w), float, values in [0, 1]
+        returns: {"pixel_values": (bs, 3, H, W)} ready for the vision transformer
+        """
+
+        if tensor_0_1.ndim != 4 or tensor_0_1.shape[1] != 3:
+            raise ValueError(f"Expected (bs, 3, h, w), got {tuple(tensor_0_1.shape)}")
+
+        x = tensor_0_1
+        if not torch.is_floating_point(x):
+            x = x.float()
+
+        # Resize
+        # if not divisible by 16 or total pixels > max_res*max_res, resize to fit within 16 patches
+        max_res = 512
+        p = 16
+        if (x.shape[-1] % p != 0) or (x.shape[-2] % p != 0) or (x.shape[-1] * x.shape[-2] > max_res * max_res):
+            target_h = x.shape[-2]
+            target_w = x.shape[-1]
+            if x.shape[-1] * target_h > max_res * max_res:
+                scale_factor = math.sqrt((max_res * max_res) / (target_w * target_h))
+                target_h = int(target_h * scale_factor)
+                target_w = int(target_w * scale_factor)
+            target_h = (target_h // p) * p
+            target_w = (target_w // p) * p
+            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+            
+        # Rescale (HF processors usually assume uint8 0..255 inputs; your inputs are already 0..1)
+        if self.processor.do_rescale:
+            # If it looks like [0..1], skip to avoid double-scaling.
+            # If user accidentally passed 0..255 floats, this will fix it.
+            if x.detach().max().item() > 1.0 + 1e-6:
+                x = x * float(self.processor.rescale_factor or 1.0 / 255.0)
+
+        # Normalize
+        if self.processor.do_normalize:
+            mean = torch.tensor(self.processor.image_mean, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
+            std = torch.tensor(self.processor.image_std, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
+            x = (x - mean) / std
+
+        return {"pixel_values": x}
+    
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+        
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+            
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+                # min 0.001
+                tv = torch.clamp(tv, min=0.001)
+            
+        # step latent
+        x0 = noisy_latents - tv * noise_pred
+        
+        stepped_latents = x0
+            
+        latents = stepped_latents.to(self.vae.device, dtype=self.vae.dtype)
+
+        scaling_factor = self.vae.config.scaling_factor if hasattr(self.vae.config, 'scaling_factor') else 1.0
+        shift_factor = self.vae.config.shift_factor if hasattr(self.vae.config, 'shift_factor') else 0.0
+        latents = (latents / scaling_factor) + shift_factor
+        if is_video:
+            # if video, we need to unsqueeze the latents to match the vae input shape
+            latents = latents.unsqueeze(2)
+        tensors_n1p1 = self.vae.decode(latents)  # -1 to 1
+        if hasattr(tensors_n1p1, 'sample'):
+            tensors_n1p1 = tensors_n1p1.sample
+        
+        if is_video:
+            # if video, we need to squeeze the tensors to match the output shape
+            tensors_n1p1 = tensors_n1p1.squeeze(2)
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+
+        with torch.no_grad():
+            target_img = tensors.to(device, dtype=dtype)
+            # go from -1 to 1 to 0 to 1
+            target_img = (target_img + 1) / 2
+            target_dino_input = self.prepare_inputs(target_img)
+            target_dino_output = self.model(**target_dino_input).pooler_output.detach()
+            # normalize
+            target_dino_output = (target_dino_output - target_dino_output.mean()) / (target_dino_output.std() + 1e-6)
+        pred_dino_input = self.prepare_inputs(pred_images)
+        pred_dino_output = self.model(**pred_dino_input).pooler_output
+        # normalize
+        pred_dino_output = (pred_dino_output - pred_dino_output.mean()) / (pred_dino_output.std() + 1e-6)
+        dino_loss = torch.nn.functional.mse_loss(
+            pred_dino_output.float(), target_dino_output.float()
+        )
+        
+        if 'dinov3' not in self.losses:
+            self.losses['dinov3'] = dino_loss.item()
+        else:
+            self.losses['dinov3'] += dino_loss.item()
+        
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+            
+            # total_loss += mse_loss
+            self.step += 1
+        
+        return dino_loss
+    
+class ModelOutputWrapper:
+    def __init__(self, head, depth, normals, segmentation):
+        self.head = head
+        self.depth = depth
+        self.normals = normals
+        self.segmentation = segmentation
+    
+
+class DiffusionFeatureExtractor7(nn.Module):
+    def __init__(
+        self, 
+        device=torch.device("cuda"), 
+        dtype=torch.bfloat16, 
+        vae=None, 
+        sd=None,
+        partial_step: bool = False
+    ):
+        super().__init__()
+        
+        self.version = 7
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
+        from toolkit.models.tipsv2 import TIPSv2DPTModel
+        pretrained_model_name = "google/tipsv2-b14-dpt"
+        self.model = TIPSv2DPTModel.from_pretrained(
+            pretrained_model_name,
+            dtype=dtype,
+        ).to(device, dtype=dtype)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        self.do_partial_step = partial_step
+    
+    def get_pred(self, tensor_0_1: torch.Tensor):
+        """
+        tensor_0_1: (bs, 3, h, w), float, values in [0, 1]
+        returns: {"pixel_values": (bs, 3, H, W)} ready for the vision transformer
+        """
+
+        if tensor_0_1.ndim != 4 or tensor_0_1.shape[1] != 3:
+            raise ValueError(f"Expected (bs, 3, h, w), got {tuple(tensor_0_1.shape)}")
+
+        x = tensor_0_1.to(self.model.device, dtype=self.model.dtype)
+
+        # Resize
+        # if not divisible by 16 or total pixels > max_res*max_res, resize to fit within 16 patches
+        max_res = 1024
+        p = 14
+        if (x.shape[-1] % p != 0) or (x.shape[-2] % p != 0) or (x.shape[-1] * x.shape[-2] > max_res * max_res):
+            target_h = x.shape[-2]
+            target_w = x.shape[-1]
+            if x.shape[-1] * target_h > max_res * max_res:
+                scale_factor = math.sqrt((max_res * max_res) / (target_w * target_h))
+                target_h = int(target_h * scale_factor)
+                target_w = int(target_w * scale_factor)
+            target_h = (target_h // p) * p
+            target_w = (target_w // p) * p
+            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+        
+        # do inference. us standard dpy but also the head
+        pixel_values = x.to(self.model.device, dtype=self.model.dtype)
+        h, w = pixel_values.shape[2:]
+        dpt_inputs = self.model._extract_intermediate(pixel_values)
+        # head is a list of 4
+        # each of the 4 is a tuple of (embeds, hidden_state)
+        # concat the hidden states from the 4 layers on dim 1
+        head = torch.cat([h[1] for h in dpt_inputs], dim=1)
+        return ModelOutputWrapper(
+            head=head,
+            depth=self.model.depth_head(dpt_inputs, image_size=(h, w)),
+            normals=self.model.normals_head(dpt_inputs, image_size=(h, w)),
+            segmentation=self.model.segmentation_head(dpt_inputs, image_size=(h, w)),
+        )
+    
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.sd_ref().vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+        
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+            
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+        
+        with torch.no_grad():
+            target_0_1 = (tensors + 1) / 2  # 0 to 1
+        
+        if not self.do_partial_step:
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
+            stepped_latents = x0
+            # min 0.001
+            tv = torch.clamp(tv, min=0.001)
+        else:
+            # step is random 0.05 to 0.02
+            step = torch.rand_like(tv) * 0.03 + 0.02
+            next_step = tv - step
+            next_step = torch.clamp(next_step, min=0.0)
+            stepped_latents = noisy_latents + (next_step - tv) * noise_pred
+            
+            with torch.no_grad():
+                # make a noisy target at next timestep
+                target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+                # add noise
+                target_latents = (1.0 - next_step) * target_latents + next_step * noise
+                target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
+
+        latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+        
+        tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+        
+        device = self.model.device
+        dtype = self.model.dtype
+        
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+
+        with torch.no_grad():
+            target = self.get_pred(target_0_1)
+        
+        pred_images = pred_images.to(device, dtype=dtype)
+        pred = self.get_pred(pred_images)
+        
+        head_loss = torch.nn.functional.mse_loss(
+            pred.head.float(), target.head.float(), reduction='none'
+        ) * velocity_equiv_weight
+        head_loss = head_loss.mean()
+        
+        depth_loss = torch.nn.functional.l1_loss(
+            pred.depth.float(), target.depth.float(), reduction='none'
+        ) * velocity_equiv_weight
+        depth_loss = depth_loss.mean()
+        
+        normals_loss = torch.nn.functional.l1_loss(
+            pred.normals.float(), target.normals.float(), reduction='none'
+        ) * velocity_equiv_weight
+        normals_loss = normals_loss.mean()
+        
+        segmentation_loss = torch.nn.functional.l1_loss(
+            pred.segmentation.float(), target.segmentation.float(), reduction='none'
+        ) * velocity_equiv_weight
+        segmentation_loss = segmentation_loss.mean()
+        
+        total_loss = (head_loss + depth_loss + normals_loss + segmentation_loss) / 4.0
+        
+        if self.do_partial_step:
+            total_loss = total_loss * 10.0
+        
+        if 'total' not in self.losses:
+            self.losses['total'] = total_loss.item()
+        else:
+            self.losses['total'] += total_loss.item()
+            
+        if 'head' not in self.losses:
+            self.losses['head'] = head_loss.item()
+        else:
+            self.losses['head'] += head_loss.item()
+            
+        if 'depth' not in self.losses:
+            self.losses['depth'] = depth_loss.item()
+        else:
+            self.losses['depth'] += depth_loss.item()
+            
+        if 'normals' not in self.losses:
+            self.losses['normals'] = normals_loss.item()
+        else:
+            self.losses['normals'] += normals_loss.item()
+            
+        if 'segmentation' not in self.losses:
+            self.losses['segmentation'] = segmentation_loss.item()
+        else:   
+            self.losses['segmentation'] += segmentation_loss.item()
+        
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+            
+            # total_loss += mse_loss
+            self.step += 1
+        
+        return total_loss
+
+class DiffusionFeatureExtractor8(DiffusionFeatureExtractor7):
+    def __init__(self, device=torch.device("cuda"), dtype=torch.bfloat16, vae=None, sd=None):
+        super().__init__(device=device, dtype=dtype, vae=vae, sd=sd, partial_step=True)
+        self.version = 8
+
+class DiffusionFeatureExtractor9(nn.Module):
+    def __init__(
+        self, 
+        device=torch.device("cuda"), 
+        dtype=torch.bfloat16, 
+        vae=None, 
+        sd=None,
+        partial_step: bool = False
+    ):
+        super().__init__()
+        
+        self.version = 9
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
+        ckpt_path = huggingface_hub.hf_hub_download(repo_id="facebook/sapiens2-pretrain-1b", filename="sapiens2_1b_pretrain.safetensors")
+        self.model = Sapiens2(arch="sapiens2_1b", img_size=(1024, 768), patch_size=16).eval().cuda()  # img_size is (H, W)
+        self.model.load_state_dict(load_file(ckpt_path))
+        self.model.to(device, dtype=dtype)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        self.do_partial_step = partial_step
+    
+    def get_pred(self, tensor_0_1: torch.Tensor):
+        if tensor_0_1.ndim != 4 or tensor_0_1.shape[1] != 3:
+            raise ValueError(f"Expected (bs, 3, h, w), got {tuple(tensor_0_1.shape)}")
+
+        x = tensor_0_1.to(self.model.device, dtype=self.model.dtype)
+        """Apply ImageNet normalization to a (B, C, H, W) RGB tensor in [0, 1]."""
+        mean = torch.as_tensor((0.485, 0.456, 0.406), dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
+        std = torch.as_tensor((0.229, 0.224, 0.225), dtype=x.dtype, device=x.device).view(1, 3, 1, 1)
+        x = (x - mean) / std
+
+        # Resize
+        # if not divisible by 16 or total pixels > max_res*max_res, resize to fit within 16 patches
+        max_res = 1024
+        p = 16
+        if (x.shape[-1] % p != 0) or (x.shape[-2] % p != 0) or (x.shape[-1] * x.shape[-2] > max_res * max_res):
+            target_h = x.shape[-2]
+            target_w = x.shape[-1]
+            if x.shape[-1] * target_h > max_res * max_res:
+                scale_factor = math.sqrt((max_res * max_res) / (target_w * target_h))
+                target_h = int(target_h * scale_factor)
+                target_w = int(target_w * scale_factor)
+            target_h = (target_h // p) * p
+            target_w = (target_w // p) * p
+            x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
+        x = x.to(self.model.device, dtype=self.model.dtype)
+        features = self.model(x)[0]
+        return features
+    
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps, 
+        batch: DataLoaderBatchDTO, 
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.sd_ref().vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+        
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+            
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+        
+        with torch.no_grad():
+            target_0_1 = (tensors + 1) / 2  # 0 to 1
+        
+        if not self.do_partial_step:
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
+            stepped_latents = x0
+            # min 0.001
+            tv = torch.clamp(tv, min=0.001)
+        else:
+            # step is random 0.1 to 0.25
+            step = torch.rand_like(tv) * 0.15 + 0.1
+            next_step = tv - step
+            next_step = torch.clamp(next_step, min=0.0)
+            stepped_latents = noisy_latents + (next_step - tv) * noise_pred
+            
+            with torch.no_grad():
+                # make a noisy target at next timestep
+                target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+                # add noise
+                target_latents = (1.0 - next_step) * target_latents + next_step * noise
+                target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
+
+        latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+        
+        tensors_n1p1 = self.sd_ref().decode_latents(latents)
+        
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+        
+        device = self.model.device
+        dtype = self.model.dtype
+
+        with torch.no_grad():
+            target = self.get_pred(target_0_1)
+        
+        pred_images = pred_images.to(device, dtype=dtype)
+        pred = self.get_pred(pred_images)
+        
+        perceptual_loss = torch.nn.functional.mse_loss(
+            pred.float(), target.float(), reduction="none"
+        )
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+        loss_perceptual = (perceptual_loss * velocity_equiv_weight).mean()
+        
+        if self.do_partial_step:
+            loss_perceptual = loss_perceptual * 10.0
+        
+        if 'loss' not in self.losses:
+            self.losses['loss'] = loss_perceptual.item()
+        else:
+            self.losses['loss'] += loss_perceptual.item()
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+            
+            # total_loss += mse_loss
+            self.step += 1
+        
+        return loss_perceptual
+
+class DiffusionFeatureExtractor10(nn.Module):
+    def __init__(
+        self,
+        device=torch.device("cuda"),
+        dtype=torch.bfloat16,
+        vae=None,
+        sd=None,
+        partial_step: bool = False
+    ):
+        super().__init__()
+
+        self.version = 10
+        self.sd_ref = weakref.ref(sd) if sd is not None else None
+        self.lpips_model = lpips.LPIPS(net='vgg')
+        self.lpips_model = self.lpips_model.to(device, dtype=torch.float32)
+
+        self.losses = {}
+        self.log_every = 100
+        self.step = 0
+        self.do_partial_step = partial_step
+
+    def _vgg_slices(self, x):
+        # run the lpips vgg backbone slice-by-slice so we can gradient
+        # checkpoint each slice. checkpointing activates whenever grads are
+        # enabled, so it does not require the module to be in train mode.
+        net = self.lpips_model.net
+        slices = [net.slice1, net.slice2, net.slice3, net.slice4, net.slice5]
+        outs = []
+        h = x
+        for s in slices:
+            if torch.is_grad_enabled():
+                h = ckpt.checkpoint(s, h, use_reentrant=False)
+            else:
+                h = s(h)
+            outs.append(h)
+        return outs
+
+    def get_lpips_features(self, tensors_0_1):
+        device = self.lpips_model.scaling_layer.shift.device
+        tensors_n1p1 = (tensors_0_1 * 2) - 1
+        def get_lpips_features(img):  # -1 to 1
+            in0_input = self.lpips_model.scaling_layer(img)
+            outs0 = self._vgg_slices(in0_input)
+
+            feats_list = []
+            for kk in range(self.lpips_model.L):
+                feats_list.append(lpips.normalize_tensor(outs0[kk]))
+
+            return feats_list
+
+        lpips_feat_list = [x for x in get_lpips_features(
+            tensors_n1p1.to(device, dtype=torch.float32))]
+
+        return lpips_feat_list
+
+    def forward(
+        self,
+        noise,
+        noise_pred,
+        noisy_latents,
+        timesteps,
+        batch: DataLoaderBatchDTO,
+        scheduler: CustomFlowMatchEulerDiscreteScheduler,
+        model=None
+    ):
+        dtype = torch.bfloat16
+        device = self.sd_ref().vae.device
+        tensors = batch.tensor.to(device, dtype=dtype)
+        is_video = False
+        # stack time for video models on the batch dimension
+        if len(noise_pred.shape) == 5:
+            # B, C, T, H, W = images.shape
+            # only take first time
+            noise = noise[:, :, 0, :, :]
+            noise_pred = noise_pred[:, :, 0, :, :]
+            noisy_latents = noisy_latents[:, :, 0, :, :]
+            is_video = True
+
+        if len(tensors.shape) == 5:
+            # batch is different
+            # (B, T, C, H, W)
+            # only take first time
+            tensors = tensors[:, 0, :, :, :]
+
+        with torch.no_grad():
+            tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+            # expand shape to match noise_pred
+            while len(tv.shape) < len(noise_pred.shape):
+                tv = tv.unsqueeze(-1)
+
+        with torch.no_grad():
+            target_0_1 = (tensors + 1) / 2  # 0 to 1
+
+        if not self.do_partial_step:
+            # step latent
+            x0 = noisy_latents - tv * noise_pred
+            stepped_latents = x0
+            # min 0.001
+            tv = torch.clamp(tv, min=0.001)
+        else:
+            # step is random 0.1 to 0.25
+            step = torch.rand_like(tv) * 0.15 + 0.1
+            next_step = tv - step
+            next_step = torch.clamp(next_step, min=0.0)
+            stepped_latents = noisy_latents + (next_step - tv) * noise_pred
+
+            with torch.no_grad():
+                # make a noisy target at next timestep
+                target_latents = batch.latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+                # add noise
+                target_latents = (1.0 - next_step) * target_latents + next_step * noise
+                target_n1p1 = self.sd_ref().decode_latents(target_latents)
+                target_0_1 = (target_n1p1 + 1) / 2  # 0 to 1
+
+        latents = stepped_latents.to(self.sd_ref().vae.device, dtype=self.sd_ref().vae.dtype)
+
+        tensors_n1p1 = self.sd_ref().decode_latents(latents)
+
+        pred_images = (tensors_n1p1 + 1) / 2  # 0 to 1
+
+        with torch.no_grad():
+            target_feats = self.get_lpips_features(target_0_1.float())
+
+        pred_feats = self.get_lpips_features(pred_images.float())
+
+        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+
+        loss_perceptual = 0
+        for idx, pred_feat in enumerate(pred_feats):
+            perceptual_loss = torch.nn.functional.mse_loss(
+                pred_feat.float(), target_feats[idx].float(), reduction="none"
+            )
+            # mean over channels/spatial per sample, keep batch dim to weight by timestep
+            perceptual_loss = perceptual_loss.mean(dim=[1, 2, 3], keepdim=True)
+            loss_perceptual = loss_perceptual + (perceptual_loss * velocity_equiv_weight).mean()
+
+        if self.do_partial_step:
+            loss_perceptual = loss_perceptual * 10.0
+
+        if 'loss' not in self.losses:
+            self.losses['loss'] = loss_perceptual.item()
+        else:
+            self.losses['loss'] += loss_perceptual.item()
+        with torch.no_grad():
+            if self.step % self.log_every == 0 and self.step > 0:
+                print(f"DFE losses:")
+                for key in self.losses:
+                    self.losses[key] /= self.log_every
+                    # print in 2.000e-01 format
+                    print(f" - {key}: {self.losses[key]:.3e}")
+                self.losses[key] = 0.0
+
+            # total_loss += mse_loss
+            self.step += 1
+
+        return loss_perceptual
+
+def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureExtractor:
+    if model_path == "v3":
+        dfe = DiffusionFeatureExtractor3(vae=vae)
+        dfe.eval()
+        return dfe
+    if model_path == "v4":
+        dfe = DiffusionFeatureExtractor4(vae=vae)
+        dfe.eval()
+        return dfe
+    if model_path == "v5":
+        dfe = DiffusionFeatureExtractor5(vae=vae)
+        dfe.eval()
+        return dfe
+    if model_path == "v6":
+        dfe = DiffusionFeatureExtractor6(vae=vae)
+        dfe.eval()
+        return dfe
+    if model_path == "v7":
+        dfe = DiffusionFeatureExtractor7(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if model_path == "v8":
+        dfe = DiffusionFeatureExtractor8(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if model_path == "v9":
+        dfe = DiffusionFeatureExtractor9(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if model_path == "v10":
+        dfe = DiffusionFeatureExtractor10(vae=vae, sd=sd)
+        dfe.eval()
+        return dfe
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    # if it ende with safetensors
+    if model_path.endswith('.safetensors'):
+        state_dict = load_file(model_path)
+    else:
+        state_dict = torch.load(model_path, weights_only=True)
+        if 'model_state_dict' in state_dict:
+            state_dict = state_dict['model_state_dict']
+
+    if 'conv_in.weight' in state_dict:
+        # determine num out channels
+        out_channels = state_dict['conv_out.weight'].shape[0]
+        dfe = DiffusionFeatureExtractor(out_channels=out_channels)
+    else:
+        dfe = DiffusionFeatureExtractor2()
+
+    dfe.load_state_dict(state_dict)
+    dfe.eval()
+    return dfe

@@ -1,0 +1,75 @@
+---
+# this is in yaml format. You can use json if you prefer
+# I like both but yaml is easier to read and write
+# plus it has comments which is nice for documentation
+job: extract # tells the runner what to do
+config:
+  # the name will be used to create a folder in the output folder
+  # it will also replace any [name] token in the rest of this config
+  name: name_of_your_model
+  # can be hugging face model, a .ckpt, or a .safetensors
+  base_model: "/path/to/base/model.safetensors"
+  # can be hugging face model, a .ckpt, or a .safetensors
+  extract_model: "/path/to/model/to/extract/trained.safetensors"
+  # we will create folder here with name above so. This will create /path/to/output/folder/name_of_your_model
+  output_folder: "/path/to/output/folder"
+  is_v2: false
+  dtype: fp16 # saved dtype
+  device: cpu # cpu, cuda:0, etc
+
+  # processes can be chained like this to run multiple in a row
+  # they must all use same models above, but great for testing different
+  # sizes and typed of extractions. It is much faster as we already have the models loaded
+  process:
+  # process 1
+  - type: locon  # locon or lora (locon is lycoris)
+    filename: "[name]_64_32.safetensors" # will be put in output folder
+    dtype: fp16
+    mode: fixed
+    linear: 64
+    conv: 32
+
+  # process 2
+  - type: locon
+    output_path: "/absolute/path/for/this/output.safetensors" # can be absolute
+    mode: ratio
+    linear: 0.2
+    conv: 0.2
+
+  # process 3
+  - type: locon
+    filename: "[name]_ratio_02.safetensors"
+    mode: quantile
+    linear: 0.5
+    conv: 0.5
+
+  # process 4
+  - type: lora  # traditional lora extraction (lierla) with linear layers only
+    filename: "[name]_4.safetensors"
+    mode: fixed  # fixed, ratio, quantile supported for lora as well
+    linear: 4 # lora dim or rank
+    # no conv for lora
+
+  # process 5
+  - type: lora
+    filename: "[name]_q05.safetensors"
+    mode: quantile
+    linear: 0.5
+
+# you can put any information you want here, and it will be saved in the model
+# the below is an example. I recommend doing trigger words at a minimum
+# in the metadata. The software will include this plus some other information
+meta:
+  name: "[name]"  # [name] gets replaced with the name above
+  description: A short description of your model
+  trigger_words:
+  - put
+  - trigger
+  - words
+  - here
+  version: '0.1'
+  creator:
+    name: Your Name
+    email: your@email.com
+    website: https://yourwebsite.com
+  any: All meta data above is arbitrary, it can be whatever you want.
