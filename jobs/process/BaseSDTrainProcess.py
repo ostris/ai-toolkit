@@ -2026,6 +2026,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # Update the learning rates if they changed
             # optimizer.param_groups = previous_params
 
+        # set up the ema now that the optimizer (and its params) are ready
+        self.setup_ema()
+
         lr_scheduler_params = self.train_config.lr_scheduler_params
 
         # make sure it had bare minimum
