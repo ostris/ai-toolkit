@@ -6,6 +6,8 @@ https://github.com/lodestone-rock/RamTorch/blob/main/ramtorch/modules/linear.py
 I simply modified it to work with a memory management model and with AI Toolkit's models
 """
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,6 +19,12 @@ if TYPE_CHECKING:
 
 # --- Per-device global state registry ---
 _DEVICE_STATE = {}
+
+# How many layers deep to prefetch weights. The old ping-pong used 2 slots, which
+# only lets one transfer overlap one compute (1-deep). A deeper ring lets Python
+# enqueue several layers ahead so the H2D stream stays saturated instead of
+# stalling on a per-layer sync. Override with AI_TOOLKIT_OFFLOAD_DEPTH.
+PIPELINE_DEPTH = int(os.environ.get("AI_TOOLKIT_OFFLOAD_DEPTH", "4"))
 
 
 def _get_device_state(device: torch.device):
@@ -31,29 +39,99 @@ def _get_device_state(device: torch.device):
         return _DEVICE_STATE[device]
 
     if device not in _DEVICE_STATE:
+        d = max(2, PIPELINE_DEPTH)
         with torch.cuda.device(device):
             _DEVICE_STATE[device] = {
-                # streams & events
+                "depth": d,
+                # streams
                 "transfer_stream": torch.cuda.Stream(device=device),
                 "transfer_grad_stream": torch.cuda.Stream(device=device),
-                "transfer_forward_finished_event": torch.cuda.Event(),
-                "compute_forward_start_event": torch.cuda.Event(),
-                "transfer_backward_finished_event": torch.cuda.Event(),
-                "transfer_weight_backward_finished_event": torch.cuda.Event(),
-                "compute_backward_start_event": torch.cuda.Event(),
-                "compute_backward_finished_event": torch.cuda.Event(),
-                # ping-pong buffers
-                "w_buffers": [None, None],
-                "b_buffers": [None, None],
-                "w_bwd_buffers": [None, None],
-                # device-side staging for grads to be sent to CPU
-                "w_grad_buffers": [None, None],
-                "b_grad_buffers": [None, None],
-                # clocks
+                # forward weight ring: slot_ready = H2D done, slot_free = compute
+                # that consumed the slot done (so it can be overwritten).
+                "w_buffers": [None] * d,
+                "b_buffers": [None] * d,
+                "fwd_slot_ready": [torch.cuda.Event() for _ in range(d)],
+                "fwd_slot_free": [torch.cuda.Event() for _ in range(d)],
                 "forward_clk": 0,
+                # backward weight ring (re-fetch for grad-input).
+                "w_bwd_buffers": [None] * d,
+                "bwd_slot_ready": [torch.cuda.Event() for _ in range(d)],
+                "bwd_slot_free": [torch.cuda.Event() for _ in range(d)],
                 "backward_clk": 0,
+                # backward grad-staging ring (device-side grads -> CPU).
+                "w_grad_buffers": [None] * d,
+                "b_grad_buffers": [None] * d,
+                "grad_compute_done": [torch.cuda.Event() for _ in range(d)],
+                "grad_xfer_done": [torch.cuda.Event() for _ in range(d)],
             }
     return _DEVICE_STATE[device]
+
+
+# ---- ring-buffer staging helpers -----------------------------------------
+#
+# Each transfer waits only on the event for the *specific slot* it is about to
+# overwrite (the compute that used that slot D layers ago), not on a single
+# global "compute started" event. With D slots that prior compute is long done,
+# so the transfer stream never actually stalls and stays D layers ahead of
+# compute. This is the deeper-pipeline + relaxed-dependency change in one.
+
+
+def _stage_forward_weight(state, device, materialize, weight_cpu, bias_cpu):
+    """H2D the next forward weight (+bias) into its ring slot; return (idx, w, b).
+    Caller runs compute, then calls _release_forward_slot(state, idx)."""
+    d = state["depth"]
+    idx = state["forward_clk"]
+    state["forward_clk"] = (idx + 1) % d
+    ts = state["transfer_stream"]
+    with torch.cuda.stream(ts):
+        ts.wait_event(state["fwd_slot_free"][idx])
+        state["w_buffers"][idx] = materialize(weight_cpu, device)
+        state["b_buffers"][idx] = (
+            bias_cpu.to(device, non_blocking=True) if bias_cpu is not None else None
+        )
+        state["fwd_slot_ready"][idx].record()
+    torch.cuda.current_stream().wait_event(state["fwd_slot_ready"][idx])
+    return idx, state["w_buffers"][idx], state["b_buffers"][idx]
+
+
+def _release_forward_slot(state, idx):
+    # Slot is reusable once the compute stream finishes the op that read it.
+    state["fwd_slot_free"][idx].record()
+
+
+def _stage_backward_weight(state, device, materialize, weight_cpu):
+    """H2D the next backward weight into its ring slot; return (idx, w).
+    Caller runs grad-input compute, then _release_backward_weight_slot."""
+    d = state["depth"]
+    idx = state["backward_clk"]
+    state["backward_clk"] = (idx + 1) % d
+    ts = state["transfer_stream"]
+    with torch.cuda.stream(ts):
+        ts.wait_event(state["bwd_slot_free"][idx])
+        state["w_bwd_buffers"][idx] = materialize(weight_cpu)
+        state["bwd_slot_ready"][idx].record()
+    torch.cuda.current_stream().wait_event(state["bwd_slot_ready"][idx])
+    return idx, state["w_bwd_buffers"][idx]
+
+
+def _release_backward_weight_slot(state, idx):
+    state["bwd_slot_free"][idx].record()
+
+
+def _stage_grads_to_cpu(state, idx, grad_w_gpu, grad_b_gpu):
+    """Copy freshly-computed device grads (in staging slot idx) to CPU on the
+    grad stream, overlapping the next H2D. Returns (grad_w_cpu, grad_b_cpu)."""
+    gs = state["transfer_grad_stream"]
+    state["grad_compute_done"][idx].record()  # on the compute stream
+    grad_w_cpu = grad_b_cpu = None
+    with torch.cuda.stream(gs):
+        gs.wait_event(state["grad_compute_done"][idx])
+        if grad_w_gpu is not None:
+            grad_w_cpu = grad_w_gpu.to("cpu", non_blocking=True)
+        if grad_b_gpu is not None:
+            grad_b_cpu = grad_b_gpu.to("cpu", non_blocking=True)
+        state["grad_xfer_done"][idx].record()
+    return grad_w_cpu, grad_b_cpu
 
 
 # (ADD) detect torchao wrapper tensors
@@ -209,24 +287,11 @@ class _BouncingLinearFn(torch.autograd.Function):
             return out.to(x.device)
 
         state = _get_device_state(device)
-        ts = state["transfer_stream"]
-        w_bufs, b_bufs = state["w_buffers"], state["b_buffers"]
-        ev_tx_f = state["transfer_forward_finished_event"]
-        ev_cu_s = state["compute_forward_start_event"]
-        idx = state["forward_clk"]
-
-        with torch.cuda.stream(ts):
-            ts.wait_event(ev_cu_s)
-            w_bufs[idx] = _materialize_linear_weight(weight_cpu, device)
-            b_bufs[idx] = (
-                bias_cpu.to(device, non_blocking=True) if bias_cpu is not None else None
-            )
-            state["forward_clk"] ^= 1
-            ev_tx_f.record()
-
-        torch.cuda.current_stream().wait_event(ev_tx_f)
-        ev_cu_s.record()
-        out = F.linear(x, w_bufs[idx], b_bufs[idx])
+        idx, w_gpu, b_gpu = _stage_forward_weight(
+            state, device, _materialize_linear_weight, weight_cpu, bias_cpu
+        )
+        out = F.linear(x, w_gpu, b_gpu)
+        _release_forward_slot(state, idx)
 
         ctx.save_for_backward(x, weight_cpu, bias_cpu)
         ctx.device = device
@@ -268,19 +333,6 @@ class _BouncingLinearFn(torch.autograd.Function):
             return grad_input.to(grad_out.device), grad_weight, grad_bias, None
 
         state = _get_device_state(device)
-        transfer_stream = state["transfer_stream"]
-        transfer_grad_stream = state["transfer_grad_stream"]
-
-        w_bwd_buffers = state["w_bwd_buffers"]
-        w_grad_buffers = state["w_grad_buffers"]
-        b_grad_buffers = state["b_grad_buffers"]
-
-        ev_tx_b = state["transfer_backward_finished_event"]
-        ev_tx_w_bwd_done = state["transfer_weight_backward_finished_event"]
-        ev_cu_b_start = state["compute_backward_start_event"]
-        ev_cu_b_finish = state["compute_backward_finished_event"]
-
-        idx = state["backward_clk"]
 
         # GPU-side dequant/cast for quantized; float path unchanged
         def _materialize_for_bwd(cpu_w):
@@ -297,45 +349,35 @@ class _BouncingLinearFn(torch.autograd.Function):
             w = cpu_w.to(device, non_blocking=True)
             return w
 
-        with torch.cuda.stream(transfer_stream):
-            transfer_stream.wait_event(ev_cu_b_start)
-            w_bwd_buffers[idx] = _materialize_for_bwd(weight_cpu)
-            state["backward_clk"] ^= 1
-            ev_tx_b.record()
-
-        torch.cuda.current_stream().wait_event(ev_tx_b)
-        ev_cu_b_start.record()
+        idx, w_bwd = _stage_backward_weight(
+            state, device, _materialize_for_bwd, weight_cpu
+        )
 
         # grad wrt input (GPU)
-        grad_input = grad_out.to(dtype=target_dtype) @ w_bwd_buffers[idx]
+        grad_input = grad_out.to(dtype=target_dtype) @ w_bwd
+        _release_backward_weight_slot(state, idx)
 
-        # ensure previous grad-to-CPU transfer that used this slot finished
-        torch.cuda.current_stream().wait_event(ev_tx_w_bwd_done)
-
-        # compute grads if float masters exist
+        # compute grads if float masters exist (frozen/quantized bases skip this)
         grad_weight = None
         grad_bias = None
-        if (
+        need_w = (
             getattr(weight_cpu, "requires_grad", False)
             and weight_cpu.dtype.is_floating_point
-        ):
-            w_grad_buffers[idx] = grad_out.flatten(0, -2).T @ x.flatten(0, -2)
-        if bias_cpu is not None and getattr(bias_cpu, "requires_grad", False):
-            reduce_dims = tuple(range(grad_out.ndim - 1))
-            b_grad_buffers[idx] = grad_out.sum(dim=reduce_dims)
-
-        ev_cu_b_finish.record()
-
-        with torch.cuda.stream(transfer_grad_stream):
-            transfer_grad_stream.wait_event(ev_cu_b_finish)
-            if (
-                getattr(weight_cpu, "requires_grad", False)
-                and weight_cpu.dtype.is_floating_point
-            ):
-                grad_weight = w_grad_buffers[idx].to("cpu", non_blocking=True)
-            if bias_cpu is not None and getattr(bias_cpu, "requires_grad", False):
-                grad_bias = b_grad_buffers[idx].to("cpu", non_blocking=True)
-            state["transfer_weight_backward_finished_event"].record()
+        )
+        need_b = bias_cpu is not None and getattr(bias_cpu, "requires_grad", False)
+        if need_w or need_b:
+            # ensure the prior grad D2H using this staging slot finished
+            torch.cuda.current_stream().wait_event(state["grad_xfer_done"][idx])
+            w_grad_gpu = b_grad_gpu = None
+            if need_w:
+                w_grad_gpu = grad_out.flatten(0, -2).T @ x.flatten(0, -2)
+                state["w_grad_buffers"][idx] = w_grad_gpu
+            if need_b:
+                b_grad_gpu = grad_out.sum(dim=tuple(range(grad_out.ndim - 1)))
+                state["b_grad_buffers"][idx] = b_grad_gpu
+            grad_weight, grad_bias = _stage_grads_to_cpu(
+                state, idx, w_grad_gpu, b_grad_gpu
+            )
 
         return grad_input.to(dtype=grad_out.dtype), grad_weight, grad_bias, None
 
@@ -389,24 +431,11 @@ class _BouncingConv2dFn(torch.autograd.Function):
             return out.to(x.device)
 
         state = _get_device_state(device)
-        ts = state["transfer_stream"]
-        w_bufs, b_bufs = state["w_buffers"], state["b_buffers"]
-        ev_tx_f = state["transfer_forward_finished_event"]
-        ev_cu_s = state["compute_forward_start_event"]
-        idx = state["forward_clk"]
-
-        with torch.cuda.stream(ts):
-            ts.wait_event(ev_cu_s)
-            w_bufs[idx] = _materialize_conv_weight(weight_cpu, device)
-            b_bufs[idx] = (
-                bias_cpu.to(device, non_blocking=True) if bias_cpu is not None else None
-            )
-            state["forward_clk"] ^= 1
-            ev_tx_f.record()
-
-        torch.cuda.current_stream().wait_event(ev_tx_f)
-        ev_cu_s.record()
-        out = F.conv2d(x, w_bufs[idx], b_bufs[idx], stride, padding, dilation, groups)
+        idx, w_gpu, b_gpu = _stage_forward_weight(
+            state, device, _materialize_conv_weight, weight_cpu, bias_cpu
+        )
+        out = F.conv2d(x, w_gpu, b_gpu, stride, padding, dilation, groups)
+        _release_forward_slot(state, idx)
 
         ctx.save_for_backward(x, weight_cpu, bias_cpu)
         ctx.meta = (device, stride, padding, dilation, groups, target_dtype)
@@ -475,19 +504,6 @@ class _BouncingConv2dFn(torch.autograd.Function):
             )
 
         state = _get_device_state(device)
-        transfer_stream = state["transfer_stream"]
-        transfer_grad_stream = state["transfer_grad_stream"]
-
-        w_bwd_buffers = state["w_bwd_buffers"]
-        w_grad_buffers = state["w_grad_buffers"]
-        b_grad_buffers = state["b_grad_buffers"]
-
-        ev_tx_b = state["transfer_backward_finished_event"]
-        ev_tx_w_bwd_done = state["transfer_weight_backward_finished_event"]
-        ev_cu_b_start = state["compute_backward_start_event"]
-        ev_cu_b_finish = state["compute_backward_finished_event"]
-
-        idx = state["backward_clk"]
 
         # GPU-side dequant/cast for quantized; float path unchanged
         def _materialize_for_bwd(cpu_w):
@@ -504,63 +520,51 @@ class _BouncingConv2dFn(torch.autograd.Function):
             w = cpu_w.to(device, non_blocking=True)
             return w
 
-        # Stage weights for input-grad compute
-        with torch.cuda.stream(transfer_stream):
-            transfer_stream.wait_event(ev_cu_b_start)
-            w_bwd_buffers[idx] = _materialize_for_bwd(weight_cpu)
-            state["backward_clk"] ^= 1
-            ev_tx_b.record()
-
-        torch.cuda.current_stream().wait_event(ev_tx_b)
-        ev_cu_b_start.record()
+        idx, w_bwd = _stage_backward_weight(
+            state, device, _materialize_for_bwd, weight_cpu
+        )
 
         from torch.nn.grad import conv2d_input, conv2d_weight  # type: ignore
 
         grad_input = conv2d_input(
             x.shape,
-            w_bwd_buffers[idx],
+            w_bwd,
             grad_out.to(dtype=target_dtype),
             stride=stride,
             padding=padding,
             dilation=dilation,
             groups=groups,
         )
+        _release_backward_weight_slot(state, idx)
 
-        # Ensure previous grad transfer that used this slot is done
-        torch.cuda.current_stream().wait_event(ev_tx_w_bwd_done)
-
-        # Compute heavy grads on GPU into staging buffers
+        # Compute heavy grads on GPU into staging buffers (frozen bases skip this)
         grad_weight = None
         grad_bias = None
-        if (
+        need_w = (
             getattr(weight_cpu, "requires_grad", False)
             and weight_cpu.dtype.is_floating_point
-        ):
-            w_grad_buffers[idx] = conv2d_weight(
-                x,
-                weight_cpu.shape,
-                grad_out,
-                stride=stride,
-                padding=padding,
-                dilation=dilation,
-                groups=groups,
+        )
+        need_b = bias_cpu is not None and getattr(bias_cpu, "requires_grad", False)
+        if need_w or need_b:
+            torch.cuda.current_stream().wait_event(state["grad_xfer_done"][idx])
+            w_grad_gpu = b_grad_gpu = None
+            if need_w:
+                w_grad_gpu = conv2d_weight(
+                    x,
+                    weight_cpu.shape,
+                    grad_out,
+                    stride=stride,
+                    padding=padding,
+                    dilation=dilation,
+                    groups=groups,
+                )
+                state["w_grad_buffers"][idx] = w_grad_gpu
+            if need_b:
+                b_grad_gpu = grad_out.sum(dim=(0, 2, 3))
+                state["b_grad_buffers"][idx] = b_grad_gpu
+            grad_weight, grad_bias = _stage_grads_to_cpu(
+                state, idx, w_grad_gpu, b_grad_gpu
             )
-        if bias_cpu is not None and getattr(bias_cpu, "requires_grad", False):
-            b_grad_buffers[idx] = grad_out.sum(dim=(0, 2, 3))
-
-        ev_cu_b_finish.record()
-
-        # Launch CPU copies on the dedicated grad stream (overlaps with next H2D)
-        with torch.cuda.stream(transfer_grad_stream):
-            transfer_grad_stream.wait_event(ev_cu_b_finish)
-            if (
-                getattr(weight_cpu, "requires_grad", False)
-                and weight_cpu.dtype.is_floating_point
-            ):
-                grad_weight = w_grad_buffers[idx].to("cpu", non_blocking=True)
-            if bias_cpu is not None and getattr(bias_cpu, "requires_grad", False):
-                grad_bias = b_grad_buffers[idx].to("cpu", non_blocking=True)
-            state["transfer_weight_backward_finished_event"].record()
 
         return (
             grad_input.to(dtype=grad_out.dtype),
