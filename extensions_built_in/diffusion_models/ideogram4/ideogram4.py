@@ -171,6 +171,7 @@ class Ideogram4Model(BaseModel):
         super().__init__(
             device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs
         )
+        self.use_old_lokr_format = False
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["Ideogram4Transformer2DModel"]
