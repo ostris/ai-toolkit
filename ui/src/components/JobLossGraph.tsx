@@ -26,6 +26,37 @@ function clamp01(x: number) {
 const FALLBACK_CANVAS_HEIGHT = 360;
 const MIN_CANVAS_HEIGHT = 160;
 
+// ---------------------------------------------------------------------------
+// Per-job localStorage persistence
+// ---------------------------------------------------------------------------
+const STORAGE_PREFIX = 'loss-graph:';
+
+interface SavedSettings {
+  useLogScale?: boolean;
+  showRaw?: boolean;
+  showSmoothed?: boolean;
+  smoothing?: number;
+  plotStride?: number;
+  clipOutliers?: boolean;
+  enabled?: Record<string, boolean>;
+  zoomRange?: { min: number; max: number } | null;
+}
+
+function loadSavedSettings(jobId: string | number): SavedSettings {
+  try {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}${jobId}`);
+    return raw ? (JSON.parse(raw) as SavedSettings) : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistSettings(jobId: string | number, settings: SavedSettings) {
+  try {
+    localStorage.setItem(`${STORAGE_PREFIX}${jobId}`, JSON.stringify(settings));
+  } catch {}
+}
+
 // Compute canvas size so uPlot's canvas + its HTML legend fit inside `host`.
 // `host` should be a layout-controlled wrapper (NOT the uPlot mount node, since
 // uPlot's stylesheet sets `width: min-content` on its mount node).
@@ -91,27 +122,42 @@ function dulledColor(rgba: string): string {
 export default function JobLossGraph({ job }: Props) {
   const { series, lossKeys, status, refreshLoss } = useJobLossLog(job.id, 2000);
 
-  // Controls
-  const [useLogScale, setUseLogScale] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
-  const [showSmoothed, setShowSmoothed] = useState(true);
+  // Load persisted settings once per job on mount.
+  const [initSettings] = useState<SavedSettings>(() => loadSavedSettings(job.id));
+
+  // Controls — initialised from localStorage, persisted on change.
+  const [useLogScale, setUseLogScale] = useState(initSettings.useLogScale ?? false);
+  const [showRaw, setShowRaw] = useState(initSettings.showRaw ?? false);
+  const [showSmoothed, setShowSmoothed] = useState(initSettings.showSmoothed ?? true);
 
   // 0..100 slider. 100 = no smoothing, 0 = heavy smoothing.
-  const [smoothing, setSmoothing] = useState(80);
+  const [smoothing, setSmoothing] = useState(initSettings.smoothing ?? 80);
 
   // UI-only downsample for rendering speed
-  const [plotStride, setPlotStride] = useState(1);
+  const [plotStride, setPlotStride] = useState(initSettings.plotStride ?? 1);
 
   // show only last N points in the chart (0 = all)
   const [windowSize] = useState<number>(0);
 
   // quick y clipping for readability
-  const [clipOutliers, setClipOutliers] = useState(false);
+  const [clipOutliers, setClipOutliers] = useState(initSettings.clipOutliers ?? false);
 
   // which loss series are enabled (default: all enabled)
-  const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const [enabled, setEnabled] = useState<Record<string, boolean>>(initSettings.enabled ?? {});
 
-  const [isZoomed, setIsZoomed] = useState(false);
+  // Initialise from saved settings so the Reset zoom button is visible immediately
+  // when returning to a job that had an active zoom.
+  const [isZoomed, setIsZoomed] = useState(initSettings.zoomRange != null);
+
+  // Persisted x-axis zoom range (step numbers). Null = unzoomed.
+  const [zoomRange, setZoomRange] = useState<{ min: number; max: number } | null>(
+    initSettings.zoomRange ?? null,
+  );
+  // Ref so the chart-creation effect can read the latest value inside raf.
+  const zoomRangeRef = useRef(zoomRange);
+  useEffect(() => {
+    zoomRangeRef.current = zoomRange;
+  }, [zoomRange]);
 
   // keep enabled map in sync with discovered keys (enable new ones automatically)
   useEffect(() => {
@@ -126,6 +172,20 @@ export default function JobLossGraph({ job }: Props) {
       return next;
     });
   }, [lossKeys]);
+
+  // Persist all user-controlled settings to localStorage whenever they change.
+  useEffect(() => {
+    persistSettings(job.id, {
+      useLogScale,
+      showRaw,
+      showSmoothed,
+      smoothing,
+      plotStride,
+      clipOutliers,
+      enabled,
+      zoomRange,
+    });
+  }, [job.id, useLogScale, showRaw, showSmoothed, smoothing, plotStride, clipOutliers, enabled, zoomRange]);
 
   const activeKeys = useMemo(() => lossKeys.filter(k => enabled[k] !== false), [lossKeys, enabled]);
 
@@ -306,18 +366,36 @@ export default function JobLossGraph({ job }: Props) {
             const sx = u.scales.x;
             const zoomed = sx.min !== xs[0] || sx.max !== xs[xs.length - 1];
             setIsZoomed(zoomed);
+            // Keep zoom range in state so it can be persisted and restored.
+            setZoomRange(zoomed ? { min: sx.min!, max: sx.max! } : null);
           },
         ],
       },
     };
 
-    uplotRef.current = new uPlot(opts, built.data, containerRef.current);
-    setIsZoomed(false);
+    const uplotInstance = new uPlot(opts, built.data, containerRef.current);
+    uplotRef.current = uplotInstance;
+    // Only reset isZoomed if there is no saved range to restore. If there is,
+    // the requestAnimationFrame below will re-apply setScale which fires the
+    // hook and sets isZoomed(true) — resetting to false first would cause a
+    // flicker where the Reset zoom button disappears and reappears.
+    if (!zoomRangeRef.current) setIsZoomed(false);
 
-    // After uPlot mounts its legend, right-size the canvas against the actual
-    // legend height so the canvas fills the remaining vertical space.
-    const fitted = computeCanvasSize(host);
-    if (fitted) uplotRef.current.setSize(fitted);
+    // Defer the size fix to the next animation frame so the browser has done a
+    // layout pass and the legend's rendered height is accurate. The synchronous
+    // read immediately after new uPlot() can return a stale/zero legend height.
+    // Also restore any previously saved zoom range here.
+    requestAnimationFrame(() => {
+      if (uplotRef.current !== uplotInstance) return;
+      const fitted = computeCanvasSize(host);
+      if (fitted) uplotInstance.setSize(fitted);
+      // Restore persisted zoom. setScale triggers the hook which calls
+      // setIsZoomed(true) and setZoomRange, keeping state consistent.
+      const saved = zoomRangeRef.current;
+      if (saved) {
+        uplotInstance.setScale('x', { min: saved.min, max: saved.max });
+      }
+    });
 
     return () => {
       uplotRef.current?.destroy();
@@ -365,6 +443,9 @@ export default function JobLossGraph({ job }: Props) {
     const xs = u.data[0] as number[];
     if (!xs || !xs.length) return;
     u.setScale('x', { min: xs[0], max: xs[xs.length - 1] });
+    // The setScale hook will call setZoomRange(null), but also clear the ref
+    // immediately so the next chart creation doesn't re-apply the old zoom.
+    zoomRangeRef.current = null;
   }, []);
 
   const totalPoints = built.data[0]?.length ?? 0;
