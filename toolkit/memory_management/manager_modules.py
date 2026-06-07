@@ -95,6 +95,34 @@ def _is_quantized_tensor(t: Optional[torch.Tensor]) -> bool:
     return not t.dtype.is_floating_point
 
 
+def _pin_inner_tensors(t: torch.Tensor) -> None:
+    """Pin the leaf storage of a tensor-subclass (e.g. torchao float8) in place.
+
+    Quantized wrappers can't be pin_memory()'d directly, but they expose their
+    real data as inner tensors via __tensor_flatten__. Pinning those lets the
+    per-layer H2D bounce run async and overlap with compute instead of blocking.
+    """
+    try:
+        names, _ = t.__tensor_flatten__()
+    except Exception:
+        return
+    for name in names:
+        inner = getattr(t, name, None)
+        if inner is None:
+            continue
+        if hasattr(inner, "__tensor_flatten__"):
+            _pin_inner_tensors(inner)  # recurse: AQT -> tensor_impl -> data/scale
+        elif (
+            isinstance(inner, torch.Tensor)
+            and inner.device.type == "cpu"
+            and not inner.is_pinned()
+        ):
+            try:
+                setattr(t, name, inner.pin_memory())
+            except Exception:
+                pass
+
+
 def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
     if t is None:
         return None
@@ -103,8 +131,11 @@ def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
             t = t.to("cpu", copy=True)
         except Exception:
             t = t.to("cpu")
-    # Don't attempt to pin quantized tensors; many backends don't support it
+    # Quantized wrappers can't be pin_memory()'d directly, but pinning their
+    # inner storage gives the same async-transfer benefit.
     if _is_quantized_tensor(t):
+        if torch.cuda.is_available():
+            _pin_inner_tensors(t)
         return t
     if torch.cuda.is_available():
         try:
