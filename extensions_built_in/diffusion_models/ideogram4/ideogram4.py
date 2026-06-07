@@ -289,7 +289,7 @@ class Ideogram4Model(BaseModel):
                 transformer,
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[transformer.input_proj, transformer.llm_cond_proj],
+                ignore_modules=[transformer.rotary_emb.inv_freq, transformer.input_proj, transformer.llm_cond_proj],
             )
         elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")

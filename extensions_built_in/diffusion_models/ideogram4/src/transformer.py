@@ -93,6 +93,10 @@ class Ideogram4MRoPE(nn.Module):
         # position_ids: (B, L, 3) of int.
         assert position_ids.ndim == 3 and position_ids.shape[-1] == 3
         batch_size, seq_len, _ = position_ids.shape
+        
+        if self.inv_freq.device == torch.device("cpu"):
+            # sometimes it gets stuck on CPU
+            self.inv_freq = self.inv_freq.to(position_ids.device)
 
         # (3, B, inv_freq_size, L)
         pos = position_ids.permute(2, 0, 1).to(dtype=torch.float32)
