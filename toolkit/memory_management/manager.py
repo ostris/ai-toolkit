@@ -52,7 +52,6 @@ class MemoryManager:
                 module.data = module.data.to(*args, **kwargs)
             else:
                 module.to(*args, **kwargs)
-
         # check for a dtype argument
         dtype = None
         if "dtype" in kwargs:
@@ -62,10 +61,8 @@ class MemoryManager:
                 if isinstance(arg, torch.dtype):
                     dtype = arg
                     break
-
         if dtype is not None:
             return self.module._mm_to(dtype=dtype)
-
         return self.module
 
     @classmethod
@@ -92,11 +89,9 @@ class MemoryManager:
 
         # count ignore modules as processed
         modules_processed = [x for x in ignore_modules]
-
         # attach to all modules
         for name, sub_module in module.named_modules():
             for child_name, child_module in sub_module.named_modules():
-
                 if (
                     child_module.__class__.__name__ in LINEAR_MODULES
                     and child_module not in modules_processed
@@ -106,7 +101,6 @@ class MemoryManager:
                         # randomly skip some modules
                         if random.random() > offload_percent:
                             skip = True
-
                     if skip:
                         module._memory_manager.unmanaged_modules.append(child_module)
                     else:
@@ -114,7 +108,6 @@ class MemoryManager:
                         LinearLayerMemoryManager.attach(
                             child_module, module._memory_manager
                         )
-
                         # attach to ARA as well
                         if hasattr(child_module, "ara_lora_ref"):
                             ara = child_module.ara_lora_ref()
@@ -123,9 +116,7 @@ class MemoryManager:
                                     ara,
                                     device,
                                 )
-
                     modules_processed.append(child_module)
-
                 elif (
                     child_module.__class__.__name__ in CONV_MODULES
                     and child_module not in modules_processed
@@ -135,7 +126,6 @@ class MemoryManager:
                         # randomly skip some modules
                         if random.random() > offload_percent:
                             skip = True
-
                     if skip:
                         module._memory_manager.unmanaged_modules.append(child_module)
                     else:
@@ -143,7 +133,6 @@ class MemoryManager:
                         ConvLayerMemoryManager.attach(
                             child_module, module._memory_manager
                         )
-
                         # attach to ARA as well
                         if hasattr(child_module, "ara_lora_ref"):
                             ara = child_module.ara_lora_ref()
@@ -152,18 +141,14 @@ class MemoryManager:
                                     ara,
                                     device,
                                 )
-
                             modules_processed.append(ara)
-
                     modules_processed.append(child_module)
-
                 elif child_module.__class__.__name__ in UNMANAGED_MODULES or any(
                     inc in child_module.__class__.__name__
                     for inc in UNMANAGED_MODULES_INCLUDES
                 ):
                     # unmanaged
                     module._memory_manager.unmanaged_modules.append(child_module)
-
                 else:
                     continue
 
@@ -179,8 +164,6 @@ class MemoryManager:
         if not hasattr(module, "_memory_manager"):
             return
 
-        # Move unmanaged modules (norms, embeddings, etc.) back to CPU before
-        # deleting _memory_manager so we still have the reference list.
         for unmanaged in module._memory_manager.unmanaged_modules:
             try:
                 if isinstance(unmanaged, torch.nn.Parameter):
@@ -190,14 +173,12 @@ class MemoryManager:
             except Exception:
                 pass
 
-        # restore the original .to() saved by attach()
         if hasattr(module, "_mm_to"):
             module.to = module._mm_to
             del module._mm_to
 
         del module._memory_manager
 
-        # restore each child layer's original forward and unpin weights
         for child in module.modules():
             lmm = getattr(child, "_layer_memory_manager", None)
             if lmm is None:
@@ -212,7 +193,6 @@ class MemoryManager:
                 else:
                     child.forward = original_forward
 
-            # unpin weight/bias so the pinned CPU allocation can be freed
             for param_name in ("weight", "bias"):
                 param = getattr(child, param_name, None)
                 if param is None or not isinstance(param, torch.nn.Parameter):
@@ -230,17 +210,12 @@ class MemoryManager:
                 except Exception:
                     pass
 
-            # clean up layer manager attributes
             del child._layer_memory_manager
             if hasattr(child, "_memory_management_device"):
                 del child._memory_management_device
             if hasattr(child, "_is_memory_managed"):
                 del child._is_memory_managed
 
-        # Delete CUDA device state entirely so streams, events, clocks, and
-        # buffers are all re-created fresh on the next managed forward pass.
-        # Resetting buffers to [None, None] without clearing the state leaves
-        # stale clock counters causing an off-by-one in the ping-pong index.
         keys_to_delete = [
             dev for dev in _DEVICE_STATE
             if isinstance(dev, torch.device) and dev.type == "cuda"

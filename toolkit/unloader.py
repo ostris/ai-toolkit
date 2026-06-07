@@ -4,6 +4,7 @@ from toolkit.basic import flush
 from toolkit.memory_management import MemoryManager
 from typing import TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from toolkit.models.base_model import BaseModel
 
@@ -65,7 +66,6 @@ def unload_text_encoder(model: "BaseModel"):
                 text_encoder_list.append(te)
                 setattr(pipe, f"text_encoder_{i}", te)
                 i += 1
-
             model.text_encoder = text_encoder_list
         else:
             # only has a single text encoder
