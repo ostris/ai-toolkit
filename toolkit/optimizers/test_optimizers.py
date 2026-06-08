@@ -8,7 +8,7 @@ Compares speed (ms/step) and peak VRAM across:
   - Adafactor
   - Automagic v1
   - Automagic v2 (fused-backward)
-  - Automagic v3 (fused-backward)
+  - Automagic v3 (fused-backward and traditional/unfused)
   - Prodigy
 """
 import contextlib
@@ -186,7 +186,8 @@ def main():
         ("Adafactor", lambda p: Adafactor(p, lr=1e-4, scale_parameter=False, relative_step=False, warmup_init=False)),
         ("Automagic v1", lambda p: Automagic(p, lr=1e-4)),
         ("Automagic v2", lambda p: Automagic2(p, lr=1e-4)),
-        ("Automagic v3", lambda p: Automagic3(p, lr=1e-4)),
+        ("Automagic v3 fused", lambda p: Automagic3(p, lr=1e-4, fused=True)),
+        ("Automagic v3 unfused", lambda p: Automagic3(p, lr=1e-4, fused=False)),
         ("Prodigy", lambda p: Prodigy(p, lr=1.0, eps=1e-6)),
     ]
 
