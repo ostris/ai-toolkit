@@ -42,20 +42,58 @@ function computeCanvasSize(host: HTMLElement): { width: number; height: number }
   return { width, height: Math.max(MIN_CANVAS_HEIGHT, height - legendH) };
 }
 
-// EMA over a (number|null)[] series. Nulls are preserved as gaps and do not
-// advance the running average.
-function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
-  const out: (number | null)[] = new Array(ys.length);
-  let prev: number | null = null;
-  for (let i = 0; i < ys.length; i++) {
+// One-directional bias-corrected EMA. The accumulator starts at 0 and each
+// output is divided by w = 1-(1-alpha)^n (n = valid points seen so far) so early
+// outputs reflect the running mean rather than the raw accumulator. `w` doubles
+// as a confidence weight (→0 with one point seen, →1 once warmed up) used to
+// combine the two passes below. Nulls are preserved as gaps and do not advance
+// the average. `reverse` walks the series back-to-front (the backward pass).
+function emaPass(
+  ys: (number | null)[],
+  alpha: number,
+  reverse: boolean,
+): { vals: (number | null)[]; weights: number[] } {
+  const vals: (number | null)[] = new Array(ys.length).fill(null);
+  const weights: number[] = new Array(ys.length).fill(0);
+  let s = 0; // raw EMA accumulator
+  let n = 0; // valid points incorporated so far
+  const start = reverse ? ys.length - 1 : 0;
+  const step = reverse ? -1 : 1;
+  for (let i = start; i >= 0 && i < ys.length; i += step) {
     const v = ys[i];
-    if (v === null || !Number.isFinite(v)) {
+    if (v === null || !Number.isFinite(v)) continue;
+    s = alpha * (v as number) + (1 - alpha) * s;
+    n += 1;
+    const w = 1 - Math.pow(1 - alpha, n);
+    vals[i] = s / w;
+    weights[i] = w;
+  }
+  return { vals, weights };
+}
+
+// Zero-phase (forward-backward) EMA, combined by each pass's confidence weight.
+// A one-sided EMA pins the first point to its raw value and the last point is a
+// pure causal (lagging) estimate. Running a forward and backward pass and
+// blending them by how much data each has seen at that index gives the best of
+// both: at the start the forward pass has ~1 point (distrusted) so the
+// backward, future-informed pass dominates; at the latest points the backward
+// pass has ~1 point so the forward (causal) estimate dominates; the middle is
+// ~50/50, which also cancels EMA's lag. Nulls stay null (both passes align).
+function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
+  const fwd = emaPass(ys, alpha, false);
+  const bwd = emaPass(ys, alpha, true);
+  const out: (number | null)[] = new Array(ys.length);
+  for (let i = 0; i < ys.length; i++) {
+    const f = fwd.vals[i];
+    const b = bwd.vals[i];
+    if (f === null || b === null) {
       out[i] = null;
       continue;
     }
-    if (prev === null) prev = v as number;
-    else prev = alpha * (v as number) + (1 - alpha) * prev;
-    out[i] = prev;
+    const wf = fwd.weights[i];
+    const wb = bwd.weights[i];
+    const wsum = wf + wb;
+    out[i] = wsum > 0 ? (wf * (f as number) + wb * (b as number)) / wsum : ((f as number) + (b as number)) / 2;
   }
   return out;
 }
