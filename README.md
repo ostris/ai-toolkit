@@ -57,46 +57,69 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 ## Installation
 
 Requirements:
-- python >=3.10 (3.12 recommended)
-- Nvidia GPU with enough ram to do what you need
-- python venv
-- git
+- Python 3.10, 3.11, or 3.12 (Python 3.13 may have compatibility issues with some packages)
+- GPU with enough RAM (NVIDIA with CUDA, or AMD with ROCm)
+- Git
 
+### Quick Start (Recommended)
 
-Linux:
+Setup scripts auto-detect your system and install the correct dependencies:
+
+#### Linux:
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+chmod +x setup.sh start_toolkit.sh
+./setup.sh
+```
+
+#### Windows (PowerShell):
+```powershell
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+.\setup.ps1
+```
+
+### Manual Installation
+
+#### Linux (NVIDIA GPU with CUDA):
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
-# install torch first
-pip3 install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip3 install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip3 install -r requirements.txt
 ```
 
-For devices running **DGX OS** (including DGX Spark), follow [these](dgx_instructions.md) instructions.
+#### Linux (AMD GPU with ROCm):
+For AMD GPUs using ROCm, we recommend using [uv](https://github.com/astral-sh/uv) for virtual environment management:
 
+```bash
+git clone https://github.com/ostris/ai-toolkit.git
+cd ai-toolkit
+uv venv
+source .venv/bin/activate
+uv pip install --upgrade --index-url https://rocm.nightlies.amd.com/v2/gfx1151/ --pre torch torchaudio torchvision
+uv pip install -r requirements.txt
+```
 
-Windows:
+For other AMD GPU architectures, replace `gfx1151` with your GPU's architecture (e.g., `gfx1100`, `gfx1030`). The setup script will auto-detect this for you.
 
-If you are having issues with Windows. I recommend using the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
+#### Windows:
+If you are having issues with Windows, use the setup script above or the easy install script at [https://github.com/Tavris1/AI-Toolkit-Easy-Install](https://github.com/Tavris1/AI-Toolkit-Easy-Install)
 
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python -m venv venv
-.\venv\Scripts\activate
-pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+.\venv\Scripts\Activate.ps1
+pip install --no-cache-dir torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 ```
 
-MacOS:
-
-Experimental support for Silicon Macs is available. I do not have a Mac with enough RAM to fully test this
-so please let me know if there are issues. There is a convience script to install and run on MacOS 
-locates at `./run_mac.zsh` that will install the dependencies locally and run the UI. To run this, 
-do the following:
-
+### MacOS:
+Experimental support for Silicon Macs:
 ```bash
 git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit

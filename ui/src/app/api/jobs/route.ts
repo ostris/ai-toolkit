@@ -40,7 +40,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { id, name, job_config } = body;
-    let gpu_ids: string = body.gpu_ids;
+    let gpu_ids: string = body.gpu_ids || '0';
 
     if (isMac()) {
       gpu_ids = "mps";
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         where: { id },
         data: {
           name,
-          gpu_ids,
+          gpu_ids: gpu_ids,
           job_config: JSON.stringify(job_config),
           ...extra,
         },
@@ -80,7 +80,7 @@ export async function POST(request: Request) {
       const training = await prisma.job.create({
         data: {
           name,
-          gpu_ids,
+          gpu_ids: gpu_ids,
           job_config: JSON.stringify(job_config),
           queue_position: newQueuePosition,
           ...extra,

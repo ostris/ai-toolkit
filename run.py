@@ -19,9 +19,25 @@ sys.path.insert(0, os.getcwd())
 # turn off diffusers telemetry until I can figure out how to make it opt-in
 os.environ['DISABLE_TELEMETRY'] = 'YES'
 
-# set torch to trace mode
+# Set ROCm environment variables for better HIP error handling and performance
+# These should be set before importing torch
+if os.environ.get("AMD_SERIALIZE_KERNEL") is None:
+    os.environ["AMD_SERIALIZE_KERNEL"] = "3"  # Better error reporting for HIP errors
+if os.environ.get("TORCH_USE_HIP_DSA") is None:
+    os.environ["TORCH_USE_HIP_DSA"] = "1"  # Enable device-side assertions
+if os.environ.get("HSA_ENABLE_SDMA") is None:
+    os.environ["HSA_ENABLE_SDMA"] = "0"  # Disable SDMA for APU compatibility
+if os.environ.get("PYTORCH_ROCM_ALLOC_CONF") is None:
+    os.environ["PYTORCH_ROCM_ALLOC_CONF"] = "max_split_size_mb:768,garbage_collect=1"  # Better VRAM fragmentation
+
+# Workaround for HIPBLAS errors with quantized models
+if os.environ.get("ROCBLAS_USE_HIPBLASLT") is None:
+    os.environ["ROCBLAS_USE_HIPBLASLT"] = "0"  # Disable HIPBLASLT to avoid quantized model crashes
+if os.environ.get("ROCBLAS_LOG_LEVEL") is None:
+    os.environ["ROCBLAS_LOG_LEVEL"] = "0"  # Disable verbose logging
+
 import torch
-    
+
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
     torch.autograd.set_detect_anomaly(True)
@@ -112,7 +128,9 @@ def main():
             job.cleanup()
             jobs_completed += 1
         except Exception as e:
+            import traceback
             print_acc(f"Error running job: {e}")
+            print_acc(f"Traceback: {traceback.format_exc()}")
             jobs_failed += 1
             try:
                 job.process[0].on_error(e)

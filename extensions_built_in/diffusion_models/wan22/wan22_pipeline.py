@@ -161,14 +161,33 @@ class Wan22Pipeline(WanPipeline):
         
         conditioning = None # wan2.2 i2v conditioning
         # check shape of latents to see if it is first frame conditioned for 2.2 14b i2v
+        # IMPORTANT: Check latents BEFORE prepare_latents, as prepare_latents may modify them
         if latents is not None:
-            if latents.shape[1] == 36:
-                # first 16 channels are latent. other 20 are conditioning
-                conditioning = latents[:, 16:]
-                latents = latents[:, :16]
-                
-                # we need to trick the in_channls to think it is only 16 channels
-                num_channels_latents = 16
+            # Check if latents have the right number of dimensions first
+            if len(latents.shape) == 5:  # (B, C, T, H, W)
+                if latents.shape[1] == 36:
+                    # first 16 channels are latent. other 20 are conditioning
+                    # Make a copy of conditioning to ensure it persists
+                    conditioning = latents[:, 16:].clone().detach()
+                    latents = latents[:, :16].clone().detach()
+                    
+                    # we need to trick the in_channls to think it is only 16 channels
+                    num_channels_latents = 16
+                elif latents.shape[1] == 16 and self.transformer.config.in_channels == 36:
+                    # Model expects 36 channels but we only have 16 - this is an error for i2v
+                    raise ValueError(
+                        f"Model is configured for i2v (36 channels) but latents only have 16 channels. "
+                        f"Expected 36-channel latents with conditioning, but got {latents.shape[1]} channels. "
+                        f"Latents shape: {latents.shape}. "
+                        f"This usually means add_first_frame_conditioning() was not called or failed."
+                    )
+            else:
+                # Latents don't have the expected 5D shape
+                if self.transformer.config.in_channels == 36:
+                    raise ValueError(
+                        f"Model is configured for i2v (36 channels) but latents have unexpected shape. "
+                        f"Expected 5D tensor (B, C, T, H, W) with C=36, but got shape: {latents.shape}"
+                    )
                 
         latents = self.prepare_latents(
             batch_size * num_videos_per_prompt,
@@ -182,9 +201,30 @@ class Wan22Pipeline(WanPipeline):
             latents,
         )
         
+        # Ensure latents have correct channel count after prepare_latents
+        if conditioning is not None and latents.shape[1] != 16:
+            # If latents somehow have wrong channels, force split
+            latents = latents[:, :16]
+        
+        # If model expects 36 channels but conditioning is still None, this is an error
+        # i2v models REQUIRE a control image - zero conditioning produces garbage output
+        if conditioning is None and self.transformer.config.in_channels == 36:
+            raise ValueError(
+                f"Model is configured for i2v (expects 36 channels) but no conditioning was provided. "
+                f"i2v models require a control image (first frame). "
+                f"Latents should have 36 channels (16 latent + 20 conditioning) when passed to pipeline, "
+                f"or gen_config.ctrl_img must be provided to generate_single_image()."
+            )
+        
+        # Ensure mask matches latents shape (16 channels for i2v, not 36)
+        # If conditioning was split, mask should match the 16-channel latents
         mask = noise_mask
         if mask is None:
             mask = torch.ones(latents.shape, dtype=torch.float32, device=device)
+        else:
+            # If mask was provided with wrong channel count, adjust it
+            if mask.shape[1] != latents.shape[1]:
+                mask = mask[:, :latents.shape[1]]
 
         # 6. Denoising loop
         num_warmup_steps = len(timesteps) - \
@@ -202,6 +242,11 @@ class Wan22Pipeline(WanPipeline):
             # we don't have one loaded yet in aggressive offload mode
             current_model = None
 
+        # Move conditioning to device ONCE before the loop to avoid expensive transfers every iteration
+        # This is critical for performance - moving tensors every iteration is very slow (28s/it -> 4s/it)
+        if conditioning is not None:
+            conditioning = conditioning.to(device, transformer_dtype)
+        
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -227,7 +272,13 @@ class Wan22Pipeline(WanPipeline):
                     current_model = self.transformer_2
                     current_guidance_scale = guidance_scale_2
                     
-                latent_model_input = latents.to(device, transformer_dtype)
+                # Move latents to device and dtype - use non_blocking for better performance on ROCm
+                latent_model_input = latents.to(device, dtype=transformer_dtype, non_blocking=True)
+                # Ensure latents are 16 channels (not 36) at start of each iteration
+                # For i2v, we need 16 channels before concatenating conditioning to make 36
+                if latent_model_input.shape[1] > 16:
+                    # If somehow latents has more than 16 channels, slice to 16
+                    latent_model_input = latent_model_input[:, :16]
                 if self.config.expand_timesteps:
                     # seq_len: num_latent_frames * latent_height//2 * latent_width//2
                     temp_ts = (mask[0][0][:, ::2, ::2] * t).flatten()
@@ -236,12 +287,30 @@ class Wan22Pipeline(WanPipeline):
                 else:
                     timestep = t.expand(latents.shape[0])
                 
+                # Clone BEFORE concatenating conditioning - this preserves the 16-channel version
                 pre_condition_latent_model_input = latent_model_input.clone()
                 
                 if conditioning is not None:
                     # conditioning is first frame conditioning for 2.2 i2v
+                    # Conditioning is already on device from before the loop, no need to move again
+                    # Concatenate to make 36 channels (16 latent + 20 conditioning) for model input
                     latent_model_input = torch.cat(
                         [latent_model_input, conditioning], dim=1)
+                    # Verify we have 36 channels after concatenation
+                    if latent_model_input.shape[1] != 36:
+                        raise ValueError(
+                            f"Expected 36 channels after concatenating conditioning, "
+                            f"but got {latent_model_input.shape[1]} channels. "
+                            f"latent_model_input before concat shape: {latent_model_input.shape}, "
+                            f"conditioning shape: {conditioning.shape}"
+                        )
+                elif latent_model_input.shape[1] == 16 and self.transformer.config.in_channels == 36:
+                    # Model expects 36 channels but we only have 16 and no conditioning
+                    # This shouldn't happen for i2v, but handle it gracefully
+                    raise ValueError(
+                        f"Model expects 36 channels (i2v mode) but received 16 channels "
+                        f"and conditioning is None. This indicates a configuration error."
+                    )
 
                 noise_pred = current_model(
                     hidden_states=latent_model_input,
@@ -259,14 +328,28 @@ class Wan22Pipeline(WanPipeline):
                         attention_kwargs=attention_kwargs,
                         return_dict=False,
                     )[0]
-                    noise_pred = noise_uncond + current_guidance_scale * \
-                        (noise_pred - noise_uncond)
+                noise_pred = noise_uncond + current_guidance_scale * \
+                    (noise_pred - noise_uncond)
+
+                # Ensure latents have correct channel count (16 for i2v, not 36)
+                # The model outputs 16 channels, so latents passed to scheduler must also be 16
+                if latents.shape[1] != noise_pred.shape[1]:
+                    # If latents somehow have wrong channels, use only the first channels matching noise_pred
+                    latents = latents[:, :noise_pred.shape[1]]
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(
                     noise_pred, t, latents, return_dict=False)[0]
                 
                 # apply i2v mask
+                # Ensure both tensors have matching channel count
+                if pre_condition_latent_model_input.shape[1] != latents.shape[1]:
+                    # Take the minimum channel count and slice both
+                    min_channels = min(pre_condition_latent_model_input.shape[1], latents.shape[1])
+                    pre_condition_latent_model_input = pre_condition_latent_model_input[:, :min_channels]
+                    latents = latents[:, :min_channels]
+                if mask.shape[1] != latents.shape[1]:
+                    mask = mask[:, :latents.shape[1]]
                 latents = (pre_condition_latent_model_input * (1 - mask)) + (
                     latents * mask
                 )
