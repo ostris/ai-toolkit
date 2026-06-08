@@ -12,9 +12,14 @@ interface Props {
 
 function formatNum(v: number) {
   if (!Number.isFinite(v)) return '';
-  if (Math.abs(v) >= 1000) return v.toFixed(0);
-  if (Math.abs(v) >= 10) return v.toFixed(3);
-  if (Math.abs(v) >= 1) return v.toFixed(4);
+  if (v === 0) return '0';
+  const abs = Math.abs(v);
+  // Very small / very large magnitudes read better as exponents (e.g. 1.00e-5)
+  // than as long decimal strings like 0.0000100.
+  if (abs < 1e-3 || abs >= 1e6) return v.toExponential(2);
+  if (abs >= 1000) return v.toFixed(0);
+  if (abs >= 10) return v.toFixed(3);
+  if (abs >= 1) return v.toFixed(4);
   return v.toPrecision(4);
 }
 
@@ -113,12 +118,13 @@ export default function JobLossGraph({ job }: Props) {
 
   const [isZoomed, setIsZoomed] = useState(false);
 
-  // keep enabled map in sync with discovered keys (enable new ones automatically)
+  // keep enabled map in sync with discovered keys. Only "loss/loss" is on by
+  // default; every other metric starts deactivated (user can toggle it on).
   useEffect(() => {
     setEnabled(prev => {
       const next = { ...prev };
       for (const k of lossKeys) {
-        if (next[k] === undefined) next[k] = true;
+        if (next[k] === undefined) next[k] = k === 'loss/loss';
       }
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
@@ -155,7 +161,23 @@ export default function JobLossGraph({ job }: Props) {
     const data: (number[] | (number | null)[])[] = [xs];
     const seriesConfigs: uPlot.Series[] = [{}]; // x
 
-    for (const key of activeKeys) {
+    // Each metric gets its own y-scale (so unrelated magnitudes auto-range
+    // independently) plus a matching colored axis.
+    const scales: uPlot.Scales = { x: { time: false } };
+    const axes: uPlot.Axis[] = [
+      {
+        stroke: 'rgba(255,255,255,0.55)',
+        grid: { stroke: 'rgba(255,255,255,0.06)' },
+        ticks: { stroke: 'rgba(255,255,255,0.15)' },
+      },
+    ];
+
+    // Data columns belonging to each scale, for per-scale clip percentiles.
+    const scaleArrays: Record<string, (number | null)[][]> = {};
+
+    for (let ki = 0; ki < activeKeys.length; ki++) {
+      const key = activeKeys[ki];
+      const scaleKey = `y::${key}`;
       const pts: LossPoint[] = series[key] ?? [];
       const map = new Map<number, number>();
       for (const p of pts) {
@@ -172,57 +194,92 @@ export default function JobLossGraph({ job }: Props) {
       const colorFaded = color.replace('1)', '0.40)');
       const colorDull = dulledColor(color);
 
+      const colArrays: (number | null)[][] = [];
+
       if (showRaw) {
         data.push(raw);
         seriesConfigs.push({
           label: `${key} (raw)`,
+          scale: scaleKey,
           stroke: colorFaded,
           width: 1.25,
           spanGaps: false,
           points: { show: false },
         });
+        colArrays.push(raw);
       }
       if (showSmoothed) {
         data.push(smooth);
         seriesConfigs.push({
           label: key,
+          scale: scaleKey,
           stroke: color,
           width: 2,
           spanGaps: false,
           points: { show: false },
         });
+        colArrays.push(smooth);
       }
       data.push(fullSmooth);
       seriesConfigs.push({
         label: `${key} (trend)`,
+        scale: scaleKey,
         stroke: colorDull,
         width: 2.5,
         spanGaps: false,
         points: { show: false },
       });
+      colArrays.push(fullSmooth);
+
+      scaleArrays[scaleKey] = colArrays;
+
+      scales[scaleKey] = {
+        distr: useLogScale ? 3 : 1,
+        range: (_u, dataMin, dataMax) => {
+          const c = yClipRef.current?.[scaleKey];
+          if (c) return [c.min, c.max];
+          return [dataMin, dataMax];
+        },
+      };
+
+      axes.push({
+        scale: scaleKey,
+        side: ki % 2 === 0 ? 3 : 1, // alternate left / right
+        stroke: color,
+        label: key,
+        labelSize: 14,
+        // Only the first scale draws gridlines; overlaying grids from multiple
+        // independent scales would be unreadable.
+        grid: { show: ki === 0, stroke: 'rgba(255,255,255,0.06)' },
+        ticks: { stroke: 'rgba(255,255,255,0.15)' },
+        size: 60,
+        values: (_u, ticks) => ticks.map(tk => formatNum(tk)),
+      });
     }
 
-    // y-domain clipping (2nd–98th percentile of all visible y values).
-    let yClip: { min: number; max: number } | null = null;
+    // y-domain clipping (2nd–98th percentile), computed per scale.
+    let yClip: Record<string, { min: number; max: number }> | null = null;
     if (clipOutliers && xs.length >= 10) {
-      const vals: number[] = [];
-      for (let s = 1; s < data.length; s++) {
-        const arr = data[s] as (number | null)[];
-        for (const v of arr) {
-          if (v !== null && Number.isFinite(v)) vals.push(v as number);
+      yClip = {};
+      for (const scaleKey of Object.keys(scaleArrays)) {
+        const vals: number[] = [];
+        for (const arr of scaleArrays[scaleKey]) {
+          for (const v of arr) {
+            if (v !== null && Number.isFinite(v)) vals.push(v as number);
+          }
         }
-      }
-      if (vals.length >= 10) {
-        vals.sort((a, b) => a - b);
-        const lo = vals[Math.floor(vals.length * 0.02)];
-        const hi = vals[Math.ceil(vals.length * 0.98) - 1];
-        if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
-          yClip = { min: lo, max: hi };
+        if (vals.length >= 10) {
+          vals.sort((a, b) => a - b);
+          const lo = vals[Math.floor(vals.length * 0.02)];
+          const hi = vals[Math.ceil(vals.length * 0.98) - 1];
+          if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
+            yClip[scaleKey] = { min: lo, max: hi };
+          }
         }
       }
     }
 
-    return { data: data as uPlot.AlignedData, seriesConfigs, yClip };
+    return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip };
   }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showRaw, showSmoothed, clipOutliers]);
 
   // Layout wrapper we measure for sizing — uPlot collapses its own mount node
@@ -231,8 +288,8 @@ export default function JobLossGraph({ job }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
 
-  // Latest yClip read by the y-scale range fn — kept current via effect.
-  const yClipRef = useRef<{ min: number; max: number } | null>(null);
+  // Latest per-scale yClip read by the y-scale range fns — kept current via effect.
+  const yClipRef = useRef<Record<string, { min: number; max: number }> | null>(null);
   useEffect(() => {
     yClipRef.current = built.yClip;
   }, [built.yClip]);
@@ -267,31 +324,8 @@ export default function JobLossGraph({ job }: Props) {
       height: initialHeight,
       padding: [12, 16, 0, 4],
       series: built.seriesConfigs,
-      scales: {
-        x: { time: false },
-        y: {
-          distr: useLogScale ? 3 : 1,
-          range: (_u, dataMin, dataMax) => {
-            const c = yClipRef.current;
-            if (c) return [c.min, c.max];
-            return [dataMin, dataMax];
-          },
-        },
-      },
-      axes: [
-        {
-          stroke: 'rgba(255,255,255,0.55)',
-          grid: { stroke: 'rgba(255,255,255,0.06)' },
-          ticks: { stroke: 'rgba(255,255,255,0.15)' },
-        },
-        {
-          stroke: 'rgba(255,255,255,0.55)',
-          grid: { stroke: 'rgba(255,255,255,0.06)' },
-          ticks: { stroke: 'rgba(255,255,255,0.15)' },
-          size: 60,
-          values: (_u, ticks) => ticks.map(tk => formatNum(tk)),
-        },
-      ],
+      scales: built.scales,
+      axes: built.axes,
       cursor: {
         drag: { x: true, y: false, setScale: true },
         points: { size: 6 },
@@ -314,12 +348,20 @@ export default function JobLossGraph({ job }: Props) {
     uplotRef.current = new uPlot(opts, built.data, containerRef.current);
     setIsZoomed(false);
 
-    // After uPlot mounts its legend, right-size the canvas against the actual
-    // legend height so the canvas fills the remaining vertical space.
-    const fitted = computeCanvasSize(host);
-    if (fitted) uplotRef.current.setSize(fitted);
+    // Right-size the canvas against the legend height so it fills the remaining
+    // vertical space. Defer to the next frame: the legend's height depends on
+    // how many series wrap, and that layout isn't settled synchronously after
+    // construction — measuring now would read a stale height (the bug that
+    // previously required a manual resize to correct).
+    const raf = requestAnimationFrame(() => {
+      const u = uplotRef.current;
+      if (!u) return;
+      const fitted = computeCanvasSize(host);
+      if (fitted) u.setSize(fitted);
+    });
 
     return () => {
+      cancelAnimationFrame(raf);
       uplotRef.current?.destroy();
       uplotRef.current = null;
     };
