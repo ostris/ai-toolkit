@@ -576,8 +576,8 @@ async function getRocmGpuStats(isWindows: boolean) {
       .map(line => line.trim())
       .filter(line => line.length > 0 && !line.startsWith('Exception') && !line.startsWith('Error'));
     
-    // Find the header line (should contain "device,GPU ID")
-    const headerIndex = lines.findIndex(line => line.includes('device,GPU ID') || line.startsWith('device,'));
+    // Find the header line (should start with "device,")
+    const headerIndex = lines.findIndex(line => line.startsWith('device,'));
     
     if (headerIndex === -1 || lines.length < headerIndex + 2) {
       return [];
@@ -604,43 +604,44 @@ async function getRocmGpuStats(isWindows: boolean) {
       return fields;
     }
 
-    // Skip header line and process data lines
-    const gpus = lines.slice(headerIndex + 1).map((line, idx) => {
-      // Parse CSV line - rocm-smi CSV format has changed!
-      // New format (25 fields): device,Device Name,Device ID,Device Rev,Subsystem ID,GUID,Temperature (Sensor edge) (C),mclk clock speed:,mclk clock level:,sclk clock speed:,sclk clock level:,socclk clock speed:,socclk clock level:,Current Socket Graphics Package Power (W),GPU use (%),GPU Memory Allocated (VRAM%),Memory Activity,VRAM Total Memory (B),VRAM Total Used Memory (B),Card Series,Card Model,Card Vendor,Card SKU,Node ID,GFX Version
-      // Old format (18 fields): device,GPU ID,Temperature,mclk clock speed,mclk level,sclk clock speed,sclk level,socclk speed,socclk level,Power,GPU use,Memory Activity,VRAM Total,VRAM Used,Card series,Card model,Card vendor,Card SKU
-      const fields = parseCSVLine(line);
-      
-      // Detect format based on field count
-      const isNewFormat = fields.length >= 25;
-      const isOldFormat = fields.length >= 18 && fields.length < 25;
-      
-      if (!isNewFormat && !isOldFormat) {
-        // Pad with empty strings to prevent index errors
-        while (fields.length < 25) {
-          fields.push('');
+    // Parse header to dynamically find field indices (works with any rocm-smi version)
+    const headerLine = lines[headerIndex];
+    const headerFields = parseCSVLine(headerLine);
+    
+    function findHeaderIndex(namePatterns: string[]): number {
+      for (let i = 0; i < headerFields.length; i++) {
+        const h = headerFields[i].toLowerCase().trim();
+        for (const pattern of namePatterns) {
+          if (h.includes(pattern.toLowerCase())) {
+            return i;
+          }
         }
       }
+      return -1;
+    }
+    
+    const tempFieldIdx = findHeaderIndex(['temperature', '(c)', 'temp']);
+    const mclkFieldIdx = findHeaderIndex(['mclk clock speed', 'mclk']);
+    const sclkFieldIdx = findHeaderIndex(['sclk clock speed', 'sclk']);
+    const powerFieldIdx = findHeaderIndex(['power (w)', 'power']);
+    const usageFieldIdx = findHeaderIndex(['gpu use', 'gpu_use', 'gpu use (%)']);
+    const memTotalFieldIdx = findHeaderIndex(['vram total memory', 'vram total']);
+    const memUsedFieldIdx = findHeaderIndex(['vram total used memory', 'vram total used', 'vram used']);
+    const cardSkuFieldIdx = findHeaderIndex(['card sku', 'sku']);
+    const cardModelFieldIdx = findHeaderIndex(['card model', 'model']);
+    const cardNameFieldIdx = findHeaderIndex(['device name']);
+    const deviceIdFieldIdx = findHeaderIndex(['device id', 'gpu id']);
+    const cardVendorFieldIdx = findHeaderIndex(['card vendor', 'vendor']);
+    
+    // Skip header line and process data lines
+    const gpus = lines.slice(headerIndex + 1).map((line, idx) => {
+      const fields = parseCSVLine(line);
       
       // Parse device name (card0, card1, etc.) to get index
       const deviceName = fields[0]?.trim() || '';
       // Extract numeric part from device name (e.g., "card0" -> 0)
       const deviceMatch = deviceName.match(/\d+/);
       const index = deviceMatch ? parseInt(deviceMatch[0]) : idx;
-      
-      // Extract fields based on format
-      // New format: Temperature at field 6, mclk at field 7, sclk at field 9, Power at field 13, Usage at field 14, Memory Total at field 17, Memory Used at field 18
-      // Old format: Temperature at field 2, mclk at field 3, sclk at field 5, Power at field 9, Usage at field 10, Memory Total at field 12, Memory Used at field 13
-      const tempFieldIdx = isNewFormat ? 6 : 2;
-      const mclkFieldIdx = isNewFormat ? 7 : 3;
-      const sclkFieldIdx = isNewFormat ? 9 : 5;
-      const powerFieldIdx = isNewFormat ? 13 : 9;
-      const usageFieldIdx = isNewFormat ? 14 : 10;
-      const memTotalFieldIdx = isNewFormat ? 17 : 12;
-      const memUsedFieldIdx = isNewFormat ? 18 : 13;
-      const cardSkuFieldIdx = isNewFormat ? 22 : 17;
-      const cardModelFieldIdx = isNewFormat ? 20 : 15;
-      const cardNameFieldIdx = isNewFormat ? 1 : -1; // Device Name in new format
       
       const tempStr = fields[tempFieldIdx]?.trim() || '';
       // Parse temperature - rocm-smi provides temperature in Celsius
@@ -653,8 +654,7 @@ async function getRocmGpuStats(isWindows: boolean) {
         }
       }
       
-      // GPU use (%) - field index depends on format
-      const gpuUtilStr = fields[usageFieldIdx]?.trim() || '0';
+      const gpuUtilStr = usageFieldIdx >= 0 ? (fields[usageFieldIdx]?.trim() || '0') : '0';
       let gpuUtil = 0;
       if (gpuUtilStr && gpuUtilStr !== 'N/A' && !isNaN(parseFloat(gpuUtilStr))) {
         const parsed = parseFloat(gpuUtilStr);
@@ -666,11 +666,8 @@ async function getRocmGpuStats(isWindows: boolean) {
       // rocm-smi GPU use is already a percentage, but validate and clamp to 0-100
       gpuUtil = Math.max(0, Math.min(100, gpuUtil));
       
-      // Memory values from rocm-smi are in bytes, but check if they're valid
-      // Field indices depend on format
-      
-      const memoryTotalStr = fields[memTotalFieldIdx]?.trim() || '0';
-      const memoryUsedStr = fields[memUsedFieldIdx]?.trim() || '0';
+      const memoryTotalStr = memTotalFieldIdx >= 0 ? (fields[memTotalFieldIdx]?.trim() || '0') : '0';
+      const memoryUsedStr = memUsedFieldIdx >= 0 ? (fields[memUsedFieldIdx]?.trim() || '0') : '0';
       let memoryTotal = parseFloat(memoryTotalStr) || 0;
       let memoryUsed = parseFloat(memoryUsedStr) || 0;
       
@@ -680,8 +677,7 @@ async function getRocmGpuStats(isWindows: boolean) {
       if (memoryUsed > memoryTotal) memoryUsed = memoryTotal; // Clamp used to total
       
       const memoryFree = Math.max(0, memoryTotal - memoryUsed);
-      // Power draw - field index depends on format
-      const powerDrawStr = fields[powerFieldIdx]?.trim() || '';
+      const powerDrawStr = powerFieldIdx >= 0 ? (fields[powerFieldIdx]?.trim() || '') : '';
       // Parse power draw, handle cases where it might be in different formats
       let powerDraw = 0;
       // Check if the field looks like a clock value (contains "Mhz" or "MHz") and skip it
@@ -699,11 +695,8 @@ async function getRocmGpuStats(isWindows: boolean) {
         }
       }
       
-      // Parse clock speeds (format: "(1000Mhz)" -> 1000)
-      // mclk = memory clock, sclk = graphics/core clock
-      // Field indices depend on format
-      const mclkStr = fields[mclkFieldIdx]?.trim() || '(0Mhz)';
-      const sclkStr = fields[sclkFieldIdx]?.trim() || '(0Mhz)';
+      const mclkStr = mclkFieldIdx >= 0 ? (fields[mclkFieldIdx]?.trim() || '(0Mhz)') : '(0Mhz)';
+      const sclkStr = sclkFieldIdx >= 0 ? (fields[sclkFieldIdx]?.trim() || '(0Mhz)') : '(0Mhz)';
       
       // Extract numeric value from clock strings like "(1000Mhz)" or "1000Mhz"
       // Handle both formats: "(1472Mhz)" and raw numbers
@@ -732,13 +725,11 @@ async function getRocmGpuStats(isWindows: boolean) {
         clockMemory = 0;
       }
       
-      // Get GPU name from Card SKU (most descriptive), then Card model, then Device Name (new format), then fallback
-      // Field indices depend on format
-      const cardSku = fields.length > cardSkuFieldIdx ? (fields[cardSkuFieldIdx]?.trim() || '') : '';
-      const cardModel = fields.length > cardModelFieldIdx ? (fields[cardModelFieldIdx]?.trim() || '') : '';
-      const deviceNameField = cardNameFieldIdx >= 0 && fields.length > cardNameFieldIdx ? (fields[cardNameFieldIdx]?.trim() || '') : '';
-      const cardVendor = fields.length > 16 ? (fields[16]?.trim() || '') : '';
-      const gpuId = fields[1]?.trim() || '';
+      const cardSku = cardSkuFieldIdx >= 0 ? (fields[cardSkuFieldIdx]?.trim() || '') : '';
+      const cardModel = cardModelFieldIdx >= 0 ? (fields[cardModelFieldIdx]?.trim() || '') : '';
+      const deviceNameField = cardNameFieldIdx >= 0 ? (fields[cardNameFieldIdx]?.trim() || '') : '';
+      const cardVendor = cardVendorFieldIdx >= 0 ? (fields[cardVendorFieldIdx]?.trim() || '') : '';
+      const gpuId = deviceIdFieldIdx >= 0 ? (fields[deviceIdFieldIdx]?.trim() || '') : '';
       
       // Use Card SKU if available and not a hex ID or numeric ID, otherwise prefer Card model, then fallback
       let name = '';
@@ -772,21 +763,21 @@ async function getRocmGpuStats(isWindows: boolean) {
         name = `AMD GPU ${index}`;
       }
 
-      // Convert memory from bytes to MB (rocm-smi reports in bytes)
-      // Check if values are already in MB/GB by checking magnitude
+      // Convert memory to MB (rocm-smi reports in bytes, but magnitude varies)
       let memoryTotalMB = 0;
       let memoryUsedMB = 0;
       let memoryFreeMB = 0;
       
       if (memoryTotal > 0) {
-        // If value is very large (> 1TB), assume bytes and convert to MB
-        // If value is reasonable (< 1000), assume already in GB and convert to MB
-        if (memoryTotal > 1024 * 1024 * 1024) {
+        // Values > 1M are clearly bytes (e.g., 536870912 = 512MB)
+        // Values 10-1M are likely MB already
+        // Values < 10 are likely GB
+        if (memoryTotal > 1000000) {
           // Bytes - convert to MB
           memoryTotalMB = Math.round(memoryTotal / (1024 * 1024));
           memoryUsedMB = Math.round(memoryUsed / (1024 * 1024));
           memoryFreeMB = Math.round(memoryFree / (1024 * 1024));
-        } else if (memoryTotal > 1000) {
+        } else if (memoryTotal >= 10) {
           // Already in MB
           memoryTotalMB = Math.round(memoryTotal);
           memoryUsedMB = Math.round(memoryUsed);
