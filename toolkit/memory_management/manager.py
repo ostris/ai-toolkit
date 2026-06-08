@@ -1,5 +1,5 @@
 import torch
-from .manager_modules import LinearLayerMemoryManager, ConvLayerMemoryManager
+from .manager_modules import LinearLayerMemoryManager, ConvLayerMemoryManager, _DEVICE_STATE
 import random
 
 LINEAR_MODULES = [
@@ -67,9 +67,9 @@ class MemoryManager:
 
     @classmethod
     def attach(
-        cls, 
-        module: torch.nn.Module, 
-        device: torch.device, 
+        cls,
+        module: torch.nn.Module,
+        device: torch.device,
         offload_percent: float = 1.0,
         ignore_modules: list[torch.nn.Module] = []
     ):
@@ -86,7 +86,7 @@ class MemoryManager:
         # add ignore modules to unmanaged list
         for im in ignore_modules:
             module._memory_manager.unmanaged_modules.append(im)
-            
+
         # count ignore modules as processed
         modules_processed = [x for x in ignore_modules]
         # attach to all modules
@@ -113,7 +113,7 @@ class MemoryManager:
                             ara = child_module.ara_lora_ref()
                             if ara not in modules_processed:
                                 MemoryManager.attach(
-                                    ara, 
+                                    ara,
                                     device,
                                 )
                     modules_processed.append(child_module)
@@ -138,7 +138,7 @@ class MemoryManager:
                             ara = child_module.ara_lora_ref()
                             if ara not in modules_processed:
                                 MemoryManager.attach(
-                                    ara, 
+                                    ara,
                                     device,
                                 )
                             modules_processed.append(ara)
@@ -151,3 +151,76 @@ class MemoryManager:
                     module._memory_manager.unmanaged_modules.append(child_module)
                 else:
                     continue
+
+    @classmethod
+    def detach(cls, module: torch.nn.Module):
+        """
+        Reverse of attach(). Moves unmanaged modules back to CPU, restores the
+        original .to() and forward methods on all child layers, unpins CPU weight
+        tensors, and clears the global CUDA device state.
+
+        Call this before unloading/replacing a module that had attach() applied.
+        """
+        if not hasattr(module, "_memory_manager"):
+            return
+
+        for unmanaged in module._memory_manager.unmanaged_modules:
+            try:
+                if isinstance(unmanaged, torch.nn.Parameter):
+                    unmanaged.data = unmanaged.data.to('cpu')
+                else:
+                    unmanaged.to('cpu')
+            except Exception:
+                pass
+
+        if hasattr(module, "_mm_to"):
+            module.to = module._mm_to
+            del module._mm_to
+
+        del module._memory_manager
+
+        for child in module.modules():
+            lmm = getattr(child, "_layer_memory_manager", None)
+            if lmm is None:
+                continue
+
+            original_forward = getattr(lmm, "_original_forward", None)
+            if original_forward is not None:
+                if hasattr(child, "ara_lora_ref"):
+                    ara = child.ara_lora_ref()
+                    if ara is not None:
+                        ara.org_forward = original_forward
+                else:
+                    child.forward = original_forward
+
+            for param_name in ("weight", "bias"):
+                param = getattr(child, param_name, None)
+                if param is None or not isinstance(param, torch.nn.Parameter):
+                    continue
+                try:
+                    if param.data.is_pinned():
+                        object.__setattr__(
+                            child,
+                            param_name,
+                            torch.nn.Parameter(
+                                param.data.clone(),
+                                requires_grad=param.requires_grad,
+                            ),
+                        )
+                except Exception:
+                    pass
+
+            del child._layer_memory_manager
+            if hasattr(child, "_memory_management_device"):
+                del child._memory_management_device
+            if hasattr(child, "_is_memory_managed"):
+                del child._is_memory_managed
+
+        keys_to_delete = [
+            dev for dev in _DEVICE_STATE
+            if isinstance(dev, torch.device) and dev.type == "cuda"
+        ]
+        for key in keys_to_delete:
+            del _DEVICE_STATE[key]
+
+        torch.cuda.empty_cache()

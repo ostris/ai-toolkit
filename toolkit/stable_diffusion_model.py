@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING
 from toolkit.print import print_acc
 from diffusers import FluxFillPipeline
 from transformers import AutoModel, AutoTokenizer, Gemma2Model, Qwen2Model, LlamaModel
+from toolkit.basic import flush
 
 if TYPE_CHECKING:
     from toolkit.lora_special import LoRASpecialNetwork
@@ -116,11 +117,6 @@ class BlankNetwork:
     
     def train(self):
         pass
-
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
 
 
 UNET_IN_CHANNELS = 4  # Stable Diffusion の in_channels は 4 で固定。XLも同じ。
@@ -233,6 +229,9 @@ class StableDiffusion:
         # some llms need left side padding, others need right side
         self.te_padding_side = "right"
         
+        # can be used on models to invalidate cache if things change.
+        self.latent_space_version = None
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):
@@ -269,6 +268,10 @@ class StableDiffusion:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+    
+    @property
+    def text_embedding_space_version(self):
+        return self.arch
     
     @property
     def unet_unwrapped(self):

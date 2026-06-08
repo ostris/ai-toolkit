@@ -1,11 +1,16 @@
 import os
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 import sys
-from typing import Union, OrderedDict
 from dotenv import load_dotenv
 # Load the .env file if it exists
 load_dotenv()
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = os.getenv("HF_HUB_ENABLE_HF_TRANSFER", "1")
+os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
+seed = None
+if "SEED" in os.environ:
+    try:
+        seed = int(os.environ["SEED"])
+    except ValueError:
+        print(f"Invalid SEED value: {os.environ['SEED']}. SEED must be an integer.")
 
 sys.path.insert(0, os.getcwd())
 # must come before ANY torch or fastai imports
@@ -24,23 +29,27 @@ if os.environ.get("HSA_ENABLE_SDMA") is None:
     os.environ["HSA_ENABLE_SDMA"] = "0"  # Disable SDMA for APU compatibility
 if os.environ.get("PYTORCH_ROCM_ALLOC_CONF") is None:
     os.environ["PYTORCH_ROCM_ALLOC_CONF"] = "max_split_size_mb:768,garbage_collect=1"  # Better VRAM fragmentation
-# HIP_LAUNCH_BLOCKING can be set to "1" for debugging (synchronous kernels), but defaults to "0" for performance
-# HSA_OVERRIDE_GFX_VERSION and PYTORCH_ROCM_ARCH should be set by the user or startup script based on their GPU
 
 # Workaround for HIPBLAS errors with quantized models
-# ROCBLAS_USE_HIPBLASLT can cause HIPBLAS_STATUS_INTERNAL_ERROR with quantized GEMM operations
-# Disable it by default - can be re-enabled via environment variable if needed
 if os.environ.get("ROCBLAS_USE_HIPBLASLT") is None:
     os.environ["ROCBLAS_USE_HIPBLASLT"] = "0"  # Disable HIPBLASLT to avoid quantized model crashes
-# Reduce ROCBLAS logging overhead
 if os.environ.get("ROCBLAS_LOG_LEVEL") is None:
     os.environ["ROCBLAS_LOG_LEVEL"] = "0"  # Disable verbose logging
 
+import torch
+
 # check if we have DEBUG_TOOLKIT in env
 if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
-    # set torch to trace mode
-    import torch
     torch.autograd.set_detect_anomaly(True)
+
+if seed is not None:
+    import random
+    import numpy as np
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
 import argparse
 from toolkit.job import get_job
 from toolkit.accelerator import get_accelerator

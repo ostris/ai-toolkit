@@ -1,4 +1,5 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import useSampleImages from '@/hooks/useSampleImages';
 import SampleImageCard from './SampleImageCard';
 import { Job } from '@prisma/client';
@@ -48,16 +49,19 @@ export const SampleImagesMenu = ({ job }: SampleImagesMenuProps) => {
   return (
     <Button
       onClick={downloadZip}
-      className={classNames(`px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700`, {
-        'opacity-50 cursor-not-allowed': isZipping,
-      })}
+      className={classNames(
+        `flex-1 sm:flex-initial justify-center px-2 sm:px-4 py-1 h-8 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center`,
+        {
+          'opacity-50 cursor-not-allowed': isZipping,
+        },
+      )}
     >
       {isZipping ? (
-        <LuLoader className="animate-spin inline-block mr-2" />
+        <LuLoader className="animate-spin inline-block sm:mr-2" />
       ) : (
-        <FaDownload className="inline-block mr-2" />
+        <FaDownload className="inline-block sm:mr-2" />
       )}
-      {isZipping ? 'Preparing' : 'Download'}
+      <span className="hidden sm:inline">{isZipping ? 'Preparing' : 'Download'}</span>
     </Button>
   );
 };
@@ -69,8 +73,9 @@ interface SampleImagesProps {
 export default function SampleImages({ job }: SampleImagesProps) {
   const { sampleImages, status, refreshSampleImages } = useSampleImages(job.id, 5000);
   const [selectedSamplePath, setSelectedSamplePath] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const didFirstScroll = useRef(false);
+  const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const numSamples = useMemo(() => {
     if (job?.job_config) {
       const jobConfig = JSON.parse(job.job_config) as JobConfig;
@@ -82,16 +87,21 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return 10;
   }, [job]);
 
-  const scrollToBottom = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'instant' });
+  // Group samples into rows of `numSamples` for the virtualized list — one row per sample iteration.
+  const rows = useMemo(() => {
+    const out: string[][] = [];
+    for (let i = 0; i < sampleImages.length; i += numSamples) {
+      out.push(sampleImages.slice(i, i + numSamples));
     }
+    return out;
+  }, [sampleImages, numSamples]);
+
+  const scrollToBottom = () => {
+    virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end' });
   };
 
   const scrollToTop = () => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({ top: 0, behavior: 'instant' });
-    }
+    virtuosoRef.current?.scrollToIndex({ index: 0, align: 'start' });
   };
 
   const PageInfoContent = useMemo(() => {
@@ -244,55 +254,49 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return null;
   }, [job]);
 
-  // scroll to bottom on first load of samples
-  useEffect(() => {
-    if (status === 'success' && sampleImages.length > 0 && !didFirstScroll.current) {
-      didFirstScroll.current = true;
-      setTimeout(() => {
-        scrollToBottom();
-      }, 100);
-    }
-  }, [status, sampleImages.length]);
-
   return (
-    <div ref={containerRef} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
+    <div ref={scrollParentCallback} className="absolute top-[80px] left-0 right-0 bottom-0 overflow-y-auto">
       <div className="pb-4">
         {PageInfoContent}
-        {sampleImages && (
-          <div className={`grid ${gridColsClass} gap-1`}>
-            {sampleImages.map((sample: string, idx: number) => {
-              // Compute current group (groups are size = numSamples)
-              const groupIndex = Math.floor(idx / numSamples);
-              const groupStart = groupIndex * numSamples;
-              const groupEnd = Math.min(groupStart + numSamples, sampleImages.length);
-              const groupSize = groupEnd - groupStart;
-              const isEndOfGroup = idx === groupEnd - 1;
+        {sampleImages && rows.length > 0 && scrollParent && (
+          <Virtuoso
+            ref={virtuosoRef}
+            customScrollParent={scrollParent}
+            totalCount={rows.length}
+            initialTopMostItemIndex={rows.length - 1}
+            followOutput="auto"
+            increaseViewportBy={400}
+            computeItemKey={index => rows[index]?.[0] ?? index}
+            itemContent={index => {
+              const row = rows[index];
+              if (!row) return null;
 
-              // Only enforce a MIN of 3 when the group's planned width is < 3
+              // Only pad the final row when numSamples < MIN_COLS and the row is short.
               const MIN_COLS = 3;
-              const shouldPad = numSamples < MIN_COLS && groupSize < MIN_COLS;
-              const padsNeeded = shouldPad ? MIN_COLS - groupSize : 0;
+              const shouldPad = numSamples < MIN_COLS && row.length < MIN_COLS;
+              const padsNeeded = shouldPad ? MIN_COLS - row.length : 0;
 
               return (
-                <div key={sample} className="contents">
-                  <SampleImageCard
-                    imageUrl={sample}
-                    numSamples={numSamples}
-                    sampleImages={sampleImages}
-                    alt="Sample Image"
-                    onClick={() => setSelectedSamplePath(sample)}
-                    observerRoot={containerRef.current}
-                  />
-
-                  {isEndOfGroup &&
-                    padsNeeded > 0 &&
-                    Array.from({ length: padsNeeded }).map((_, i) => (
-                      <div key={`pad-${groupIndex}-${i}`} className="invisible" />
-                    ))}
+                // pb-1 recreates the vertical gap between rows that the original single CSS grid provided via `gap-1`.
+                <div className={`grid ${gridColsClass} gap-1 pb-1`}>
+                  {row.map(sample => (
+                    <SampleImageCard
+                      key={sample}
+                      imageUrl={sample}
+                      numSamples={numSamples}
+                      sampleImages={sampleImages}
+                      alt="Sample Image"
+                      onClick={() => setSelectedSamplePath(sample)}
+                      observerRoot={scrollParent}
+                    />
+                  ))}
+                  {Array.from({ length: padsNeeded }).map((_, i) => (
+                    <div key={`pad-${index}-${i}`} className="invisible" />
+                  ))}
                 </div>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </div>
       <SampleImageViewer
@@ -304,14 +308,14 @@ export default function SampleImages({ job }: SampleImagesProps) {
         refreshSampleImages={refreshSampleImages}
       />
       <div
-        className="fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="hidden md:flex fixed top-20 mt-4 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToTop}
         title="Scroll to Top"
       >
         <FaCaretUp className="text-gray-500 dark:text-gray-400" />
       </div>
       <div
-        className="fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg flex items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
+        className="hidden md:flex fixed bottom-5 right-6 w-10 h-10 rounded-full bg-gray-900 shadow-lg items-center justify-center text-white opacity-80 hover:opacity-100 cursor-pointer"
         onClick={scrollToBottom}
         title="Scroll to Bottom"
       >

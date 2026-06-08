@@ -737,3 +737,7 @@ def get_schedule(
         mu = m * image_seq_len + b
         timesteps = time_shift(mu, 1.0, timesteps)
     return timesteps.tolist()
+
+def get_low_step_schedule(num_steps: int) -> list:
+    """Build uniform spaced timestep schedule from t=1 (noise) to t=0 (clean) to match training."""
+    return torch.linspace(1, 0, num_steps + 1).tolist()

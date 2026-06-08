@@ -4,24 +4,42 @@ import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot } from '@/server/settings';
 
+function isUnderRoot(filepath: string, root: string): boolean {
+  const resolved = path.resolve(filepath);
+  return resolved === root || resolved.startsWith(root + path.sep);
+}
+
 export async function POST(request: NextRequest) {
-  
-  const body = await request.json();
-  const { imgPath } = body;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    // Client aborted the request before body was fully sent
+    return new NextResponse(null, { status: 499 });
+  }
+
+  if (request.signal.aborted) {
+    return new NextResponse(null, { status: 499 });
+  }
+
+  const { imgPath, ext } = body;
   console.log('Received POST request for caption:', imgPath);
   try {
     // Decode the path
     const filepath = imgPath;
     console.log('Decoded image path:', filepath);
 
-    // caption name is the filepath without extension but with .txt
-    const captionPath = filepath.replace(/\.[^/.]+$/, '') + '.txt';
+    // caption name is the filepath without extension but with the caption extension (default txt)
+    const captionExt = ((ext || 'txt') as string).replace(/^\.+/, '').trim() || 'txt';
+    const captionPath = filepath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
 
     // Get allowed directories
     const allowedDir = await getDatasetsRoot();
 
-    // Security check: Ensure path is in allowed directory
-    const isAllowed = filepath.startsWith(allowedDir) && !filepath.includes('..');
+    // Security check: resolve so `..` segments collapse, then verify it's still
+    // under the allowed root. Substring `.includes('..')` would false-positive
+    // on filenames that contain `..` as text (e.g. an ellipsis in a filename).
+    const isAllowed = isUnderRoot(filepath, allowedDir);
 
     if (!isAllowed) {
       console.warn(`Access denied: ${filepath} not in ${allowedDir}`);

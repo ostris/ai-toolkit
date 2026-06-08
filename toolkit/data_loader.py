@@ -29,12 +29,16 @@ import platform
 def is_native_windows():
     return platform.system() == "Windows" and platform.release() != "2"
 
+def is_macos():
+    return platform.system() == "Darwin"
+
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
     
 
 image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
+audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
 
 
 class RescaleTransform:
@@ -389,7 +393,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         self.dataset_config = dataset_config
         # update bucket divisibility
         self.dataset_config.bucket_tolerance = sd.get_bucket_divisibility()
-        self.is_video = dataset_config.num_frames > 1
+        self.is_video = dataset_config.num_frames > 1 or dataset_config.auto_frame_count
+        self.is_audio_model = hasattr(sd, 'is_audio_model') and sd.is_audio_model if sd is not None else False
         super().__init__()
         folder_path = dataset_config.folder_path
         self.dataset_path = dataset_config.dataset_path
@@ -422,10 +427,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         # check if dataset_path is a folder or json
         if os.path.isdir(self.dataset_path):
             extensions = image_extensions
-            if self.is_video:
+            if self.is_audio_model:
+                # only look for audio files
+                extensions = audio_extensions
+            elif self.is_video:
                 # only look for videos
                 extensions = video_extensions
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
+            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.')]
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
@@ -491,6 +499,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         latent_space_version = "sd1"
         if self.sd is not None and self.sd.model_config.latent_space_version is not None:
             latent_space_version = self.sd.model_config.latent_space_version
+        elif self.sd is not None and self.sd.latent_space_version is not None:
+            latent_space_version = self.sd.latent_space_version
         elif self.sd.is_xl:
             latent_space_version = 'sdxl'
         elif self.sd.is_v3:
@@ -503,6 +513,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             latent_space_version = 'sdxl'
         else:
             latent_space_version = self.sd.model_config.arch if self.sd is not None else "sd1"
+            
+        temporal_compression = 8
+        if self.sd is not None:
+            if hasattr(self.sd.vae, 'config') and hasattr(self.sd.vae.config, 'scale_factor_temporal'):
+                temporal_compression = self.sd.vae.config.scale_factor_temporal
+            if hasattr(self.sd.unet, 'config') and hasattr(self.sd.unet.config, 'temporal_compression_ratio'):
+                temporal_compression = self.sd.unet.config.temporal_compression_ratio
         
         bad_count = 0
         for file in tqdm(file_list):
@@ -510,14 +527,17 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 file_item = FileItemDTO(
                     sd=self.sd,
                     path=file,
+                    is_audio_model=self.is_audio_model,
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
-                    text_embedding_space_version=self.sd.model_config.arch if self.sd else "sd1",
+                    text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
+                    temporal_compression=temporal_compression,
+                    sample_rate=self.sd.sample_rate if self.is_audio_model and self.sd is not None else 48000,
                 )
                 self.file_list.append(file_item)
             except Exception as e:
@@ -584,11 +604,6 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             if self.is_generating_controls:
                 # always do this last
                 self.setup_controls()
-        else:
-            if self.dataset_config.poi is not None:
-                # handle cropping to a specific point of interest
-                # setup buckets every epoch
-                self.setup_buckets(quiet=True)
         self.epoch_num += 1
 
     def __len__(self):
@@ -668,7 +683,7 @@ def get_dataloader_from_datasets(
 
     dataloader_kwargs = {}
     
-    if is_native_windows():
+    if is_native_windows() or is_macos():
         dataloader_kwargs['num_workers'] = 0
     else:
         dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers

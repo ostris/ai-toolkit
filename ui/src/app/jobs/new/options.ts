@@ -1,10 +1,12 @@
 import { GroupedSelectOption, SelectOption, JobConfig } from '@/types';
 import { defaultSliderConfig } from './jobConfig';
+import { defaultAudioSampleConfig, defaultSampleConfig, defaultIdeogramSamplesConfig } from '@/helpers/defaultSamples';
 
 type Control = 'depth' | 'line' | 'pose' | 'inpaint';
 
 type DisableableSections =
   | 'model.quantize'
+  | 'model.quantize_te'
   | 'train.timestep_type'
   | 'network.conv'
   | 'trigger_word'
@@ -20,6 +22,7 @@ type AdditionalSections =
   | 'datasets.do_audio'
   | 'datasets.audio_normalize'
   | 'datasets.audio_preserve_pitch'
+  | 'datasets.auto_frame_count'
   | 'sample.ctrl_img'
   | 'sample.multi_ctrl_imgs'
   | 'train.audio_loss_multiplier'
@@ -28,9 +31,20 @@ type AdditionalSections =
   | 'model.layer_offloading'
   | 'model.low_vram'
   | 'model.qie.match_target_res'
-  | 'model.assistant_lora_path';
+  | 'model.assistant_lora_path'
+  | 'ideogram_4_prompt';
 
-type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental';
+type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
+
+export type SampleTag = {
+  title: string;
+  type: 'text' | 'multiline' | 'number'
+  full?: boolean;
+}
+
+export interface SampleTags {
+  [key: string]: SampleTag;
+}
 
 export interface ModelArch {
   name: string;
@@ -38,13 +52,16 @@ export interface ModelArch {
   group: ModelGroup;
   controls?: Control[];
   isVideoModel?: boolean;
+  hasMultiLinePrompts?: boolean;
   defaults?: { [key: string]: any };
   disableSections?: DisableableSections[];
   additionalSections?: AdditionalSections[];
   accuracyRecoveryAdapters?: { [key: string]: string };
+  sampleTags?: SampleTags;
 }
 
 const defaultNameOrPath = '';
+const defaultLinearRank = 32
 
 export const modelArchs: ModelArch[] = [
   {
@@ -664,9 +681,38 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].datasets[x].do_i2v': [false, undefined],
       'config.process[0].datasets[x].do_audio': [true, undefined],
       'config.process[0].datasets[x].fps': [24, undefined],
+      'config.process[0].datasets[x].auto_frame_count': [false, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
+  },
+  {
+    name: 'ltx2.3',
+    label: 'LTX-2.3',
+    group: 'video',
+    isVideoModel: true,
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['Lightricks/LTX-2.3/ltx-2.3-22b-dev.safetensors', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].sample.num_frames': [121, 1],
+      'config.process[0].sample.fps': [24, 1],
+      'config.process[0].sample.width': [768, 1024],
+      'config.process[0].sample.height': [768, 1024],
+      'config.process[0].train.audio_loss_multiplier': [1.0, undefined],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].datasets[x].cache_latents_to_disk': [true, false],
+      'config.process[0].datasets[x].do_i2v': [false, undefined],
+      'config.process[0].datasets[x].do_audio': [true, undefined],
+      'config.process[0].datasets[x].fps': [24, undefined],
+      'config.process[0].datasets[x].auto_frame_count': [false, undefined],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.layer_offloading', 'model.low_vram', 'datasets.do_audio', 'datasets.audio_normalize', 'datasets.audio_preserve_pitch', 'datasets.do_i2v', 'train.audio_loss_multiplier', 'datasets.auto_frame_count'],
   },
   {
     name: 'flux2_klein_4b',
@@ -700,6 +746,28 @@ export const modelArchs: ModelArch[] = [
     ],
   },
   {
+    name: 'ernie_image',
+    label: 'ERNIE-Image',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['baidu/ERNIE-Image', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
     name: 'flux2_klein_9b',
     label: 'FLUX.2-klein-base-9B',
     group: 'image',
@@ -729,6 +797,212 @@ export const modelArchs: ModelArch[] = [
       'model.layer_offloading',
       'model.qie.match_target_res',
     ],
+  },
+  {
+    name: 'ace_step_15_xl',
+    label: 'ACE-Step 1.5 XL',
+    group: 'audio',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_xl_base_aio.safetensors', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
+    },
+    sampleTags: {
+      "CAPTION": {
+        title: "Audio Prompt",
+        type: "text",
+        full: true,
+      },
+      "LYRICS": {
+        title: "Lyrics",
+        type: "multiline",
+        full: true,
+      },
+      "BPM": {
+        title: "BPM",
+        type: "number",
+      },
+      "KEYSCALE": {
+        title: "Key Scale",
+        type: "text",
+      },
+      "TIMESIGNATURE": {
+        title: "Time Signature",
+        type: "text",
+      },
+      "DURATION": {
+        title: "Duration (sec)",
+        type: "number",
+      },
+      "LANGUAGE": {
+        title: "Language",
+        type: "text",
+      },
+    },
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
+    name: 'ace_step_15',
+    label: 'ACE-Step 1.5',
+    group: 'audio',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['ostris/ace_step_1.5_ComfyUI_files/ace_step_1.5_base_aio.safetensors', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].model.qtype': ['qfloat8', 'qfloat8'],
+      'config.process[0].sample': [defaultAudioSampleConfig, defaultSampleConfig],
+    },
+    sampleTags: {
+      "CAPTION": {
+        title: "Audio Prompt",
+        type: "text",
+        full: true,
+      },
+      "LYRICS": {
+        title: "Lyrics",
+        type: "multiline",
+        full: true,
+      },
+      "BPM": {
+        title: "BPM",
+        type: "number",
+      },
+      "KEYSCALE": {
+        title: "Key Scale",
+        type: "text",
+      },
+      "TIMESIGNATURE": {
+        title: "Time Signature",
+        type: "text",
+      },
+      "DURATION": {
+        title: "Duration (sec)",
+        type: "number",
+      },
+      "LANGUAGE": {
+        title: "Language",
+        type: "text",
+      },
+    },
+    disableSections: ['network.conv'],
+    additionalSections: [
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
+    name: 'nucleus_image',
+    label: 'Nucleus-Image',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['NucleusAI/Nucleus-Image', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['img_mlp.experts', 'img_mlp.gate'], []],
+      'config.process[0].network.linear': [128, defaultLinearRank],
+      'config.process[0].network.linear_alpha': [128, defaultLinearRank],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram'],
+  },
+  {
+    name: 'hidream_o1',
+    label: 'HiDream-O1',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['HiDream-ai/HiDream-O1-Image', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].train.max_loss': [1.0, undefined],
+      'config.process[0].network.network_kwargs.ignore_if_contains': [['lm_head', 'patch_embed', 'visual'], []],
+      'config.process[0].network.transformer_only': [false, undefined],
+      'config.process[0].sample.width': [2048, 1024],
+      'config.process[0].sample.height': [2048, 1024],
+      'config.process[0].model.model_kwargs': [
+        {
+          noise_scale_inference: 8.0,
+          noise_scale: 8.0,
+        },
+        {},
+      ],
+    },
+    disableSections: [
+      'network.conv',
+      'model.quantize_te',
+      'train.unload_text_encoder',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
+    name: 'zimage_l2p',
+    label: 'Z-Image L2P (pixel space)',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['zhen-nan/L2P/model-1k-merge.safetensors', defaultNameOrPath],
+      'config.process[0].model.extras_name_or_path': ['Tongyi-MAI/Z-Image-Turbo', undefined],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+    },
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
+    name: 'ideogram4',
+    label: 'Ideogram4',
+    group: 'experimental',
+    defaults: {
+      'config.process[0].model.name_or_path': ['ideogram-ai/ideogram-4-fp8', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].sample': [defaultIdeogramSamplesConfig, defaultSampleConfig],
+    },
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+      'ideogram_4_prompt',
+    ],
+    hasMultiLinePrompts: true,
   },
 ].sort((a, b) => {
   // Sort by label, case-insensitive

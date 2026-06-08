@@ -60,7 +60,7 @@ export const Modal: React.FC<ModalProps> = ({
     <Fragment>
       {/* Modal backdrop */}
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900 bg-opacity-75 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-gray-900 bg-opacity-75 backdrop-blur-sm transition-opacity p-2 sm:p-4"
         onClick={handleOverlayClick}
         aria-modal="true"
         role="dialog"
@@ -68,14 +68,14 @@ export const Modal: React.FC<ModalProps> = ({
       >
         {/* Modal panel */}
         <div
-          className={`relative mx-auto w-full ${sizeClasses[size]} rounded-lg bg-gray-800 border border-gray-700 shadow-xl transition-all`}
+          className={`relative my-auto mx-auto w-full ${sizeClasses[size]} rounded-xl bg-gray-900 shadow-xl shadow-black/10 dark:shadow-2xl dark:shadow-black/80 transition-all`}
           onClick={e => e.stopPropagation()}
         >
           {/* Modal header */}
           {(title || showCloseButton) && (
-            <div className="flex items-center justify-between rounded-t-lg border-b border-gray-700 bg-gray-850 px-6 py-4">
+            <div className="flex items-center justify-between bg-gray-800 px-4 py-3 rounded-t-xl">
               {title && (
-                <h3 id="modal-title" className="text-xl font-semibold text-gray-100">
+                <h3 id="modal-title" className="font-semibold text-gray-100 truncate pr-2">
                   {title}
                 </h3>
               )}
@@ -83,7 +83,7 @@ export const Modal: React.FC<ModalProps> = ({
               {showCloseButton && (
                 <button
                   type="button"
-                  className="ml-auto inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-gray-700 hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="ml-auto inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-gray-700 hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 flex-shrink-0"
                   onClick={onClose}
                   aria-label="Close modal"
                 >
@@ -102,7 +102,7 @@ export const Modal: React.FC<ModalProps> = ({
           )}
 
           {/* Modal content */}
-          <div className="px-6 py-4">{children}</div>
+          <div className="px-4 sm:px-6 py-4">{children}</div>
         </div>
       </div>
     </Fragment>

@@ -1,1 +1,1 @@
-from .ltx2 import LTX2Model
+from .ltx2 import LTX2Model, LTX23Model

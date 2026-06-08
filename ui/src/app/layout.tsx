@@ -7,6 +7,11 @@ import ConfirmModal from '@/components/ConfirmModal';
 import { Suspense } from 'react';
 import AuthWrapper from '@/components/AuthWrapper';
 import DocModal from '@/components/DocModal';
+import os from 'os';
+import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import MergeLoRAsModal from '@/components/MergeLoRAsModal';
+import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
+import PromptBoxEditorModal from '@/components/PromptBoxEditorModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,16 +22,35 @@ export const metadata: Metadata = {
   description: 'A toolkit for building AI things.',
 };
 
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   // Check if the AI_TOOLKIT_AUTH environment variable is set
   const authRequired = process.env.AI_TOOLKIT_AUTH ? true : false;
 
+  const platform = os.platform();
+
   return (
-    <html lang="en" className="dark">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="apple-mobile-web-app-title" content="AI-Toolkit" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                var theme = localStorage.getItem('theme') || 'dark';
+                if (theme === 'dark') document.documentElement.classList.add('dark');
+              })();
+            `,
+          }}
+        />
       </head>
       <body className={inter.className}>
+        <script dangerouslySetInnerHTML={{ __html: `window.server_platform = "${platform}";` }} />
         <ThemeProvider>
           <AuthWrapper authRequired={authRequired}>
             <div className="flex h-screen bg-gray-950">
@@ -39,6 +63,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </ThemeProvider>
         <ConfirmModal />
         <DocModal />
+        <CaptionDatasetModal />
+        <MergeLoRAsModal />
+        <UpsamplePromptsModal />
+        <PromptBoxEditorModal />
       </body>
     </html>
   );

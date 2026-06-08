@@ -329,6 +329,17 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.auto_frame_count': {
+    title: 'Auto Frame Count',
+    description: (
+      <>
+        This will automatically determine the number of frames to use for each video in your dataset instead of relying
+        on a fixed num_frames. This allows you to include videos of different lengths in the dataset, and each video
+        will be processed without speeding up or slowing down. Be careful about adding long videos into your dataset, as
+        they use up more VRAM. This currently will not work with a batch size greater than 1.
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {

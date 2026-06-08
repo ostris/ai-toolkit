@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { isMac } from '@/helpers/basic';
 
 const prisma = new PrismaClient();
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
+  const job_ref = searchParams.get('job_ref');
+  const job_type = searchParams.get('job_type');
 
   try {
     if (id) {
@@ -14,8 +17,16 @@ export async function GET(request: Request) {
       });
       return NextResponse.json(job);
     }
+    if (job_ref) {
+      const job = await prisma.job.findFirst({
+        where: { job_ref },
+        orderBy: { updated_at: 'desc' },
+      });
+      return NextResponse.json(job);
+    }
 
     const jobs = await prisma.job.findMany({
+      where: job_type ? { job_type } : undefined,
       orderBy: { created_at: 'desc' },
     });
     return NextResponse.json({ jobs: jobs });
@@ -28,10 +39,21 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { id, name, job_config, gpu_ids } = body;
-    
-    // Use provided gpu_ids or default to '0' if not provided
-    const gpuIds = gpu_ids || '0';
+    const { id, name, job_config } = body;
+    let gpu_ids: string = body.gpu_ids || '0';
+
+    if (isMac()) {
+      gpu_ids = "mps";
+    }
+
+    const extra: any = {};
+    if ("job_ref" in body) {
+      extra["job_ref"] = body.job_ref;
+    }
+
+    if ("job_type" in body) {
+      extra["job_type"] = body.job_type;
+    }
 
     if (id) {
       // Update existing training
@@ -39,8 +61,9 @@ export async function POST(request: Request) {
         where: { id },
         data: {
           name,
-          gpu_ids: gpuIds,
+          gpu_ids: gpu_ids,
           job_config: JSON.stringify(job_config),
+          ...extra,
         },
       });
       return NextResponse.json(training);
@@ -57,9 +80,10 @@ export async function POST(request: Request) {
       const training = await prisma.job.create({
         data: {
           name,
-          gpu_ids: gpuIds,
+          gpu_ids: gpu_ids,
           job_config: JSON.stringify(job_config),
           queue_position: newQueuePosition,
+          ...extra,
         },
       });
       return NextResponse.json(training);
