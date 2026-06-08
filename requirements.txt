@@ -36,6 +36,7 @@ opencv-python
 pytorch-wavelets==1.3.0
 matplotlib==3.10.1
 setuptools==69.5.1
-scipy==1.12.0
+# 1.12.0 has no Python 3.13 wheel (builds from source, needs gfortran). Use >=1.14.1 for 3.13 wheels.
+scipy>=1.12.0,<2
 av==16.0.1
 torchcodec
