@@ -260,6 +260,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.current_boundary_index = 0
         self.steps_this_boundary = 0
         self.num_consecutive_oom = 0
+        self.additional_logs = {}
 
     def post_process_generate_image_config_list(self, generate_image_config_list: List[GenerateImageConfig]):
         # override in subclass
@@ -2353,6 +2354,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                     self.logger.log({
                                         f'loss/{key}': value,
                                     })
+                            if self.additional_logs is not None:
+                                for key, value in self.additional_logs.items():
+                                    self.logger.log({
+                                        key: value,
+                                    })
+                                self.additional_logs = {}
                     elif self.logging_config.log_every is None:
                         if self.accelerator.is_main_process:
                             # log every step
@@ -2363,6 +2370,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 self.logger.log({
                                     f'loss/{key}': value,
                                 })
+                            if self.additional_logs is not None:
+                                for key, value in self.additional_logs.items():
+                                    self.logger.log({
+                                        key: value,
+                                    })
+                                self.additional_logs = {}
 
 
                     if self.performance_log_every > 0 and self.step_num % self.performance_log_every == 0:
