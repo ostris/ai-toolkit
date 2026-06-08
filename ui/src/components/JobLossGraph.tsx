@@ -136,8 +136,7 @@ export default function JobLossGraph({ job }: Props) {
 
   // Controls
   const [useLogScale, setUseLogScale] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
-  const [showSmoothed, setShowSmoothed] = useState(true);
+  const [showTrend, setShowTrend] = useState(true);
 
   // 0..100 slider. 100 = no smoothing, 0 = heavy smoothing.
   const [smoothing, setSmoothing] = useState(80);
@@ -229,45 +228,34 @@ export default function JobLossGraph({ job }: Props) {
       const fullSmooth = emaWithNulls(raw, fullAlpha);
 
       const color = strokeForKey(key);
-      const colorFaded = color.replace('1)', '0.40)');
       const colorDull = dulledColor(color);
 
       const colArrays: (number | null)[][] = [];
 
-      if (showRaw) {
-        data.push(raw);
-        seriesConfigs.push({
-          label: `${key} (raw)`,
-          scale: scaleKey,
-          stroke: colorFaded,
-          width: 1.25,
-          spanGaps: false,
-          points: { show: false },
-        });
-        colArrays.push(raw);
-      }
-      if (showSmoothed) {
-        data.push(smooth);
-        seriesConfigs.push({
-          label: key,
-          scale: scaleKey,
-          stroke: color,
-          width: 2,
-          spanGaps: false,
-          points: { show: false },
-        });
-        colArrays.push(smooth);
-      }
-      data.push(fullSmooth);
+      // Main series: smoothed by the slider (slider at 100% = raw), always shown.
+      data.push(smooth);
       seriesConfigs.push({
-        label: `${key} (trend)`,
+        label: key,
         scale: scaleKey,
-        stroke: colorDull,
-        width: 2.5,
+        stroke: color,
+        width: 2,
         spanGaps: false,
         points: { show: false },
       });
-      colArrays.push(fullSmooth);
+      colArrays.push(smooth);
+
+      if (showTrend) {
+        data.push(fullSmooth);
+        seriesConfigs.push({
+          label: `${key} (trend)`,
+          scale: scaleKey,
+          stroke: colorDull,
+          width: 2.5,
+          spanGaps: false,
+          points: { show: false },
+        });
+        colArrays.push(fullSmooth);
+      }
 
       scaleArrays[scaleKey] = colArrays;
 
@@ -318,7 +306,7 @@ export default function JobLossGraph({ job }: Props) {
     }
 
     return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip };
-  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showRaw, showSmoothed, clipOutliers]);
+  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
 
   // Layout wrapper we measure for sizing — uPlot collapses its own mount node
   // to width:min-content, so we can't read sizes off it.
@@ -342,8 +330,8 @@ export default function JobLossGraph({ job }: Props) {
   // axis distribution changes. Data updates go through setData.
   const hasData = (built.data[0]?.length ?? 0) > 1;
   const structuralKey = useMemo(
-    () => `${activeKeys.join('|')}|raw=${showRaw}|sm=${showSmoothed}|log=${useLogScale}|has=${hasData}`,
-    [activeKeys, showRaw, showSmoothed, useLogScale, hasData],
+    () => `${activeKeys.join('|')}|trend=${showTrend}|log=${useLogScale}|has=${hasData}`,
+    [activeKeys, showTrend, useLogScale, hasData],
   );
 
   useEffect(() => {
@@ -508,8 +496,7 @@ export default function JobLossGraph({ job }: Props) {
           <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <label className="block text-xs text-gray-400 mb-2">Display</label>
             <div className="flex flex-wrap gap-2">
-              <ToggleButton checked={showSmoothed} onClick={() => setShowSmoothed(v => !v)} label="Smoothed" />
-              <ToggleButton checked={showRaw} onClick={() => setShowRaw(v => !v)} label="Raw" />
+              <ToggleButton checked={showTrend} onClick={() => setShowTrend(v => !v)} label="Trend" />
               <ToggleButton checked={useLogScale} onClick={() => setUseLogScale(v => !v)} label="Log Y" />
               <ToggleButton checked={clipOutliers} onClick={() => setClipOutliers(v => !v)} label="Clip outliers" />
             </div>
@@ -555,7 +542,6 @@ export default function JobLossGraph({ job }: Props) {
               value={smoothing}
               onChange={e => setSmoothing(Number(e.target.value))}
               className="w-full accent-blue-500"
-              disabled={!showSmoothed}
             />
           </div>
 
