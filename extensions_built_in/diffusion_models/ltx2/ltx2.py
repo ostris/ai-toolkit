@@ -1,4 +1,5 @@
 from functools import partial
+import inspect
 import os
 from typing import List, Optional
 
@@ -237,6 +238,45 @@ class LTX2Model(BaseModel):
 
     def get_bucket_divisibility(self):
         return 32
+
+    def _prepare_audio_latents_compat(
+        self,
+        batch_size: int,
+        num_channels_latents_audio: int,
+        num_mel_bins: int,
+        num_frames: int,
+        frame_rate: int,
+    ):
+        # Diffusers LTX2 API has changed across commits; keep compatibility by
+        # forwarding only kwargs that exist on the installed signature.
+        kwargs = {
+            "num_channels_latents": num_channels_latents_audio,
+            "num_mel_bins": num_mel_bins,
+            "num_frames": num_frames,
+            "frame_rate": frame_rate,
+            "sampling_rate": self.pipeline.audio_sampling_rate,
+            "hop_length": self.pipeline.audio_hop_length,
+            "dtype": torch.float32,
+            "device": self.transformer.device,
+            "generator": None,
+            "latents": None,
+        }
+
+        method = self.pipeline.prepare_audio_latents
+        signature = inspect.signature(method)
+        filtered_kwargs = {
+            key: value for key, value in kwargs.items() if key in signature.parameters
+        }
+
+        # Prefer positional batch_size to support versions that don't expose the
+        # arg name in kwargs.
+        result = method(batch_size, **filtered_kwargs)
+
+        # Most versions return (audio_latents, audio_num_frames). Some may return
+        # only latents; infer frame count from the tensor shape then.
+        if isinstance(result, tuple):
+            return result
+        return result, result.shape[1]
 
     def load_model(self):
         dtype = self.torch_dtype
@@ -951,23 +991,12 @@ class LTX2Model(BaseModel):
                 num_channels_latents_audio = (
                     self.pipeline.audio_vae.config.latent_channels
                 )
-                duration_s = batch.num_frames / frame_rate
-                audio_latents_per_second = (
-                    self.pipeline.audio_sampling_rate
-                    / self.pipeline.audio_hop_length
-                    / float(self.pipeline.audio_vae_temporal_compression_ratio)
-                )
-                audio_num_frames = round(duration_s * audio_latents_per_second)
-                audio_latents = self.pipeline.prepare_audio_latents(
-                    batch_size,
-                    num_channels_latents=num_channels_latents_audio,
-                    audio_latent_length=audio_num_frames,
+                audio_latents, audio_num_frames = self._prepare_audio_latents_compat(
+                    batch_size=batch_size,
+                    num_channels_latents_audio=num_channels_latents_audio,
                     num_mel_bins=num_mel_bins,
-                    noise_scale=0.0,
-                    dtype=torch.float32,
-                    device=self.transformer.device,
-                    generator=None,
-                    latents=None,
+                    num_frames=batch.dataset_config.num_frames,
+                    frame_rate=frame_rate,
                 )
 
             if self.pipeline.connectors.device != self.transformer.device:
