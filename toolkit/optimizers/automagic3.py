@@ -36,10 +36,9 @@ class Automagic3(torch.optim.Optimizer):
     whose update is exactly zero (dead/masked grads, low-precision underflow)
     carry no direction and abstain from the vote, so a pool of frozen elements
     can't quietly bias a row's lr upward. Noisy and clean layers each find their
-    own operating point automatically; the lr
-    neither collapses to min_lr nor runs away to max_lr. ``lr_bump_rate`` only
-    sets how fast it gets there, not where it lands. lr is clamped to
-    [min_lr, max_lr].
+    own operating point automatically; the lr neither collapses to min_lr nor
+    runs away to max_lr. ``lr_bump_rate`` only sets how fast it gets there, not
+    where it lands. lr is clamped to [min_lr, max_lr].
 
     With ``fused=True`` (default) the step is fused into the backward pass via
     ``register_post_accumulate_grad_hook``: each parameter is updated and its
@@ -56,6 +55,45 @@ class Automagic3(torch.optim.Optimizer):
     Second-moment EMA state is stored in ``p.dtype`` (math runs in fp32 when
     the state is lower precision). Updates to low-precision (e.g. bf16/fp16)
     parameters are applied in fp32 and stochastically rounded on write-back.
+
+    Parameters
+    ----------
+    lr : float
+        Starting learning rate for every row. The controller adapts away from
+        this, so it is a launch point, not a tuned target -- a low value just
+        lets the lr ramp up on its own (there is no warmup). Values above 1e-3
+        are rejected and forced back to 1e-6.
+    min_lr, max_lr : float
+        Hard clamps on every per-row lr. ``max_lr`` doubles as the per-step
+        trust region: since the per-element update is capped at
+        ``clip_threshold`` (~1), a weight moves at most ~``max_lr`` per step, so
+        keep it modest -- a high ceiling lets the hottest rows take destabilising
+        steps (and, when fused, the trainer's grad clip can't catch them).
+    lr_bump_rate : float
+        Fractional, log-space size of each lr nudge (~10% at 0.1). Sets how fast
+        the lr moves, NOT where it settles (the flip dynamics fix that); a full
+        up-nudge and a full down-nudge cancel exactly.
+    beta2 : float
+        EMA decay for the second moment, as in Adam/Adafactor.
+    eps : float
+        Floor added to the second moment before the rsqrt, to avoid div-by-zero.
+    clip_threshold : float
+        Trust region on the update: its RMS is scaled to <= this, then every
+        element is clamped to +/- this, so no single weight takes an outsized
+        step.
+    weight_decay : float
+        Decoupled (AdamW-style) weight decay; 0 disables it.
+    lr_smoothing_steps : int
+        How many steps of the flip signal to EMA-average before nudging the lr
+        (>=1, default 3). Higher = smoother/slower lr, lower = twitchier/faster;
+        it does not change where the lr lands. Held as an EMA, so it costs O(1)
+        state per row regardless of the value.
+    fused : bool
+        If True (default), each param is updated inside the backward pass the
+        moment its grad is ready -- low peak VRAM, but it bypasses the trainer's
+        grad clipping / nan-skip and cannot be combined with multi-backward
+        gradient accumulation. If False, a normal ``.step()``-time update, with
+        low-precision grads accumulated using stochastic rounding.
 
     Improvements over v2
     --------------------
@@ -95,10 +133,12 @@ class Automagic3(torch.optim.Optimizer):
        weight updates, so it actually keeps learning instead of stalling.
 
     5. Faster hot path, identical math. eps is folded into the small reduced
-       row/col vectors instead of the full gradient-square tensor, and the lr
-       scale and parameter update are fused into one ``addcmul_``. Plain English:
-       each step issues fewer GPU passes over the weights, so it runs faster
-       (notably in bf16/fp16) without changing the result.
+       row/col vectors instead of the full gradient-square tensor; the lr scale
+       and parameter update are fused into one ``addcmul_``; and the per-element
+       agree/flip vote is a single int8 sign-product (``cur_sign * prev_sign``)
+       instead of several boolean masks plus float casts. Plain English: each
+       step issues fewer GPU passes over the weights, so it runs faster (notably
+       in bf16/fp16) without changing the result.
     """
 
     def __init__(
@@ -165,10 +205,17 @@ class Automagic3(torch.optim.Optimizer):
 
     @staticmethod
     def _rms(t: torch.Tensor) -> torch.Tensor:
+        # Root-mean-square of a tensor; used to size the trust-region clip.
         return t.norm(2) / (t.numel() ** 0.5)
 
     @staticmethod
     def _approx_sq_grad(row: torch.Tensor, col: torch.Tensor) -> torch.Tensor:
+        # Adafactor's factored second moment (inherited from v2). Rather than
+        # store a full RxC tensor of running grad^2, only its per-row and
+        # per-col means are kept; this rebuilds the rank-1 approximation of
+        # 1/sqrt(v) -- the per-element update scale -- as the outer product
+        # rsqrt(row / mean(row)) (x) rsqrt(col). That is the standard HF
+        # Adafactor reconstruction and is what keeps optimizer state small.
         r = (row / row.mean(dim=-1, keepdim=True)).rsqrt_().unsqueeze(-1)
         c = col.unsqueeze(-2).rsqrt()
         return torch.mul(r, c)
@@ -297,6 +344,13 @@ class Automagic3(torch.optim.Optimizer):
         # which saves a full-size kernel pass.
         sq = grad * grad
 
+        # Second moment: a beta2-EMA of grad^2, then update = grad / sqrt(v),
+        # exactly as Adam/Adafactor (this magnitude-normalises the step; only the
+        # *sign* of the result drives the lr controller further down). For >=2D
+        # params v is Adafactor-factored into row/col means (small state, see
+        # _approx_sq_grad); 1D params (biases, norms) keep the full per-element
+        # second moment. State lives in p.dtype; when that is low precision the
+        # math is done in an fp32 copy and written back.
         if p.dim() >= 2:
             row_state = state["exp_avg_sq_row"]
             col_state = state["exp_avg_sq_col"]
@@ -348,6 +402,10 @@ class Automagic3(torch.optim.Optimizer):
         cur_sign = update.sign().to(torch.int8)
         prev_sign = state["prev_sign"]
 
+        # dims: the within-row axes to reduce the per-element vote over (so each
+        # output channel gets one nudge). lr_b: the per-row lr reshaped to
+        # broadcast across the full param for the weight update below. For 1D
+        # params there is no row to reduce over (one lr per element).
         lr_t = state["lr"]
         if p.dim() >= 2:
             dims = tuple(range(1, p.dim()))
@@ -438,6 +496,14 @@ class Automagic3(torch.optim.Optimizer):
         return loss
 
     def get_learning_rates(self) -> List[float]:
+        # Reporting helper: one representative lr per param group. Uses the
+        # arithmetic mean of the per-row lrs because it is magnitude-weighted --
+        # the rows actually taking sizeable steps dominate, so the number reads
+        # like the scalar lr you'd set in another trainer. (A geometric mean or
+        # median instead gets dragged toward min_lr by frozen rows and reads
+        # misleadingly low.) A handful of rows riding at max_lr can lift this
+        # average even while the typical row is flat; that's expected and bounded
+        # by the max_lr clamp, not a runaway.
         out = []
         for group in self.param_groups:
             lrs = [
