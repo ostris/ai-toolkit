@@ -280,7 +280,14 @@ curl -fsS "https://api.runpod.io/graphql" \\
 
 
 def _build_pod_env() -> dict:
-    env = {"PUBLIC_KEY": read_public_key()}
+    env = {
+        "PUBLIC_KEY": read_public_key(),
+        # Model cache lands on the volume (contract.disk_size_gb budgets it
+        # there), so a pod stop/start never re-downloads weights and the
+        # small container disk stays out of the picture.
+        "HF_HOME": "/workspace/.hf_home",
+        "HF_HUB_ENABLE_HF_TRANSFER": "1",
+    }
     hf_token = os.environ.get("HF_TOKEN")
     if hf_token:
         # Provider-visible in pod env; README documents using read-scoped
