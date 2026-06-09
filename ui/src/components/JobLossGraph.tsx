@@ -122,6 +122,23 @@ function strokeForKey(key: string) {
   return PALETTE[hashToIndex(key, PALETTE.length)];
 }
 
+// Persisted, per-URL graph settings. Sliders + display toggles + which loss
+// series are visible. Zoom / highlighted window is intentionally NOT persisted.
+interface PersistedSettings {
+  useLogScale: boolean;
+  showTrend: boolean;
+  smoothing: number;
+  plotStride: number;
+  clipOutliers: boolean;
+  enabled: Record<string, boolean>;
+}
+
+// Key by the exact URL so each job remembers its own settings independently.
+function settingsStorageKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  return `jobLossGraph:${window.location.pathname}${window.location.search}`;
+}
+
 function dulledColor(rgba: string): string {
   const m = rgba.match(/rgba?\((\d+),(\d+),(\d+)/);
   if (!m) return 'rgba(120,120,120,1)';
@@ -155,13 +172,67 @@ export default function JobLossGraph({ job }: Props) {
 
   const [isZoomed, setIsZoomed] = useState(false);
 
+  // Gate persistence writes until we've loaded any stored settings, so the
+  // initial defaults don't clobber what was saved before the load effect runs.
+  const [hydrated, setHydrated] = useState(false);
+
+  // Restored series selection, kept so the lossKeys-sync effect can honor it for
+  // keys that arrive after load rather than falling back to the default.
+  const persistedEnabledRef = useRef<Record<string, boolean> | null>(null);
+
+  // Load persisted settings for this job's URL. Re-runs when the job changes
+  // (navigating between jobs) so each URL restores its own saved state.
+  useEffect(() => {
+    setHydrated(false);
+    persistedEnabledRef.current = null;
+    const key = settingsStorageKey();
+    if (!key) {
+      setHydrated(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const s = JSON.parse(raw) as Partial<PersistedSettings>;
+        if (typeof s.useLogScale === 'boolean') setUseLogScale(s.useLogScale);
+        if (typeof s.showTrend === 'boolean') setShowTrend(s.showTrend);
+        if (typeof s.smoothing === 'number') setSmoothing(s.smoothing);
+        if (typeof s.plotStride === 'number') setPlotStride(s.plotStride);
+        if (typeof s.clipOutliers === 'boolean') setClipOutliers(s.clipOutliers);
+        if (s.enabled && typeof s.enabled === 'object') {
+          persistedEnabledRef.current = s.enabled;
+          setEnabled(s.enabled);
+        }
+      }
+    } catch {
+      // ignore malformed / unavailable storage
+    }
+    setHydrated(true);
+  }, [job.id]);
+
+  // Persist settings whenever they change (after the initial load).
+  useEffect(() => {
+    if (!hydrated) return;
+    const key = settingsStorageKey();
+    if (!key) return;
+    try {
+      const payload: PersistedSettings = { useLogScale, showTrend, smoothing, plotStride, clipOutliers, enabled };
+      localStorage.setItem(key, JSON.stringify(payload));
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [hydrated, useLogScale, showTrend, smoothing, plotStride, clipOutliers, enabled]);
+
   // keep enabled map in sync with discovered keys. Only "loss/loss" is on by
   // default; every other metric starts deactivated (user can toggle it on).
   useEffect(() => {
+    // Nothing discovered yet — don't prune, or we'd wipe a restored selection
+    // before the keys have loaded.
+    if (lossKeys.length === 0) return;
     setEnabled(prev => {
       const next = { ...prev };
       for (const k of lossKeys) {
-        if (next[k] === undefined) next[k] = k === 'loss/loss';
+        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? k === 'loss/loss';
       }
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
