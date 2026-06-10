@@ -355,6 +355,17 @@ class TestProviderStrings(PodTestBase):
         # contract owns the uploaded filename
         self.assertEqual(contract.SELF_STOP_SCRIPT, "self_stop.sh")
 
+    def test_self_stop_script_bridges_env_from_pid1(self):
+        # Live-validated failure: tmux/ssh shells do not inherit the container
+        # env, so both cost backstops failed-open ("RUNPOD_POD_ID or
+        # RUNPOD_STOP_KEY missing") and a completed pod idle-billed for hours.
+        # The script must bridge both vars from /proc/1/environ when unset.
+        script = pod.self_stop_script()
+        self.assertIn("/proc/1/environ", script)
+        bridge = script.index("/proc/1/environ")
+        guard = script.index("cannot stop pod")
+        self.assertLess(bridge, guard, "env bridge must run before the missing-var guard")
+
     def test_container_start_command_survives_ui_exit(self):
         cmd = pod.container_start_command()
         self.assertIn("/start.sh", cmd)        # still boots SSH + UI

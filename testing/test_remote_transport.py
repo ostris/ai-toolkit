@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -115,8 +116,20 @@ class TestCommandBuilders(unittest.TestCase):
             ["ssh", "-p", "10022", "-o", "BatchMode=yes",
              "-o", "StrictHostKeyChecking=accept-new",
              "-o", f"UserKnownHostsFile={contract.SSH_KNOWN_HOSTS_FILE}",
+             *contract.ssh_identity_args(),
              "root@1.2.3.4"],
         )
+
+    def test_ssh_identity_args_when_key_exists(self):
+        # BatchMode cannot prompt for a passphrase, so the dedicated
+        # passphrase-less pipeline key must be offered explicitly when present
+        # (live-validated failure mode: Permission denied (publickey)).
+        with mock.patch("os.path.exists", return_value=True):
+            args = contract.ssh_identity_args()
+        self.assertEqual(args[:1], ["-i"])
+        self.assertIn("IdentitiesOnly=yes", args)
+        with mock.patch("os.path.exists", return_value=False):
+            self.assertEqual(contract.ssh_identity_args(), [])
 
     def test_ssh_run_passes_text_capture_timeout(self):
         captured = {}

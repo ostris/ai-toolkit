@@ -331,16 +331,25 @@ def build_progress_command(m: RunManifest) -> str:
     """
     db_path = contract.remote_loss_db_path(m.run_name, m.job_name or m.run_name)
     uri = "file:" + db_path.replace("'", "\\'") + "?mode=ro"
+    plain = db_path.replace("'", "\\'")
+    # Two live-validated fixes: (1) the trainer writes metric keys as
+    # 'loss/<key>' (e.g. 'loss/loss'), never bare 'loss'; (2) opening a WAL
+    # db with mode=ro can fail when the reader cannot create/map the -shm,
+    # so fall back to a plain connect (SELECT-only; WAL allows readers).
     code = (
         "import sqlite3\n"
-        "try:\n"
-        f" con=sqlite3.connect('{uri}',uri=True)\n"
-        " row=con.execute(\"SELECT step,value_real FROM metrics"
-        " WHERE key='loss' ORDER BY step DESC LIMIT 1\").fetchone()\n"
-        " print('' if row is None else"
+        "q=\"SELECT step,value_real FROM metrics"
+        " WHERE key LIKE 'loss%' ORDER BY step DESC LIMIT 1\"\n"
+        "row=None\n"
+        f"for target,kw in (('{uri}',{{'uri':True}}),('{plain}',{{}})):\n"
+        " try:\n"
+        "  con=sqlite3.connect(target,timeout=5,**kw)\n"
+        "  row=con.execute(q).fetchone()\n"
+        "  break\n"
+        " except Exception:\n"
+        "  continue\n"
+        "print('' if row is None else"
         " '%s,%s'%(row[0],'' if row[1] is None else row[1]))\n"
-        "except Exception:\n"
-        " print('')\n"
     )
     return f"python3 -c {contract.shell_quote(code)}"
 

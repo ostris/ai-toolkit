@@ -76,6 +76,7 @@ def ssh_base_args(ep: Endpoint) -> list:
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"UserKnownHostsFile={contract.SSH_KNOWN_HOSTS_FILE}",
+        *contract.ssh_identity_args(),
         f"{ep.user}@{ep.host}",
     ]
 
@@ -128,7 +129,7 @@ def build_rsync_up(local_dir: str, ep: Endpoint, remote_dir: str, *,
     """
     if excludes is None:
         excludes = contract.UPLOAD_EXCLUDES
-    cmd = ["rsync", "-az"]
+    cmd = ["rsync", "-rlptz"]  # no -o/-g: chown EPERM on /workspace volumes
     for pattern in excludes:
         cmd.append(f"--exclude={pattern}")
     if delete_within:
@@ -140,7 +141,7 @@ def build_rsync_up(local_dir: str, ep: Endpoint, remote_dir: str, *,
 def build_rsync_down(ep: Endpoint, remote_path: str, local_dir: str, *,
                      excludes=(), files_from: str = None) -> list:
     """Build (never run) a download rsync command. NEVER includes --delete."""
-    cmd = ["rsync", "-az"]
+    cmd = ["rsync", "-rlptz"]  # no -o/-g: chown EPERM on /workspace volumes
     for pattern in excludes:
         cmd.append(f"--exclude={pattern}")
     if files_from:

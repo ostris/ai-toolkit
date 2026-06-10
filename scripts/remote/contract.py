@@ -45,6 +45,19 @@ def shell_quote(value: str) -> str:
 # BatchMode once a recycled endpoint presents a different host key.
 SSH_KNOWN_HOSTS_FILE = os.path.expanduser("~/.aitk_remote_known_hosts")
 
+# Dedicated pipeline identity. The pipeline runs ssh with BatchMode=yes, which
+# cannot prompt for a passphrase — a passphrase-protected personal key fails
+# silently as "Permission denied (publickey)" (live-validated failure mode).
+# Generate with: ssh-keygen -t ed25519 -N "" -f ~/.ssh/aitk_remote_ed25519
+SSH_IDENTITY_FILE = os.path.expanduser("~/.ssh/aitk_remote_ed25519")
+
+
+def ssh_identity_args() -> list:
+    """-i/-o IdentitiesOnly args when the dedicated pipeline key exists."""
+    if os.path.exists(SSH_IDENTITY_FILE):
+        return ["-i", SSH_IDENTITY_FILE, "-o", "IdentitiesOnly=yes"]
+    return []
+
 
 # ---------------------------------------------------------------------------
 # Remote filesystem layout (keyed by run name to prevent collisions)

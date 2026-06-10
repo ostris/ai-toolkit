@@ -291,7 +291,7 @@ def _provision(run_name: str, args, base_dir: str):
     m.state = contract.RunState.PROVISIONING.value
     manifest.save(m, base_dir)
     try:
-        info = pod.wait_for_ready(info.pod_id)
+        info = pod.wait_for_ready(info.pod_id, timeout_s=getattr(args, 'ready_timeout', 2400))
     except Exception:
         m.state = contract.RunState.PROVISION_FAILED.value
         manifest.save(m, base_dir)

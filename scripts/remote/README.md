@@ -87,12 +87,18 @@ Gated models (Flux.2, Klein) need a HuggingFace token, forwarded to the pod:
 
 ### SSH key
 
-Transport is plain ssh/rsync as root. You need `~/.ssh/id_ed25519.pub` or
-`~/.ssh/id_rsa.pub`. If absent:
+Transport is plain ssh/rsync as root, always in `BatchMode` — which **cannot
+prompt for a passphrase**. A passphrase-protected personal key fails silently
+as `Permission denied (publickey)` (live-validated). Create the dedicated
+passphrase-less pipeline key, which the pipeline prefers automatically and
+offers explicitly with `IdentitiesOnly`:
 
 ```
-ssh-keygen -t ed25519
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/aitk_remote_ed25519 -C "aitk-remote-pipeline"
 ```
+
+(Fallback discovery order: `aitk_remote_ed25519.pub`, `id_ed25519.pub`,
+`id_rsa.pub` — but only the dedicated key is guaranteed to work headlessly.)
 
 ---
 
@@ -213,6 +219,21 @@ not terminated, and the missing artifacts are named).
 ---
 
 ## 5. First-run live validation (REQUIRED once)
+
+> **Status: executed 2026-06-10** on an A100 PCIe pod. Confirmed working:
+> provisioning + out-of-stock fallback chain, public-IP SSH + rsync probe,
+> dataset/config/overlay sync, sentinel-wrapped launch with `warming`
+> early-tail on cold start, `watch --once --json`, sample/checkpoint pulls,
+> `exit_code` sentinel, UI-kill tmux survival (R27 override), pgrep present,
+> and `down` pull-verify-terminate. Four bugs found and fixed in code:
+> passphrase-protected personal SSH keys fail silently under BatchMode (use
+> the dedicated `~/.ssh/aitk_remote_ed25519` — generated automatically by
+> setup below), `rsync -a` chown fails on `/workspace` volumes (now
+> `-rlptz`), the self-stop script could not see `RUNPOD_POD_ID`/
+> `RUNPOD_STOP_KEY` from a tmux shell (now bridged from `/proc/1/environ` —
+> this one idle-billed a finished pod for hours), and the remote loss query
+> used the wrong metric key + a fragile WAL read-only open. The
+> `resume_pod(gpu_count=0)` rescue shape remains unverified live.
 
 Before trusting unattended runs, execute the plan's U5 gate once against a
 real pod (~$1-2 on the cheapest GPU):
