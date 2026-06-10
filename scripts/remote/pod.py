@@ -244,38 +244,55 @@ def stop_key_env() -> dict:
 def validate_stop_key() -> bool:
     """Pre-spend check: can the key the pod will receive actually stop pods?
 
-    Live-validated failure mode: a Read-Only restricted key authenticates
-    nothing on the pods REST API (401), so self-stop fails OPEN and a
-    finished pod idle-bills until the laptop notices. Probing the stop
-    endpoint with a sentinel pod id distinguishes auth (401 -> bad key)
-    from existence (4xx/5xx 'does not exist' -> key fine). Warn-only.
+    Live-validated platform facts: RunPod restricted keys get 401 on the
+    ENTIRE rest.runpod.io pods API regardless of console toggles (the
+    'api.runpod.ai' toggle governs serverless only), and there is no
+    pods-scoped key. A restricted key works for self-stop ONLY when its
+    api.runpod.io/graphql toggle is Read/Write (the script's GraphQL
+    podStop fallback). Probe both surfaces with a sentinel pod id:
+    401/403 -> auth rejected; 'does not exist'-style errors -> auth fine.
+    Warn-only — never blocks provisioning.
     """
     env = stop_key_env()
     key = env.get("RUNPOD_STOP_KEY")
     if not key:
         return False  # already warned by stop_key_env
+    import json as _json
     import urllib.request
     import urllib.error
-    req = urllib.request.Request(
-        "https://rest.runpod.io/v1/pods/aitk0sentinel0pod/stop",
-        method="POST", headers={"Authorization": f"Bearer {key}"})
-    try:
-        urllib.request.urlopen(req, timeout=15)
+
+    def _auth_ok(url, data=None):
+        req = urllib.request.Request(
+            url, method="POST",
+            headers={"Authorization": f"Bearer {key}",
+                     "Content-Type": "application/json"},
+            data=_json.dumps(data).encode() if data else None)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                body = r.read().decode()
+                # GraphQL returns 200 with an errors array; auth errors name
+                # unauthorized, others ('not found') mean auth passed.
+                return "unauthorized" not in body.lower()
+        except urllib.error.HTTPError as e:
+            return e.code not in (401, 403)
+        except Exception:
+            return True  # network hiccup: don't block provisioning
+
+    if _auth_ok("https://rest.runpod.io/v1/pods/aitk0sentinel0pod/stop"):
         return True
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            _warn(
-                "the pod-side stop key CANNOT stop pods (HTTP 401). "
-                "Self-stop will fail-open and a finished pod will idle-bill. "
-                "Fix: RunPod console -> Settings -> API Keys -> edit the "
-                "RUNPOD_STOP_API_KEY key -> permission 'Restricted' with "
-                "Pods: Read & Write (or remove RUNPOD_STOP_API_KEY from .env "
-                "to fall back to the account key)."
-            )
-            return False
-        return True  # non-401 (e.g. 'pod does not exist') means auth passed
-    except Exception:
-        return True  # network hiccup: don't block provisioning on the probe
+    gql = {"query": 'mutation { podStop(input: {podId: "aitk0sentinel0pod"}) { id } }'}
+    if _auth_ok("https://api.runpod.io/graphql", gql):
+        return True
+    _warn(
+        "the pod-side stop key CANNOT stop pods on either API surface "
+        "(REST 401 and GraphQL rejected). Self-stop will fail-open and a "
+        "finished pod will idle-bill. Fix: RunPod console -> Settings -> "
+        "API Keys -> edit the RUNPOD_STOP_API_KEY key -> set "
+        "api.runpod.io/graphql to Read/Write (restricted keys cannot use "
+        "the pods REST API at all) — or remove RUNPOD_STOP_API_KEY from "
+        ".env to fall back to the account key."
+    )
+    return False
 
 
 def container_start_command() -> str:

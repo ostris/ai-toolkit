@@ -59,12 +59,21 @@ The pod stops *itself* when training ends (the cost dead-man, section 7).
 That requires an API key living **on the pod**, so scope it down:
 
 1. Create a second key (**Settings → API Keys → "+ API Key"**).
-2. Give it the **minimum permission RunPod's console offers**. If
-   per-permission scoping is available, grant **Pods Read/Write only** —
-   nothing else. If the console only offers full-scope keys, understand the
-   residual risk: a pod-resident key can act on your whole account (create
-   pods, spend credit). The key exists only for the pod's lifetime and the
-   pod is yours alone, but it is provider-visible.
+2. Permission settings (**live-validated 2026-06-10** — RunPod has no
+   pods-scoped keys, and restricted keys get 401 on the entire
+   `rest.runpod.io` pods API regardless of toggles; the `api.runpod.ai`
+   toggle governs serverless endpoints only):
+   - **API Key Options: `Restricted`**
+   - **`api.runpod.io/graphql`: `Read / Write`** ← required; this is the
+     only surface a restricted key can stop pods through (the script's
+     GraphQL `podStop` fallback)
+   - **`api.runpod.ai`: `None`**
+   Residual risk to understand: GraphQL Read/Write can manage your whole
+   account's pods (create, spend credit) — it is "restricted" only in that
+   it can't use the newer REST surface. The key is provider-visible on the
+   pod for the pod's lifetime. `provision` probes the key against both API
+   surfaces before any money is spent and warns loudly if it cannot stop
+   pods.
 3. Add it to `.env`:
 
    ```
