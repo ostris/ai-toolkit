@@ -20,7 +20,7 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.remote import contract, launch, manifest, pod
+from scripts.remote import contract, launch, manifest, monitor, pod
 from scripts.remote.manifest import RunManifest
 from scripts.remote.transport import Endpoint
 
@@ -444,6 +444,427 @@ class TestScriptSyntax(unittest.TestCase):
         m = RunManifest(run_name="has space", job_name="has space")
         self._bash_n(launch.build_wrapper_script(m, 1800))
         self._bash_n(launch.build_timer_script(m, 1.0))
+
+
+# ---------------------------------------------------------------------------
+# U6 fixtures: mock RunPod SDK + scripted ssh responses for a status cycle
+# ---------------------------------------------------------------------------
+
+
+RAW_RUNNING = {
+    "id": "pod-1", "desiredStatus": "RUNNING", "costPerHr": 1.89,
+    "machine": {"gpuDisplayName": "NVIDIA A100 80GB PCIe"},
+    "runtime": {"ports": [{"privatePort": 22, "isIpPublic": True,
+                           "ip": EP.host, "publicPort": EP.port}]},
+}
+RAW_EXITED = {"id": "pod-1", "desiredStatus": "EXITED"}
+
+
+class FakeSdk:
+    """get_pod returns the scripted raws in order, holding on the last one."""
+
+    def __init__(self, *raws):
+        self.raws = list(raws)
+
+    def get_pod(self, pod_id):
+        return self.raws.pop(0) if len(self.raws) > 1 else self.raws[0]
+
+
+def activity_output(log_age=30, sample_age=None, now=NOW):
+    log = f"{now - log_age:.0f}" if log_age is not None else ""
+    sample = f"{now - sample_age:.4f}" if sample_age is not None else ""
+    return f"NOW={now:.0f}\nLOG={log}\nSAMPLE={sample}\n"
+
+
+def monitor_handlers(tail=PROGRESS_TAIL, log_age=30, sample_age=None,
+                     timed_out=None, exit_code=None, tmux_rc=0,
+                     progress="865,0.4012", df_pct=42, extra=None):
+    """Scripted ssh/rsync responses for a full RUNNING-pod status cycle.
+
+    Order matters: specific needles first ('stat -c %Y' before 'date +%s'
+    because the activity probe contains both).
+    """
+    df_line = f"/dev/vda1 104857600 47185920 57671680 {df_pct}% /workspace"
+    handlers = [
+        ("stat -c %Y", proc(activity_output(log_age, sample_age))),
+        ("df -P /workspace", proc(df_line)),
+        ("python3 -c", proc(progress)),
+        ("timed_out", proc(timed_out or "", returncode=0 if timed_out else 1)),
+        ("exit_code", proc(exit_code or "", returncode=0 if exit_code else 1)),
+        ("tmux has-session", proc("", returncode=tmux_rc)),
+        ("tail -c", proc(tail)),
+        ("date +%s", proc(f"{NOW:.0f}")),
+        ("-printf '%P", proc("")),  # empty remote artifact inventory
+        ("rsync", proc("")),
+    ]
+    return (extra or []) + handlers
+
+
+class MonitorBase(unittest.TestCase):
+    """Temp base dir with a RUNNING manifest wired to pod-1."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="aitk-monitor-test-")
+        self.save_manifest()
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def save_manifest(self, **kw):
+        kw.setdefault("pod_id", "pod-1")
+        kw.setdefault("state", contract.RunState.RUNNING.value)
+        kw.setdefault("total_steps", 4000)
+        manifest.save(make_manifest(**kw), self.base)
+
+    def write_mirror(self, sentinel, content):
+        run_dir = contract.local_run_dir(RUN, self.base)
+        os.makedirs(run_dir, exist_ok=True)
+        with open(os.path.join(run_dir, sentinel), "w") as f:
+            f.write(content)
+
+    def status(self, runner=None, sdk=None):
+        return monitor.get_status(
+            RUN, base_dir=self.base,
+            sdk=sdk if sdk is not None else FakeSdk(RAW_RUNNING),
+            runner=runner if runner is not None else DispatchRunner(monitor_handlers()))
+
+
+# ---------------------------------------------------------------------------
+# U6: state precedence (R14)
+# ---------------------------------------------------------------------------
+
+
+class TestStatePrecedence(MonitorBase):
+    def test_gone_pod_is_pod_lost_despite_stale_local_sentinel(self):
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")
+        runner = DispatchRunner([])
+        report = self.status(runner=runner, sdk=FakeSdk(None))
+        self.assertEqual(report.state, contract.RunState.POD_LOST.value)
+        self.assertEqual(runner.calls, [])  # no ssh on a gone pod
+
+    def test_exited_with_mirrored_zero_is_completed_with_zero_ssh_calls(self):
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")
+        runner = DispatchRunner([])
+        report = self.status(runner=runner, sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.COMPLETED.value)
+        self.assertEqual(runner.calls, [])
+
+    def test_exited_with_mirrored_nonzero_is_crashed_reporting_the_code(self):
+        self.write_mirror(contract.EXIT_CODE_FILE, "137\n")
+        runner = DispatchRunner([])
+        report = self.status(runner=runner, sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.CRASHED.value)
+        self.assertIn("137", report.detail)
+        self.assertEqual(runner.calls, [])
+
+    def test_exited_nonzero_after_stop_honors_manifest_stopped(self):
+        self.save_manifest(state=contract.RunState.STOPPED.value)
+        self.write_mirror(contract.EXIT_CODE_FILE, "143\n")
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.STOPPED.value)
+
+    def test_exited_with_mirrored_timed_out_wins_over_exit_code(self):
+        self.write_mirror(contract.TIMED_OUT_FILE, "1768500000\n")
+        self.write_mirror(contract.EXIT_CODE_FILE, "143\n")
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.TIMED_OUT.value)
+
+    def test_exited_with_no_sentinel_resolves_timed_out_conservatively(self):
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.TIMED_OUT.value)
+
+    def test_running_remote_exit_zero_is_completed(self):
+        runner = DispatchRunner(monitor_handlers(exit_code="0\n"))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.COMPLETED.value)
+
+    def test_running_remote_exit_nonzero_is_crashed_with_code(self):
+        runner = DispatchRunner(monitor_handlers(exit_code="1\n"))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.CRASHED.value)
+        self.assertIn("1", report.detail)
+
+    def test_running_remote_timed_out_sentinel_wins(self):
+        runner = DispatchRunner(monitor_handlers(timed_out="1768500000\n",
+                                                 exit_code="143\n"))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.TIMED_OUT.value)
+
+    def test_running_tmux_gone_no_sentinel_is_unknown(self):
+        runner = DispatchRunner(monitor_handlers(tmux_rc=1))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.UNKNOWN.value)
+
+
+# ---------------------------------------------------------------------------
+# U6: running substates + health (R13/R14/R19/R26)
+# ---------------------------------------------------------------------------
+
+
+OOM_TAIL = (
+    "balfua_v3:  10%|#         | 400/4000 [1:00:00<9:00:00, 9.00s/it]\r"
+    "# OOM during training step, skipping batch\n"
+    "balfua_v3:  11%|#1        | 440/4000 [1:06:00<8:54:00, 9.00s/it]\r"
+    "# OOM during training step, skipping batch\n"
+    "balfua_v3:  12%|#2        | 480/4000 [1:12:00<8:48:00, 9.00s/it]\r"
+    "# OOM during training step, skipping batch\n"
+)
+
+
+class TestRunningSubstates(MonitorBase):
+    def test_active_progress_is_running_with_step_and_loss(self):
+        report = self.status()
+        self.assertEqual(report.state, contract.RunState.RUNNING.value)
+        self.assertEqual(report.step, 865)
+        self.assertAlmostEqual(report.recent_loss, 0.4012)
+        self.assertEqual(report.oom_skips, 0)
+        self.assertEqual(report.total_steps, 4000)
+
+    def test_three_scattered_oom_lines_is_degraded_count_three(self):
+        runner = DispatchRunner(monitor_handlers(tail=OOM_TAIL))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.DEGRADED.value)
+        self.assertEqual(report.oom_skips, 3)
+        self.assertIn("3", report.detail)
+
+    def test_no_advance_15min_with_fresh_samples_is_sampling(self):
+        runner = DispatchRunner(monitor_handlers(log_age=900, sample_age=60))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.SAMPLING.value)
+
+    def test_no_advance_25min_with_no_new_files_flags_stalled(self):
+        runner = DispatchRunner(monitor_handlers(log_age=1500, sample_age=None))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.RUNNING.value)
+        self.assertIn("stalled", report.detail.lower())
+
+    def test_missing_loss_db_tolerated_as_warming(self):
+        runner = DispatchRunner(monitor_handlers(progress=""))
+        report = self.status(runner=runner)
+        self.assertEqual(report.state, contract.RunState.RUNNING.value)
+        self.assertIsNone(report.step)
+        self.assertIn("warming", report.detail.lower())
+
+    def test_disk_91_percent_warns_naming_workspace(self):
+        runner = DispatchRunner(monitor_handlers(df_pct=91))
+        report = self.status(runner=runner)
+        self.assertEqual(report.disk_used_pct, 91)
+        self.assertTrue(report.disk_warning)
+        self.assertIn("/workspace", report.detail)
+
+    def test_disk_below_threshold_no_warning(self):
+        report = self.status()
+        self.assertEqual(report.disk_used_pct, 42)
+        self.assertFalse(report.disk_warning)
+
+    def test_drift_true_when_derived_config_tampered(self):
+        import hashlib
+        run_dir = contract.local_run_dir(RUN, self.base)
+        os.makedirs(run_dir, exist_ok=True)
+        cfg = os.path.join(run_dir, "remote_config.yaml")
+        with open(cfg, "w") as f:
+            f.write("job: extension\n")
+        with open(cfg, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        self.save_manifest(config_hash=digest)
+        self.assertFalse(self.status(runner=DispatchRunner(monitor_handlers())).drift)
+        with open(cfg, "a") as f:
+            f.write("steps: 9999\n")  # tamper after launch
+        report = self.status(runner=DispatchRunner(monitor_handlers()))
+        self.assertTrue(report.drift)
+        self.assertIn("drift", report.detail.lower())
+
+    def test_progress_command_is_readonly_stdlib_sqlite_not_a_cli(self):
+        cmd = monitor.build_progress_command(make_manifest())
+        self.assertIn("mode=ro", cmd)
+        self.assertIn("python3", cmd)
+        self.assertNotIn("sqlite3 ", cmd)  # never the sqlite3 CLI...
+        self.assertFalse(cmd.lstrip().startswith("sqlite3"))
+        self.assertIn("import sqlite3", cmd)  # ...always the stdlib module
+        runner = DispatchRunner(monitor_handlers())
+        self.status(runner=runner)
+        joined = [" ".join(c) for c in runner.commands("python3 -c")]
+        self.assertEqual(len(joined), 1)
+        self.assertIn("mode=ro", joined[0])
+
+
+# ---------------------------------------------------------------------------
+# U6: reviewability (R16)
+# ---------------------------------------------------------------------------
+
+
+class TestReviewableSteps(unittest.TestCase):
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="aitk-review-test-")
+        self.samples = os.path.join(contract.local_output_dir(RUN, self.base),
+                                    "samples")
+        os.makedirs(self.samples)
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def write_samples(self, step, count, age_s, now=NOW):
+        for i in range(count):
+            path = os.path.join(self.samples,
+                                f"1768500{i:03d}__{step:09d}_{i}.jpg")
+            with open(path, "w") as f:
+                f.write("x")
+            os.utime(path, (now - age_s, now - age_s))
+
+    def steps(self, **kw):
+        m = make_manifest(**kw)
+        return monitor.reviewable_steps(m, base_dir=self.base, now=NOW)
+
+    def test_full_batch_is_reviewable_even_when_fresh(self):
+        self.write_samples(500, 12, age_s=5)  # 12/12 matches prompt_count
+        self.assertEqual(self.steps(), [500])
+
+    def test_fresh_partial_batch_is_not_reviewable(self):
+        self.write_samples(750, 4, age_s=30)  # 4/12, newest 30s old
+        self.assertEqual(self.steps(), [])
+
+    def test_old_partial_batch_is_reviewable_with_warning(self):
+        self.write_samples(750, 4, age_s=600)  # 4/12 but settled
+        self.assertEqual(self.steps(), [750])
+
+    def test_steps_at_or_below_last_reviewed_are_excluded(self):
+        self.write_samples(500, 12, age_s=600)
+        self.write_samples(750, 12, age_s=600)
+        self.assertEqual(self.steps(last_reviewed_step=500), [750])
+
+    def test_no_prompt_count_falls_back_to_stability_only(self):
+        self.write_samples(500, 3, age_s=600)
+        self.write_samples(750, 3, age_s=10)
+        self.assertEqual(self.steps(prompt_count=None), [500])
+
+
+# ---------------------------------------------------------------------------
+# U6: watch loop + exit codes (R17) and attach
+# ---------------------------------------------------------------------------
+
+
+import contextlib
+import io
+import json as _json
+
+
+class TestWatchAndAttach(MonitorBase):
+    def watch(self, runner=None, sdk=None, **kw):
+        kw.setdefault("base_dir", self.base)
+        kw.setdefault("sdk", sdk if sdk is not None else FakeSdk(RAW_RUNNING))
+        kw.setdefault("runner",
+                      runner if runner is not None else DispatchRunner(monitor_handlers()))
+        kw.setdefault("_sleep", lambda s: None)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = monitor.watch(RUN, **kw)
+        return code, out.getvalue()
+
+    def write_local_samples(self, step, count):
+        samples = os.path.join(contract.local_output_dir(RUN, self.base),
+                               "samples")
+        os.makedirs(samples, exist_ok=True)
+        for i in range(count):
+            with open(os.path.join(samples,
+                                   f"1768500{i:03d}__{step:09d}_{i}.jpg"), "w") as f:
+                f.write("x")
+
+    def test_terminal_states_produce_distinct_documented_exit_codes(self):
+        cases = [
+            ("0\n", None, contract.EXIT_COMPLETED),
+            ("1\n", None, contract.EXIT_CRASHED),
+            ("143\n", contract.RunState.STOPPED.value, contract.EXIT_STOPPED),
+            (None, None, contract.EXIT_TIMED_OUT),  # no sentinel: conservative
+        ]
+        for exit_code, state, expected in cases:
+            with self.subTest(exit_code=exit_code, state=state):
+                self.setUp()
+                if state:
+                    self.save_manifest(state=state)
+                if exit_code is not None:
+                    self.write_mirror(contract.EXIT_CODE_FILE, exit_code)
+                code, _ = self.watch(runner=DispatchRunner([]),
+                                     sdk=FakeSdk(RAW_EXITED), once=True)
+                self.assertEqual(code, expected)
+                self.tearDown()
+
+    def test_pod_lost_and_unknown_have_their_own_exit_codes(self):
+        code, _ = self.watch(runner=DispatchRunner([]), sdk=FakeSdk(None),
+                             once=True)
+        self.assertEqual(code, contract.EXIT_POD_LOST)
+        code, _ = self.watch(runner=DispatchRunner(monitor_handlers(tmux_rc=1)),
+                             once=True)
+        self.assertEqual(code, contract.EXIT_UNKNOWN)
+
+    def test_once_still_running_nothing_new_exits_running(self):
+        code, _ = self.watch(once=True)
+        self.assertEqual(code, contract.EXIT_RUNNING)
+
+    def test_once_json_with_new_reviewable_steps_is_valid_json_exit_10(self):
+        self.write_local_samples(500, 12)  # full batch → reviewable
+        code, out = self.watch(once=True, json_out=True)
+        self.assertEqual(code, contract.EXIT_NEW_SAMPLES)
+        data = _json.loads(out)  # ONE valid json object, nothing else
+        self.assertEqual(data["run"], RUN)
+        self.assertEqual(data["state"], contract.RunState.RUNNING.value)
+        self.assertEqual(data["step"], 865)
+        self.assertEqual(data["total_steps"], 4000)
+        self.assertAlmostEqual(data["loss"], 0.4012)
+        self.assertEqual(data["reviewable_steps"], [500])
+        self.assertEqual(data["last_reviewed_step"], 0)
+        self.assertEqual(data["exit_code"], contract.EXIT_NEW_SAMPLES)
+        self.assertEqual(data["oom_skips"], 0)
+        self.assertEqual(data["disk_used_pct"], 42)
+        self.assertFalse(data["drift"])
+
+    def test_once_json_terminal_reports_terminal_exit_code(self):
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")
+        code, out = self.watch(runner=DispatchRunner([]),
+                               sdk=FakeSdk(RAW_EXITED), once=True,
+                               json_out=True)
+        self.assertEqual(code, contract.EXIT_COMPLETED)
+        data = _json.loads(out)
+        self.assertEqual(data["state"], contract.RunState.COMPLETED.value)
+        self.assertEqual(data["exit_code"], contract.EXIT_COMPLETED)
+
+    def test_watch_loop_prints_transition_and_exits_on_terminal(self):
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")  # used on cycle 2
+        sleeps = []
+        code, out = self.watch(sdk=FakeSdk(RAW_RUNNING, RAW_EXITED),
+                               interval_s=600, _sleep=sleeps.append)
+        self.assertEqual(code, contract.EXIT_COMPLETED)
+        self.assertEqual(sleeps, [600])  # one full cycle, then terminal
+        self.assertIn("-> RUNNING", out)
+        self.assertIn("RUNNING -> COMPLETED", out)
+
+    def test_watch_announces_newly_reviewable_steps_once(self):
+        self.write_local_samples(500, 12)
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")
+        code, out = self.watch(sdk=FakeSdk(RAW_RUNNING, RAW_EXITED))
+        self.assertEqual(out.count("new reviewable sample steps: [500]"), 1)
+
+    def test_watch_persists_resolved_state_to_manifest(self):
+        self.write_mirror(contract.EXIT_CODE_FILE, "1\n")
+        code, _ = self.watch(runner=DispatchRunner([]),
+                             sdk=FakeSdk(RAW_EXITED), once=True)
+        self.assertEqual(code, contract.EXIT_CRASHED)
+        self.assertEqual(manifest.load(RUN, self.base).state,
+                         contract.RunState.CRASHED.value)
+
+    def test_attach_reports_same_state_as_a_continuous_watcher(self):
+        # DEGRADED is the watcher-visible state for this fixture set; attach
+        # must rebuild it from manifest + API + remote log alone.
+        runner = DispatchRunner(monitor_handlers(tail=OOM_TAIL))
+        expected = monitor.get_status(RUN, base_dir=self.base,
+                                      sdk=FakeSdk(RAW_RUNNING), runner=runner)
+        report = monitor.attach(RUN, base_dir=self.base,
+                                sdk=FakeSdk(RAW_RUNNING),
+                                runner=DispatchRunner(monitor_handlers(tail=OOM_TAIL)))
+        self.assertEqual(report.state, expected.state)
+        self.assertEqual(report.state, contract.RunState.DEGRADED.value)
+        self.assertEqual(report.oom_skips, 3)
+        self.assertEqual(manifest.load(RUN, self.base).state,
+                         contract.RunState.DEGRADED.value)
 
 
 if __name__ == "__main__":
