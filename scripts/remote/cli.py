@@ -275,6 +275,10 @@ def _provision(run_name: str, args, base_dir: str):
                 "save_every (re-run preflight) — or pass --disk-gb explicitly")
         disk_gb = contract.disk_size_gb(m.total_steps, m.save_every)
     gpu_fallback = tuple(args.gpu_fallback or ())
+    if not args.dry_run:
+        # Pre-spend check: a stop key that can't stop pods (401) means
+        # self-stop fails open and a finished pod idle-bills (live-validated).
+        pod.validate_stop_key()
     info = pod.create_pod(run_name, gpu_type=args.gpu, image_tag=args.image,
                           disk_gb=disk_gb, gpu_fallback=gpu_fallback,
                           dry_run=args.dry_run)

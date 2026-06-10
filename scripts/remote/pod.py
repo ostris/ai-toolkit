@@ -241,6 +241,43 @@ def stop_key_env() -> dict:
     return {}
 
 
+def validate_stop_key() -> bool:
+    """Pre-spend check: can the key the pod will receive actually stop pods?
+
+    Live-validated failure mode: a Read-Only restricted key authenticates
+    nothing on the pods REST API (401), so self-stop fails OPEN and a
+    finished pod idle-bills until the laptop notices. Probing the stop
+    endpoint with a sentinel pod id distinguishes auth (401 -> bad key)
+    from existence (4xx/5xx 'does not exist' -> key fine). Warn-only.
+    """
+    env = stop_key_env()
+    key = env.get("RUNPOD_STOP_KEY")
+    if not key:
+        return False  # already warned by stop_key_env
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(
+        "https://rest.runpod.io/v1/pods/aitk0sentinel0pod/stop",
+        method="POST", headers={"Authorization": f"Bearer {key}"})
+    try:
+        urllib.request.urlopen(req, timeout=15)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            _warn(
+                "the pod-side stop key CANNOT stop pods (HTTP 401). "
+                "Self-stop will fail-open and a finished pod will idle-bill. "
+                "Fix: RunPod console -> Settings -> API Keys -> edit the "
+                "RUNPOD_STOP_API_KEY key -> permission 'Restricted' with "
+                "Pods: Read & Write (or remove RUNPOD_STOP_API_KEY from .env "
+                "to fall back to the account key)."
+            )
+            return False
+        return True  # non-401 (e.g. 'pod does not exist') means auth passed
+    except Exception:
+        return True  # network hiccup: don't block provisioning on the probe
+
+
 def container_start_command() -> str:
     """R27: start-command override decoupling container lifetime from the
     image's Node UI keep-alive.
