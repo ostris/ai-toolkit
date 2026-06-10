@@ -20,7 +20,8 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.remote import contract, launch, lifecycle, manifest, monitor, pod
+from scripts.remote import (contract, launch, lifecycle, manifest, monitor,
+                            pod, transport)
 from scripts.remote.manifest import RunManifest
 from scripts.remote.transport import Endpoint
 
@@ -517,6 +518,9 @@ RAW_RUNNING = {
                            "ip": EP.host, "publicPort": EP.port}]},
 }
 RAW_EXITED = {"id": "pod-1", "desiredStatus": "EXITED"}
+# RUNNING per the API but no direct SSH port exposed yet (B2a scenario).
+RAW_RUNNING_NO_SSH = {"id": "pod-1", "desiredStatus": "RUNNING",
+                      "costPerHr": 1.89}
 
 
 class FakeSdk:
@@ -615,6 +619,45 @@ class TestStatePrecedence(MonitorBase):
         self.assertEqual(report.state, contract.RunState.CRASHED.value)
         self.assertIn("137", report.detail)
         self.assertEqual(runner.calls, [])
+
+    def test_no_pod_id_returns_manifest_state_never_pod_lost(self):
+        # B7/#21: nothing was ever provisioned — POD_LOST would be a lie.
+        self.save_manifest(pod_id=None,
+                           state=contract.RunState.PREFLIGHTED.value)
+        runner = DispatchRunner([])
+        report = self.status(runner=runner, sdk=FakeSdk(None))
+        self.assertEqual(report.state, contract.RunState.PREFLIGHTED.value)
+        self.assertIn("no pod provisioned", report.detail)
+        self.assertEqual(runner.calls, [])
+
+    def test_gone_pod_after_recorded_teardown_is_terminated_not_pod_lost(self):
+        # B8/#22: down/rescue recorded the termination; GONE is expected.
+        self.save_manifest(state=contract.RunState.TERMINATED.value,
+                           terminated_at=NOW)
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(None))
+        self.assertEqual(report.state, contract.RunState.TERMINATED.value)
+        self.assertIn("torn down", report.detail)
+
+    def test_gone_pod_with_terminated_at_alone_is_terminated(self):
+        self.save_manifest(state=contract.RunState.STOPPED.value,
+                           terminated_at=NOW)
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(None))
+        self.assertEqual(report.state, contract.RunState.TERMINATED.value)
+
+    def test_nonzero_exit_with_stop_requested_at_is_stopped_despite_running_state(self):
+        # B5/#9: a concurrent watch cycle clobbered state back to RUNNING
+        # after stop was requested; the durable stop_requested_at must win.
+        self.save_manifest(state=contract.RunState.RUNNING.value,
+                           stop_requested_at=NOW)
+        self.write_mirror(contract.EXIT_CODE_FILE, "143\n")
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.STOPPED.value)
+
+    def test_zero_exit_with_stop_requested_at_stays_completed(self):
+        self.save_manifest(stop_requested_at=NOW)
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")
+        report = self.status(runner=DispatchRunner([]), sdk=FakeSdk(RAW_EXITED))
+        self.assertEqual(report.state, contract.RunState.COMPLETED.value)
 
     def test_exited_nonzero_after_stop_honors_manifest_stopped(self):
         self.save_manifest(state=contract.RunState.STOPPED.value)
@@ -886,6 +929,67 @@ class TestWatchAndAttach(MonitorBase):
         self.assertEqual(data["state"], contract.RunState.COMPLETED.value)
         self.assertEqual(data["exit_code"], contract.EXIT_COMPLETED)
 
+    def test_watch_terminated_run_exits_completed_code(self):
+        # B8/#22: a verified teardown is a success terminal — exit 0.
+        self.save_manifest(state=contract.RunState.TERMINATED.value,
+                           terminated_at=NOW)
+        code, _ = self.watch(runner=DispatchRunner([]), sdk=FakeSdk(None),
+                             once=True)
+        self.assertEqual(code, contract.EXIT_COMPLETED)
+
+    def test_json_includes_detail_log_tail_path_and_pulled_checkpoints(self):
+        # B10/#15: the agent contract carries detail, the mirrored log tail
+        # path, and the locally pulled checkpoint steps.
+        out_dir = contract.local_output_dir(RUN, self.base)
+        os.makedirs(out_dir, exist_ok=True)
+        for step in (500, 250):  # written out of order; emitted sorted
+            with open(os.path.join(out_dir,
+                                   f"{RUN}_{step:09d}.safetensors"), "w") as f:
+                f.write("x")
+        code, out = self.watch(once=True, json_out=True)
+        data = _json.loads(out)
+        self.assertIn("detail", data)
+        self.assertEqual(data["detail"], "")  # healthy RUNNING: no detail
+        self.assertEqual(data["pulled_checkpoint_steps"], [250, 500])
+        expected_tail = os.path.abspath(os.path.join(
+            contract.local_run_dir(RUN, self.base), transport.LOG_TAIL_FILE))
+        self.assertEqual(data["log_tail_path"], expected_tail)
+        self.assertTrue(os.path.exists(expected_tail))  # mirrored by the pull
+
+    def test_watch_survives_one_transient_cycle_failure(self):
+        # B9/#17: cycle 1's pull raises (find exits 255 → RuntimeError);
+        # the watcher warns, sleeps, and cycle 2 resolves terminal.
+        self.write_mirror(contract.EXIT_CODE_FILE, "0\n")
+        flake = {"n": 0}
+
+        def find_handler(cmd):
+            flake["n"] += 1
+            return proc("", returncode=255 if flake["n"] == 1 else 0)
+
+        runner = DispatchRunner(monitor_handlers(
+            extra=[("-printf '%P", find_handler)]))
+        sleeps = []
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _ = self.watch(runner=runner,
+                                 sdk=FakeSdk(RAW_RUNNING, RAW_EXITED),
+                                 interval_s=600, _sleep=sleeps.append)
+        self.assertEqual(code, contract.EXIT_COMPLETED)
+        self.assertEqual(sleeps, [600])
+        self.assertIn("watch cycle failed", err.getvalue())
+
+    def test_five_consecutive_cycle_failures_exit_unknown(self):
+        runner = DispatchRunner(monitor_handlers(
+            extra=[("-printf '%P", proc("", returncode=255))]))
+        sleeps = []
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, _ = self.watch(runner=runner, sdk=FakeSdk(RAW_RUNNING),
+                                 interval_s=600, _sleep=sleeps.append)
+        self.assertEqual(code, contract.EXIT_UNKNOWN)
+        self.assertEqual(len(sleeps), 4)  # the 5th failure exits, no sleep
+        self.assertEqual(err.getvalue().count("watch cycle failed"), 5)
+
     def test_watch_loop_prints_transition_and_exits_on_terminal(self):
         self.write_mirror(contract.EXIT_CODE_FILE, "0\n")  # used on cycle 2
         sleeps = []
@@ -1045,6 +1149,22 @@ class TestStopRun(LifecycleBase):
         self.assertEqual(manifest.load(RUN, self.base).state,
                          contract.RunState.STOPPED.value)
 
+    def test_stop_persists_stop_requested_at_before_the_kill(self):
+        # B5/#9: the durable stop intent must be on disk BEFORE the pkill so
+        # a concurrent watch cycle can never erase the evidence of the stop.
+        seen = []
+
+        def pkill_handler(cmd):
+            seen.append(manifest.load(RUN, self.base).stop_requested_at)
+            return proc("")
+
+        runner = DispatchRunner([("pkill", pkill_handler)]
+                                + monitor_handlers())
+        _report, _out, _runner = self.stop(runner=runner)
+        self.assertEqual(len(seen), 1)
+        self.assertIsNotNone(seen[0])  # already persisted at pkill time
+        self.assertIsNotNone(manifest.load(RUN, self.base).stop_requested_at)
+
     def test_stop_refuses_when_pod_not_reachable(self):
         with self.assertRaises(lifecycle.LifecycleError) as ctx:
             lifecycle.stop_run(RUN, base_dir=self.base,
@@ -1091,22 +1211,40 @@ class TestVerifyArtifacts(LifecycleBase):
         self.assertIn(f"{RUN}_000000250.safetensors", v.missing)
 
     def test_completed_demands_full_count_and_final_no_suffix_save(self):
+        # The trainer loop is `for step in range(start, total_steps)`, so the
+        # last STEPPED save of a 5000/250 run is 4750 — 19 stepped saves —
+        # and the no-suffix final save lands after the loop (B1/#1).
         self.early_stop_manifest(state=contract.RunState.COMPLETED.value,
-                                 last_pulled_checkpoint_step=5000)
-        self.write_checkpoints(range(250, 5001, 250), final=True)
+                                 last_pulled_checkpoint_step=4750)
+        self.write_checkpoints(range(250, 5000, 250), final=True)
         v = lifecycle.verify_artifacts(manifest.load(RUN, self.base),
                                        base_dir=self.base)
         self.assertTrue(v.ok)
-        self.assertEqual(v.expected_count, 20)  # floor(5000/250), R9
+        self.assertEqual(v.expected_count, 19)  # (5000-1)//250, NOT 20
 
     def test_completed_missing_final_safetensors_fails(self):
         self.early_stop_manifest(state=contract.RunState.COMPLETED.value,
-                                 last_pulled_checkpoint_step=5000)
-        self.write_checkpoints(range(250, 5001, 250), final=False)
+                                 last_pulled_checkpoint_step=4750)
+        self.write_checkpoints(range(250, 5000, 250), final=False)
         v = lifecycle.verify_artifacts(manifest.load(RUN, self.base),
                                        base_dir=self.base)
         self.assertFalse(v.ok)
         self.assertIn(f"{RUN}.safetensors", v.missing)
+
+    def test_completed_4000_250_verifies_without_phantom_last_checkpoint(self):
+        # Regression (B1/#1): a COMPLETED 4000/250 run really produced
+        # 250..3750 + the final no-suffix file; expecting a _000004000
+        # stepped save would fail every honest completed run.
+        self.early_stop_manifest(state=contract.RunState.COMPLETED.value,
+                                 total_steps=4000,
+                                 last_pulled_checkpoint_step=3750)
+        self.write_checkpoints(range(250, 4000, 250), final=True)
+        v = lifecycle.verify_artifacts(manifest.load(RUN, self.base),
+                                       base_dir=self.base)
+        self.assertTrue(v.ok)
+        self.assertEqual(v.expected_count, 15)  # (4000-1)//250
+        self.assertEqual(v.missing, [])
+        self.assertTrue(v.final_present)
 
 
 # ---------------------------------------------------------------------------
@@ -1154,19 +1292,94 @@ class TestDownRun(LifecycleBase):
         self.assertNotEqual(manifest.load(RUN, self.base).state,
                             contract.RunState.TERMINATED.value)
 
-    def test_force_terminates_despite_missing_artifacts(self):
+    def test_force_terminates_despite_missing_artifacts_with_rc_2(self):
+        # B6/#16: forced teardown over a failed verification is NOT DOWN_OK —
+        # it returns the distinct DOWN_FORCED_INCOMPLETE (2).
         self.early_stop_manifest()
         steps = [s for s in range(250, 1501, 250) if s != 1000]
         self.write_checkpoints(steps)
         sdk = LifecycleSdk(RAW_RUNNING)
         code, out, runner = self.down(sdk, force=True)
-        self.assertEqual(code, lifecycle.DOWN_OK)
+        self.assertEqual(code, lifecycle.DOWN_FORCED_INCOMPLETE)
+        self.assertEqual(code, 2)
         self.assertIn("terminate_pod", sdk.ops)
         self.assertNotIn("stop_pod", sdk.ops)
         self.assertIn(f"{RUN}_000001000.safetensors", out)  # still named
         self.assertEqual(runner.commands(contract.PULLED_OK_FILE), [])
         self.assertEqual(manifest.load(RUN, self.base).state,
                          contract.RunState.TERMINATED.value)
+
+    def test_running_pod_without_ssh_endpoint_refuses_to_terminate(self):
+        # B2a/#4: RUNNING per the API but no SSH path — a verified fresh
+        # pull is impossible; down must not destroy the pod.
+        self.early_stop_manifest()
+        self.write_checkpoints(range(250, 1501, 250))
+        sdk = LifecycleSdk(RAW_RUNNING_NO_SSH)
+        runner = DispatchRunner([])
+        code, out, runner = self.down(sdk, runner=runner)
+        self.assertEqual(code, lifecycle.DOWN_VERIFY_FAILED)
+        self.assertNotIn("terminate_pod", sdk.ops)
+        self.assertNotIn("stop_pod", sdk.ops)
+        self.assertEqual(runner.calls, [])  # no ssh possible, none attempted
+        self.assertIn("SSH", out)
+        self.assertIn("rescue", out)
+        self.assertNotEqual(manifest.load(RUN, self.base).state,
+                            contract.RunState.TERMINATED.value)
+
+    def test_zero_artifacts_after_launch_is_suspicious_not_clean(self):
+        # B2b/#4: launched run, zero observed artifacts — verification must
+        # fail (stop, not terminate) instead of green-lighting teardown.
+        self.early_stop_manifest(last_pulled_checkpoint_step=0,
+                                 launched_at=NOW - 3600)
+        sdk = LifecycleSdk(RAW_RUNNING)
+        code, out, runner = self.down(sdk)
+        self.assertEqual(code, lifecycle.DOWN_VERIFY_FAILED)
+        self.assertIn("stop_pod", sdk.ops)
+        self.assertNotIn("terminate_pod", sdk.ops)
+        self.assertIn("suspicious", out.lower())
+        self.assertEqual(runner.commands(contract.PULLED_OK_FILE), [])
+
+    def test_zero_artifacts_after_launch_forced_terminates_with_rc_2(self):
+        self.early_stop_manifest(last_pulled_checkpoint_step=0,
+                                 launched_at=NOW - 3600)
+        sdk = LifecycleSdk(RAW_RUNNING)
+        code, _out, _runner = self.down(sdk, force=True)
+        self.assertEqual(code, lifecycle.DOWN_FORCED_INCOMPLETE)
+        self.assertIn("terminate_pod", sdk.ops)
+
+    def test_pull_failure_stops_pod_skips_ack_returns_verify_failed(self):
+        # B3/#5: the final pull raising (transport RuntimeError) must route
+        # to the stop-not-terminate path even though local artifacts verify.
+        self.early_stop_manifest()
+        self.write_checkpoints(range(250, 1501, 250))
+        sdk = LifecycleSdk(RAW_RUNNING)
+        runner = DispatchRunner(monitor_handlers(
+            extra=[("-printf '%P", proc("", returncode=255))]))
+        code, out, runner = self.down(sdk, runner=runner)
+        self.assertEqual(code, lifecycle.DOWN_VERIFY_FAILED)
+        self.assertIn("stop_pod", sdk.ops)
+        self.assertNotIn("terminate_pod", sdk.ops)
+        self.assertEqual(runner.commands(contract.PULLED_OK_FILE), [])
+        self.assertIn("final pull failed", out)
+        self.assertIn("rescue", out)
+
+    def test_pull_failure_then_stop_pod_error_still_returns_verify_failed(self):
+        self.early_stop_manifest()
+        self.write_checkpoints(range(250, 1501, 250))
+
+        class StopFailSdk(LifecycleSdk):
+            def stop_pod(self, pod_id):
+                self.ops.append("stop_pod")
+                raise RuntimeError("api flake")  # wrapped into PodError
+
+        sdk = StopFailSdk(RAW_RUNNING)
+        runner = DispatchRunner(monitor_handlers(
+            extra=[("-printf '%P", proc("", returncode=255))]))
+        code, out, _runner = self.down(sdk, runner=runner)
+        self.assertEqual(code, lifecycle.DOWN_VERIFY_FAILED)
+        self.assertIn("stop_pod", sdk.ops)
+        self.assertNotIn("terminate_pod", sdk.ops)
+        self.assertIn("rescue", out)  # guidance survives the stop failure
 
     def test_down_on_gone_pod_succeeds_quietly_still_verifying(self):
         self.early_stop_manifest()
@@ -1218,6 +1431,51 @@ class TestRescueRun(LifecycleBase):
         self.assertIn("stop_pod", sdk.ops)
         self.assertNotIn("terminate_pod", sdk.ops)
         self.assertIn(f"{RUN}_000001250.safetensors", out)
+
+    def test_rescue_pull_failure_restops_pod_and_raises_lifecycle_error(self):
+        # B4/#6: a pull failure after the zero-GPU start must re-stop the
+        # pod (best effort) and surface actionable guidance, never leave it
+        # running CPU-only and billing.
+        self.early_stop_manifest()
+        self.write_checkpoints(range(250, 1501, 250))
+        sdk = LifecycleSdk(RAW_EXITED, RAW_RUNNING)
+        runner = DispatchRunner(monitor_handlers(
+            extra=[("-printf '%P", proc("", returncode=255))]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(lifecycle.LifecycleError) as ctx:
+                lifecycle.rescue_run(RUN, base_dir=self.base, sdk=sdk,
+                                     runner=runner, now=NOW,
+                                     _sleep=lambda s: None)
+        self.assertIn("zero-GPU start", str(ctx.exception))
+        self.assertIn(("resume_pod", 0), sdk.ops)
+        self.assertIn("stop_pod", sdk.ops)
+        self.assertNotIn("terminate_pod", sdk.ops)
+        text = out.getvalue()
+        self.assertIn("re-STOPPED", text)
+        self.assertIn("retry", text.lower())
+
+    def test_rescue_failure_with_stop_error_still_raises_with_guidance(self):
+        self.early_stop_manifest()
+        self.write_checkpoints(range(250, 1501, 250))
+
+        class StopFailSdk(LifecycleSdk):
+            def stop_pod(self, pod_id):
+                self.ops.append("stop_pod")
+                raise RuntimeError("api flake")  # wrapped into PodError
+
+        sdk = StopFailSdk(RAW_EXITED, RAW_RUNNING)
+        runner = DispatchRunner(monitor_handlers(
+            extra=[("-printf '%P", proc("", returncode=255))]))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(lifecycle.LifecycleError):
+                lifecycle.rescue_run(RUN, base_dir=self.base, sdk=sdk,
+                                     runner=runner, now=NOW,
+                                     _sleep=lambda s: None)
+        self.assertIn("stop_pod", sdk.ops)  # the re-stop was ATTEMPTED
+        self.assertNotIn("terminate_pod", sdk.ops)
+        self.assertIn("console", out.getvalue())  # manual-stop guidance
 
     def test_rescue_refuses_running_pod_pointing_at_stop_down(self):
         sdk = LifecycleSdk(RAW_RUNNING)

@@ -67,6 +67,9 @@ STALL_HARD_SECONDS = 1500     # >= 25 min without advance and no new files → s
 DISK_WARN_PCT = 85            # /workspace use% warning threshold (R26)
 REVIEW_STABILITY_SECONDS = 120  # local partial-batch age before reviewable (R16)
 DEFAULT_WATCH_INTERVAL_S = 600  # watch cadence (R17)
+# Consecutive failed watch cycles tolerated before the watcher gives up with
+# EXIT_UNKNOWN instead of looping blind forever (B9/#17).
+WATCH_MAX_CONSECUTIVE_FAILURES = 5
 
 
 @dataclass
@@ -145,7 +148,11 @@ def _exit_code_resolution(m: RunManifest, content: str, source: str) -> _Resolut
     if code == 0:
         return _Resolution(contract.RunState.COMPLETED.value,
                            f"trainer exited 0 ({source} exit_code sentinel)")
-    if m.state == contract.RunState.STOPPED.value:
+    # Durable stop intent (B5/#9): stop_run persists stop_requested_at BEFORE
+    # the pkill, so a nonzero exit maps to STOPPED even when a concurrent
+    # watch cycle clobbered the manifest state back to RUNNING.
+    if (m.state == contract.RunState.STOPPED.value
+            or m.stop_requested_at is not None):
         return _Resolution(contract.RunState.STOPPED.value,
                            f"trainer exited with code {content.strip()} after a "
                            f"requested stop ({source} sentinel)")
@@ -256,8 +263,19 @@ def _running_substate(ep: Endpoint, m: RunManifest, runner) -> _Resolution:
 
 def _resolve(m: RunManifest, pod_info, *, ep=None, runner=subprocess.run,
              base_dir: str = ".") -> _Resolution:
-    # 1) pod gone from the API → POD_LOST, even over a stale local mirror.
+    # 0) no pod ever provisioned (B7/#21): the manifest's own state is the
+    #    truth — never POD_LOST for a run that hasn't reached provisioning.
+    if not m.pod_id:
+        return _Resolution(m.state, "no pod provisioned yet for this run")
+
+    # 1) pod gone from the API → POD_LOST, even over a stale local mirror —
+    #    UNLESS we tore it down ourselves: down/rescue record terminated_at +
+    #    TERMINATED, and a verified teardown is not a lost pod (B8/#22).
     if pod_info is None or pod_info.status == "GONE":
+        if (m.terminated_at is not None
+                or m.state == contract.RunState.TERMINATED.value):
+            return _Resolution(contract.RunState.TERMINATED.value,
+                               "torn down by down/rescue")
         return _Resolution(
             contract.RunState.POD_LOST.value,
             "pod is gone from the RunPod API (terminated externally?) — local "
@@ -494,11 +512,30 @@ def pull_once(run_name: str, *, base_dir: str = ".", sdk=None,
     return report, pull
 
 
+def _pulled_checkpoint_steps(m: RunManifest, base_dir: str) -> list:
+    """Sorted stepped-checkpoint steps present locally in output/<run>/."""
+    out_dir = contract.local_output_dir(m.run_name, base_dir)
+    job_name = m.job_name or m.run_name
+    steps = []
+    if os.path.isdir(out_dir):
+        for name in os.listdir(out_dir):
+            step = contract.parse_checkpoint_filename(name, job_name)
+            if step is not None:
+                steps.append(step)
+    return sorted(steps)
+
+
 def _emit(run_name: str, report: StatusReport, code: int, json_out: bool,
           base_dir: str) -> int:
     """Final emission: ONE json object when --json, then the exit code."""
     if json_out:
         m = manifest.load(run_name, base_dir)
+        # transport.mirror_sentinels writes the mirrored tail as
+        # transport.LOG_TAIL_FILE under runs/<run>/ — compute the path from
+        # the same constants, never a hardcoded filename (B10/#15).
+        tail_path = os.path.abspath(os.path.join(
+            contract.local_run_dir(run_name, base_dir),
+            transport.LOG_TAIL_FILE))
         print(json.dumps({
             "run": report.run_name,
             "state": report.state,
@@ -511,6 +548,9 @@ def _emit(run_name: str, report: StatusReport, code: int, json_out: bool,
             "reviewable_steps": report.reviewable,
             "last_reviewed_step": m.last_reviewed_step,
             "cost_estimate": report.cost_estimate,
+            "detail": report.detail,
+            "log_tail_path": tail_path if os.path.exists(tail_path) else None,
+            "pulled_checkpoint_steps": _pulled_checkpoint_steps(m, base_dir),
             "exit_code": code,
         }))
     return code
@@ -529,9 +569,23 @@ def watch(run_name: str, *, interval_s: float = DEFAULT_WATCH_INTERVAL_S,
     """
     last_state = None
     announced = set()
+    failures = 0
     while True:
-        report, _pull = pull_once(run_name, base_dir=base_dir, sdk=sdk,
-                                  runner=runner)
+        # One cycle never crashes the watcher (B9/#17): transient ssh/API
+        # failures are warned and retried; a run of consecutive failures
+        # exits EXIT_UNKNOWN instead of looping blind forever.
+        try:
+            report, _pull = pull_once(run_name, base_dir=base_dir, sdk=sdk,
+                                      runner=runner)
+        except (RuntimeError, subprocess.TimeoutExpired, pod.PodError) as e:
+            failures += 1
+            _warn(f"watch cycle failed "
+                  f"({failures}/{WATCH_MAX_CONSECUTIVE_FAILURES}): {e}")
+            if failures >= WATCH_MAX_CONSECUTIVE_FAILURES or once:
+                return contract.EXIT_UNKNOWN
+            _sleep(interval_s)
+            continue
+        failures = 0
         new_steps = [s for s in report.reviewable if s not in announced]
         announced.update(new_steps)
         if not json_out:
@@ -550,6 +604,13 @@ def watch(run_name: str, *, interval_s: float = DEFAULT_WATCH_INTERVAL_S,
             return _emit(run_name, report,
                          contract.WATCH_EXIT_CODES[state_enum], json_out,
                          base_dir)
+        if state_enum is contract.RunState.TERMINATED:
+            # TERMINATED means down/rescue verified the artifacts and tore
+            # the pod down — a SUCCESS terminal. Reuse EXIT_COMPLETED (0)
+            # rather than minting a new code: agent loops already treat 0 as
+            # "run finished and fully accounted for" (B8/#22).
+            return _emit(run_name, report, contract.EXIT_COMPLETED,
+                         json_out, base_dir)
         if once:
             code = (contract.EXIT_NEW_SAMPLES if new_steps
                     else contract.EXIT_RUNNING)

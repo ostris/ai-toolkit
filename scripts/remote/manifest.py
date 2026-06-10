@@ -84,6 +84,10 @@ class RunManifest:
     optimizer_pairing_step: int = None
     last_reviewed_step: int = 0
     last_sentinel: str = None         # mirrored exit_code value or "timed_out"
+    # durable stop intent (authoritative): set by lifecycle.stop_run BEFORE
+    # the pkill so monitor maps the eventual nonzero exit_code to STOPPED even
+    # if a concurrent watch cycle clobbered state back to RUNNING (B5).
+    stop_requested_at: float = None   # epoch seconds
 
     # forward compatibility: unknown keys survive round-trips
     extra: dict = field(default_factory=dict)
@@ -121,10 +125,13 @@ class RunManifest:
         return round(hours * self.hourly_rate, 2)
 
     def expected_checkpoint_count(self, observed_max_step: int = None) -> int:
-        """floor(max_step / save_every).
+        """floor(max_step / save_every) — stepped saves land ON multiples.
 
         Uses the observed max trained step so early-stopped runs verify
-        cleanly; callers pass total_steps only for COMPLETED runs (R9).
+        cleanly. The trainer loop is `for step in range(start, total_steps)`,
+        so a COMPLETED run's last loop step is total_steps - 1: callers must
+        pass total_steps - 1 (NOT total_steps) for completed runs — the
+        no-suffix final save written after the loop is checked separately (R9).
         """
         if not self.save_every:
             return 0

@@ -17,9 +17,14 @@ down   — final incremental pull → verify against manifest expectations →
          step — floor(observed / save_every) — so reviewer-driven early
          stops verify cleanly; the configured-total formula and the final
          no-suffix safetensors requirement apply ONLY when the run state is
-         COMPLETED (R9). On verification failure the pod is STOPPED (not
-         terminated), exactly what is missing is printed, and a failure code
-         returns — unless force=True, which terminates anyway. down on an
+         COMPLETED (R9; the loop's last step is total_steps - 1, so that is
+         (total_steps - 1) // save_every stepped saves plus the final file).
+         Verification fails on missing artifacts, on a failed final pull, on
+         a RUNNING pod with no resolvable SSH endpoint, and on a launched
+         run with zero observed artifacts. On failure the pod is STOPPED
+         (not terminated), exactly what is missing is printed, and
+         DOWN_VERIFY_FAILED returns — unless force=True, which terminates
+         anyway and returns DOWN_FORCED_INCOMPLETE. down on an
          already-terminated/GONE pod succeeds quietly, still verifying local
          artifacts, with cost from the manifest.
 
@@ -51,6 +56,10 @@ from scripts.remote.transport import Endpoint
 
 DOWN_OK = 0
 DOWN_VERIFY_FAILED = 1
+# force=True teardown that destroyed data DESPITE a failed verification —
+# distinct from DOWN_OK so callers can tell a clean teardown from a forced
+# incomplete one (B6/#16).
+DOWN_FORCED_INCOMPLETE = 2
 RESCUE_OK = 0
 RESCUE_VERIFY_FAILED = 1
 
@@ -137,7 +146,12 @@ def verify_artifacts(m: RunManifest, *, base_dir: str = ".") -> VerificationResu
 
     completed = m.state == contract.RunState.COMPLETED.value
     if completed and m.total_steps and m.save_every:
-        expected = int(m.total_steps) // int(m.save_every)
+        # The trainer loop is `for step in range(start, total_steps)` with
+        # stepped saves at step % save_every == 0 (step != start); its last
+        # loop step is total_steps - 1, then the NO-SUFFIX final save lands
+        # after the loop. A 5000/250 run therefore has 19 stepped saves
+        # (250..4750), not 20 — the final no-suffix file covers the end.
+        expected = m.expected_checkpoint_count(int(m.total_steps) - 1)
     else:
         expected = m.expected_checkpoint_count(observed)
 
@@ -193,6 +207,12 @@ def stop_run(run_name: str, *, base_dir: str = ".", sdk=None,
             "with no SSH path — there is no reachable trainer to kill. Use "
             "`down` to tear down, or `rescue` if the pod is stopped.")
 
+    # Durable stop intent (B5/#9): persist BEFORE the pkill so monitor maps
+    # the eventual nonzero exit_code to STOPPED even if a concurrent watch
+    # cycle clobbers state back to RUNNING between the kill and the sentinel.
+    m.stop_requested_at = time.time()
+    manifest.save(m, base_dir)
+
     # Kill the trainer PROCESS only. The [r] bracket keeps the pattern from
     # matching the ssh-side shell that carries it. No tmux kill-session, ever.
     pattern = contract.trainer_pkill_pattern(run_name)
@@ -238,8 +258,9 @@ def down_run(run_name: str, *, force: bool = False, base_dir: str = ".",
              sdk=None, runner=subprocess.run, now: float = None) -> int:
     """Final pull → verify → ack → terminate → cost report (R9).
 
-    See the module docstring for the full decision table. Returns DOWN_OK or
-    DOWN_VERIFY_FAILED.
+    See the module docstring for the full decision table. Returns DOWN_OK,
+    DOWN_VERIFY_FAILED, or DOWN_FORCED_INCOMPLETE (force=True teardown that
+    proceeded despite a failed verification).
     """
     now = time.time() if now is None else float(now)
     m = manifest.load(run_name, base_dir)
@@ -248,27 +269,64 @@ def down_run(run_name: str, *, force: bool = False, base_dir: str = ".",
     ep = _endpoint(info) if not gone else None
     reachable = (not gone) and info.status == "RUNNING" and ep is not None
 
+    # RUNNING per the API but no resolvable SSH endpoint: a fresh final pull
+    # is impossible, so terminating would destroy unverified data (B2/#4).
+    if (not gone) and info.status == "RUNNING" and ep is None and not force:
+        print(f"[down] {run_name}: pod {m.pod_id} is RUNNING per the RunPod "
+              "API but exposes no resolvable SSH endpoint — a verified final "
+              "pull is impossible; refusing to terminate. Retry `down` in a "
+              "minute, or `stop` then `rescue` to retrieve artifacts; "
+              "`down --force` terminates anyway.")
+        return DOWN_VERIFY_FAILED
+
     # Final incremental pull (mirrors sentinels too, R25) when reachable.
+    # A failed pull must never green-light termination (B3/#5).
+    pull_error = None
     if reachable:
-        transport.pull_artifacts(ep, m, base_dir=base_dir, runner=runner)
-        manifest.save(m, base_dir)
+        try:
+            transport.pull_artifacts(ep, m, base_dir=base_dir, runner=runner)
+            manifest.save(m, base_dir)
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            pull_error = e
+            print(f"[down] {run_name}: final pull failed: {e}")
 
     v = verify_artifacts(m, base_dir=base_dir)
-    if not v.ok:
-        _print_missing(run_name, v, prefix="down")
+    # A LAUNCHED run with zero observed artifacts is suspicious, not clean:
+    # an empty inventory must never green-light termination (B2/#4).
+    suspicious_zero = (v.observed_max_step == 0 and m.launched_at is not None)
+    verified = v.ok and pull_error is None and not suspicious_zero
+    rc = DOWN_OK
+    if not verified:
+        if not v.ok:
+            _print_missing(run_name, v, prefix="down")
+        elif suspicious_zero:
+            print(f"[down] {run_name}: verification FAILED — the run was "
+                  "launched but ZERO artifacts were observed locally "
+                  "(suspicious empty inventory); refusing to treat as clean")
         if gone:
             print(f"[down] {run_name}: pod is already gone — nothing left to "
                   "preserve; proceeding with local teardown")
         elif force:
             print(f"[down] {run_name}: force=True — terminating DESPITE "
-                  f"{len(v.missing)} missing artifact(s)")
+                  f"failed verification ({len(v.missing)} missing "
+                  "artifact(s))")
+            rc = DOWN_FORCED_INCOMPLETE
         else:
             if info.status == "RUNNING":
-                pod.stop_pod(m.pod_id, sdk=sdk)
-                print(f"[down] {run_name}: pod {m.pod_id} STOPPED (not "
-                      "terminated) — artifacts preserved on its volume. "
-                      "Use `rescue` to retrieve them, or re-run `down "
-                      "--force` to terminate anyway.")
+                # stop-not-terminate; a stop failure must still preserve
+                # the volume and surface the rescue guidance (B3/#5).
+                try:
+                    pod.stop_pod(m.pod_id, sdk=sdk)
+                    print(f"[down] {run_name}: pod {m.pod_id} STOPPED (not "
+                          "terminated) — artifacts preserved on its volume. "
+                          "Use `rescue` to retrieve them, or re-run `down "
+                          "--force` to terminate anyway.")
+                except pod.PodError as e:
+                    print(f"[down] {run_name}: stop_pod failed ({e}) — pod "
+                          f"{m.pod_id} may still be RUNNING and billing; "
+                          "artifacts remain on its volume. Use `rescue` to "
+                          "retrieve them, or `down --force` to terminate "
+                          "anyway.")
             else:
                 print(f"[down] {run_name}: pod {m.pod_id} is already "
                       f"{info.status} — artifacts remain on its volume. Use "
@@ -278,8 +336,8 @@ def down_run(run_name: str, *, force: bool = False, base_dir: str = ".",
 
     # Ack: write pulled.ok remotely WITH CONTENT (never a bare touch — the
     # presence convention is "readable with non-empty content"). Only after a
-    # passed verification, and only when the pod is reachable.
-    if v.ok and reachable:
+    # passed verification WITH a fresh pull, and only when reachable.
+    if verified and reachable:
         ack = contract.remote_sentinel_path(run_name, contract.PULLED_OK_FILE)
         res = transport.ssh_run(
             ep, f"echo {int(now)} > {contract.shell_quote(ack)}", runner=runner)
@@ -298,11 +356,15 @@ def down_run(run_name: str, *, force: bool = False, base_dir: str = ".",
 
     cost = m.estimated_cost()
     cost_s = f"${cost:.2f}" if cost is not None else "unknown (no rate recorded)"
-    verified_s = (f"{len(v.found_steps)} checkpoint(s) verified" if v.ok
-                  else f"{len(v.missing)} artifact(s) missing")
+    if verified:
+        verified_s = f"{len(v.found_steps)} checkpoint(s) verified"
+    elif v.missing:
+        verified_s = f"{len(v.missing)} artifact(s) missing"
+    else:
+        verified_s = "verification failed (no verified fresh pull)"
     pod_s = "pod already gone" if gone else f"pod {m.pod_id} terminated"
     print(f"[down] {run_name}: {pod_s}; {verified_s}; estimated cost {cost_s}")
-    return DOWN_OK
+    return rc
 
 
 # ---------------------------------------------------------------------------
@@ -348,25 +410,45 @@ def rescue_run(run_name: str, *, base_dir: str = ".", sdk=None,
     # the manifest endpoint is cache, and RunPod reassigns IP/port across
     # stop/start.
     info = pod.start_zero_gpu(m.pod_id, sdk=sdk)
-    elapsed = 0.0
-    while not (info.ssh_host and info.ssh_port):
-        if elapsed >= wait_timeout_s:
-            raise LifecycleError(
-                f"pod {m.pod_id} did not expose an SSH endpoint within "
-                f"{int(wait_timeout_s)}s of the zero-GPU start — it is left "
-                "running CPU-only (billing storage + CPU); retry rescue or "
-                "stop it from the RunPod console.")
-        _sleep(poll_s)
-        elapsed += poll_s
-        info = pod.get_pod_info(m.pod_id, sdk=sdk)
-    ep = Endpoint(host=info.ssh_host, port=int(info.ssh_port))
-    m.ssh_host, m.ssh_port = info.ssh_host, int(info.ssh_port)
+    # Everything after the zero-GPU start is wrapped (B4/#6): a mid-flight
+    # failure must re-stop the pod (best effort) instead of leaving it
+    # running CPU-only and billing forever.
+    try:
+        elapsed = 0.0
+        while not (info.ssh_host and info.ssh_port):
+            if elapsed >= wait_timeout_s:
+                raise LifecycleError(
+                    f"pod {m.pod_id} did not expose an SSH endpoint within "
+                    f"{int(wait_timeout_s)}s of the zero-GPU start")
+            _sleep(poll_s)
+            elapsed += poll_s
+            info = pod.get_pod_info(m.pod_id, sdk=sdk)
+        ep = Endpoint(host=info.ssh_host, port=int(info.ssh_port))
+        m.ssh_host, m.ssh_port = info.ssh_host, int(info.ssh_port)
 
-    # Pull + mirror (sentinels and, on terminal states, loss_log.db — R25).
-    transport.pull_artifacts(ep, m, base_dir=base_dir, runner=runner)
-    manifest.save(m, base_dir)
+        # Pull + mirror (sentinels and, on terminal states, loss_log.db — R25).
+        transport.pull_artifacts(ep, m, base_dir=base_dir, runner=runner)
+        manifest.save(m, base_dir)
 
-    v = verify_artifacts(m, base_dir=base_dir)
+        v = verify_artifacts(m, base_dir=base_dir)
+    except (RuntimeError, subprocess.TimeoutExpired, pod.PodError) as e:
+        # NOTE: LifecycleError subclasses RuntimeError, so the endpoint-wait
+        # timeout above also lands here and gets the same re-stop treatment.
+        try:
+            pod.stop_pod(m.pod_id, sdk=sdk)
+            state_s = (f"pod {m.pod_id} re-STOPPED — its volume storage "
+                       "still bills until terminated")
+        except pod.PodError as stop_err:
+            state_s = (f"pod {m.pod_id} could NOT be re-stopped ({stop_err}) "
+                       "— it may be running CPU-only AND billing; stop it "
+                       "from the RunPod console")
+        print(f"[rescue] {run_name}: rescue failed after the zero-GPU "
+              f"start: {e}")
+        print(f"[rescue] {run_name}: {state_s}; artifacts remain on its "
+              "volume — retry `rescue` once the cause is fixed.")
+        raise LifecycleError(
+            f"rescue of run '{run_name}' failed after the zero-GPU start: "
+            f"{e}") from e
     if not v.ok:
         _print_missing(run_name, v, prefix="rescue")
         pod.stop_pod(m.pod_id, sdk=sdk)
