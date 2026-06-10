@@ -12,8 +12,6 @@ from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 from diffusers.utils import is_torch_xla_available
-from k_diffusion.external import CompVisVDenoiser, CompVisDenoiser
-from k_diffusion.sampling import get_sigmas_karras, BrownianTreeNoiseSampler
 from toolkit.models.flux import bypass_flux_guidance, restore_flux_guidance
 from diffusers.image_processor import PipelineImageInput
 from PIL import Image
@@ -213,6 +211,8 @@ class StableDiffusionKDiffusionXLPipeline(StableDiffusionXLPipeline):
         if use_karras_sigmas:
             sigma_min: float = self.k_diffusion_model.sigmas[0].item()
             sigma_max: float = self.k_diffusion_model.sigmas[-1].item()
+            from k_diffusion.sampling import get_sigmas_karras
+
             sigmas = get_sigmas_karras(n=num_inference_steps, sigma_min=sigma_min, sigma_max=sigma_max)
             sigmas = sigmas.to(device)
         else:
@@ -272,6 +272,8 @@ class StableDiffusionKDiffusionXLPipeline(StableDiffusionXLPipeline):
 
         if "noise_sampler" in inspect.signature(self.sampler).parameters:
             min_sigma, max_sigma = sigmas[sigmas > 0].min(), sigmas.max()
+            from k_diffusion.sampling import BrownianTreeNoiseSampler
+
             noise_sampler = BrownianTreeNoiseSampler(latents, min_sigma, max_sigma, noise_sampler_seed)
             sampler_kwargs["noise_sampler"] = noise_sampler
 
