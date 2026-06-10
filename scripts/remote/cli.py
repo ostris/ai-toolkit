@@ -5,9 +5,10 @@ Usage:
     python scripts/remote/cli.py <subcommand> [...]
     python -m scripts.remote.cli <subcommand> [...]
 
-Twelve subcommands wired to the scripts.remote.* modules:
+Thirteen subcommands wired to the scripts.remote.* modules:
     preflight  provision  sync  launch  up
     status     pull       watch stop    down  attach  rescue
+    mark-reviewed
 
 This module is THIN: argument parsing + wiring only. Business logic lives in
 preflight/pod/transport/launch/monitor/lifecycle; cross-unit strings live in
@@ -255,6 +256,17 @@ def cmd_preflight(args) -> int:
 def _provision(run_name: str, args, base_dir: str):
     """Shared by `provision` and `up`. Returns (pod_id|None, hint_printed)."""
     m = _load_manifest(run_name, base_dir)
+    # Double-provision guard (#3): a manifest that already records a pod
+    # refuses a second one unless that pod is GONE or --force-new is passed.
+    if m.pod_id and not getattr(args, "force_new", False):
+        info = pod.get_pod_info(m.pod_id)
+        if info.status != "GONE":
+            raise CliError(
+                f"run '{run_name}' already has pod {m.pod_id} "
+                f"({info.status}) recorded in its manifest — refusing to "
+                "provision a second pod that would bill in parallel. Use "
+                "`status` to inspect it, `down`/`rescue` to tear it down, "
+                "or pass --force-new to provision anyway.")
     disk_gb = args.disk_gb
     if disk_gb is None:
         if not (m.total_steps and m.save_every):
@@ -335,20 +347,32 @@ def cmd_sync(args) -> int:
         # peek at config.name so the drift pre-check can read the manifest
         cfg = preflight_mod.load_source_config(args.config, args.base_dir)
         run_name = (cfg.get("config") or {}).get("name")
-    old_hash = old_state = None
+    old = None
     if run_name:
         try:
-            m = manifest.load(run_name, args.base_dir)
-            old_hash, old_state = m.config_hash, m.state
+            old = manifest.load(run_name, args.base_dir)
         except manifest.ManifestNotFoundError:
             pass
+    live = (old is not None and old.state in contract.LIVE_STATES
+            and bool(old.pod_id))
     result = preflight_mod.run_preflight(
         args.config, run_name=run_name, base_dir=args.base_dir,
         allow_uncaptioned=args.allow_uncaptioned)
-    if old_state in contract.LIVE_STATES and old_hash and result.config_hash != old_hash:
-        _warn(f"CONFIG DRIFT: run '{result.run_name}' is {old_state} on the "
-              "pod with a DIFFERENT config than this sync just derived — the "
-              "running trainer keeps its old config; relaunch to apply changes")
+    if live:
+        if old.config_hash and result.config_hash != old.config_hash:
+            _warn(f"CONFIG DRIFT: run '{result.run_name}' is {old.state} on "
+                  "the pod with a DIFFERENT config than this sync just "
+                  "derived — the running trainer keeps its old config; the "
+                  "new config applies at the next launch")
+        # R19/#19: re-preflight just overwrote the manifest with the NEW
+        # config's facts, but the RUNNING training still follows the
+        # launch-time ones — restore them so status/verify stay truthful.
+        # The new derived file stays on disk for the next launch.
+        m = _load_manifest(result.run_name, args.base_dir)
+        for name in ("state", "job_name", "total_steps", "save_every",
+                     "sample_every", "prompt_count", "config_hash"):
+            setattr(m, name, getattr(old, name))
+        manifest.save(m, args.base_dir)
     _sync(result, args, args.base_dir)
     return 0
 
@@ -455,6 +479,25 @@ def cmd_rescue(args) -> int:
     return lifecycle.rescue_run(args.run, base_dir=args.base_dir)
 
 
+def cmd_mark_reviewed(args) -> int:
+    """Advance the review watermark (#14) — without this, `watch --once`
+    re-reports the same reviewable steps forever."""
+    m = _load_manifest(args.run, args.base_dir)
+    try:
+        step = int(args.step)
+    except (TypeError, ValueError):
+        raise CliError(f"step must be an integer, got {args.step!r}") from None
+    current = m.last_reviewed_step or 0
+    if step < current:
+        raise CliError(
+            f"step {step} is below the current last_reviewed_step "
+            f"({current}) — the review watermark only moves forward")
+    m.last_reviewed_step = step
+    manifest.save(m, args.base_dir)
+    print(f"[mark-reviewed] {args.run}: last_reviewed_step={step}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
@@ -485,6 +528,9 @@ def _add_provision_args(p):
                    help="volume size; default derived from steps/save_every")
     p.add_argument("--dry-run", action="store_true",
                    help="print the create request without calling the API")
+    p.add_argument("--force-new", action="store_true",
+                   help="provision even when the manifest already records a "
+                        "live pod (default: refuse unless that pod is GONE)")
 
 
 def _add_launch_args(p):
@@ -578,6 +624,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run", help="run name")
     p.set_defaults(func=cmd_rescue)
 
+    p = sub.add_parser("mark-reviewed", help="advance the review watermark "
+                       "after reviewing samples (watch re-reports steps "
+                       "until this is run)")
+    p.add_argument("run", help="run name")
+    p.add_argument("step", help="highest sample step just reviewed")
+    p.set_defaults(func=cmd_mark_reviewed)
+
     return parser
 
 
@@ -594,7 +647,10 @@ def main(argv=None) -> int:
         return 1
     except (CliError, preflight_mod.PreflightError, pod.PodError,
             launch_mod.LaunchError, lifecycle.LifecycleError,
-            manifest.ManifestNotFoundError) as e:
+            manifest.ManifestNotFoundError, RuntimeError,
+            subprocess.TimeoutExpired) as e:
+        # RuntimeError/TimeoutExpired cover transport failures (#17): exit 1
+        # with the message instead of a traceback.
         print(f"[cli] ERROR: {e}", file=sys.stderr)
         return 1
 

@@ -17,11 +17,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.remote import (contract, launch, lifecycle, manifest, monitor,
-                            pod, transport)
+from scripts.remote import (cli, contract, launch, lifecycle, manifest,
+                            monitor, pod, transport)
 from scripts.remote.manifest import RunManifest
 from scripts.remote.transport import Endpoint
 
@@ -1507,12 +1508,12 @@ class TestRescueRun(LifecycleBase):
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_SUBCOMMANDS = [
     "preflight", "provision", "sync", "launch", "up", "status",
-    "pull", "watch", "stop", "down", "attach", "rescue",
+    "pull", "watch", "stop", "down", "attach", "rescue", "mark-reviewed",
 ]
 
 
 class TestCliHelpSmoke(unittest.TestCase):
-    """`--help` exits 0 and lists all 12 subcommands; each subcommand
+    """`--help` exits 0 and lists all 13 subcommands; each subcommand
     `--help` exits 0. Subprocess only — no network, no RunPod SDK."""
 
     def _run_cli(self, *argv):
@@ -1520,7 +1521,7 @@ class TestCliHelpSmoke(unittest.TestCase):
             [sys.executable, os.path.join("scripts", "remote", "cli.py"), *argv],
             capture_output=True, text=True, cwd=_REPO_ROOT, timeout=60)
 
-    def test_top_level_help_lists_all_twelve_subcommands(self):
+    def test_top_level_help_lists_all_thirteen_subcommands(self):
         res = self._run_cli("--help")
         self.assertEqual(res.returncode, 0, res.stderr)
         for name in CLI_SUBCOMMANDS:
@@ -1532,6 +1533,237 @@ class TestCliHelpSmoke(unittest.TestCase):
                 res = self._run_cli(name, "--help")
                 self.assertEqual(res.returncode, 0, res.stderr)
                 self.assertIn("usage:", res.stdout)
+
+
+# ---------------------------------------------------------------------------
+# U8: provision double-pod guard (#3)
+# ---------------------------------------------------------------------------
+
+
+class TestCliProvisionGuard(unittest.TestCase):
+    """provision refuses when the manifest already records a live pod."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="aitk-cli-prov-test-")
+        manifest.save(make_manifest(pod_id="pod-1"), self.base)
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def provision(self, *extra):
+        args = cli.build_parser().parse_args(
+            ["--base-dir", self.base, "provision", RUN,
+             "--disk-gb", "80", "--dry-run", *extra])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            return cli.cmd_provision(args)
+
+    def test_live_pod_refuses_naming_pod_and_remedies(self):
+        live = pod.PodInfo(pod_id="pod-1", status="RUNNING")
+        with mock.patch.object(cli.pod, "get_pod_info", return_value=live), \
+             mock.patch.object(cli.pod, "create_pod") as create:
+            with self.assertRaises(cli.CliError) as ctx:
+                self.provision()
+        msg = str(ctx.exception)
+        self.assertIn("pod-1", msg)
+        for hint in ("status", "down", "rescue", "--force-new"):
+            self.assertIn(hint, msg)
+        create.assert_not_called()
+
+    def test_gone_pod_proceeds(self):
+        gone = pod.PodInfo(pod_id="pod-1", status="GONE")
+        dry = pod.PodInfo(pod_id="DRY_RUN", status="DRY_RUN")
+        with mock.patch.object(cli.pod, "get_pod_info", return_value=gone), \
+             mock.patch.object(cli.pod, "create_pod",
+                               return_value=dry) as create:
+            rc = self.provision()
+        self.assertEqual(rc, 0)
+        create.assert_called_once()
+        self.assertTrue(create.call_args.kwargs.get("dry_run"))
+
+    def test_force_new_skips_the_guard(self):
+        dry = pod.PodInfo(pod_id="DRY_RUN", status="DRY_RUN")
+        with mock.patch.object(cli.pod, "get_pod_info") as get_info, \
+             mock.patch.object(cli.pod, "create_pod",
+                               return_value=dry) as create:
+            rc = self.provision("--force-new")
+        self.assertEqual(rc, 0)
+        get_info.assert_not_called()  # the guard is bypassed entirely
+        create.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# U8: mark-reviewed watermark advance (#14)
+# ---------------------------------------------------------------------------
+
+
+class TestCliMarkReviewed(MonitorBase):
+    def mark(self, step):
+        args = cli.build_parser().parse_args(
+            ["--base-dir", self.base, "mark-reviewed", RUN, str(step)])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = args.func(args)
+        return rc, out.getvalue()
+
+    def write_local_samples(self, step, count):
+        samples = os.path.join(contract.local_output_dir(RUN, self.base),
+                               "samples")
+        os.makedirs(samples, exist_ok=True)
+        for i in range(count):
+            with open(os.path.join(samples,
+                                   f"1768500{i:03d}__{step:09d}_{i}.jpg"), "w") as f:
+                f.write("x")
+
+    def watch_once(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = monitor.watch(RUN, base_dir=self.base,
+                                 sdk=FakeSdk(RAW_RUNNING),
+                                 runner=DispatchRunner(monitor_handlers()),
+                                 once=True, json_out=True,
+                                 _sleep=lambda s: None)
+        return code, out.getvalue()
+
+    def test_sets_last_reviewed_step_and_prints_confirmation(self):
+        rc, out = self.mark(500)
+        self.assertEqual(rc, 0)
+        self.assertEqual(manifest.load(RUN, self.base).last_reviewed_step, 500)
+        self.assertIn("500", out)
+
+    def test_step_below_watermark_raises_cli_error(self):
+        self.save_manifest(last_reviewed_step=750)
+        with self.assertRaises(cli.CliError) as ctx:
+            self.mark(500)
+        self.assertIn("750", str(ctx.exception))
+        self.assertEqual(manifest.load(RUN, self.base).last_reviewed_step, 750)
+
+    def test_non_integer_step_raises_cli_error(self):
+        with self.assertRaises(cli.CliError):
+            self.mark("abc")
+
+    def test_watch_after_marking_returns_running_not_new_samples(self):
+        self.write_local_samples(500, 12)  # full batch → reviewable
+        code, _out = self.watch_once()
+        self.assertEqual(code, contract.EXIT_NEW_SAMPLES)
+        self.mark(500)
+        code, out = self.watch_once()
+        self.assertEqual(code, contract.EXIT_RUNNING)
+        data = _json.loads(out)
+        self.assertEqual(data["last_reviewed_step"], 500)
+        self.assertEqual(data["reviewable_steps"], [])
+
+
+# ---------------------------------------------------------------------------
+# U8: main() error handling (#17, cli side) + sync fact preservation (#19)
+# ---------------------------------------------------------------------------
+
+
+class TestCliMainErrorHandling(unittest.TestCase):
+    """Transport-class failures exit 1 with the message, never a traceback."""
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="aitk-cli-err-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def main(self, argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = cli.main(argv)
+        return rc, err.getvalue()
+
+    def test_cli_error_path_exits_1_with_message(self):
+        # mark-reviewed on a missing manifest → CliError → exit 1
+        rc, err = self.main(["--base-dir", self.base,
+                             "mark-reviewed", "no_such_run", "100"])
+        self.assertEqual(rc, 1)
+        self.assertIn("[cli] ERROR:", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_runtime_error_from_command_exits_1_without_traceback(self):
+        with mock.patch.object(cli, "cmd_preflight",
+                               side_effect=RuntimeError("ssh transport flaked")):
+            rc, err = self.main(["--base-dir", self.base,
+                                 "preflight", "whatever.yaml"])
+        self.assertEqual(rc, 1)
+        self.assertIn("ssh transport flaked", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_timeout_expired_from_command_exits_1_without_traceback(self):
+        boom = subprocess.TimeoutExpired(cmd="ssh", timeout=30)
+        with mock.patch.object(cli, "cmd_preflight", side_effect=boom):
+            rc, err = self.main(["--base-dir", self.base,
+                                 "preflight", "whatever.yaml"])
+        self.assertEqual(rc, 1)
+        self.assertIn("[cli] ERROR:", err)
+        self.assertNotIn("Traceback", err)
+
+
+class TestCliSyncPreservesLaunchFacts(unittest.TestCase):
+    """#19: sync over a LIVE run must not clobber launch-time manifest facts."""
+
+    LAUNCH_FACTS = dict(
+        state=contract.RunState.RUNNING.value, job_name=RUN,
+        total_steps=4000, save_every=250, sample_every=250,
+        prompt_count=12, config_hash="oldhash")
+
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="aitk-cli-sync-test-")
+        manifest.save(make_manifest(pod_id="pod-1", **self.LAUNCH_FACTS),
+                      self.base)
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def fake_preflight(self, config, run_name=None, base_dir=".",
+                       allow_uncaptioned=False):
+        # simulate run_preflight's manifest overwrite with NEW config facts
+        m = manifest.load(run_name, base_dir)
+        m.state = contract.RunState.PREFLIGHTED.value
+        m.job_name = "renamed_job"
+        m.total_steps = 9000
+        m.save_every = 500
+        m.sample_every = 500
+        m.prompt_count = 4
+        m.config_hash = "newhash"
+        manifest.save(m, base_dir)
+        return mock.Mock(run_name=run_name, config_hash="newhash")
+
+    def sync(self):
+        args = cli.build_parser().parse_args(
+            ["--base-dir", self.base, "sync", "cfg.yaml", "--run-name", RUN])
+        err = io.StringIO()
+        with mock.patch.object(cli, "check_rsync"), \
+             mock.patch.object(cli.preflight_mod, "run_preflight",
+                               side_effect=self.fake_preflight), \
+             mock.patch.object(cli, "_sync") as sync_mock, \
+             contextlib.redirect_stderr(err):
+            rc = cli.cmd_sync(args)
+        return rc, err.getvalue(), sync_mock
+
+    def test_live_run_keeps_launch_facts_and_warns_next_launch(self):
+        rc, err, sync_mock = self.sync()
+        self.assertEqual(rc, 0)
+        sync_mock.assert_called_once()
+        self.assertIn("CONFIG DRIFT", err)
+        self.assertIn("next launch", err)
+        m = manifest.load(RUN, self.base)
+        for name, value in self.LAUNCH_FACTS.items():
+            self.assertEqual(getattr(m, name), value, name)
+
+    def test_non_live_run_takes_the_new_facts(self):
+        m = manifest.load(RUN, self.base)
+        m.state = contract.RunState.SYNCED.value
+        manifest.save(m, self.base)
+        rc, err, _sync_mock = self.sync()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("CONFIG DRIFT", err)
+        m = manifest.load(RUN, self.base)
+        self.assertEqual(m.total_steps, 9000)
+        self.assertEqual(m.config_hash, "newhash")
+        self.assertEqual(m.job_name, "renamed_job")
 
 
 if __name__ == "__main__":

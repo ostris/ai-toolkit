@@ -20,7 +20,7 @@ python scripts/remote/cli.py <subcommand>     # or: python -m scripts.remote.cli
 | Subcommand | What it does |
 |---|---|
 | `preflight <config>` | Validate config + dataset, write `runs/<run>/remote_config.yaml`. Local only. |
-| `provision <run>` | Create a pod (`--gpu/--gpu-fallback/--image/--disk-gb/--dry-run`), wait for SSH. |
+| `provision <run>` | Create a pod (`--gpu/--gpu-fallback/--image/--disk-gb/--dry-run`), wait for SSH. Refuses when the manifest already records a pod that is not GONE — use `status`/`down`/`rescue` on the existing pod, or `--force-new` to provision anyway. |
 | `sync <config>` | Upload dataset, ctrl images, derived config, self-stop tool, repo overlay. |
 | `launch <run>` | Guarded start (`--resume/--fresh/--max-hours/--max-grace`). |
 | `up <config>` | preflight → provision → sync → launch; tears the pod down on post-provision failure. |
@@ -31,6 +31,7 @@ python scripts/remote/cli.py <subcommand>     # or: python -m scripts.remote.cli
 | `down <run>` | Final pull → verify → ack → terminate (`--force` to skip verify). |
 | `attach <run>` | Rebuild watcher state in a fresh session. |
 | `rescue <run>` | Zero-GPU start a stopped pod, pull, verify, terminate. |
+| `mark-reviewed <run> <step>` | Advance the review watermark after reviewing samples. |
 
 ---
 
@@ -148,12 +149,19 @@ The full pipeline, with the existing skill at each stage:
    download Klein/Flux.2 weights for 20-60 minutes before step 1.
 6. **`watch --once --json` on a schedule** — see the polling pattern below.
 7. **`ai-toolkit-sample-reviewer`** on `output/<run>/samples/` whenever new
-   reviewable sample steps appear.
+   reviewable sample steps appear. Invoke it **once per new-steps batch**
+   (not one call per step) — serial montage-based review; parallel per-step
+   image-review subagents are a known failure mode. After each review, run
+   **`mark-reviewed <run> <step>`** with the highest step just reviewed —
+   this advances the watermark; without it `watch --once` re-reports the
+   same steps (exit 10) forever.
 8. **`stop <run>`** early if the reviewer's verdict is "done/overcooked" —
    the desired checkpoint is usually earlier than the final step.
 9. **`down <run>`** — final pull, verify, terminate, cost report.
 10. **Checkpoint pick** — non-monotonic trajectories: review 3+ late
-    checkpoints, never auto-pick the last save.
+    checkpoints, never auto-pick the last save. The JSON's
+    `pulled_checkpoint_steps` lists exactly which checkpoint steps are
+    already local to choose from.
 
 ### Polling pattern for multi-hour runs
 
@@ -176,23 +184,27 @@ This performs ONE status+pull cycle and prints one JSON object:
 | `disk_used_pct` | `/workspace` usage — keep-all checkpoints make disk-full a real risk |
 | `drift` | true when the local derived config no longer matches the launch hash |
 | `reviewable_steps` | sample steps with complete batches, newer than `last_reviewed_step` |
-| `last_reviewed_step` | watermark; update `runs/<run>/manifest.json` after reviewing |
+| `last_reviewed_step` | watermark; advance with `mark-reviewed <run> <step>` after reviewing |
 | `cost_estimate` | elapsed × hourly rate captured at provision |
+| `detail` | human-readable state explanation (crash code, stall, OOM count, drift) |
+| `log_tail_path` | absolute path to the mirrored log tail (`runs/<run>/log_tail.txt`); null until a pull mirrors it |
+| `pulled_checkpoint_steps` | sorted checkpoint steps already pulled into `output/<run>/` |
 | `exit_code` | mirrors the process exit code |
 
 ### Exit codes (the complete contract)
 
 | Code | State | Agent action |
 |---|---|---|
-| `0` | COMPLETED | run `down <run>` |
-| `3` | running, nothing new | sleep ~10 min, re-invoke |
-| `10` | new reviewable sample steps | run `ai-toolkit-sample-reviewer`, then re-invoke |
-| `20` | CRASHED | pod left up — read the traceback in the JSON/`runs/<run>/log_tail.txt`, diagnose, then `down` |
+| `0` | COMPLETED | run `down <run>`. TERMINATED also resolves exit 0 after a clean `down`/`rescue` teardown — the run is finished and fully accounted for. |
+| `3` | running, nothing new | sleep ~10 min, re-invoke. Also covers DEGRADED (inspect `oom_skips`/`state` in the JSON) and SAMPLING (normal during sample generation). |
+| `10` | new reviewable sample steps | run `ai-toolkit-sample-reviewer`, then `mark-reviewed <run> <step>`, then re-invoke |
+| `20` | CRASHED | pod left up — read `detail` and the file at `log_tail_path` in the JSON, diagnose, then `down` |
 | `21` | STOPPED | early stop landed; `down <run>` |
 | `22` | TIMED_OUT | max-runtime timer fired (or pod stopped with no sentinel); `rescue` then inspect |
 | `23` | UNKNOWN | pod running but tmux session gone, no sentinel — container restart or tmux death; ssh in to inspect |
 | `24` | POD_LOST | pod gone from the RunPod API; local mirrors under `runs/<run>/` are all that remain |
 | `1` | — | CLI error (bad args, missing manifest, API failure) on any command |
+| `2` | DOWN_FORCED_INCOMPLETE | `down --force` terminated with missing artifacts — the missing files were named; nothing more is pullable |
 
 Non-watch commands exit `0` on success, `1` on failure (`down` and `rescue`
 exit `1` specifically when artifact verification fails — the pod is stopped,
