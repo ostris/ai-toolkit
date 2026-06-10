@@ -2463,6 +2463,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     unet_module = self.sd.unet
                     unet_module.to = lambda *args, **kwargs: unet_module
 
+                # Compiled tensor-subclass weights (e.g. static mxfp8) can't survive a no-op
+                # `.to()` move (swap_tensors + compile's param weakref). Sampling does several
+                # redundant moves; guard `.to` on the unet (and its inner module) to skip them.
+                if str(getattr(self.model_config, "qtype", "") or "").startswith("mxfp8"):
+                    from toolkit.util.mxfp8_patch import install_noop_move_guard_recursive
+                    install_noop_move_guard_recursive(self.sd.unet)
             except Exception as e:
                 # undo any block-level compiles that happened before the failure,
                 # so "continuing without compilation" is actually true
