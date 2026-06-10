@@ -369,11 +369,14 @@ def _build_pod_env() -> dict:
 
 
 def _build_create_request(run_name: str, gpu_type_id: str, image: str,
-                          disk_gb: int, env: dict, cloud_type: str) -> dict:
+                          disk_gb: int, env: dict, cloud_type: str,
+                          gpu_count: int = 1) -> dict:
     return dict(
         name=f"aitk-{run_name}",
         image_name=image,
         gpu_type_id=gpu_type_id,
+        gpu_count=int(gpu_count),   # >1 => multi-GPU pod (launch.py runs
+                                    # `accelerate launch --num_processes N`)
         cloud_type=cloud_type,
         # Direct public-IP SSH is required: RunPod's proxy SSH cannot carry
         # rsync (R6).
@@ -439,12 +442,18 @@ def _pod_info_from_raw(pod_id: str, raw) -> PodInfo:
 # ---------------------------------------------------------------------------
 
 def create_pod(run_name, *, gpu_type=DEFAULT_GPU, image_tag=None, disk_gb,
-               env=None, gpu_fallback=(), cloud_type="SECURE", dry_run=False,
-               sdk=None) -> PodInfo:
+               env=None, gpu_fallback=(), gpu_count=1, cloud_type="SECURE",
+               dry_run=False, sdk=None) -> PodInfo:
     """Provision a pod (R6). Out-of-stock fails fast naming the GPU type;
     substitution only via the explicit `gpu_fallback` list (R7) — the
-    returned PodInfo.gpu_type reflects what was actually provisioned."""
+    returned PodInfo.gpu_type reflects what was actually provisioned.
+
+    gpu_count > 1 provisions a multi-GPU pod for data-parallel training;
+    launch.py then drives it with `accelerate launch --num_processes N`."""
     contract.validate_run_name(run_name)
+    gpu_count = int(gpu_count)
+    if gpu_count < 1:
+        raise PodError(f"gpu_count must be >= 1, got {gpu_count}")
     image = image_tag or os.environ.get("AITK_REMOTE_IMAGE") or DEFAULT_IMAGE_TAG
     pod_env = _build_pod_env()
     if env:
@@ -459,7 +468,7 @@ def create_pod(run_name, *, gpu_type=DEFAULT_GPU, image_tag=None, disk_gb,
 
     if dry_run:
         request = _build_create_request(run_name, attempts[0], image, disk_gb,
-                                        pod_env, cloud_type)
+                                        pod_env, cloud_type, gpu_count)
         print("create_pod --dry-run: request that WOULD be sent (no API call):")
         print(json.dumps(_redacted_request(request), indent=2, sort_keys=True))
         if len(attempts) > 1:
@@ -470,7 +479,7 @@ def create_pod(run_name, *, gpu_type=DEFAULT_GPU, image_tag=None, disk_gb,
     out_of_stock = []
     for gpu_type_id in attempts:
         request = _build_create_request(run_name, gpu_type_id, image, disk_gb,
-                                        pod_env, cloud_type)
+                                        pod_env, cloud_type, gpu_count)
         try:
             created = _sdk_create_pod(sdk, request)
         except Exception as e:  # noqa: BLE001 — SDK raises plain exceptions

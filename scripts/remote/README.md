@@ -288,7 +288,27 @@ real pod (~$1-2 on the cheapest GPU):
 | RTX 4090 24GB (validation runs) | ~$0.69/hr | ~$4 |
 
 Rates drift; the actual rate is captured at provision time into the manifest
-and `status`/`down` report estimated cost from it.
+and `status`/`down` report estimated cost from it. `--gpus N` provisions N of
+the chosen GPU and bills ~N× the rate above.
+
+### Multiple GPUs (`--gpus N`)
+
+`provision`/`up` accept `--gpus N` (default 1). N>1 provisions an N-GPU pod
+and trains data-parallel via `accelerate launch --multi_gpu
+--num_processes N` (ai-toolkit's run.py is built for it; rank-0 still owns
+the single loss db, samples dir, and checkpoints). Tradeoffs to know:
+
+- **Effective batch scales ~N×** — the dataset is seen ~N× faster per step,
+  so step counts/LR tuned for 1 GPU over-train. Cut `train.steps` ~N×
+  (launch warns when `gpu_count > 1`).
+- **No per-GPU VRAM savings** — every GPU holds a full frozen base model;
+  all N must be 80GB+.
+- **Sublinear speedup, ~N× cost** — the frozen-base forward dominates, so
+  it's faster but not N×. Worth it for long runs, not a 100-step job.
+- The `accelerate` flag set is conservative (`--mixed_precision no
+  --dynamo_backend no`); override with the `AITK_ACCELERATE_ARGS` env var.
+  Single-GPU is the fully live-validated path; the multi-GPU `accelerate`
+  invocation is validated on your first real N>1 run.
 
 **The cost dead-man design** — laptop sleep can never cause unbounded spend:
 

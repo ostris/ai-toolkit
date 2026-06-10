@@ -299,6 +299,31 @@ class TestWrapperScript(unittest.TestCase):
         self.assertIn("SECONDS + 900", script)
         self.assertNotIn("SECONDS + 1800", script)
 
+    def test_single_gpu_uses_plain_python(self):
+        # default gpu_count=1 -> the fully-validated python run.py path
+        m = make_manifest()
+        self.assertEqual(getattr(m, "gpu_count", 1), 1)
+        script = launch.build_wrapper_script(m, 1800)
+        self.assertIn("python run.py", script)
+        self.assertNotIn("accelerate launch", script)
+
+    def test_multi_gpu_uses_accelerate_launch(self):
+        m = make_manifest(gpu_count=4)
+        script = launch.build_wrapper_script(m, 1800)
+        self.assertIn("accelerate launch --multi_gpu --num_processes 4", script)
+        # the trainer line is accelerate, not a bare python invocation
+        train_line = next(l for l in script.splitlines() if "run.py" in l)
+        self.assertIn("accelerate launch", train_line)
+        self.assertNotIn("python run.py", train_line)
+        # rank-0-only artifact writes still hold (sentinel mechanics unchanged)
+        self.assertIn('echo "$code" >', script)
+
+    def test_accelerate_args_overridable_via_env(self):
+        m = make_manifest(gpu_count=2)
+        with mock.patch.dict(os.environ, {"AITK_ACCELERATE_ARGS": "--main_process_port 29999"}):
+            script = launch.build_wrapper_script(m, 1800)
+        self.assertIn("--main_process_port 29999", script)
+
     def test_no_provider_strings_in_launch_source(self):
         with open(launch.__file__, "r") as f:
             src = f.read()

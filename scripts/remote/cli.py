@@ -267,6 +267,9 @@ def _provision(run_name: str, args, base_dir: str):
                 "provision a second pod that would bill in parallel. Use "
                 "`status` to inspect it, `down`/`rescue` to tear it down, "
                 "or pass --force-new to provision anyway.")
+    gpu_count = int(getattr(args, "gpus", 1) or 1)
+    if gpu_count < 1:
+        raise CliError(f"--gpus must be >= 1, got {gpu_count}")
     disk_gb = args.disk_gb
     if disk_gb is None:
         if not (m.total_steps and m.save_every):
@@ -281,15 +284,16 @@ def _provision(run_name: str, args, base_dir: str):
         pod.validate_stop_key()
     info = pod.create_pod(run_name, gpu_type=args.gpu, image_tag=args.image,
                           disk_gb=disk_gb, gpu_fallback=gpu_fallback,
-                          dry_run=args.dry_run)
+                          gpu_count=gpu_count, dry_run=args.dry_run)
     if args.dry_run:
         print(f"[provision] dry run for '{run_name}' "
-              f"(disk {disk_gb} GB) — no pod created")
+              f"({gpu_count} GPU(s), disk {disk_gb} GB) — no pod created")
         return None, disk_gb
     m.pod_id = info.pod_id
     m.image_tag = (args.image or os.environ.get("AITK_REMOTE_IMAGE")
                    or pod.DEFAULT_IMAGE_TAG)
     m.gpu_requested = pod.resolve_gpu_type(args.gpu)
+    m.gpu_count = gpu_count
     m.disk_gb = int(disk_gb)
     m.provisioned_at = time.time()
     m.state = contract.RunState.PROVISIONING.value
@@ -306,7 +310,8 @@ def _provision(run_name: str, args, base_dir: str):
     m.state = contract.RunState.POD_READY.value
     manifest.save(m, base_dir)
     rate = f"${info.hourly_rate:.2f}/hr" if info.hourly_rate else "rate unknown"
-    print(f"[provision] pod {info.pod_id} ready: {info.gpu_type} ({rate}), "
+    gpu_s = f"{gpu_count}x {info.gpu_type}" if gpu_count > 1 else info.gpu_type
+    print(f"[provision] pod {info.pod_id} ready: {gpu_s} ({rate}), "
           f"disk {disk_gb} GB, ssh root@{info.ssh_host} -p {info.ssh_port}")
     return info.pod_id, disk_gb
 
@@ -525,6 +530,10 @@ def _add_provision_args(p):
     p.add_argument("--gpu-fallback", action="append", default=[],
                    help="fallback GPU type tried when --gpu is out of stock "
                         "(repeatable, ordered)")
+    p.add_argument("--gpus", type=int, default=1, metavar="N",
+                   help="number of GPUs on the pod (default: 1). N>1 trains "
+                        "data-parallel via `accelerate launch`; effective "
+                        "batch scales ~Nx, so cut train.steps ~Nx to match")
     p.add_argument("--image", default=None,
                    help="ostris/aitoolkit image tag (default: "
                         "$AITK_REMOTE_IMAGE or the pinned default)")

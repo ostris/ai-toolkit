@@ -99,6 +99,24 @@ class TestCreatePod(PodTestBase):
         pod.create_pod("r1", disk_gb=80, sdk=sdk)
         self.assertIs(sdk.create_pod.call_args.kwargs["support_public_ip"], True)
 
+    def test_gpu_count_defaults_to_one(self):
+        sdk = mock.MagicMock()
+        sdk.create_pod.return_value = {"id": "pod123"}
+        sdk.get_pod.return_value = RAW_READY_POD
+        pod.create_pod("r1", disk_gb=80, sdk=sdk)
+        self.assertEqual(sdk.create_pod.call_args.kwargs["gpu_count"], 1)
+
+    def test_gpu_count_passed_to_request(self):
+        sdk = mock.MagicMock()
+        sdk.create_pod.return_value = {"id": "pod123"}
+        sdk.get_pod.return_value = RAW_READY_POD
+        pod.create_pod("r1", disk_gb=80, gpu_count=4, sdk=sdk)
+        self.assertEqual(sdk.create_pod.call_args.kwargs["gpu_count"], 4)
+
+    def test_gpu_count_below_one_rejected(self):
+        with self.assertRaises(pod.PodError):
+            pod.create_pod("r1", disk_gb=80, gpu_count=0, sdk=mock.MagicMock())
+
     def test_invalid_run_name_rejected_before_any_call(self):
         sdk = mock.MagicMock()
         with self.assertRaises(ValueError):

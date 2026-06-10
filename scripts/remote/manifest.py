@@ -50,6 +50,7 @@ class RunManifest:
     image_repo_commit: str = None
     gpu_requested: str = None
     gpu_provisioned: str = None
+    gpu_count: int = 1          # >1 => multi-GPU pod, launched via accelerate
     hourly_rate: float = None
     disk_gb: int = None
     provisioned_at: float = None      # epoch seconds

@@ -84,6 +84,33 @@ RunPod ids.
 
 A 3000-step Klein run on MaxQ is roughly **$2.50**.
 
+### Multiple GPUs (`--gpus N`)
+
+`--gpus N` (on `provision` / `up`) provisions an N-GPU pod and trains
+data-parallel via `accelerate launch --multi_gpu --num_processes N` instead
+of plain `python run.py` (ai-toolkit's run.py is built for this — model,
+LoRA network, and optimizer are `accelerator.prepare()`'d, and
+sampling/saving/logging are rank-0-guarded, so there's still one
+`loss_log.db`, one samples dir, one set of checkpoints). Default is 1 GPU
+(the fully-validated path).
+
+Three things to tell the user before using it:
+
+- **Effective batch scales ~Nx** — the dataset is seen ~N× faster per step,
+  so step counts/LR tuned for 1 GPU will OVER-train. Cut `train.steps`
+  roughly N× (launch prints this warning when `gpu_count > 1`).
+- **No per-GPU VRAM savings** — each GPU holds a full frozen base model, so
+  all N GPUs must be 80GB+ (MaxQ/A100 fine).
+- **Sublinear speedup** — the frozen-base forward dominates, so 4 GPUs is
+  faster but not 4×; it costs ~N× the hourly rate. Worth it for long runs or
+  when wall-clock matters, not for a quick 100-step job.
+
+The exact `accelerate launch` flag set is conservative (`--mixed_precision
+no --dynamo_backend no`, letting ai-toolkit own dtype/compile) and is the
+**one piece validated only on the first real multi-GPU run** — override via
+the `AITK_ACCELERATE_ARGS` env var if a pod needs different flags. Single-GPU
+(the default) is fully live-validated.
+
 ## What "up" actually does (so you can narrate it / debug it)
 
 1. **preflight** (again, idempotent) — derived config + hash into the manifest.

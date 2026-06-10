@@ -34,6 +34,7 @@ class TestManifestRoundTrip(unittest.TestCase):
             image_repo_commit="deadbeef",
             gpu_requested="A100 80GB",
             gpu_provisioned="A100 80GB",
+            gpu_count=4,
             hourly_rate=1.89,
             disk_gb=90,
             provisioned_at=1000.0,
