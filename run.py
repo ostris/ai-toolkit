@@ -38,6 +38,7 @@ import argparse
 from toolkit.job import get_job
 from toolkit.accelerator import get_accelerator
 from toolkit.print import print_acc, setup_log_to_file
+from jobs.exceptions import JobReturnedToQueueException, JobStoppedException
 
 accelerator = get_accelerator()
 
@@ -111,6 +112,14 @@ def main():
             job.run()
             job.cleanup()
             jobs_completed += 1
+        except (JobReturnedToQueueException, JobStoppedException) as e:
+            print_acc(str(e))
+            try:
+                job.process[0].on_error(e)
+            except Exception as e2:
+                print_acc(f"Error running cleanup: {e2}")
+            finally:
+                job.cleanup()
         except Exception as e:
             print_acc(f"Error running job: {e}")
             jobs_failed += 1
@@ -118,6 +127,8 @@ def main():
                 job.process[0].on_error(e)
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
+            finally:
+                job.cleanup()
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
@@ -126,6 +137,8 @@ def main():
                 job.process[0].on_error(e)
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
+            finally:
+                job.cleanup()
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e

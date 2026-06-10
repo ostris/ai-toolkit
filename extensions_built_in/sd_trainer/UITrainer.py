@@ -8,6 +8,7 @@ from typing import Literal, Optional
 import threading
 import time
 import signal
+from jobs.exceptions import JobReturnedToQueueException, JobStoppedException
 
 AITK_Status = Literal["running", "stopped", "error", "completed"]
 
@@ -132,12 +133,12 @@ class UITrainer(SDTrainer):
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
-            raise Exception("Job stopped")
+            raise JobStoppedException("Job stopped")
         if self.should_return_to_queue():
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
-            raise Exception("Job returning to queue")
+            raise JobReturnedToQueueException("Job returning to queue")
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:

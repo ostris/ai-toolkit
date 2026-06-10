@@ -78,6 +78,7 @@ export interface SaveConfig {
   dtype: string;
   save_every: number;
   max_step_saves_to_keep: number;
+  rolling_pause: number;
   save_format: string;
   push_to_hub: boolean;
 }
