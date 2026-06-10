@@ -241,8 +241,14 @@ not terminated, and the missing artifacts are named).
 > `-rlptz`), the self-stop script could not see `RUNPOD_POD_ID`/
 > `RUNPOD_STOP_KEY` from a tmux shell (now bridged from `/proc/1/environ` —
 > this one idle-billed a finished pod for hours), and the remote loss query
-> used the wrong metric key + a fragile WAL read-only open. The
-> `resume_pod(gpu_count=0)` rescue shape remains unverified live.
+> used the wrong metric key + a fragile WAL read-only open.
+>
+> **Follow-up validation (same day):** with a Restricted key carrying
+> `api.runpod.io/graphql: Read/Write`, the full chain now passes live —
+> self-stop fired from a tmux shell (pod EXITED in <15s via the GraphQL
+> fallback after REST 401), and the rescue leg (`resume_pod(gpu_count=0)`
+> zero-GPU start → endpoint re-resolution → ssh) succeeded. Every
+> UNCERTAIN SDK call shape is now verified. The gate is fully closed.
 
 Before trusting unattended runs, execute the plan's U5 gate once against a
 real pod (~$1-2 on the cheapest GPU):
