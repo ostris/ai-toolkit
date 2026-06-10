@@ -27,6 +27,7 @@ name or by their `description` triggers.
 
 | Stage | Skill | Use when |
 |---|---|---|
+| **Orchestrator** | `ai-toolkit-train` | "walk me through training" — guides the full lifecycle, invoking every skill below at the right step with go/no-go gates between stages |
 | Config | `ai-toolkit-lora-config` | "train a LoRA on X" — generates the training YAML |
 | Config (Klein) | `flux2-klein-lora-config`* | Flux.2 Klein-specific config recipe |
 | Captioning | `ai-toolkit-gemini-captioner` | generate per-dataset Gemini captions |
@@ -47,6 +48,15 @@ model-training methodology and run locally regardless of where training
 executes.
 
 ## Typical end-to-end (RunPod)
+
+The easiest entry point is the orchestrator — it runs the whole sequence
+below with a checkpoint between each stage:
+
+```
+ai-toolkit-train                  # "walk me through training" — conducts all of the below
+```
+
+Or drive the stages yourself:
 
 ```
 ai-toolkit-lora-config            # generate config from reference images
