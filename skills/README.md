@@ -29,18 +29,20 @@ name or by their `description` triggers.
 |---|---|---|
 | **Orchestrator** | `ai-toolkit-train` | "walk me through training" — guides the full lifecycle, invoking every skill below at the right step with go/no-go gates between stages |
 | Config | `ai-toolkit-lora-config` | "train a LoRA on X" — generates the training YAML |
-| Config (Klein) | `flux2-klein-lora-config`* | Flux.2 Klein-specific config recipe |
 | Captioning | `ai-toolkit-gemini-captioner` | generate per-dataset Gemini captions |
 | Caption QA | `style-vs-content-caption-auditor` | audit captions for leakage before training |
 | Dataset triage | `ai-toolkit-dataset-diagnostics` | "no images found", crashes before step 0, stale cache |
 | DOP tuning | `dop-class-advisor`* | pick `diff_output_preservation_class` |
-| **Remote launch** | `ai-toolkit-remote-launch` | "train this on RunPod" — preflight + provision + sync + launch |
+| **Remote launch** | `ai-toolkit-remote-launch` | "train this on RunPod" — preflight + provision + sync + launch (incl. `--gpus N` multi-GPU) |
 | **Remote monitor** | `ai-toolkit-remote-monitor` | "check on my run" — watch loop, pull, drive review |
 | **Remote teardown** | `ai-toolkit-remote-teardown` | "tear it down" / "is anything still billing" |
 | Review | `ai-toolkit-sample-reviewer` | "review my samples / pick a checkpoint" |
 
-\* `flux2-klein-lora-config` and `dop-class-advisor` are model-/parameter-
-specific helpers; the rest form the universal path.
+\* `dop-class-advisor` is a parameter-specific helper; the rest form the
+universal path. Model-specific config skills like `flux2-klein-lora-config`
+are **not bundled here** — they live in the maintainer's global
+`~/.claude/skills/`; `ai-toolkit-lora-config` covers config generation for
+all models in this set.
 
 The three **remote** skills wrap `scripts/remote/cli.py` (the hosted-GPU
 pipeline — see `scripts/remote/README.md`). The remaining skills are

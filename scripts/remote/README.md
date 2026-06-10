@@ -152,7 +152,9 @@ existing review tooling works unchanged. Run state lives in
 
 ## 4. The agentic loop (how Claude Code drives it)
 
-The full pipeline, with the existing skill at each stage:
+The easiest entry point is the **`ai-toolkit-train`** orchestrator skill —
+it conducts the whole sequence below, stopping at a go/no-go gate between
+each stage. The steps it runs, with the skill at each stage:
 
 1. **`ai-toolkit-lora-config`** — produce the training YAML from reference
    images and a goal.
@@ -281,11 +283,21 @@ real pod (~$1-2 on the cheapest GPU):
 
 ## 6. Cost
 
-| GPU (Secure Cloud, on-demand) | ~Rate | 6h run |
-|---|---|---|
-| A100 80GB PCIe (default) | ~$1.89/hr | ~$11 |
-| H100 80GB | ~$2.99/hr | ~$18 |
-| RTX 4090 24GB (validation runs) | ~$0.69/hr | ~$4 |
+| GPU (alias) | VRAM | ~Rate | 6h run |
+|---|---|---|---|
+| `MAXQ` — RTX PRO 6000 Blackwell Max-Q (**recommended**) | 96G | ~$0.50/hr | ~$3 |
+| `PRO 6000` / `PRO 6000 WK` | 96G | ~$1.9–2.1/hr | ~$12 |
+| `A100` — A100 80GB PCIe (current CLI default) | 80G | ~$1.39/hr | ~$8 |
+| `A100 SXM` | 80G | ~$1.49/hr | ~$9 |
+| `H100` — H100 80GB SXM | 80G | ~$3.29/hr | ~$20 |
+| `4090` — RTX 4090 (cheap validation runs, 24G only) | 24G | ~$0.34–0.69/hr | ~$3 |
+
+Select with `--gpu <alias>` (full alias list in `scripts/remote/pod.py`;
+unknown names pass through as exact RunPod ids). **MaxQ (96GB, ~$0.50/hr) is
+the cheapest 80GB+ card** and the recommended choice — a 3000-step Klein run
+is ~$2.50. The CLI's built-in default is still `A100`; pass `--gpu MAXQ`
+(with `--gpu-fallback "A100"` since any single type is often out of stock).
+RTX 4090's 24GB can't hold Klein/Flux.2 unquantized — validation only.
 
 Rates drift; the actual rate is captured at provision time into the manifest
 and `status`/`down` report estimated cost from it. `--gpus N` provisions N of
