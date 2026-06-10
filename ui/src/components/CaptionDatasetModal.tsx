@@ -4,7 +4,7 @@ import { Modal } from '@/components/Modal';
 import { createGlobalState } from 'react-global-hooks';
 import { useFromNull } from '@/hooks/useFromNull';
 import { CaptionJobConfig } from '@/types';
-import { defaultCaptionJobConfig } from '@/helpers/captionJobConfig';
+import { defaultCaptionJobConfig, fallbackCaptionJobConfig } from '@/helpers/captionJobConfig';
 import { objectCopy } from '@/utils/basic';
 import { useNestedState } from '@/utils/hooks';
 import { isMac } from '@/helpers/basic';
@@ -44,7 +44,7 @@ export const openCaptionDatasetModal = (
 
 export const CaptionDatasetModal: React.FC = () => {
   const [modalInfo, setModalInfo] = captionDatasetModalState.use();
-  const [jobConfig, setJobConfig] = useNestedState<CaptionJobConfig>(objectCopy(defaultCaptionJobConfig));
+  const [jobConfig, setJobConfig] = useNestedState<CaptionJobConfig>(objectCopy(fallbackCaptionJobConfig));
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
   const [existingJobName, setExistingJobName] = useState<string | null>(null);
   const [hasLoadedExistingJob, setHasLoadedExistingJob] = useState(false);
@@ -58,19 +58,31 @@ export const CaptionDatasetModal: React.FC = () => {
   const showLoadingOverlay = isLoadingExistingJob || isSaving;
 
   useFromNull(() => {
-    // reset the state
-    setJobConfig(objectCopy(defaultCaptionJobConfig));
     setActiveTab('simple');
     setExistingJobName(null);
-    // set the path_to_caption
-    if (modalInfo?.datasetPath) {
+
+    if (!modalInfo?.datasetPath) {
+      return;
+    }
+
+    let isActive = true;
+
+    defaultCaptionJobConfig(modalInfo.datasetPath).then(defaultConfig => {
+      if (!isActive) {
+        return;
+      }
+
+      setJobConfig(objectCopy(defaultConfig));
       setJobConfig(modalInfo.datasetPath, 'config.process[0].caption.path_to_caption');
-    }
-    // default the caption extension to the current header selection. Editing it
-    // here only changes this job, not the header (separate state).
-    if (modalInfo?.defaultCaptionExt) {
-      setJobConfig(modalInfo.defaultCaptionExt, 'config.process[0].caption.caption_extension');
-    }
+
+      if (modalInfo.defaultCaptionExt) {
+        setJobConfig(modalInfo.defaultCaptionExt, 'config.process[0].caption.caption_extension');
+      }
+    });
+
+    return () => {
+      isActive = false;
+    };
   }, [modalInfo]);
 
   // clone existing caption job
