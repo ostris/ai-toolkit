@@ -460,6 +460,7 @@ def default_ssh_probe(host: str, port: int) -> bool:
         "-p", str(port),
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new",
+        "-o", f"UserKnownHostsFile={contract.SSH_KNOWN_HOSTS_FILE}",
         "-o", "ConnectTimeout=10",
         f"root@{host}",
         "rsync --version",

@@ -499,7 +499,8 @@ def scan_dataset(folder: str, check_captions: bool = True) -> DatasetReport:
 # ---------------------------------------------------------------------------
 
 def derived_config_path(run_name: str, base_dir: str = ".") -> str:
-    return os.path.join(contract.local_run_dir(run_name, base_dir), 'remote_config.yaml')
+    return os.path.join(contract.local_run_dir(run_name, base_dir),
+                        contract.DERIVED_CONFIG_FILE)
 
 
 def dump_derived_config(config: dict, path: str) -> str:
@@ -543,6 +544,15 @@ def run_preflight(config_path: str, run_name: str = None, base_dir: str = ".",
         config = replace_name_tag(config, job_name)
     validate_structure(config)
     job_name = config['config']['name']
+
+    # The job name flows into remote paths, the checkpoint grammar, and
+    # root-executed shell strings exactly like the run name — validate it
+    # UNCONDITIONALLY (#12), even when --run-name supplied a valid override.
+    try:
+        contract.validate_run_name(job_name)
+    except ValueError as e:
+        raise PreflightError(
+            f"config.name is not usable as a job name: {e}") from None
 
     derived = copy.deepcopy(config)
     warnings = []

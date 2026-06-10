@@ -445,6 +445,16 @@ class TestRunNameGuard(PreflightTestCase):
                         run_name="bad$name")
         self.assertIn("invalid run name", str(ctx.exception))
 
+    def test_config_name_validated_even_with_valid_run_name_override(self):
+        # config.name flows into remote paths + shell strings like the run
+        # name does; a valid --run-name must NOT bypass its validation (#12)
+        config = self.balfua_like_config(name="bad name")
+        with self.assertRaises(preflight.PreflightError) as ctx:
+            self.run_pf(self.write_config(config), run_name="good_run")
+        msg = str(ctx.exception)
+        self.assertIn("config.name", msg)
+        self.assertIn("invalid run name", msg)
+
 
 class TestHubPushWarning(PreflightTestCase):
     def test_push_to_hub_true_warns(self):

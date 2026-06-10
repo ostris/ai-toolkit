@@ -41,7 +41,7 @@ from dataclasses import dataclass, field
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from scripts.remote import contract, launch, manifest, monitor, pod, transport
+from scripts.remote import contract, manifest, monitor, pod, transport
 from scripts.remote.manifest import RunManifest
 from scripts.remote.transport import Endpoint
 
@@ -58,14 +58,6 @@ RESCUE_VERIFY_FAILED = 1
 RESCUE_ENDPOINT_TIMEOUT_S = 600
 RESCUE_ENDPOINT_POLL_S = 10
 
-# States that mean "the run still looks alive" — used to hold STOPPED across
-# the post-kill settle window (the wrapper has not written exit_code yet).
-_LIVE_STATES = {
-    contract.RunState.RUNNING.value,
-    contract.RunState.SAMPLING.value,
-    contract.RunState.DEGRADED.value,
-    contract.RunState.UNKNOWN.value,
-}
 
 
 class LifecycleError(RuntimeError):
@@ -203,7 +195,7 @@ def stop_run(run_name: str, *, base_dir: str = ".", sdk=None,
 
     # Kill the trainer PROCESS only. The [r] bracket keeps the pattern from
     # matching the ssh-side shell that carries it. No tmux kill-session, ever.
-    pattern = launch._trainer_pkill_pattern(run_name)
+    pattern = contract.trainer_pkill_pattern(run_name)
     res = transport.ssh_run(ep, f"pkill -f {contract.shell_quote(pattern)}",
                             runner=runner)
     if res.returncode not in (0, 1):  # 1 = nothing matched (already exited)
@@ -227,7 +219,8 @@ def stop_run(run_name: str, *, base_dir: str = ".", sdk=None,
     # resolves a live-looking state — hold STOPPED so the eventual sentinel
     # read still maps to STOPPED.
     m = manifest.load(run_name, base_dir)
-    if m.state in _LIVE_STATES:
+    # SETTLE_STATES: the wrapper may not have written exit_code yet.
+    if m.state in contract.SETTLE_STATES:
         m.state = contract.RunState.STOPPED.value
         manifest.save(m, base_dir)
         report.state = contract.RunState.STOPPED.value

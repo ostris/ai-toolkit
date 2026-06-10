@@ -306,6 +306,10 @@ class TestWaitForReady(PodTestBase):
         self.assertIn("10422", cmd)
         self.assertIn("root@1.2.3.4", cmd)
         self.assertIn("rsync --version", cmd)
+        # pipeline-private known-hosts file shared with transport (#13):
+        # RunPod recycles IP:port pairs, the global known_hosts would
+        # hard-fail later pods in BatchMode
+        self.assertIn(f"UserKnownHostsFile={contract.SSH_KNOWN_HOSTS_FILE}", cmd)
 
 
 class TestStopTerminateRescue(PodTestBase):

@@ -102,14 +102,9 @@ def _self_stop_snippet() -> str:
     return "\n".join(lines).strip("\n")
 
 
-def _trainer_pkill_pattern(run_name: str) -> str:
-    """Pattern matching the trainer process for this run only.
-
-    The [r] bracket trick keeps the pattern from matching the very shell that
-    pgrep/pkill runs inside over ssh (whose command line contains the pattern
-    verbatim) while still matching the real `python run.py ...<run>` process.
-    """
-    return f"[r]un.py.*{run_name}"
+# Canonical home is contract.trainer_pkill_pattern (shared with lifecycle);
+# thin private alias kept for this module's internal call sites.
+_trainer_pkill_pattern = contract.trainer_pkill_pattern
 
 
 def build_wrapper_script(m: RunManifest,
@@ -341,6 +336,36 @@ def launch_run(run_name: str, *, ep: Endpoint, resume: bool = False,
     # --- pre-launch guards (R10) ------------------------------------------
     _guard_not_running(ep, run_name, runner=runner)
     _guard_checkpoints(ep, m, resume=resume, fresh=fresh, now=now, runner=runner)
+
+    # --- fresh start: invalidate all pull/review progress (#2) -------------
+    # The remote output dir was moved aside by the guard; the LOCAL mirror and
+    # the manifest watermarks describe the OLD attempt and must reset too, or
+    # the first pull of the new run would skip everything below the old marks.
+    if fresh:
+        m.last_pulled_sample_step = 0
+        m.last_pulled_checkpoint_step = 0
+        m.last_reviewed_step = 0
+        m.optimizer_pairing_step = None
+        local_out = contract.local_output_dir(run_name, base_dir)
+        if os.path.isdir(local_out):
+            os.rename(local_out, f"{local_out}.old.{int(now)}")
+
+    # --- clear stale sentinels + rotate the prior log (#8) ------------------
+    # A relaunch over leftovers would otherwise resolve instantly as
+    # COMPLETED/CRASHED/TIMED_OUT from the previous attempt's sentinels, and
+    # early_tail could match an OLD traceback (toolkit/print.py opens the log
+    # in append mode).
+    sentinel_paths = [contract.remote_sentinel_path(run_name, s)
+                      for s in (contract.EXIT_CODE_FILE, contract.TIMED_OUT_FILE,
+                                contract.PULLED_OK_FILE)]
+    _check(transport.ssh_run(
+        ep, "rm -f " + " ".join(q(p) for p in sentinel_paths), runner=runner),
+        "clearing stale sentinels")
+    log_path = contract.remote_log_path(run_name)
+    _check(transport.ssh_run(
+        ep, f"if [ -f {q(log_path)} ]; then mv {q(log_path)} "
+            f"{q(f'{log_path}.{int(now)}')}; fi", runner=runner),
+        "rotating remote log")
 
     # --- generate + upload the wrapper and timer as files ------------------
     run_root = contract.remote_run_root(run_name)

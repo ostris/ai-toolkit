@@ -321,9 +321,7 @@ def _sync(result, args, base_dir: str) -> None:
     m.overlay_git_sha = facts.get("overlay_git_sha")
     m.overlay_dirty_hash = facts.get("overlay_dirty_hash")
     m.image_repo_commit = facts.get("image_repo_commit")
-    live = {s.value for s in (contract.RunState.RUNNING, contract.RunState.SAMPLING,
-                              contract.RunState.DEGRADED)}
-    if m.state not in live:
+    if m.state not in contract.LIVE_STATES:
         m.state = contract.RunState.SYNCED.value
     manifest.save(m, base_dir)
     print(f"[sync] overlay uploaded (local {facts.get('overlay_git_sha')}, "
@@ -347,9 +345,7 @@ def cmd_sync(args) -> int:
     result = preflight_mod.run_preflight(
         args.config, run_name=run_name, base_dir=args.base_dir,
         allow_uncaptioned=args.allow_uncaptioned)
-    live = {s.value for s in (contract.RunState.RUNNING, contract.RunState.SAMPLING,
-                              contract.RunState.DEGRADED)}
-    if old_state in live and old_hash and result.config_hash != old_hash:
+    if old_state in contract.LIVE_STATES and old_hash and result.config_hash != old_hash:
         _warn(f"CONFIG DRIFT: run '{result.run_name}' is {old_state} on the "
               "pod with a DIFFERENT config than this sync just derived — the "
               "running trainer keeps its old config; relaunch to apply changes")

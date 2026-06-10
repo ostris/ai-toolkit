@@ -177,17 +177,21 @@ class TestLaunchGuards(LaunchBase):
         runner = DispatchRunner(launch_handlers(ckpt_stdout=listing, ckpt_rc=0))
         result = self.launch(runner, resume=True)
         self.assertEqual(result.outcome, "running")
-        self.assertEqual(runner.commands("mv "), [])  # checkpoints untouched
+        # checkpoints untouched: no mv of the job dir (log rotation is the
+        # only mv and never touches the output dir)
+        job_dir_mvs = [c for c in runner.commands("mv ")
+                       if JOB_DIR in " ".join(str(x) for x in c)]
+        self.assertEqual(job_dir_mvs, [])
         self.assertTrue(runner.commands("tmux new-session"))
 
     def test_fresh_moves_output_dir_aside_before_launch(self):
         listing = f"{JOB_DIR}/{RUN}_000001000.safetensors\n"
         runner = DispatchRunner(launch_handlers(ckpt_stdout=listing, ckpt_rc=0))
         self.launch(runner, fresh=True)
-        mv_calls = runner.commands("mv ")
+        mv_calls = [c for c in runner.commands("mv ")
+                    if JOB_DIR in " ".join(str(x) for x in c)]
         self.assertEqual(len(mv_calls), 1)
         mv_joined = " ".join(mv_calls[0])
-        self.assertIn(JOB_DIR, mv_joined)
         self.assertIn(f".old.{int(NOW)}", mv_joined)
         self.assertLess(runner.first_index("mv "),
                         runner.first_index("tmux new-session"))
@@ -196,6 +200,61 @@ class TestLaunchGuards(LaunchBase):
         runner = DispatchRunner(launch_handlers())
         with self.assertRaises(launch.LaunchError):
             self.launch(runner, resume=True, fresh=True)
+
+    def test_fresh_resets_watermarks_and_moves_local_output_aside(self):
+        # the manifest carries progress from the OLD attempt (#2)
+        m = manifest.load(RUN, self.base)
+        m.last_pulled_sample_step = 500
+        m.last_pulled_checkpoint_step = 500
+        m.last_reviewed_step = 250
+        m.optimizer_pairing_step = 500
+        manifest.save(m, self.base)
+        local_out = contract.local_output_dir(RUN, self.base)
+        os.makedirs(local_out)
+        with open(os.path.join(local_out, "old_artifact.txt"), "w") as f:
+            f.write("from the previous attempt")
+
+        listing = f"{JOB_DIR}/{RUN}_000001000.safetensors\n"
+        runner = DispatchRunner(launch_handlers(ckpt_stdout=listing, ckpt_rc=0))
+        self.launch(runner, fresh=True)
+
+        m2 = manifest.load(RUN, self.base)
+        self.assertEqual(m2.last_pulled_sample_step, 0)
+        self.assertEqual(m2.last_pulled_checkpoint_step, 0)
+        self.assertEqual(m2.last_reviewed_step, 0)
+        self.assertIsNone(m2.optimizer_pairing_step)
+        # local mirror moved aside, not deleted
+        self.assertFalse(os.path.exists(local_out))
+        aside = f"{local_out}.old.{int(NOW)}"
+        self.assertTrue(os.path.isdir(aside))
+        self.assertTrue(os.path.exists(
+            os.path.join(aside, "old_artifact.txt")))
+
+
+class TestLaunchPreSpawnCleanup(LaunchBase):
+    def test_sentinels_cleared_and_log_rotated_before_spawn(self):
+        runner = DispatchRunner(launch_handlers())
+        self.launch(runner)
+        # sentinel rm: all three paths in one rm -f, before the tmux spawn
+        rm_idx = runner.first_index("rm -f")
+        self.assertIsNotNone(rm_idx)
+        rm_joined = " ".join(str(x) for x in runner.calls[rm_idx])
+        for sentinel in (contract.EXIT_CODE_FILE, contract.TIMED_OUT_FILE,
+                         contract.PULLED_OK_FILE):
+            self.assertIn(contract.remote_sentinel_path(RUN, sentinel),
+                          rm_joined)
+        # log rotation: guarded mv of the remote log, quoted, before spawn
+        log_path = contract.remote_log_path(RUN)
+        rot_needle = f"mv {contract.shell_quote(log_path)}"
+        rot_idx = runner.first_index(rot_needle)
+        self.assertIsNotNone(rot_idx)
+        rot_joined = " ".join(str(x) for x in runner.calls[rot_idx])
+        self.assertIn(f"[ -f {contract.shell_quote(log_path)} ]", rot_joined)
+        self.assertIn(f"{log_path}.{int(NOW)}", rot_joined)
+        spawn_idx = runner.first_index("tmux new-session")
+        self.assertIsNotNone(spawn_idx)
+        self.assertLess(rm_idx, spawn_idx)
+        self.assertLess(rot_idx, spawn_idx)
 
 
 # ---------------------------------------------------------------------------

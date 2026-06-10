@@ -412,10 +412,6 @@ def reviewable_steps(m: RunManifest, base_dir: str = ".", now: float = None) -> 
 # Status
 # ---------------------------------------------------------------------------
 
-_LIVE_STATES = {contract.RunState.RUNNING.value, contract.RunState.SAMPLING.value,
-                contract.RunState.DEGRADED.value}
-
-
 def _status_from(m: RunManifest, pod_info, ep, *, base_dir: str, runner) -> StatusReport:
     r = _resolve(m, pod_info, ep=ep, runner=runner, base_dir=base_dir)
     step = loss = None
@@ -425,7 +421,7 @@ def _status_from(m: RunManifest, pod_info, ep, *, base_dir: str, runner) -> Stat
         disk_pct, disk_warn = check_disk(ep, runner=runner)
 
     details = [r.detail] if r.detail else []
-    if step is None and r.state in _LIVE_STATES:
+    if step is None and r.state in contract.LIVE_STATES:
         details.append("loss_log.db not readable yet (trainer still warming)")
     if disk_warn:
         details.append(f"disk warning: /workspace at {disk_pct}% used "

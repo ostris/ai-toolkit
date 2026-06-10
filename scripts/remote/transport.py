@@ -24,6 +24,7 @@ in parallel as U3).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -47,13 +48,13 @@ SAMPLE_STABILITY_SECONDS = 120
 CHECKPOINT_STABILITY_SECONDS = 60
 
 SSH_TIMEOUT = 60            # seconds, for short remote commands
+RSYNC_TIMEOUT = 3600        # seconds — checkpoint transfers are large (#18)
 LOG_TAIL_BYTES = 16384      # ~16KB of log mirrored on every pull (R25)
 LOG_TAIL_FILE = "log_tail.txt"
 LOSS_DB_FILE = "loss_log.db"
 
-# Local filename of the derived remote config written by preflight (R2/R19).
-# The path shape is pinned by the plan ("runs/<run>/remote_config.yaml").
-DERIVED_CONFIG_FILE = "remote_config.yaml"
+# Local filename of the derived remote config (canonical home: contract.py).
+DERIVED_CONFIG_FILE = contract.DERIVED_CONFIG_FILE
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,7 @@ def ssh_base_args(ep: Endpoint) -> list:
         "-p", str(ep.port),
         "-o", "BatchMode=yes",
         "-o", "StrictHostKeyChecking=accept-new",
+        "-o", f"UserKnownHostsFile={contract.SSH_KNOWN_HOSTS_FILE}",
         f"{ep.user}@{ep.host}",
     ]
 
@@ -94,7 +96,9 @@ def ssh_run(ep: Endpoint, command: str, *, timeout: float = SSH_TIMEOUT,
                   capture_output=True, timeout=timeout)
 
 
-def _run(cmd: list, runner, timeout: float = None) -> subprocess.CompletedProcess:
+def _run(cmd: list, runner, timeout: float = RSYNC_TIMEOUT) -> subprocess.CompletedProcess:
+    """Execute a built command (rsync legs, local git). Default timeout is
+    RSYNC_TIMEOUT — checkpoint transfers are large; ssh_run keeps SSH_TIMEOUT."""
     return runner(cmd, text=True, capture_output=True, timeout=timeout)
 
 
@@ -282,13 +286,19 @@ class ArtifactInventory:
         return ckpts[-1].step if ckpts else 0
 
 
+# Emitted by _find_command when the job dir does not exist yet, so callers can
+# tell "no artifacts yet" (truthful empty inventory) from a transport failure.
+DIR_ABSENT_MARKER = "__ABSENT__"
+
+
 def _find_command(job_dir: str) -> str:
     q = contract.shell_quote(job_dir)
-    return (
+    find = (
         f"find {q} -maxdepth 2 -type f "
         "\\( -path '*/samples/*' -o -name '*.safetensors' -o -name 'optimizer.pt' \\) "
         "-printf '%P\\t%s\\t%T@\\n'"
     )
+    return f"if [ -d {q} ]; then {find}; else echo {DIR_ABSENT_MARKER}; fi"
 
 
 def parse_find_output(text: str, job_name: str) -> ArtifactInventory:
@@ -324,13 +334,22 @@ def parse_find_output(text: str, job_name: str) -> ArtifactInventory:
 
 def list_remote_artifacts(ep: Endpoint, m: RunManifest, *,
                           runner=subprocess.run) -> ArtifactInventory:
-    """One ssh `find` over the remote job dir, parsed with contract grammars."""
+    """One ssh `find` over the remote job dir, parsed with contract grammars.
+
+    A missing job dir (pre-first-save) is a truthful empty inventory, signalled
+    by the explicit DIR_ABSENT_MARKER. Any nonzero exit (ssh 255, find errors)
+    RAISES — silently returning empty would let a transient transport failure
+    masquerade as "no artifacts" and stall watermark-driven pulls.
+    """
     job_name = m.job_name or m.run_name
     job_dir = contract.remote_job_dir(m.run_name, job_name)
     res = ssh_run(ep, _find_command(job_dir), runner=runner)
     if res.returncode != 0:
-        # job dir may not exist yet (pre-first-save); an empty inventory is truth
-        return ArtifactInventory()
+        raise RuntimeError(
+            f"artifact listing failed (ssh): exit {res.returncode}: "
+            f"{(res.stderr or '').strip()[:2000]}")
+    if DIR_ABSENT_MARKER in (res.stdout or ""):
+        return ArtifactInventory()  # job dir not created yet (pre-first-save)
     return parse_find_output(res.stdout, job_name)
 
 
@@ -359,6 +378,34 @@ def _stat_sizes(ep: Endpoint, job_dir: str, names: list, *, runner) -> dict:
 # ---------------------------------------------------------------------------
 # Pull
 # ---------------------------------------------------------------------------
+
+SAFETENSORS_HEADER_MAX = 100 * 1024 * 1024  # sanity cap on the JSON header
+
+
+def validate_safetensors_container(path: str) -> bool:
+    """Cheap container integrity check for a pulled .safetensors file.
+
+    Reads the first 8 bytes as a little-endian uint64 header length, then
+    json-parses the header. Catches truncated/garbage transfers without
+    touching tensor data. Returns False on any structural problem; never
+    raises. Deliberately NOT applied to optimizer.pt (torch pickle).
+    """
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+            if len(head) != 8:
+                return False
+            header_len = int.from_bytes(head, "little")
+            if not 0 < header_len <= SAFETENSORS_HEADER_MAX:
+                return False
+            header = f.read(header_len)
+            if len(header) != header_len:
+                return False
+            json.loads(header.decode("utf-8"))
+        return True
+    except (OSError, ValueError, UnicodeDecodeError):
+        return False
+
 
 @dataclass
 class PullResult:
@@ -427,9 +474,9 @@ def pull_artifacts(ep: Endpoint, m: RunManifest, *, base_dir: str = ".",
         final_candidate = None
 
     stat_targets = candidates + ([final_candidate] if final_candidate else [])
+    stable_ckpts = []
     if stat_targets:
         sizes = _stat_sizes(ep, job_dir, [e.name for e in stat_targets], runner=runner)
-        stable_ckpts = []
         for e in candidates:
             if sizes.get(e.name) == e.size:
                 stable_ckpts.append(e)
@@ -459,6 +506,25 @@ def pull_artifacts(ep: Endpoint, m: RunManifest, *, base_dir: str = ".",
             os.unlink(list_path)
         result.pulled_files += len(files_to_pull)
 
+        # --- integrity-validate every newly pulled checkpoint BEFORE it is
+        # counted or the watermark advances (#10). A corrupt copy is deleted
+        # locally and left re-pullable next cycle. optimizer.pt is a torch
+        # pickle — deliberately NOT validated here.
+        for e in stable_ckpts + ([final_candidate] if final_candidate else []):
+            local_path = os.path.join(out_dir, e.name)
+            if validate_safetensors_container(local_path):
+                continue
+            try:
+                os.unlink(local_path)
+            except OSError:
+                pass
+            if e.step is not None and e.step in result.new_checkpoint_steps:
+                result.new_checkpoint_steps.remove(e.step)
+            result.skipped_unstable.append(f"{e.name} (failed integrity check)")
+            result.pulled_files -= 1
+            _warn(f"{e.name}: failed integrity check after pull — local copy "
+                  "deleted; will re-pull next cycle")
+
     # --- optimizer.pt snapshot, paired to the NEWEST pulled checkpoint ----
     # The trainer overwrites one optimizer.pt per save: only the newest
     # checkpoint can carry optimizer state. Pair only when the newest pulled
@@ -480,9 +546,12 @@ def pull_artifacts(ep: Endpoint, m: RunManifest, *, base_dir: str = ".",
                 _warn(f"optimizer.pt snapshot failed: {(res.stderr or '').strip()[:500]}")
 
     # --- watermarks (caller saves the manifest) ----------------------------
-    included_samples = result.new_sample_steps + result.partial_steps
-    if included_samples:
-        m.last_pulled_sample_step = max([m.last_pulled_sample_step or 0] + included_samples)
+    # Partial steps are deliberately EXCLUDED from the sample watermark (#11):
+    # they must stay below it so the next cycle re-pulls them, and they report
+    # in new_sample_steps exactly once — on the cycle the batch completes.
+    if result.new_sample_steps:
+        m.last_pulled_sample_step = max(
+            [m.last_pulled_sample_step or 0] + result.new_sample_steps)
     if result.new_checkpoint_steps:
         m.last_pulled_checkpoint_step = max(
             [m.last_pulled_checkpoint_step or 0] + result.new_checkpoint_steps)
@@ -568,7 +637,8 @@ def check_config_drift(m: RunManifest, *, base_dir: str = ".") -> bool:
     """
     if not m.config_hash:
         return False  # nothing recorded yet; drift is undefined
-    path = os.path.join(contract.local_run_dir(m.run_name, base_dir), DERIVED_CONFIG_FILE)
+    path = os.path.join(contract.local_run_dir(m.run_name, base_dir),
+                        contract.DERIVED_CONFIG_FILE)
     if not os.path.exists(path):
         return True  # recorded hash but the derived config vanished: drifted
     with open(path, "rb") as f:

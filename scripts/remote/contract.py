@@ -39,6 +39,13 @@ def shell_quote(value: str) -> str:
     return "'" + str(value).replace("'", "'\"'\"'") + "'"
 
 
+# Pipeline-private known-hosts file, shared by EVERY ssh path (transport's
+# ssh/rsync and pod's readiness probe). RunPod recycles IP:port pairs across
+# customers, so the user's global known_hosts would hard-fail later pods in
+# BatchMode once a recycled endpoint presents a different host key.
+SSH_KNOWN_HOSTS_FILE = os.path.expanduser("~/.aitk_remote_known_hosts")
+
+
 # ---------------------------------------------------------------------------
 # Remote filesystem layout (keyed by run name to prevent collisions)
 # ---------------------------------------------------------------------------
@@ -116,12 +123,26 @@ def tmux_timer_session(run_name: str) -> str:
     return f"aitk-timer-{run_name}"
 
 
+def trainer_pkill_pattern(run_name: str) -> str:
+    """Pattern matching the trainer process for this run only.
+
+    The [r] bracket trick keeps the pattern from matching the very shell that
+    pgrep/pkill runs inside over ssh (whose command line contains the pattern
+    verbatim) while still matching the real `python run.py ...<run>` process.
+    """
+    return f"[r]un.py.*{run_name}"
+
+
 # ---------------------------------------------------------------------------
 # Local layout
 # ---------------------------------------------------------------------------
 
 LOCAL_RUNS_DIR = "runs"      # runs/<run>/manifest.json, remote_config.yaml, mirrors
 LOCAL_OUTPUT_DIR = "output"  # pulled artifacts mirror trainer layout: output/<run>/
+
+# Local filename of the derived remote config written by preflight (R2/R19).
+# The path shape is pinned by the plan ("runs/<run>/remote_config.yaml").
+DERIVED_CONFIG_FILE = "remote_config.yaml"
 
 
 def local_run_dir(run_name: str, base_dir: str = ".") -> str:
@@ -177,6 +198,16 @@ TERMINAL_STATES = {
     RunState.TIMED_OUT, RunState.POD_LOST, RunState.PULLED,
     RunState.TERMINATED, RunState.PROVISION_FAILED,
 }
+
+# States that mean "training looks alive on the pod" (monitor/cli), and the
+# superset lifecycle uses to hold STOPPED across the post-kill settle window
+# (UNKNOWN = pod up, tmux gone, sentinel not yet written).
+LIVE_STATES = {
+    RunState.RUNNING.value,
+    RunState.SAMPLING.value,
+    RunState.DEGRADED.value,
+}
+SETTLE_STATES = LIVE_STATES | {RunState.UNKNOWN.value}
 
 # watch exit codes (R17) — distinct codes so agent loops can branch.
 EXIT_COMPLETED = 0

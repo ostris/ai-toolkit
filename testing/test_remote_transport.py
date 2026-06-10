@@ -8,6 +8,7 @@ scripted CompletedProcess objects.
 """
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -72,6 +73,28 @@ def make_manifest(**kw):
     return RunManifest(**defaults)
 
 
+def valid_safetensors_bytes():
+    header = json.dumps({"__metadata__": {"format": "pt"}}).encode("utf-8")
+    return len(header).to_bytes(8, "little") + header + b"\x00" * 16
+
+
+def materializing_rsync(cmd):
+    """Fake rsync for --files-from pulls: write valid safetensors container
+    bytes for each pulled checkpoint so the post-pull integrity check passes."""
+    dest = cmd[-1]
+    list_paths = [a.split("=", 1)[1] for a in cmd if a.startswith("--files-from=")]
+    if list_paths:
+        with open(list_paths[0]) as f:
+            names = [line.strip() for line in f if line.strip()]
+        for name in names:
+            if name.endswith(".safetensors"):
+                path = os.path.join(dest, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as fh:
+                    fh.write(valid_safetensors_bytes())
+    return proc("")
+
+
 def pull_handlers(find_lines, pod_time=NOW, stat_lines=None, extra=None):
     """Standard scripted responses for a pull_artifacts cycle."""
     handlers = [
@@ -80,7 +103,7 @@ def pull_handlers(find_lines, pod_time=NOW, stat_lines=None, extra=None):
         ("stat --printf", proc("\n".join(stat_lines or []) + ("\n" if stat_lines else ""))),
         ("cat ", proc("", returncode=1)),       # no sentinels present
         ("tail -c", proc("", returncode=1)),    # no log yet
-        ("rsync", proc("")),
+        ("rsync", materializing_rsync),
     ]
     return (extra or []) + handlers
 
@@ -90,7 +113,9 @@ class TestCommandBuilders(unittest.TestCase):
         self.assertEqual(
             transport.ssh_base_args(EP),
             ["ssh", "-p", "10022", "-o", "BatchMode=yes",
-             "-o", "StrictHostKeyChecking=accept-new", "root@1.2.3.4"],
+             "-o", "StrictHostKeyChecking=accept-new",
+             "-o", f"UserKnownHostsFile={contract.SSH_KNOWN_HOSTS_FILE}",
+             "root@1.2.3.4"],
         )
 
     def test_ssh_run_passes_text_capture_timeout(self):
@@ -132,6 +157,24 @@ class TestCommandBuilders(unittest.TestCase):
             self.assertFalse(any(a == "--delete" or a.startswith("--delete") for a in cmd),
                              f"--delete found in download command: {cmd}")
         self.assertIn("--files-from=/tmp/list.txt", variants[3])
+
+    def test_rsync_execution_uses_long_timeout_ssh_keeps_short(self):
+        captured = []
+
+        def runner(cmd, **kw):
+            captured.append((list(cmd), kw))
+            return proc("")
+
+        transport.upload_file(EP, __file__, "/workspace/runs/r/cfg.yaml",
+                              runner=runner)
+        rsync_kw = [kw for c, kw in captured if c[0] == "rsync"]
+        self.assertTrue(rsync_kw)
+        for kw in rsync_kw:
+            self.assertEqual(kw.get("timeout"), transport.RSYNC_TIMEOUT)
+        ssh_kw = [kw for c, kw in captured if c[0] == "ssh"]
+        self.assertTrue(ssh_kw)
+        for kw in ssh_kw:
+            self.assertEqual(kw.get("timeout"), transport.SSH_TIMEOUT)
 
 
 class TestUploadOverlay(unittest.TestCase):
@@ -231,9 +274,25 @@ class TestInventory(unittest.TestCase):
         self.assertEqual(len(inv.entries), 26)
 
     def test_missing_job_dir_yields_empty_inventory(self):
-        runner = DispatchRunner([("find ", proc("", returncode=1, stderr="No such file"))])
+        # absence is signalled by the explicit marker, NOT a nonzero exit
+        runner = DispatchRunner(
+            [("find ", proc(f"{transport.DIR_ABSENT_MARKER}\n"))])
         inv = transport.list_remote_artifacts(EP, make_manifest(), runner=runner)
         self.assertEqual(inv.entries, [])
+
+    def test_listing_ssh_failure_raises_instead_of_empty(self):
+        runner = DispatchRunner([("find ", proc("", returncode=255,
+                                                stderr="Connection timed out"))])
+        with self.assertRaises(RuntimeError) as ctx:
+            transport.list_remote_artifacts(EP, make_manifest(), runner=runner)
+        self.assertIn("artifact listing failed (ssh)", str(ctx.exception))
+        self.assertIn("Connection timed out", str(ctx.exception))
+
+    def test_find_command_wrapped_in_existence_check(self):
+        cmd = transport._find_command(JOB_DIR)
+        self.assertTrue(cmd.startswith(f"if [ -d '{JOB_DIR}' ]; then "))
+        self.assertIn("find ", cmd)
+        self.assertIn(f"else echo {transport.DIR_ABSENT_MARKER}; fi", cmd)
 
 
 class TestPull(unittest.TestCase):
@@ -329,7 +388,26 @@ class TestPull(unittest.TestCase):
         self.assertEqual(result.new_sample_steps, [])
         self.assertEqual(result.partial_steps, [750])
         self.assertEqual(result.pulled_files, 4)
+        # partial steps never advance the watermark: re-pullable next cycle
+        self.assertEqual(m.last_pulled_sample_step, 0)
+
+    def test_partial_step_completing_later_reported_once(self):
+        m = make_manifest()
+        # cycle 1: 4/12 with old mtime → partial; watermark must NOT advance
+        lines = [sample_line(750, i, NOW - 600) for i in range(4)]
+        r1, _ = self._pull(m, pull_handlers(lines))
+        self.assertEqual(r1.partial_steps, [750])
+        self.assertEqual(m.last_pulled_sample_step, 0)
+        # cycle 2: batch completed → reported once as complete, watermark moves
+        lines = [sample_line(750, i, NOW - 600) for i in range(12)]
+        r2, _ = self._pull(m, pull_handlers(lines))
+        self.assertEqual(r2.new_sample_steps, [750])
+        self.assertEqual(r2.partial_steps, [])
         self.assertEqual(m.last_pulled_sample_step, 750)
+        # cycle 3: nothing new — no double-report after completion
+        r3, _ = self._pull(m, pull_handlers(lines))
+        self.assertEqual(r3.new_sample_steps, [])
+        self.assertEqual(r3.partial_steps, [])
 
     def test_optimizer_paired_to_newest_pulled_checkpoint_only(self):
         old = NOW - 3600
@@ -359,6 +437,72 @@ class TestPull(unittest.TestCase):
         self.assertEqual(result.new_checkpoint_steps, [1000])
         self.assertIsNone(result.optimizer_pairing_step)
         self.assertIsNone(m.optimizer_pairing_step)
+
+
+class TestSafetensorsValidation(unittest.TestCase):
+    def setUp(self):
+        self.base = tempfile.mkdtemp(prefix="aitk-transport-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def _write(self, name, data):
+        path = os.path.join(self.base, name)
+        with open(path, "wb") as f:
+            f.write(data)
+        return path
+
+    def test_fabricated_valid_header_passes(self):
+        path = self._write("ok.safetensors", valid_safetensors_bytes())
+        self.assertTrue(transport.validate_safetensors_container(path))
+
+    def test_truncated_file_rejected(self):
+        path = self._write("short.safetensors", b"\x10\x00\x01")
+        self.assertFalse(transport.validate_safetensors_container(path))
+
+    def test_header_length_past_eof_rejected(self):
+        # claims a 4096-byte header but the file ends after 4 bytes of it
+        data = (4096).to_bytes(8, "little") + b"{\"a\""
+        path = self._write("lying.safetensors", data)
+        self.assertFalse(transport.validate_safetensors_container(path))
+
+    def test_non_json_header_rejected(self):
+        garbage = b"not json at all!"
+        data = len(garbage).to_bytes(8, "little") + garbage
+        path = self._write("garbage.safetensors", data)
+        self.assertFalse(transport.validate_safetensors_container(path))
+
+    def test_pull_rejects_corrupt_checkpoint_and_keeps_valid_one(self):
+        old = NOW - 3600
+        lines = [ckpt_line(1000, old), ckpt_line(1250, old)]
+        stat = [f"{JOB_DIR}/{RUN}_000001000.safetensors\t600000000",
+                f"{JOB_DIR}/{RUN}_000001250.safetensors\t600000000"]
+        out_dir = os.path.join(self.base, "output", RUN)
+
+        def fake_rsync(cmd):
+            os.makedirs(out_dir, exist_ok=True)
+            with open(os.path.join(out_dir, f"{RUN}_000001000.safetensors"), "wb") as f:
+                f.write(valid_safetensors_bytes())
+            with open(os.path.join(out_dir, f"{RUN}_000001250.safetensors"), "wb") as f:
+                f.write(b"\x00\x01\x02")  # truncated garbage
+            return proc("")
+
+        m = make_manifest()
+        runner = DispatchRunner(pull_handlers(
+            lines, stat_lines=stat, extra=[("--files-from", fake_rsync)]))
+        result = transport.pull_artifacts(EP, m, base_dir=self.base, now=NOW,
+                                          runner=runner)
+        # only the valid checkpoint counts; the corrupt one is deleted and
+        # left re-pullable (watermark stops at 1000, not 1250)
+        self.assertEqual(result.new_checkpoint_steps, [1000])
+        self.assertEqual(m.last_pulled_checkpoint_step, 1000)
+        self.assertEqual(result.pulled_files, 1)
+        self.assertTrue(any("failed integrity check" in s
+                            for s in result.skipped_unstable))
+        self.assertTrue(os.path.exists(
+            os.path.join(out_dir, f"{RUN}_000001000.safetensors")))
+        self.assertFalse(os.path.exists(
+            os.path.join(out_dir, f"{RUN}_000001250.safetensors")))
 
 
 class TestSentinelMirror(unittest.TestCase):
