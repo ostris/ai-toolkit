@@ -1183,5 +1183,39 @@ class TestRescueRun(LifecycleBase):
         self.assertEqual(sdk.ops, ["get_pod"])
 
 
+# ---------------------------------------------------------------------------
+# U8: CLI smoke (scripts/remote/cli.py) — thin wiring + docs, smoke only
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CLI_SUBCOMMANDS = [
+    "preflight", "provision", "sync", "launch", "up", "status",
+    "pull", "watch", "stop", "down", "attach", "rescue",
+]
+
+
+class TestCliHelpSmoke(unittest.TestCase):
+    """`--help` exits 0 and lists all 12 subcommands; each subcommand
+    `--help` exits 0. Subprocess only — no network, no RunPod SDK."""
+
+    def _run_cli(self, *argv):
+        return subprocess.run(
+            [sys.executable, os.path.join("scripts", "remote", "cli.py"), *argv],
+            capture_output=True, text=True, cwd=_REPO_ROOT, timeout=60)
+
+    def test_top_level_help_lists_all_twelve_subcommands(self):
+        res = self._run_cli("--help")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        for name in CLI_SUBCOMMANDS:
+            self.assertIn(name, res.stdout)
+
+    def test_every_subcommand_help_exits_zero(self):
+        for name in CLI_SUBCOMMANDS:
+            with self.subTest(subcommand=name):
+                res = self._run_cli(name, "--help")
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertIn("usage:", res.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
