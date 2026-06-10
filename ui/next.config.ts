@@ -11,18 +11,11 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_APP_VERSION: appVersion,
   },
   serverExternalPackages: ['macstats', 'osx-temperature-sensor'],
-  webpack: (config, { isServer }) => {
+   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals.push('osx-temperature-sensor', 'macstats');
     }
     return config;
-  },
-  devIndicators: {
-    buildActivity: false,
-  },
-  typescript: {
-    // Remove this. Build fails because of route types
-    ignoreBuildErrors: true,
   },
   experimental: {
     serverActions: {

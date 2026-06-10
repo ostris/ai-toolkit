@@ -29,11 +29,11 @@ const contentTypeMap: { [key: string]: string } = {
   '.ogg': 'audio/ogg',
 };
 
-export async function GET(request: NextRequest, { params }: { params: { imagePath: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ imagePath: string[] }> }) {
   const { imagePath } = await params;
   try {
     // Decode the path
-    const filepath = decodeURIComponent(imagePath);
+    const filepath = decodeURIComponent(imagePath.join('/'));
 
     // Get allowed directories
     const datasetRoot = await getDatasetsRoot();
