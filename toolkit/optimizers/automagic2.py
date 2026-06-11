@@ -32,7 +32,7 @@ class Automagic2(torch.optim.Optimizer):
         eps: float = 1e-30,
         clip_threshold: float = 1.0,
         weight_decay: float = 0.0,
-        agreement_threshold: float = 0.6,
+        agreement_threshold: float = 0.5,
     ):
         if lr > 1e-3:
             print(f"Warning! Start lr {lr} is very high; forcing to 1e-6.")

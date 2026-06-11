@@ -1,9 +1,9 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped } from '@/utils/jobs';
+import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, saveJobNow } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
@@ -30,8 +30,9 @@ export default function JobActionBar({
 
   if (!afterDelete) afterDelete = onRefresh;
 
+  const iconSizeClass = 'w-5 h-5 sm:w-6 sm:h-6';
   return (
-    <div className={`${className}`}>
+    <div className={`flex items-center flex-shrink-0 ${className ?? ''}`}>
       {canStart && (
         <Button
           onClick={async () => {
@@ -43,9 +44,9 @@ export default function JobActionBar({
             }
             if (onRefresh) onRefresh();
           }}
-          className={`ml-2 opacity-100`}
+          className={`ml-1 sm:ml-2 opacity-100`}
         >
-          <Play />
+          <Play className={iconSizeClass} />
         </Button>
       )}
       {canRemoveFromQueue && (
@@ -55,9 +56,9 @@ export default function JobActionBar({
             await markJobAsStopped(job.id);
             if (onRefresh) onRefresh();
           }}
-          className={`ml-2 opacity-100`}
+          className={`ml-1 sm:ml-2 opacity-100`}
         >
-          <X />
+          <X className={iconSizeClass} />
         </Button>
       )}
       {canStop && (
@@ -75,19 +76,19 @@ export default function JobActionBar({
               },
             });
           }}
-          className={`ml-2 opacity-100`}
+          className={`ml-1 sm:ml-2 opacity-100`}
         >
-          <Pause />
+          <Pause className={iconSizeClass} />
         </Button>
       )}
       {!hideView && (
-        <Link href={`/jobs/${job.id}`} className="ml-2 text-gray-200 hover:text-gray-100 inline-block">
-          <Eye />
+        <Link href={`/jobs/${job.id}`} className="ml-1 sm:ml-2 text-gray-200 hover:text-gray-100 inline-block">
+          <Eye className={iconSizeClass} />
         </Link>
       )}
       {job.job_type === 'caption' && canEdit && (
         <div
-          className="ml-2 hover:text-gray-100 inline-block cursor-pointer"
+          className="ml-1 sm:ml-2 hover:text-gray-100 inline-block cursor-pointer"
           onClick={() =>
             openCaptionDatasetModal(
               job.job_ref || '',
@@ -98,12 +99,12 @@ export default function JobActionBar({
             )
           }
         >
-          <Pen />
+          <Pen className={iconSizeClass} />
         </div>
       )}
       {job.job_type === 'train' && canEdit && (
-        <Link href={`/jobs/new?id=${job.id}`} className="ml-2 hover:text-gray-100 inline-block">
-          <Pen />
+        <Link href={`/jobs/new?id=${job.id}`} className="ml-1 sm:ml-2 hover:text-gray-100 inline-block">
+          <Pen className={iconSizeClass} />
         </Link>
       )}
       <Button
@@ -130,29 +131,44 @@ export default function JobActionBar({
             },
           });
         }}
-        className={`ml-2 opacity-100`}
+        className={`ml-1 sm:ml-2 opacity-100`}
       >
-        <Trash2 />
+        <Trash2 className={iconSizeClass} />
       </Button>
-      <div className="border-r border-1 border-gray-700 ml-2 inline"></div>
+      <div className="border-r border-1 border-gray-700 ml-1 sm:ml-2 inline"></div>
       <Menu>
-        <MenuButton className={'ml-2'}>
-          <Cog />
+        <MenuButton className={'ml-1 sm:ml-2'}>
+          <Cog className={iconSizeClass} />
         </MenuButton>
-        <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-4">
+        <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 mt-4">
           {job.job_type === 'train' && (
             <MenuItem>
               <Link
                 href={`/jobs/new?cloneId=${job.id}`}
-                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded block"
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
               >
+                <Copy className="w-4 h-4" />
                 Clone Job
               </Link>
             </MenuItem>
           )}
+          {canStop && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+                onClick={async () => {
+                  await saveJobNow(job.id);
+                  if (onRefresh) onRefresh();
+                }}
+              >
+                <Save className="w-4 h-4" />
+                Save Next Step
+              </div>
+            </MenuItem>
+          )}
           <MenuItem>
             <div
-              className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
+              className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
               onClick={() => {
                 let message = `Are you sure you want to mark this job as stopped? This will set the job status to 'stopped' if the status is hung. Only do this if you are 100% sure the job is stopped. This will NOT stop the job.`;
                 openConfirm({
@@ -167,6 +183,7 @@ export default function JobActionBar({
                 });
               }}
             >
+              <OctagonX className="w-4 h-4" />
               Mark as Stopped
             </div>
           </MenuItem>

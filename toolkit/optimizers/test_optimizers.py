@@ -1,12 +1,14 @@
 """
-Optimizer benchmark on a ~500M parameter fp32 transformer.
+Optimizer benchmark on a ~500M parameter transformer, run once per dtype
+(float32, float16, bfloat16).
 
 Compares speed (ms/step) and peak VRAM across:
   - AdamW (torch, unfused — traditional Python loop)
   - AdamW8bit (bitsandbytes)
   - Adafactor
   - Automagic v1
-  - Automagic v2 (only optimizer using fused-backward)
+  - Automagic v2 (fused-backward)
+  - Automagic v3 (fused-backward and traditional/unfused)
   - Prodigy
 """
 import contextlib
@@ -74,7 +76,7 @@ class Transformer(nn.Module):
 # ---- benchmark -----------------------------------------------------------
 
 DEVICE = "cuda"
-DTYPE = torch.float32
+DTYPES = [torch.float32, torch.float16, torch.bfloat16]
 D_MODEL = 1024
 N_HEADS = 16
 N_LAYERS = 40
@@ -85,21 +87,21 @@ WARMUP = 3
 ITERS = 10
 
 
-def build_model():
+def build_model(dtype):
     torch.manual_seed(0)
-    return Transformer(D_MODEL, N_HEADS, N_LAYERS, D_FF).to(DEVICE, dtype=DTYPE)
+    return Transformer(D_MODEL, N_HEADS, N_LAYERS, D_FF).to(DEVICE, dtype=dtype)
 
 
-def benchmark(results: list, label: str, opt_factory):
+def benchmark(results: list, label: str, opt_factory, dtype):
     gc.collect()
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
 
-    model = build_model()
+    model = build_model(dtype)
     # Some optimizers print on construction; mute that so the final table is clean.
     with contextlib.redirect_stdout(io.StringIO()):
         opt = opt_factory(model.parameters())
-    x = torch.randn(BATCH, SEQ, D_MODEL, device=DEVICE, dtype=DTYPE)
+    x = torch.randn(BATCH, SEQ, D_MODEL, device=DEVICE, dtype=dtype)
 
     print(f"  running {label}...", flush=True)
     try:
@@ -119,21 +121,31 @@ def benchmark(results: list, label: str, opt_factory):
         peak = torch.cuda.max_memory_allocated() / 1024**3
         results.append({"label": label, "ms": dt, "peak": peak, "ok": True})
     except torch.cuda.OutOfMemoryError:
-        results.append({"label": label, "ms": float("inf"), "peak": float("inf"), "ok": False})
+        results.append({"label": label, "ms": float("inf"), "peak": float("inf"), "ok": False, "note": "OOM"})
+    except Exception as e:
+        # An optimizer may not support a given dtype; record it and keep going.
+        print(f"    {label} failed: {type(e).__name__}: {e}", flush=True)
+        results.append({"label": label, "ms": float("inf"), "peak": float("inf"), "ok": False, "note": "ERR"})
     finally:
+        # Fused-backward optimizers register post-accumulate-grad hooks on the
+        # params; without removing them the hook closures keep this model alive
+        # past `del`, inflating the *next* fused optimizer's peak. Unregister so
+        # each run reports its true isolated peak regardless of run order.
+        for h in getattr(opt, "_hook_handles", []):
+            h.remove()
         del opt, model
         gc.collect()
         torch.cuda.empty_cache()
 
 
-def print_table(results: list):
+def print_table(results: list, dtype_name: str):
     results = sorted(results, key=lambda r: r["peak"])
 
     headers = ["#", "Optimizer", "Peak VRAM", "Time/step"]
     rows = []
     for i, r in enumerate(results, 1):
         if not r["ok"]:
-            rows.append([str(i), r["label"], "OOM", "-"])
+            rows.append([str(i), r["label"], r.get("note", "OOM"), "-"])
             continue
         rows.append([str(i), r["label"], f"{r['peak']:.2f} GB", f"{r['ms']:.1f} ms"])
 
@@ -144,6 +156,7 @@ def print_table(results: list):
 
     line_top = "─" * (sum(widths) + 3 * (len(widths) - 1))
     print()
+    print(f"  dtype: {dtype_name}")
     print(line_top)
     print(fmt(headers))
     print(line_top)
@@ -153,35 +166,38 @@ def print_table(results: list):
 
 
 def main():
-    n_params = sum(p.numel() for p in build_model().parameters())
-    dtype_name = str(DTYPE).replace("torch.", "")
+    n_params = sum(p.numel() for p in build_model(torch.float32).parameters())
     print(f"Model:  {N_LAYERS} blocks × d_model={D_MODEL} × d_ff={D_FF}")
-    print(f"        {n_params/1e6:.1f}M params ({dtype_name})")
+    print(f"        {n_params/1e6:.1f}M params")
     print(f"Step:   batch={BATCH}, seq={SEQ}")
     print(f"Timing: {WARMUP} warmup + {ITERS} timed iters")
-    print()
+    print(f"Rounds: {', '.join(str(d).replace('torch.', '') for d in DTYPES)}")
 
     from toolkit.optimizers.automagic import Automagic
     from toolkit.optimizers.automagic2 import Automagic2
+    from toolkit.optimizers.automagic3 import Automagic3
     from toolkit.optimizers.adafactor import Adafactor
     from prodigyopt import Prodigy
     import bitsandbytes as bnb
 
-    results: list = []
-    benchmark(results, "AdamW",
-              lambda p: torch.optim.AdamW(p, lr=1e-4, eps=1e-6, foreach=False, fused=False))
-    benchmark(results, "AdamW8bit",
-              lambda p: bnb.optim.AdamW8bit(p, lr=1e-4, eps=1e-6))
-    benchmark(results, "Adafactor",
-              lambda p: Adafactor(p, lr=1e-4, scale_parameter=False, relative_step=False, warmup_init=False))
-    benchmark(results, "Automagic v1",
-              lambda p: Automagic(p, lr=1e-4))
-    benchmark(results, "Automagic v2",
-              lambda p: Automagic2(p, lr=1e-4))
-    benchmark(results, "Prodigy",
-              lambda p: Prodigy(p, lr=1.0, eps=1e-6))
+    optimizers = [
+        ("AdamW", lambda p: torch.optim.AdamW(p, lr=1e-4, eps=1e-6, foreach=False, fused=False)),
+        ("AdamW8bit", lambda p: bnb.optim.AdamW8bit(p, lr=1e-4, eps=1e-6)),
+        ("Adafactor", lambda p: Adafactor(p, lr=1e-4, scale_parameter=False, relative_step=False, warmup_init=False)),
+        ("Automagic v1", lambda p: Automagic(p, lr=1e-4)),
+        ("Automagic v2", lambda p: Automagic2(p, lr=1e-4)),
+        ("Automagic v3 fused", lambda p: Automagic3(p, lr=1e-4, fused=True)),
+        ("Automagic v3 unfused", lambda p: Automagic3(p, lr=1e-4, fused=False)),
+        ("Prodigy", lambda p: Prodigy(p, lr=1.0, eps=1e-6)),
+    ]
 
-    print_table(results)
+    for dtype in DTYPES:
+        dtype_name = str(dtype).replace("torch.", "")
+        print(f"\n=== Round: {dtype_name} ===")
+        results: list = []
+        for label, factory in optimizers:
+            benchmark(results, label, factory, dtype)
+        print_table(results, dtype_name)
 
 
 if __name__ == "__main__":

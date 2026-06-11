@@ -62,7 +62,7 @@ class ZImageModel(BaseModel):
         return CustomFlowMatchEulerDiscreteScheduler(**scheduler_config)
 
     def get_bucket_divisibility(self):
-        return 16 * 2  # 16 for the VAE, 2 for patch size
+        return 8 * 2  # 8 for the VAE, 2 for patch size
 
     def load_training_adapter(self, transformer: ZImageTransformer2DModel):
         self.print_and_status_update("Loading assistant LoRA")
@@ -300,8 +300,8 @@ class ZImageModel(BaseModel):
         generator: torch.Generator,
         extra: dict,
     ):
-        self.model.to(self.device_torch, dtype=self.torch_dtype)
-        self.model.to(self.device_torch)
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
 
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
@@ -326,7 +326,8 @@ class ZImageModel(BaseModel):
         text_embeddings: PromptEmbeds,
         **kwargs,
     ):
-        self.model.to(self.device_torch)
+        if self.model.device == torch.device("cpu"):
+            self.model.to(self.device_torch)
 
         latent_model_input = latent_model_input.unsqueeze(2)
         latent_model_input_list = list(latent_model_input.unbind(dim=0))

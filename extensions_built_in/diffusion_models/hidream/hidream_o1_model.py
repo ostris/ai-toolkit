@@ -445,7 +445,7 @@ class HidreamO1Model(BaseModel):
             vinputs=z,
             timestep=t_pixeldit.reshape(-1),
             token_types=token_types,
-            use_flash_attn=True,
+            use_flash_attn=False,
         )
         x_pred = outputs.x_pred  # (B, S, C*p*p) over the full padded sequence
 

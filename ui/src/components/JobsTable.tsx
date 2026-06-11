@@ -160,16 +160,18 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
             <div key={gpuKey} className="mb-6">
               <div
                 className={classNames(
-                  'text-md flex px-4 py-1 rounded-t-lg',
+                  'text-md flex flex-wrap gap-y-1 px-2 sm:px-4 py-1 rounded-t-lg',
                   { 'bg-green-600 dark:bg-green-900': queue?.is_running },
                   { 'bg-red-600 dark:bg-red-900': !queue?.is_running },
                 )}
               >
-                <div className="flex items-center space-x-2 flex-1 py-2">
-                  <h2 className="font-semibold text-white">{jobsDict[gpuKey].name}</h2>
-                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300"># {queue?.gpu_ids}</span>
+                <div className="flex items-center space-x-2 flex-1 min-w-0 py-2">
+                  <h2 className="font-semibold text-white truncate">{jobsDict[gpuKey].name}</h2>
+                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 flex-shrink-0">
+                    # {queue?.gpu_ids}
+                  </span>
                 </div>
-                <div className="text-sm text-gray-300 italic flex items-center">
+                <div className="text-sm text-gray-300 italic flex items-center flex-shrink-0">
                   {queue?.is_running ? (
                     <>
                       <span className="text-green-100 dark:text-green-400 mr-2">Queue Running</span>
@@ -178,7 +180,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
                           await stopQueue(queue.gpu_ids as string);
                           refresh();
                         }}
-                        className="ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
+                        className="ml-2 sm:ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
                       >
                         STOP
                       </button>
@@ -191,7 +193,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
                           await startQueue(gpuKey);
                           refresh();
                         }}
-                        className="ml-4 text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
+                        className="ml-2 sm:ml-4 text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
                       >
                         START
                       </button>

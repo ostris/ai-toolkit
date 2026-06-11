@@ -15,7 +15,6 @@ from toolkit.dataloader_mixins import (
     LatentCachingFileItemDTOMixin,
     ControlFileItemDTOMixin,
     ArgBreakMixin,
-    PoiFileItemDTOMixin,
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
     UnconditionalFileItemDTOMixin,
@@ -51,7 +50,6 @@ class FileItemDTO(
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
     UnconditionalFileItemDTOMixin,
-    PoiFileItemDTOMixin,
     ArgBreakMixin,
 ):
     def __init__(self, *args, **kwargs):

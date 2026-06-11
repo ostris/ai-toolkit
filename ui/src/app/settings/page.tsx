@@ -36,7 +36,7 @@ export default function Settings() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Settings</h1>
+          <h1 className="text-base sm:text-lg">Settings</h1>
         </div>
         <div className="flex-1"></div>
       </TopBar>
