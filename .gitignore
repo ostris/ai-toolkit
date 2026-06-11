@@ -186,3 +186,37 @@ aitk_db.db
 /data
 .claude
 runs/
+
+# --- Private training configs ------------------------------------------
+# config/examples/ is private-by-default: every config you write (artist
+# names, dataset paths, recipes) is ignored automatically. Only the
+# upstream-shipped example configs below are public. To publish a new
+# example deliberately, add a matching '!' line here (or git add -f).
+/config/examples/*
+!/config/examples/modal/
+!/config/examples/modal/modal_train_lora_flux_24gb.yaml
+!/config/examples/modal/modal_train_lora_flux_schnell_24gb.yaml
+!/config/examples/extract.example.yml
+!/config/examples/generate.example.yaml
+!/config/examples/mod_lora_scale.yaml
+!/config/examples/remote_smoke_test.yaml
+!/config/examples/train_flex_redux.yaml
+!/config/examples/train_full_fine_tune_flex.yaml
+!/config/examples/train_full_fine_tune_lumina.yaml
+!/config/examples/train_lora_chroma_24gb.yaml
+!/config/examples/train_lora_flex2_24gb.yaml
+!/config/examples/train_lora_flex_24gb.yaml
+!/config/examples/train_lora_flux_24gb.yaml
+!/config/examples/train_lora_flux_kontext_24gb.yaml
+!/config/examples/train_lora_flux_schnell_24gb.yaml
+!/config/examples/train_lora_hidream_48.yaml
+!/config/examples/train_lora_lumina.yaml
+!/config/examples/train_lora_omnigen2_24gb.yaml
+!/config/examples/train_lora_qwen_image_24gb.yaml
+!/config/examples/train_lora_qwen_image_edit_2509_32gb.yaml
+!/config/examples/train_lora_qwen_image_edit_32gb.yaml
+!/config/examples/train_lora_sd35_large_24gb.yaml
+!/config/examples/train_lora_wan21_14b_24gb.yaml
+!/config/examples/train_lora_wan21_1b_24gb.yaml
+!/config/examples/train_lora_wan22_14b_24gb.yaml
+!/config/examples/train_slider.example.yml
