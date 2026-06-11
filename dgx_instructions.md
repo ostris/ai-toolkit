@@ -82,3 +82,30 @@ python run.py path/to/train.yaml
 ```
 </details>
 <br>
+<details>
+  <summary>Building Torchcode 0.9.1 - found in requirements.txt</summary>
+  
+  ```bash
+  # These commands uses UV as build envvironment - should work well with conda as well.
+  sudo add-apt-repository ppa:deadsnakes/ppa
+  sudo apt update
+  sudo apt install python3.11-dev
+  sudo apt update && sudo apt install -y libavdevice-dev libavfilter-dev libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev
+  git clone https://github.com/meta-pytorch/torchcodec.git
+  cd torchcodec
+  git checkout v0.9.1
+  uv venv --python 3.11
+  source .venv/bin/activate
+  uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+  uv pip install wheel setuptool pybind11
+  export ENABLE_CUDA=1
+  export I_CONFIRM_THIS_IS_NOT_A_LICENSE_VIOLATION=1
+  export TORCH_CUDA_ARCH_LIST="9.0;10.0"
+  export CMAKE_ARGS="-DTORCH_STABLE_ABI=OFF -DTORCH_TARGET_VERSION=0x0203000000000000"
+  uv build --wheel --no-build-isolation --out-dir ./wheels
+  ```
+  If compile went well - you should now have  wheel file called : `torchcodec-0.9.1-cp311-cp311-linux_aarch64.whl`
+  Copy this file to the ai-toolkit folder, change your dev environment to the one for ai-toolkit instead of torchcodec, and install it with
+  `uv pip install torchcodec-0.9.1-cp311-cp311-linux_aarch64.whl`
+</details>
+<br>
