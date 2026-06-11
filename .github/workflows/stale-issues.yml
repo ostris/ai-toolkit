@@ -1,0 +1,100 @@
+name: Close Stale Issues and PRs
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight UTC
+  workflow_dispatch:       # Allow manual triggering
+
+jobs:
+  close-stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Close stale issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const threeMonthsAgo = new Date();
+            threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+            let closedIssues = 0;
+            let closedPRs = 0;
+
+            // --- Close stale issues ---
+            const issueIterator = github.paginate.iterator(
+              github.rest.issues.listForRepo,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                per_page: 100,
+              }
+            );
+
+            for await (const { data: items } of issueIterator) {
+              for (const issue of items) {
+                // Skip pull requests (issues API returns both)
+                if (issue.pull_request) continue;
+
+                if (new Date(issue.updated_at) < threeMonthsAgo) {
+                  console.log(`Closing issue #${issue.number}: "${issue.title}" (last activity: ${issue.updated_at})`);
+
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    body: `This issue has been automatically closed due to inactivity. It has had no activity for 3 months.\n\nIf this issue is still relevant, please feel free to reopen it with updated information or context. We apologize for any inconvenience.`,
+                  });
+
+                  await github.rest.issues.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    state: 'closed',
+                    state_reason: 'not_planned',
+                  });
+
+                  closedIssues++;
+                }
+              }
+            }
+
+            // --- Close stale pull requests ---
+            const prIterator = github.paginate.iterator(
+              github.rest.pulls.list,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                per_page: 100,
+              }
+            );
+
+            for await (const { data: prs } of prIterator) {
+              for (const pr of prs) {
+                if (new Date(pr.updated_at) < threeMonthsAgo) {
+                  console.log(`Closing PR #${pr.number}: "${pr.title}" (last activity: ${pr.updated_at})`);
+
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: pr.number,
+                    body: `This pull request has been automatically closed due to inactivity. It has had no activity for 3 months.\n\nIf this PR is still relevant, please feel free to reopen it with updated information or context. We apologize for any inconvenience.`,
+                  });
+
+                  await github.rest.pulls.update({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: pr.number,
+                    state: 'closed',
+                  });
+
+                  closedPRs++;
+                }
+              }
+            }
+
+            console.log(`Closed ${closedIssues} stale issue(s) and ${closedPRs} stale PR(s).`);

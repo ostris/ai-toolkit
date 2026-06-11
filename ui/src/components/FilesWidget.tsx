@@ -2,8 +2,10 @@ import React from 'react';
 import useFilesList from '@/hooks/useFilesList';
 import Link from 'next/link';
 import { Loader2, AlertCircle, Download, Box, Brain } from 'lucide-react';
+import { openMergeLoRAsModal } from './MergeLoRAsModal';
+import { getFilename, getFoldername } from '@/utils/basic';
 
-export default function FilesWidget({ jobID }: { jobID: string }) {
+export default function FilesWidget({ jobID, jobName }: { jobID: string; jobName: string }) {
   const { files, status, refreshFiles } = useFilesList(jobID, 5000);
 
   const cleanSize = (size: number) => {
@@ -19,13 +21,31 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
   };
 
   return (
-    <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden hover:shadow-2xl transition-all duration-300 border border-gray-800">
+    <div className="col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800">
       <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Brain className="w-5 h-5 text-purple-400" />
+          <Brain className="w-5 h-5 text-purple-600 dark:text-purple-400" />
           <h2 className="font-semibold text-gray-100">Checkpoints</h2>
           <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300">{files.length}</span>
         </div>
+        {files.length > 0 && (
+          <span
+            className="px-3 py-1 rounded-full text-sm bg-purple-500/10 text-purple-500 uppercase cursor-pointer hover:bg-purple-500/20"
+            onClick={() => {
+              const outputName = `${jobName}_merged`;
+              openMergeLoRAsModal(
+                getFoldername(files[0].path),
+                outputName,
+                files.map(f => ({ path: f.path })),
+                () => {
+                  refreshFiles();
+                },
+              );
+            }}
+          >
+            merge
+          </span>
+        )}
       </div>
 
       <div className="p-2">
@@ -45,7 +65,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
         {['success', 'refreshing'].includes(status) && (
           <div className="space-y-1">
             {files.map((file, index) => {
-              const fileName = file.path.split('/').pop() || '';
+              const fileName = getFilename(file.path);
               const nameWithoutExt = fileName.replace('.safetensors', '');
               return (
                 <a
@@ -55,7 +75,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
                   className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-gray-800 transition-all duration-200"
                 >
                   <div className="flex items-center space-x-2 min-w-0">
-                    <Box className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                    <Box className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" />
                     <div className="flex flex-col min-w-0">
                       <div className="flex text-sm text-gray-200">
                         <span className="overflow-hidden text-ellipsis direction-rtl whitespace-nowrap">
@@ -68,7 +88,7 @@ export default function FilesWidget({ jobID }: { jobID: string }) {
                   <div className="flex items-center space-x-3 flex-shrink-0">
                     <span className="text-xs text-gray-400">{cleanSize(file.size)}</span>
                     <div className="bg-purple-500 bg-opacity-0 group-hover:bg-opacity-10 rounded-full p-1 transition-all">
-                      <Download className="w-3 h-3 text-purple-400" />
+                      <Download className="w-3 h-3 text-purple-600 dark:text-purple-400" />
                     </div>
                   </div>
                 </a>

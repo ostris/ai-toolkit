@@ -1,0 +1,8 @@
+# Laptop-only dependencies for scripts/remote/ (the RunPod control plane).
+# Install into your LOCAL venv: pip install -r scripts/remote/requirements.txt
+# NEVER merge these into the repo's training requirements — the pod's
+# training environment is the pinned ostris/aitoolkit image and must not
+# gain a runpod dependency.
+runpod>=1.7,<2
+python-dotenv
+pyyaml

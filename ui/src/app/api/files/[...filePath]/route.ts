@@ -62,6 +62,8 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       // Audio
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
+      '.flac': 'audio/flac',
+      '.ogg': 'audio/ogg',
     };
 
     const contentType = contentTypeMap[ext] || 'application/octet-stream';

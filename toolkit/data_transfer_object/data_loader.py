@@ -5,7 +5,8 @@ import torch
 
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-
+import av
+            
 from toolkit import image_utils
 from toolkit.basic import get_quick_signature_string
 from toolkit.dataloader_mixins import (
@@ -21,6 +22,7 @@ from toolkit.dataloader_mixins import (
     ClipImageFileItemDTOMixin,
     InpaintControlFileItemDTOMixin,
     TextEmbeddingFileItemDTOMixin,
+    AudioProcessingDTOMixin,
 )
 from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 
@@ -42,6 +44,7 @@ class FileItemDTO(
     TextEmbeddingFileItemDTOMixin,
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
+    AudioProcessingDTOMixin,
     ControlFileItemDTOMixin,
     InpaintControlFileItemDTOMixin,
     ClipImageFileItemDTOMixin,
@@ -54,7 +57,11 @@ class FileItemDTO(
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get("path", "")
         self.dataset_config: "DatasetConfig" = kwargs.get("dataset_config", None)
-        self.is_video = self.dataset_config.num_frames > 1
+        self.is_video = self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count
+        self.is_audio_model = kwargs.get("is_audio_model", False)
+        self.sample_rate = kwargs.get("sample_rate", 48000)
+        self.num_frames = self.dataset_config.num_frames
+        self.temporal_compression = kwargs.get("temporal_compression", 8)
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(
@@ -82,8 +89,16 @@ class FileItemDTO(
                 and db_entry[2] == file_signature
             ):
                 use_db_entry = True
-
-        if use_db_entry:
+        if self.is_audio_model:
+            # get the length of the audio file in ms
+            with av.open(self.path) as c:
+                if c.duration is not None:
+                    w =  int(c.duration / 1_000)
+                else:
+                    s = c.streams.audio[0]
+                    w = int(float(s.duration * s.time_base) * 1_000)
+            h = 1
+        elif use_db_entry:
             w, h, _ = size_database[file_key]
         elif self.is_video:
             # Open the video file
@@ -197,6 +212,8 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
+            
+            self.num_frames: int = self.file_items[0].num_frames
 
             if not is_latents_cached:
                 # only return a tensor if latents are not cached

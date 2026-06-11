@@ -44,14 +44,13 @@ class Flux2KleinModel(Flux2Model):
             self.flux2_klein_te_path,
             torch_dtype=dtype,
         )
-        text_encoder.to(self.device_torch, dtype=dtype)
-
-        flush()
-
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Qwen3")
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype))
+            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
             freeze(text_encoder)
+            flush()
+        elif not self.model_config.low_vram:
+            text_encoder.to(self.device_torch, dtype=dtype)
             flush()
 
         if (

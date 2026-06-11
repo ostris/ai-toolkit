@@ -1,0 +1,60 @@
+---
+# Gating live validation for the remote-GPU pipeline (scripts/remote/README.md §6).
+# 100 steps on a synthetic dataset — validates pipeline mechanics, not quality.
+job: extension
+config:
+  name: remote_smoke_test
+  process:
+    - type: 'sd_trainer'
+      training_folder: "output"
+      device: cuda:0
+      trigger_word: "smoketest"
+      network:
+        type: "lora"
+        linear: 8
+        linear_alpha: 8
+      save:
+        dtype: float16
+        save_every: 50
+        max_step_saves_to_keep: 10
+        push_to_hub: false
+      datasets:
+        - folder_path: "/tmp/aitk_smoke_dataset"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.0
+          cache_latents_to_disk: true
+          resolution: [512]
+      train:
+        batch_size: 1
+        steps: 100
+        gradient_accumulation_steps: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        timestep_type: "weighted"
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        ema_config:
+          use_ema: false
+        dtype: bf16
+      model:
+        name_or_path: "black-forest-labs/FLUX.2-klein-base-9B"
+        arch: "flux2_klein_9b"
+        quantize: false
+      sample:
+        sampler: "flowmatch"
+        sample_every: 50
+        width: 512
+        height: 512
+        prompts:
+          - "smoketest a red circle on a white background"
+          - "a photo of a dog"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 20
+      logging:
+        log_every: 1
+        use_ui_logger: true

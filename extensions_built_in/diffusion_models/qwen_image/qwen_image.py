@@ -354,12 +354,17 @@ class QwenImageModel(BaseModel):
     def get_prompt_embeds(self, prompt: str) -> PromptEmbeds:
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
-
+        
         prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
             prompt,
             device=self.device_torch,
             num_images_per_prompt=1,
         )
+        # diffusers >=0.37 returns None when all tokens are valid (no padding)
+        if prompt_embeds_mask is None:
+            prompt_embeds_mask = torch.ones(
+                prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.int64
+            )
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
