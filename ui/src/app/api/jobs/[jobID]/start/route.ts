@@ -27,20 +27,26 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     data: { queue_position: newQueuePosition },
   });
 
-  // make sure the queue is running
+  // make sure the queue exists and is running
   const queue = await prisma.queue.findFirst({
     where: {
       gpu_ids: job.gpu_ids,
     },
   });
 
-  // if queue doesn't exist, create it
+  // if queue doesn't exist, create it and start it
   if (!queue) {
     await prisma.queue.create({
       data: {
         gpu_ids: job.gpu_ids,
-        is_running: false,
+        is_running: true,
       },
+    });
+  } else {
+    // ensure the queue is running so the worker picks up the new job
+    await prisma.queue.update({
+      where: { id: queue.id },
+      data: { is_running: true },
     });
   }
 
