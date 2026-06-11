@@ -61,27 +61,34 @@ Sample 5-8 dataset images using the Read tool. You want to internalize:
 - **For character LoRAs**: identity features (face, build, hair), what varies across the set (clothing, pose, lighting).
 - **For combined**: both, plus how the two style descriptors in captions differ.
 
-Write a brief "ground truth" summary before looking at any samples. This anchors you so you don't drift toward whatever the latest checkpoint happens to do — small datasets are easy to overfit to in your own analysis.
+Write a "ground truth" spec **to a text file** (e.g. `output/<run>/ground_truth.txt`) before looking at any samples. Two reasons: it anchors *you* so you don't drift toward whatever the latest checkpoint happens to do — small datasets are easy to overfit to in your own analysis — and it is the exact file the Gemini wide pass (Step 4) consumes via `--ground-truth`. Make it concrete: medium, palette, texture/mark-making, what varies across the set, and any artist-intent notes lifted from the YAML comments. A fidelity judgment with no ground truth is a guess, for you and for Gemini alike.
 
 ### Step 4 — Evaluate checkpoints
 
-**THE NON-NEGOTIABLE RULE: every checkpoint gets looked at before you name a winner.** You may use large step-jumps to *locate* the promising region quickly, but coarse sampling is never where you stop. A winner picked from a sparse sample is not a finding — it's a guess. The real peak is routinely the checkpoint you skipped, and bleed/degradation cliffs are often one save wide. Coarse-to-fine is the method; coarse-alone is the failure mode this skill exists to prevent.
+**THE NON-NEGOTIABLE RULE: every checkpoint gets looked at before you name a winner.** A winner picked from a sparse sample is not a finding — it's a guess. The real peak is routinely the checkpoint you skipped, and bleed/degradation cliffs are often one save wide. Coarse-to-fine is the method; coarse-alone is the failure mode this skill exists to prevent. With the Gemini wide pass, "looked at" splits cleanly: **every checkpoint appears in the wide-pass JSON (that satisfies coverage), and every finalist is eyeballed directly by you (that satisfies the verdict).** The JSON is never the verdict.
 
-Total image count is too high to fit in one context, so work in two passes — but pass 2 is mandatory, not optional, and it must leave no gaps in the candidate region.
+Total image count is too high to pour into context image-by-image, so the **wide pass runs through Gemini** (cheap VLM tokens) and you spend Opus vision only on finalists. Work in two passes — but pass 2 is mandatory, not optional, and it must leave no gaps in the candidate region.
 
-**Pass 1 — Coarse sweep (locate the region).**
-Jump across the run in large strides (e.g. every 3rd–4th checkpoint) looking at the 3 most diagnostic prompts each:
-- 1 trigger prompt covering core dataset content
-- 1 trigger prompt testing generalization (a subject *not* in the dataset)
-- 1 control prompt (no trigger) — the most important diagnostic for bleed
+**Pass 1 — Gemini wide factual pass, then read the JSON (locate the region).**
 
-This gives you the trajectory shape: roughly where style first appears (floor), where it looks strongest (candidate peak), and where overfitting / control-prompt bleed begins (ceiling). Pass 1 produces a *hypothesis about the best region* — nothing more. Do not name a winner from pass 1.
+Run the wide pass first. It looks at EVERY sample (every checkpoint × every prompt) and writes one structured record per image — fidelity, subject match, texture/palette match, control-bleed, gibberish-text, a `composition` descriptor, and `dataset_subject_leak` — into `sample_review.json`. See `references/gemini-wide-pass.md` for the field schema and how to read it.
 
-**Pass 2 — Fill in EVERY checkpoint in and around the candidate region (mandatory, no gaps).**
-Inspect every consecutive checkpoint from just-before the candidate peak to just-after the bleed/degradation onset — no skipped steps. Add the diagnostic prompts AND the full prompt set for the genuine finalists. You are doing three things pass 1 can't:
-1. **Pin the exact peak.** With every step inspected, the best checkpoint is observed, not interpolated.
+```bash
+# from the captioning venv (it has google-genai): source .venv-captioning/bin/activate
+export GEMINI_API_KEY="..."
+python scripts/review_samples_gemini.py \
+    --config output/<run>/<run>.yaml \
+    --ground-truth output/<run>/ground_truth.txt \
+    --goal style          # or character / combined
+```
+
+Then **read `sample_review.json`** (it's text — cheap) and build the trajectory from the structured facts: where the style/identity first appears (floor), where fidelity and texture peak (candidate peak), where overfitting and control-prompt bleed begin (ceiling). Cross-reference the `composition` descriptors across *different* prompts at the same step to spot memorization (different prompts → identical layout). The JSON gives full per-checkpoint coverage as text — exactly what the non-negotiable rule demands — without spending Opus vision on it. Pass 1 produces a *hypothesis about the best region* — nothing more. **Do not name a winner from the JSON:** Gemini is the coarse pass, never the verdict — its "looks strong" has masked mode-collapse before (see the hard constraints below and `references/troubleshooting.md`).
+
+**Pass 2 — Eyeball the candidate region with your own eyes (mandatory, no gaps).**
+The JSON already covers every checkpoint, so coverage is settled — *verification* is the job now. With the Read tool, directly look at every consecutive checkpoint from just-before the candidate peak to just-after the bleed/degradation onset — no skipped steps — plus the full prompt set for the genuine finalists. You are doing three things the JSON can't:
+1. **Pin the exact peak.** Gemini's scores cluster; your eye separates the true peak from its near-identical neighbour.
 2. **Find the cliff precisely.** Bleed and quality-collapse often turn on within a single 200-step save. You must see the last-clean step and the first-bled step adjacently.
-3. **Catch per-prompt failures coarse sampling missed** (e.g. a specific subject that substitutes or collapses only on certain prompts).
+3. **Catch what the schema flattened** — a subtle aesthetic miss that scored "adequate" but is spiritually wrong, or a per-prompt failure the per-image facts didn't surface.
 
 **Hard constraints on the winner pick:**
 - Never name a winner or runner-up you have not directly inspected across the full prompt set.
@@ -89,7 +96,7 @@ Inspect every consecutive checkpoint from just-before the candidate peak to just
 - Never extrapolate a checkpoint's quality from 2-3 of its samples. If it's a finalist, look at all of its prompts.
 - If you used a subagent summary for a checkpoint, that does not count as inspecting it for the final pick — verify finalists directly (subagent framing like "densest composite" has masked collapse before; see `references/troubleshooting.md` patterns).
 
-**When the run is large** (e.g. 20+ checkpoints × 20+ prompts), parallelize pass 2 with subagents: dispatch one subagent per checkpoint (or per small contiguous group) with the dataset references + that checkpoint's full sample set + the rubric + an explicit instruction to report concrete layout/identity facts (NOT vibes or "kit density"), and have each return a structured score. Then synthesize, and directly eyeball the 2-3 finalists yourself. Subagents make full coverage cheap — they are the mechanism that makes "look at every checkpoint" tractable, not an excuse to skip coverage.
+**Coverage comes from the Gemini wide pass, not from Claude subagents.** Do NOT fan out image-analysis subagents over the samples — a dozen parallel vision subagents will crash the laptop, and a subagent's prose summary is no more trustworthy than Gemini's JSON for the final pick. The wide pass already made "look at every checkpoint" tractable as one cheap text artifact; spend your own vision budget only on directly eyeballing the 2-3 finalists across their full prompt set. (If the wide pass itself needs more horsepower on a hard/abstract style, bump `--model` to `gemini-3.1-pro-preview` — which is already the default — rather than reaching for subagents.)
 
 ### Step 5 — Score against the rubric
 
@@ -159,7 +166,7 @@ When you do suggest one, provide the exact `scripts/merge_loras.py` invocation. 
 
 - **Don't stop at the coarse sweep.** Large step-jumps locate the region; they never decide the winner. If you crown a checkpoint without having inspected its immediate neighbors, you have guessed, not reviewed. Fill in every checkpoint in the candidate band first (Step 4, Pass 2).
 - **Don't extrapolate a checkpoint's quality from 2-3 samples.** A finalist gets its full prompt set looked at. "Step N's espresso prompt looked great" is not "step N is the winner" — the same step may fail on the horse or guitar prompt, and the next step may be strictly better. Both have happened and produced wrong picks.
-- **Don't trust a subagent summary as the basis for the final pick.** Subagent framing ("densest composite", "strong kit") has masked mode-collapse before. Use subagents for coverage breadth; eyeball the finalists yourself.
+- **Don't treat the Gemini wide-pass JSON (or any summary) as the verdict.** It is the coarse pass — full coverage as text, nothing more. Its scores ("strong", "adequate") have the same blind spot a subagent's "densest composite" did: they can rate a mode-collapsed checkpoint highly. Use the JSON to locate the candidate band; eyeball the finalists yourself before committing. And do NOT fan out image-analysis subagents over the samples — that crashes the laptop and buys nothing the wide pass didn't already give you.
 - Don't pick the final checkpoint by default. The user could already do that — they invoked this skill specifically to find a non-default answer.
 - Don't write hedging recommendations ("step 1500 might work, but step 2000 could also be good"). Commit — but commit to a checkpoint you actually inspected with inspected neighbors, not to a guess dressed as a decision.
 - Don't enumerate every image you looked at. The output is a recommendation, not a review log.
@@ -171,3 +178,4 @@ Read these as needed:
 
 - `references/output-layout.md` — sample filename parsing, checkpoint naming, dataset paths, merge_loras.py invocation
 - `references/evaluation-criteria.md` — detailed rubric per LoRA type (style / character / combined)
+- `references/gemini-wide-pass.md` — the `scripts/review_samples_gemini.py` wide pass: when to run it, the `sample_review.json` field schema, and how to read it into a trajectory
