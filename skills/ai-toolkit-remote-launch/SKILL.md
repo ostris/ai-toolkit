@@ -69,8 +69,9 @@ same flags.
 
 **Always ask the user which GPU to provision before launching. Do NOT
 silently default to the cheapest.** Present a short speed-vs-cost choice and
-let them pick. (Derrick prefers SPEED over price for training — lean the
-recommendation toward the fast end unless told otherwise.) Offer roughly:
+let them pick. For a first-time trainer, recommend the cheapest card that
+fits the model's VRAM floor; honor a known speed-over-price preference
+(e.g. from memory) when the user has one. Offer roughly:
 
 - **Fastest** — `H100` (SXM, 80G, ~$3.29/hr), `H100 NVL` (94G, ~$3.19/hr),
   or `H200` (141G, ~$3.79/hr). ~1.5–2× A100 training throughput.
@@ -114,7 +115,7 @@ shifts these down a tier):
 |---|---|---|---|
 | Flux.2 dev | 80G (can still OOM) | ~48–80G | batch 1 + grad-accum; OOM-prone even at 80G |
 | Flux.2 Klein 9B | 80G | ~24–48G | repo configs run it unquantized on 80G+ |
-| Qwen-Image-Edit (2511) | ~80G | ~48G (`quantize_te`) | Derrick's most-trained; quantized fits 48G |
+| Qwen-Image-Edit (2511) | ~80G | ~48G (`quantize_te`) | quantized fits 48G |
 | Wan2.2 14B (video) | 80G+ | — | `gradient_checkpointing` required even at 95G |
 | SDXL | 24G | — | fits anywhere |
 | Z-Image Turbo / Base | ~24G | — | small; 24–48G is plenty |
@@ -193,7 +194,14 @@ default 30 min), then self-stops via the RunPod API. A separate
 max-runtime timer (`--max-hours`, default 24) is the hard backstop. **Laptop
 sleep cannot leave a pod billing.** This was live-validated 2026-06-10.
 
-Set tighter bounds for short runs: `--max-hours 2 --max-grace 240`.
+**Right-size `--max-hours` on every launch — don't ride the 24h default.**
+The backstop only limits damage if it's near the real run length: estimate
+wall-clock (steps × s/step for the model+GPU, plus up to 1h warming) and set
+`--max-hours` to ~2× that estimate. A crashed-then-abandoned pod bills the
+full GPU rate until this timer fires — 24h of H100 is ~$80, a right-sized
+6h cap is ~$20. This matters most for a first-time trainer who won't
+recognize a crash or know to tear down. Short runs: `--max-hours 2
+--max-grace 240`.
 
 ## Common mistakes
 

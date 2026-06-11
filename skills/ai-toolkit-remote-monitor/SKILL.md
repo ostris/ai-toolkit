@@ -122,8 +122,19 @@ checkpoint from what's already pulled. After stopping, go to
 - **COMPLETED (exit 0)** — hand off to `ai-toolkit-remote-teardown` for the
   final pull, verify, terminate, cost report.
 - **CRASHED (exit 20)** — read `detail` and `runs/<run>/log_tail.txt`
-  (`log_tail_path`). The pod is left up; `ai-toolkit-dataset-diagnostics`
-  maps most trainer startup failures. Tear down when done diagnosing.
+  (`log_tail_path`). The pod is left up, **billing full GPU rate**, so
+  decide immediately which mode you're in:
+  - *Diagnosing right now, in this session* (and the fix might need the
+    pod — e.g. inspecting the remote filesystem): leave it up, diagnose,
+    tear down the moment you're done. `ai-toolkit-dataset-diagnostics`
+    maps most trainer startup failures.
+  - *Anything else* — the user is stepping away, the session is ending, or
+    this is a first-time trainer: pull what's needed (the log tail is
+    already local; `pull` grabs any artifacts), **tear down first, diagnose
+    from the saved log**. Almost every crash is diagnosable from
+    `log_tail.txt` alone, and a fix means a fresh launch anyway. Never park
+    a crashed pod "to look at later" — that's the most expensive way to
+    store a text file.
 - **POD_LOST / TIMED_OUT** — the pod may be stopped (not gone); the teardown
   skill's `rescue` retrieves artifacts from a stopped pod.
 
@@ -138,6 +149,9 @@ checkpoint from what's already pulled. After stopping, go to
 - **Forgetting `mark-reviewed`** — without it, `watch --once` returns exit
   10 for the same steps forever.
 - **Trusting the last checkpoint** — non-monotonic; review several.
+- **Parking a crashed pod** — CRASHED leaves the pod up at full GPU rate;
+  if diagnosis isn't happening right now, tear down and diagnose from the
+  saved log tail.
 - **Re-resolving SSH from the manifest** — never needed; every CLI command
   re-resolves the endpoint via the API (RunPod recycles IP:port).
 

@@ -27,8 +27,9 @@ name or by their `description` triggers.
 
 | Stage | Skill | Use when |
 |---|---|---|
-| **Orchestrator** | `ai-toolkit-train` | "walk me through training" — guides the full lifecycle, invoking every skill below at the right step with go/no-go gates between stages |
-| Config | `ai-toolkit-lora-config` | "train a LoRA on X" — generates the training YAML |
+| **Orchestrator** | `ai-toolkit-train` | "walk me through training" — guides the full lifecycle, invoking every skill below at the right step with go/no-go gates between stages. Carries its own dataset-readiness check (Stage 0.5) and a first-timer gate protocol (cost/time expectations, plain-language gates) in its `references/` |
+| Model brief | `ai-toolkit-model-brief` | "what should my model do" — brainstorms requirements (text rendering, edit vs generate, fidelity↔flexibility) into `briefs/<project>-brief.md` before any model/config choice |
+| Config | `ai-toolkit-lora-config` | "train a LoRA on X" — generates the training YAML (reads the brief when one exists) |
 | Captioning | `ai-toolkit-gemini-captioner` | generate per-dataset Gemini captions |
 | Caption QA | `style-vs-content-caption-auditor` | audit captions for leakage before training |
 | Dataset triage | `ai-toolkit-dataset-diagnostics` | "no images found", crashes before step 0, stale cache |
@@ -61,7 +62,8 @@ ai-toolkit-train                  # "walk me through training" — conducts all 
 Or drive the stages yourself:
 
 ```
-ai-toolkit-lora-config            # generate config from reference images
+ai-toolkit-model-brief            # brainstorm what the model must do -> briefs/<project>-brief.md
+ai-toolkit-lora-config            # generate config from reference images (+ the brief)
 ai-toolkit-gemini-captioner       # caption the dataset
 style-vs-content-caption-auditor  # audit captions
 ai-toolkit-remote-launch          # preflight -> up (provision/sync/launch)

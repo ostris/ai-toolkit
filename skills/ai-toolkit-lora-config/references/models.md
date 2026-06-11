@@ -136,6 +136,43 @@ Distilled/turbo models compress the sampling trajectory to 4-8 steps. High-frequ
 | "I have a 3090" (24GB) | any with `quantize: true` |
 | "I have an H100" or "Colab Pro+" | any with `quantize: false` |
 
+### Capability matrix (for mapping a model brief)
+
+When a model brief exists (`briefs/<project>-brief.md`, produced by
+`ai-toolkit-model-brief`), its MUST capabilities are hard filters over this
+matrix, applied **before** the selection table above. Ratings are working
+tiers, not benchmarks — when a MUST rides on one, verify with a quick
+sample from the base model before committing the run.
+
+| Model | Text rendering | Edit support | Motion | Prompt adherence | Faces | License | Hosted availability |
+|---|---|---|---|---|---|---|---|
+| Flux.2-dev | strong | — | — | strong | strong | non-commercial | wide |
+| Flux.2-Klein-9B | good | native via ctrl_img | — | good | good | Apache 2.0 | wide |
+| Flux.2-Klein-4B | fair | native via ctrl_img | — | fair | fair | Apache 2.0 | wide |
+| Qwen-Image / Qwen-Image-Edit (2511) | strong (best of set) | **purpose-built (Edit)** | — | strong | good | commercial-friendly | wide (note: hosted runtimes often need LoRA strength >1.0) |
+| Z-Image Base | fair | — | — | good | fair | commercial-friendly | moderate |
+| Z-Image Turbo | weak (distilled) | — | — | fair | fair | commercial-friendly | moderate |
+| Chroma | fair | — | — | good | fair | Apache 2.0 | narrow |
+| FLUX.1-Kontext-dev | good | purpose-built (paired) | — | good | good | non-commercial | moderate |
+| Wan2.2 (video) | — | — | **yes** | good | fair | commercial-friendly | moderate |
+| SDXL | weak | — | — | weak | fair | commercial-friendly | universal |
+
+How to apply a brief:
+
+1. **Lane first** (brief axes 3–4): edit intent → Qwen-Image-Edit /
+   Kontext / Klein ctrl_img only. Motion → Wan. Otherwise text-to-image.
+2. **Hard filters** (brief MUSTs + constraints): text rendering MUST drops
+   the "weak" column entries; commercial use drops non-commercial bases;
+   the inference destination must actually host the arch (an unhosted arch
+   runs only locally — if the brief says "don't know yet", prefer
+   wide-availability archs).
+3. **Trade-offs last**: volume/speed (brief axis 8) vs texture fidelity
+   (axis 9) is the turbo-vs-base tier choice — never resolve it silently;
+   the texture-fidelity tiers above are the vocabulary for that
+   conversation.
+4. **The dial** (brief axis 1) doesn't pick the model — it sets rank,
+   steps, captioning aggressiveness, and DOP once the model is chosen.
+
 ### Validation-run pattern
 
 When committing to a long run on a tier-1 model (Klein 9B base, Flux.2-dev), it's worth doing a tier-2 sanity check first to validate captioning before burning hours on the canonical run:

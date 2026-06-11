@@ -187,6 +187,10 @@ aitk_db.db
 .claude
 runs/
 
+# Model briefs are private like configs: artist intent, dream prompts,
+# client/commercial details.
+briefs/
+
 # --- Private training configs ------------------------------------------
 # config/examples/ is private-by-default: every config you write (artist
 # names, dataset paths, recipes) is ignored automatically. Only the

@@ -13,6 +13,15 @@ The most useful LoRA configs are not generic templates. Each decision — model 
 
 ## The flow
 
+0. **Check for a model brief.** If `briefs/<project>-brief.md` exists (or
+   `ai-toolkit-model-brief` just produced one), read it first — it answers
+   most of the question flow below, so skip everything it answers. Its
+   MUST capabilities are hard filters on model selection (see the
+   capability matrix in `references/models.md`), its dial position sets
+   rank/steps/DOP posture, its "what stays promptable" intent feeds the
+   captioning strategy, and its dream prompts become the sample prompts.
+   No brief and the user seems unsure what the model is even for? Route to
+   `ai-toolkit-model-brief` before generating anything.
 1. **Look at the images.** If the user sent reference images, read them and describe what you see to anchor the rest of the conversation. For a style LoRA you're noting medium, palette, composition, texture. For a character LoRA you're noting identity features, framing, variability.
 2. **Identify the goal type.** Ask whichever of these isn't already clear:
    - Character LoRA — capture a specific person/subject, flexible across styles
@@ -52,7 +61,7 @@ Don't over-ask. If the user says "95GB, commercial is fine, go wild," take that 
 
 ## Model selection
 
-Pick the model based on the user's goal, licensing needs, and VRAM. See `references/models.md` for full details on each.
+Pick the model based on the user's goal, licensing needs, and VRAM. See `references/models.md` for full details on each. When a model brief exists, apply its MUSTs through the capability matrix there (lane first, hard filters second, trade-offs last) before this shorthand table.
 
 Decision shorthand:
 
@@ -136,6 +145,8 @@ a red bicycle
 ```
 
 For character LoRAs, include prompts that test multiple style descriptors (the ones you used in captions) plus generalization prompts (styles the LoRA never saw). See `references/sample-prompts.md` for full templates.
+
+When a model brief exists, **derive the sample prompts from its dream prompts**: strip any style description (same minimal-prompt rule as above), add the trigger, and make sure every MUST capability has at least one prompt that tests it (a text MUST gets a prompt with lettering; an edit MUST gets a ctrl_img prompt). The brief's requirements are the test suite — the run should generate evidence for each one every sample cycle.
 
 ## DOP (Diff Output Preservation)
 
