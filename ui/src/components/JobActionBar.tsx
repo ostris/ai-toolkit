@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Download } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
@@ -152,6 +152,21 @@ export default function JobActionBar({
               </Link>
             </MenuItem>
           )}
+
+          {job.job_type === 'train' && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+                onClick={() => {
+                  window.location.href = `/api/jobs/${job.id}/export`;
+                }}
+              >
+                <Download className="w-4 h-4" />
+                Export Job
+              </div>
+            </MenuItem>
+          )}
+
           {canStop && (
             <MenuItem>
               <div
@@ -166,6 +181,7 @@ export default function JobActionBar({
               </div>
             </MenuItem>
           )}
+
           <MenuItem>
             <div
               className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"

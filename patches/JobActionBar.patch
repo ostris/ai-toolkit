@@ -1,0 +1,23 @@
+diff --git a/ui/src/components/JobActionBar.tsx b/ui/src/components/JobActionBar.tsx
+index 5623ae6..2ce274f 100644
+--- a/ui/src/components/JobActionBar.tsx
++++ b/ui/src/components/JobActionBar.tsx
+@@ -150,6 +150,18 @@ export default function JobActionBar({
+               </Link>
+             </MenuItem>
+           )}
++          {job.job_type === 'train' && (
++            <MenuItem>
++              <div
++                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"
++                onClick={() => {
++                  window.location.href = `/api/jobs/${job.id}/export`;
++                }}
++              >
++                Export Job
++              </div>
++            </MenuItem>
++          )}
+           <MenuItem>
+             <div
+               className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded"

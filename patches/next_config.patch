@@ -1,0 +1,22 @@
+diff --git a/ui/next.config.ts b/ui/next.config.ts
+index de85a43..00f358d 100644
+--- a/ui/next.config.ts
++++ b/ui/next.config.ts
+@@ -1,16 +1,13 @@
+ import type { NextConfig } from 'next';
+ 
+ const nextConfig: NextConfig = {
+-  serverExternalPackages: ['macstats', 'osx-temperature-sensor'],
++  serverExternalPackages: ['macstats', 'osx-temperature-sensor', 'unzipper'],
+   webpack: (config, { isServer }) => {
+     if (isServer) {
+       config.externals.push('osx-temperature-sensor', 'macstats');
+     }
+     return config;
+   },
+-  devIndicators: {
+-    buildActivity: false,
+-  },
+   typescript: {
+     // Remove this. Build fails because of route types
+     ignoreBuildErrors: true,
