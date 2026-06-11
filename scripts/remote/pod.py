@@ -51,10 +51,22 @@ GPU_ALIASES = {
     "A100 80GB": "NVIDIA A100 80GB PCIe",
     "A100 SXM": "NVIDIA A100-SXM4-80GB",
     "H100": "NVIDIA H100 80GB HBM3",
+    "H100 SXM": "NVIDIA H100 80GB HBM3",
     "H100 PCIE": "NVIDIA H100 PCIe",
+    "H100 NVL": "NVIDIA H100 NVL",          # 94GB, verified live id
+    "H200": "NVIDIA H200",                  # 141GB, fastest single-GPU option
+    "H200 NVL": "NVIDIA H200 NVL",
     "4090": "NVIDIA GeForce RTX 4090",
     "5090": "NVIDIA GeForce RTX 5090",
+    # 48GB tier — for models that fit in 48G (SDXL, Z-Image, quantized
+    # Qwen-Image-Edit). Cheaper and often faster than MaxQ; verified live ids.
     "L40S": "NVIDIA L40S",
+    "L40": "NVIDIA L40",
+    "A6000": "NVIDIA RTX A6000",
+    "RTX A6000": "NVIDIA RTX A6000",
+    "RTX 6000 ADA": "NVIDIA RTX 6000 Ada Generation",
+    "6000 ADA": "NVIDIA RTX 6000 Ada Generation",
+    "A40": "NVIDIA A40",
     # 96GB Blackwell workstation/server cards (verified live ids, June 2026).
     # MaxQ is routinely the cheapest 80GB+ option on Secure Cloud (~$0.50/hr).
     "MAXQ": "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition",

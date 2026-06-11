@@ -65,24 +65,65 @@ idle-bills. If you want the steps separately (e.g. to inspect the pod
 before launching), run `provision`, `sync`, then `launch` individually —
 same flags.
 
-### GPU choice
+### GPU choice — ASK, don't assume
 
-Default to **MaxQ** (RTX PRO 6000 Blackwell, 96GB, ~$0.50/hr Secure) — it's
-the cheapest 80GB+ card and handles Klein/Flux.2 unquantized. Always pass
-`--gpu-fallback` because any single GPU type is frequently out of stock.
-A sensible chain: `--gpu MAXQ --gpu-fallback "A100" --gpu-fallback "A100 SXM"`.
-Aliases live in `scripts/remote/pod.py` (`MAXQ`, `A100`, `A100 SXM`, `H100`,
-`PRO 6000`, `4090`, `5090`, `L40S`, ...); unknown names pass through as exact
-RunPod ids.
+**Always ask the user which GPU to provision before launching. Do NOT
+silently default to the cheapest.** Present a short speed-vs-cost choice and
+let them pick. (Derrick prefers SPEED over price for training — lean the
+recommendation toward the fast end unless told otherwise.) Offer roughly:
 
-| GPU (alias) | VRAM | Secure $/hr |
-|---|---|---|
-| `MAXQ` | 96G | ~0.50 |
-| `A100` (PCIe) | 80G | ~1.39 |
-| `A100 SXM` | 80G | ~1.49 |
-| `H100` (SXM) | 80G | ~3.29 |
+- **Fastest** — `H100` (SXM, 80G, ~$3.29/hr), `H100 NVL` (94G, ~$3.19/hr),
+  or `H200` (141G, ~$3.79/hr). ~1.5–2× A100 training throughput.
+- **Balanced** — `A100` (80G, ~$1.39/hr) / `A100 SXM` (~$1.49/hr).
+- **Cheapest** — `MAXQ` (RTX PRO 6000 Blackwell, 96G, ~$0.50/hr) — cheapest
+  80GB+ card, but the slowest of these.
 
-A 3000-step Klein run on MaxQ is roughly **$2.50**.
+Cost is ~neutral for a fixed run (a faster GPU finishes in fewer hours), so
+speed is usually the better axis. Always pass `--gpu-fallback` to a
+same-tier alternate since any single type is frequently out of stock — e.g.
+`--gpu H100 --gpu-fallback "H100 NVL" --gpu-fallback "H100 PCIE" --gpu-fallback "A100"`.
+
+| GPU (alias) | VRAM | Secure $/hr | speed tier |
+|---|---|---|---|
+| `H200` | 141G | ~3.79 | fastest |
+| `H100` (SXM) | 80G | ~3.29 | fastest |
+| `H100 NVL` | 94G | ~3.19 | fastest |
+| `A100 SXM` | 80G | ~1.49 | balanced |
+| `A100` (PCIe) | 80G | ~1.39 | balanced |
+| `MAXQ` | 96G | ~0.50 | cheapest (slowest) |
+
+Full alias list in `scripts/remote/pod.py` (`H100`, `H100 NVL`, `H200`,
+`A100`, `A100 SXM`, `MAXQ`, `PRO 6000`, `A6000`, `RTX 6000 ADA`, `L40`,
+`L40S`, `4090`, `5090`, ...); unknown names pass through as exact RunPod ids.
+A 2500-step Klein run is ~$3–5 on MaxQ and faster (often similar total $) on
+an H100.
+
+### Fit the GPU to the model's VRAM need (don't over-provision)
+
+Pick the smallest VRAM tier that clears the model's floor at the chosen
+precision, THEN apply the speed preference within tiers that fit. Forcing
+80GB+ on a model that trains fine in 48GB wastes money and often *speed* —
+the 48GB cards (A6000 ~$0.49, RTX 6000 Ada ~$0.77, L40/L40S ~$0.82) are
+cheaper and can be faster than MaxQ. Conversely, never recommend a card
+below the floor — it OOMs before step 1.
+
+Starting fit guidance (LoRA training; **verify per model**, quantization
+shifts these down a tier):
+
+| Model (`arch`) | Unquantized floor | With `quantize: true` | Notes |
+|---|---|---|---|
+| Flux.2 dev | 80G (can still OOM) | ~48–80G | batch 1 + grad-accum; OOM-prone even at 80G |
+| Flux.2 Klein 9B | 80G | ~24–48G | repo configs run it unquantized on 80G+ |
+| Qwen-Image-Edit (2511) | ~80G | ~48G (`quantize_te`) | Derrick's most-trained; quantized fits 48G |
+| Wan2.2 14B (video) | 80G+ | — | `gradient_checkpointing` required even at 95G |
+| SDXL | 24G | — | fits anywhere |
+| Z-Image Turbo / Base | ~24G | — | small; 24–48G is plenty |
+
+So: a quantized Qwen-Image-Edit or SDXL/Z-Image run should be offered the
+48GB (or 24GB) tier — fast AND cheap — not an 80GB card. An unquantized
+Klein/Flux.2/Wan run needs 80GB+, so the choice there is which 80GB+ card
+(speed vs cost). Read the config's `model.quantize` / `quantize_te` and
+`arch` to decide the floor before presenting GPU options.
 
 ### Multiple GPUs (`--gpus N`)
 

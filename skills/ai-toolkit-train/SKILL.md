@@ -65,7 +65,9 @@ Establish, by asking only what you can't infer:
   (Derrick trains Qwen-Image-Edit most often and Klein 9B for stubborn
   styles — default questions there unless told otherwise.)
 - **Compute**: **RunPod** (the hosted pipeline — default now; replaces
-  Colab) or **local**? This decides Stage 4.
+  Colab) or **local**? This decides Stage 4. If RunPod, also ASK which GPU —
+  Derrick prefers SPEED over price, so offer fastest (H100/H200) / balanced
+  (A100) / cheapest (MaxQ) and lean fast; never silently pick the cheapest.
 
 Confirm the frame in 2-3 lines before moving on. Don't over-interrogate —
 infer model/params from the goal and let Stage 1 refine.
@@ -115,8 +117,9 @@ pre-flight sanity sweep. Skip when the dataset is known-good.
 - **GATE:** read the preflight output together — path remaps, file/caption
   counts, warnings — before provisioning. Preflight failure is free; a bad
   config discovered after a pod is running is not.
-- Confirm GPU + rough cost with the user (MaxQ 96GB ~$0.50/hr is the default;
-  a 3000-step Klein run ≈ $2.50). Always use `--gpu-fallback`.
+- Confirm the GPU + rough cost with the user — ASK, don't assume cheapest
+  (Derrick leans speed). The launch skill carries the speed/balanced/cheapest
+  options and the model→min-VRAM fit table. Always use `--gpu-fallback`.
 - First run spends 20-60 min in `warming` (model download) — that's normal,
   not a hang.
 
