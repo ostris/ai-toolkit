@@ -22,7 +22,15 @@ Usage:
     python scripts/review_samples_gemini.py \\
         --config output/my_run/my_run.yaml \\
         --ground-truth /tmp/my_run_ground_truth.txt \\
-        --goal style
+        --goal style \\
+        --mode quality          # or --mode fast
+
+`--mode` picks the underlying Gemini model:
+  - `quality` (default) = gemini-3.1-pro-preview. ~5 min/checkpoint. Best for
+    abstract or multi-material styles where subtle material reads matter.
+  - `fast` = gemini-3.1-flash-lite. ~10x cheaper and faster. Fine for clean
+    photo styles or character LoRAs. Use --mode fast when you already know
+    what to look for and just want to locate the candidate band.
 
 `--ground-truth` is a plain-text file you (Opus) write first, after looking at
 5-8 dataset images: the medium, palette, texture, mark-making, what varies, and
@@ -269,9 +277,19 @@ def main():
                         help="Override the samples folder (default: <training_folder>/<name>/samples).")
     parser.add_argument("--output", default=None,
                         help="Output JSON path (default: <run folder>/sample_review.json).")
-    parser.add_argument("--model", default="gemini-3.1-pro-preview",
-                        help="Gemini model id. Fallbacks if quota-limited: "
-                             "gemini-3.1-flash-lite, gemini-2.5-pro, gemini-2.5-flash")
+    parser.add_argument("--mode", choices=["quality", "fast"], default="quality",
+                        help="Speed-vs-quality preset for the Gemini wide pass. "
+                             "'quality' (default) = gemini-3.1-pro-preview — strongest material/texture "
+                             "reads on abstract or multi-mode styles; ~5 min per checkpoint × prompt grid. "
+                             "'fast' = gemini-3.1-flash-lite — ~10× cheaper and faster, fine for the "
+                             "factual extraction on clean photo-style or character LoRAs, may miss "
+                             "subtle material variants on harder styles. Overridden if --model is "
+                             "passed explicitly. Per [Gemini captioner fallback model] memory: use "
+                             "flash-lite (NOT flash-preview, which 404s on v1beta).")
+    parser.add_argument("--model", default=None,
+                        help="Override the Gemini model id explicitly. Bypasses --mode. Valid: "
+                             "gemini-3.1-pro-preview, gemini-3.1-flash-lite, gemini-2.5-pro, "
+                             "gemini-2.5-flash. Use --mode unless you need a non-preset model.")
     parser.add_argument("--max-side", type=int, default=1024,
                         help="Downscale longest image side to this before sending (cuts Gemini cost; "
                              "most samples are already <=1024). 0 disables.")
@@ -282,6 +300,14 @@ def main():
     parser.add_argument("--overwrite", action="store_true",
                         help="Re-analyze images already present in the output JSON.")
     args = parser.parse_args()
+
+    # Resolve --mode preset to a concrete model id. --model wins if passed.
+    MODE_MODELS = {
+        "quality": "gemini-3.1-pro-preview",
+        "fast": "gemini-3.1-flash-lite",
+    }
+    if args.model is None:
+        args.model = MODE_MODELS[args.mode]
 
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -349,7 +375,7 @@ def main():
     print(f"Checkpoints: {len(by_step)}  |  prompts: {len(prompts)}  |  "
           f"control indices: {control_indices}")
     print(f"Sample images: {total_imgs}  |  to analyze: {len(jobs)}"
-          f"{' (capped by --limit)' if args.limit else ''}  |  model: {args.model}")
+          f"{' (capped by --limit)' if args.limit else ''}  |  mode: {args.mode}  |  model: {args.model}")
     if not jobs:
         print("Nothing to do. (Use --overwrite to redo.)")
         return

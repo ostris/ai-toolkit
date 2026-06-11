@@ -39,9 +39,11 @@ Read the YAML and extract:
 - `train.steps` and `save.save_every` (tells you how many checkpoints to expect)
 - `train.diff_output_preservation` (DOP on or off changes how strict to be about control-prompt bleed)
 - `model.arch` and the dataset folder
-- Comments in the YAML — Derrick often documents intent there ("texture is essential", "weird artifacts welcome"). Honor those.
+- Comments in the YAML — the config author often documents intent there ("texture is essential", "weird artifacts welcome"). Honor those.
 
 Classify the training goal: **style LoRA**, **character LoRA**, or **combined**. The rubric differs — see `references/evaluation-criteria.md`.
+
+**If a model brief exists for this run (`briefs/<project>-brief.md`), read it now.** It changes the review four ways: (1) the sample prompts were derived from its dream prompts, so the brief tells you what each prompt is *testing* — score each MUST capability explicitly (a text MUST means the lettering prompt's output gets judged on legibility, not vibes); (2) the **make-or-break ingredient and feel words** are the FIRST thing to check at every checkpoint — "delicate", "the glow", "the collage panels" have each been the real acceptance criterion that generic fidelity scoring missed; (3) the fidelity↔flexibility dial and off-switch ruling weight the failure modes — a fidelity-leaning or always-on-deployment brief tolerates control-prompt bleed, a must-stay-clean brief treats bleed as disqualifying; (4) the "Out of scope" section lists what NOT to penalize. A winner that fails a MUST or loses the make-or-break ingredient is not a winner — say so in Concerns even if it scores well otherwise.
 
 ### Step 2 — Locate samples and map them to prompts
 
@@ -73,13 +75,23 @@ Total image count is too high to pour into context image-by-image, so the **wide
 
 Run the wide pass first. It looks at EVERY sample (every checkpoint × every prompt) and writes one structured record per image — fidelity, subject match, texture/palette match, control-bleed, gibberish-text, a `composition` descriptor, and `dataset_subject_leak` — into `sample_review.json`. See `references/gemini-wide-pass.md` for the field schema and how to read it.
 
+**Before invoking, ask the user to pick `--mode quality` or `--mode fast`** using AskUserQuestion. The choice is real and varies by run, so don't default silently. Phrase the question in terms of the trade-off they care about (how long they have to wait vs. how subtle the material/texture reads need to be), not in terms of Gemini model IDs.
+
+| `--mode` | Model | Speed (14 ckpt × 16 prompt grid ≈ 220 imgs) | When |
+|---|---|---|---|
+| `quality` (default) | `gemini-3.1-pro-preview` | ~50–70 min wall clock | Abstract/multi-mode styles (multiple materials, dense overlays, gibberish-text leak); v4-style "trigger fires variety" runs where you need to spot subtle material differences between samples; any run where mode-collapse vs real variation is the question. |
+| `fast` | `gemini-3.1-flash-lite` | ~5–10 min wall clock | Clean photo or single-mode styles; character LoRAs (identity is binary-ish); large step counts where you mostly just want to find the candidate band; iterating on a v2/v3 of the same run where you already know what to look for. |
+
+Either mode produces the same JSON schema — only the per-image reads get richer at `quality`. The aesthetic verdict still happens on Opus in Pass 2 regardless, so `fast` doesn't gate final quality, it just costs you some early signal on hard styles.
+
 ```bash
 # from the captioning venv (it has google-genai): source .venv-captioning/bin/activate
 export GEMINI_API_KEY="..."
 python scripts/review_samples_gemini.py \
     --config output/<run>/<run>.yaml \
     --ground-truth output/<run>/ground_truth.txt \
-    --goal style          # or character / combined
+    --goal style \                # or character / combined
+    --mode quality                # or --mode fast — ASK THE USER FIRST
 ```
 
 Then **read `sample_review.json`** (it's text — cheap) and build the trajectory from the structured facts: where the style/identity first appears (floor), where fidelity and texture peak (candidate peak), where overfitting and control-prompt bleed begin (ceiling). Cross-reference the `composition` descriptors across *different* prompts at the same step to spot memorization (different prompts → identical layout). The JSON gives full per-checkpoint coverage as text — exactly what the non-negotiable rule demands — without spending Opus vision on it. Pass 1 produces a *hypothesis about the best region* — nothing more. **Do not name a winner from the JSON:** Gemini is the coarse pass, never the verdict — its "looks strong" has masked mode-collapse before (see the hard constraints below and `references/troubleshooting.md`).

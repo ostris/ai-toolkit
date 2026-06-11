@@ -45,7 +45,8 @@ export GEMINI_API_KEY="..."
 python scripts/review_samples_gemini.py \
     --config output/<run>/<run>.yaml \
     --ground-truth output/<run>/ground_truth.txt \
-    --goal style
+    --goal style \
+    --mode quality        # or --mode fast
 ```
 
 The script reads the config to find the run folder, samples dir, trigger word,
@@ -57,10 +58,25 @@ control. It is **re-run safe** — already-recorded images are skipped; pass
 
 Useful flags:
 
-- `--model` — defaults to `gemini-3.1-pro-preview`. Fallbacks if quota-limited:
-  `gemini-3.1-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`. (Flash tiers
-  are fine for the *factual* extraction and cheaper still; the aesthetic verdict
-  stays on Opus regardless, so a lower tier doesn't gate final quality.)
+- `--mode` — speed-vs-quality preset for the underlying Gemini model. Ask the
+  user before picking; don't default silently.
+  - `quality` (default) → `gemini-3.1-pro-preview`. ~5 min/checkpoint on a
+    14-ckpt × 16-prompt grid (≈50–70 min total). Use for abstract or
+    multi-material styles where subtle material differences between samples
+    matter (e.g. v4-style "does the trigger fire variety vs. mode-collapse to
+    chrome").
+  - `fast` → `gemini-3.1-flash-lite`. ~10× faster (≈5–10 min total). Use for
+    clean single-mode styles, character LoRAs (identity is binary-ish), or
+    iteration runs where you already know what to look for.
+  - Either mode produces the same JSON schema; only the per-image reads get
+    richer at `quality`. The aesthetic verdict still happens on Opus in
+    Pass 2, so `fast` doesn't gate final quality — just early signal on hard
+    styles. (Per the [Gemini captioner fallback model] memory: flash-lite
+    NOT flash-preview — the latter 404s on v1beta.)
+- `--model` — explicit override that bypasses `--mode`. Valid:
+  `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite`, `gemini-2.5-pro`,
+  `gemini-2.5-flash`. Use only when you need a non-preset model (e.g. quota
+  fallback). For the normal speed-vs-quality choice, prefer `--mode`.
 - `--max-side` — downscales the longest image side before sending (default
   1024; most samples are already ≤1024 so it's usually a no-op). Lower it to
   cut Gemini cost further on huge sample sets.
