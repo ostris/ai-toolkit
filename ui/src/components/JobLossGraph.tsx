@@ -312,6 +312,7 @@ export default function JobLossGraph({ job }: Props) {
         width: 2,
         spanGaps: false,
         points: { show: false },
+        value: (_u, value) => formatNum(value),
       });
       colArrays.push(smooth);
 
@@ -324,6 +325,7 @@ export default function JobLossGraph({ job }: Props) {
           width: 2.5,
           spanGaps: false,
           points: { show: false },
+          value: (_u, value) => formatNum(value),
         });
         colArrays.push(fullSmooth);
       }
