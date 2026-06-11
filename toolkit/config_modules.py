@@ -759,7 +759,27 @@ class ModelConfig:
         self.compile_fullgraph = kwargs.get("compile_fullgraph", False)
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
         self.cache_size_limit = kwargs.get("cache_size_limit", None)
-        
+
+        # mxfp8 stores weights as tensor subclasses. torch.compile leaves a weakref on the traced
+        # params (torch's MetaConverter, see pytorch/pytorch#170770), which makes a GENUINE device
+        # move (offloading) of the compiled weight crash inside torch.utils.swap_tensors
+        # ("_apply(): Couldn't swap Linear.weight"). The no-op move guard installed after compile
+        # only skips moves that change nothing (sampling device juggling at low_vram=False); it
+        # cannot rescue a real offload move. So compiling an mxfp8 model that also offloads is
+        # unsupported -> fail fast here instead of crashing minutes into the run.
+        _mxfp8_compilable = isinstance(self.qtype, str) and self.qtype in (
+            "mxfp8", "mxfp8_static", "mxfp8_static_d1",
+        )
+        if self.quantize and _mxfp8_compilable and self.compile and (self.low_vram or self.layer_offloading):
+            _which = "low_vram" if self.low_vram else "layer_offloading"
+            raise ValueError(
+                f"Unsupported combination: qtype='{self.qtype}' + compile=True + {_which}=True. "
+                f"Offloading a torch.compiled mxfp8 (tensor-subclass) weight triggers a torch "
+                f"swap_tensors weakref crash (pytorch/pytorch#170770; upstream fixes #171209/#174738 "
+                f"are unmerged). Choose one: compile=False, or {_which}=False (mxfp8 already cuts "
+                f"weight VRAM substantially, so compile without offload usually fits)."
+            )
+
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
         

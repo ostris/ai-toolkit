@@ -797,6 +797,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for group in self.optimizer.param_groups:
                 for param in group['params']:
                     params.append(param)
+            # EMA keeps a weakref on every tracked param. If a tracked param is a tensor SUBCLASS
+            # (e.g. a trainable mxfp8 / quantized weight in a full fine-tune), that weakref makes
+            # the whole model un-.to()-able: nn.Module._apply forces the swap_tensors path for
+            # subclass params and swap_tensors refuses weakref'd tensors -> crash on any device
+            # move / sampling teardown (pytorch/pytorch#187008, which the no-op move guard cannot
+            # rescue for genuine moves). LoRA training is unaffected (EMA tracks only the plain
+            # LoRA params, never the frozen quantized base). Fail fast instead of crashing mid-run.
+            from torch.utils._python_dispatch import is_traceable_wrapper_subclass
+            subclass_params = [p for p in params if is_traceable_wrapper_subclass(p)]
+            if subclass_params:
+                raise ValueError(
+                    f"use_ema=True is incompatible with training tensor-subclass (quantized) "
+                    f"parameters: {len(subclass_params)} EMA-tracked param(s) are tensor subclasses "
+                    f"(e.g. mxfp8/quantized weights in a full fine-tune). EMA holds a weakref to "
+                    f"each tracked param, which makes the model crash on any .to()/device move via "
+                    f"torch.utils.swap_tensors (pytorch/pytorch#187008). Use a LoRA adapter so EMA "
+                    f"tracks only plain LoRA params, or disable EMA for full quantized fine-tuning."
+                )
             self.ema = ExponentialMovingAverage(
                 params,
                 decay=self.train_config.ema_config.ema_decay,
