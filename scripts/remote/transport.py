@@ -92,8 +92,11 @@ def _remote_spec(ep: Endpoint, remote_path: str) -> str:
 
 def ssh_run(ep: Endpoint, command: str, *, timeout: float = SSH_TIMEOUT,
             runner=subprocess.run) -> subprocess.CompletedProcess:
-    """Run a single remote command; returns CompletedProcess (caller checks)."""
-    return runner(ssh_base_args(ep) + [command], text=True,
+    """Run a single remote command; returns CompletedProcess (caller checks).
+    Decode with errors='replace' so log tails containing tqdm ANSI escapes /
+    other non-UTF-8 bytes don't crash the whole monitor pipeline."""
+    return runner(ssh_base_args(ep) + [command],
+                  encoding="utf-8", errors="replace",
                   capture_output=True, timeout=timeout)
 
 
