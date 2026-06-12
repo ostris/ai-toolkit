@@ -2099,23 +2099,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     block_compile = getattr(self.model_config, 'block_compile', False)
 
                     cache_info = f", cache_size_limit={cache_size_limit}" if cache_size_limit != 8 else ""
-
                     # ====================================================
                     # BLOCK COMPILE
                     # ====================================================
                     if block_compile:
+                        BLOCK_LIST_ATTRS = self.sd.get_transformer_block_names()
+                        
+                        if BLOCK_LIST_ATTRS is None or len(BLOCK_LIST_ATTRS) == 0:
+                            BLOCK_LIST_ATTRS = [
+                                'layers',
+                                'transformer_blocks',
+                                'single_transformer_blocks',
+                                'double_stream_blocks',
+                                'single_stream_blocks',
+                                'double_blocks',
+                                'single_blocks',
+                                'blocks',
+                            ]
                         inner_unet = unwrap_model(self.sd.unet)
-
-                        BLOCK_LIST_ATTRS = [
-                            'layers',
-                            'transformer_blocks',
-                            'single_transformer_blocks',
-                            'double_stream_blocks',
-                            'single_stream_blocks',
-                            'double_blocks',
-                            'single_blocks',
-                            'blocks',
-                        ]
 
                         compiled_block_count = 0
 

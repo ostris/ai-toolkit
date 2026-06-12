@@ -709,7 +709,9 @@ class ModelConfig:
 
         if self.compile and self.quantize:
             print("Quantized model detected - allowing torch.compile (experimental - Does not work with offloaded transformer)")
-            # self.compile = False
+            # make it torchao instead of quantio for compatibility with torch compile
+            if self.qtype == "qfloat8":
+                self.qtype = "float8"
         self.block_compile = kwargs.get("block_compile", False)
         self.compile_mode = kwargs.get("compile_mode", "default")
         self.compile_fullgraph = kwargs.get("compile_fullgraph", True)
