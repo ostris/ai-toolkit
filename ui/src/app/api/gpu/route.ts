@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
-import { createRequire } from 'module';
 import os from 'os';
+import { getMacstats } from '@/server/macstats';
 
 const execAsync = promisify(exec);
 
@@ -47,41 +47,42 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
     let memTotal = memoryTotal;
 
     try {
-      // Use createRequire to hide from webpack static analysis so it doesn't fail on non-mac platforms
-      const nativeRequire = createRequire(import.meta.url);
-      const ms = nativeRequire('macstats') as any;
-
-      try {
-        const gpuData = ms.getGpuDataSync();
-        temperature = gpuData.temperature || 0;
-        gpuLoad = gpuData.usage || 0;
-      } catch {
-        // ignore
-      }
-
-      try {
-        const fanData = ms.getFanDataSync();
-        const fanKeys = Object.keys(fanData);
-        if (fanKeys.length > 0) {
-          fanSpeed = fanData[fanKeys[0]].rpm || 0;
+      const ms = await getMacstats();
+      if (ms) {
+        try {
+          const gpuData = ms.getGpuDataSync?.();
+          temperature = gpuData?.temperature || 0;
+          gpuLoad = gpuData?.usage || 0;
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
-      }
 
-      try {
-        const powerData = ms.getPowerDataSync();
-        powerDraw = powerData.gpu || 0;
-      } catch {
-        // ignore
-      }
+        try {
+          const fanData = ms.getFanDataSync?.();
+          const fanKeys = fanData ? Object.keys(fanData) : [];
+          if (fanData && fanKeys.length > 0) {
+            fanSpeed = fanData[fanKeys[0]].rpm || 0;
+          }
+        } catch {
+          // ignore
+        }
 
-      try {
-        const ramData = ms.getRAMUsageSync();
-        memUsed = ramData.used / (1024 * 1024);
-        memTotal = ramData.total / (1024 * 1024);
-      } catch {
-        // ignore
+        try {
+          const powerData = ms.getPowerDataSync?.();
+          powerDraw = powerData?.gpu || 0;
+        } catch {
+          // ignore
+        }
+
+        try {
+          const ramData = ms.getRAMUsageSync?.();
+          if (ramData) {
+            memUsed = ramData.used / (1024 * 1024);
+            memTotal = ramData.total / (1024 * 1024);
+          }
+        } catch {
+          // ignore
+        }
       }
     } catch (error) {
       console.warn('macstats not available:', error);
@@ -248,4 +249,3 @@ async function getGpuStats(isWindows: boolean) {
 
   return gpus;
 }
-
