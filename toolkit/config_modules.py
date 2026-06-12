@@ -706,10 +706,15 @@ class ModelConfig:
 
         # compile the model with torch compile
         self.compile = kwargs.get("compile", False)
-        
+
         if self.compile and self.quantize:
-            print("Warning: You cannot compile a quantized model. Disabling compile.")
-            self.compile = False
+            print("Quantized model detected - allowing torch.compile (experimental - Does not work with offloaded transformer)")
+            # self.compile = False
+        self.block_compile = kwargs.get("block_compile", False)
+        self.compile_mode = kwargs.get("compile_mode", "default")
+        self.compile_fullgraph = kwargs.get("compile_fullgraph", True)
+        self.compile_dynamic = kwargs.get("compile_dynamic", True)
+        self.cache_size_limit = kwargs.get("cache_size_limit", 8)
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
