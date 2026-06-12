@@ -86,6 +86,7 @@ if os.environ.get("DEBUG_TOOLKIT", "0") == "1":
 
 import argparse
 from toolkit.job import get_job
+from jobs.exceptions import JobReturnedToQueueException, JobStoppedException
 
 def print_end_message(jobs_completed, jobs_failed):
     failure_string = f"{jobs_failed} failure{'' if jobs_failed == 1 else 's'}" if jobs_failed > 0 else ""
@@ -133,9 +134,23 @@ def main(config_file_list_str: str, recover: bool = False, name: str = None):
             
             job.cleanup()
             jobs_completed += 1
+        except (JobReturnedToQueueException, JobStoppedException) as e:
+            print(str(e))
+            try:
+                job.process[0].on_error(e)
+            except Exception as e2:
+                print(f"Error running cleanup: {e2}")
+            finally:
+                job.cleanup()
         except Exception as e:
             print(f"Error running job: {e}")
             jobs_failed += 1
+            try:
+                job.process[0].on_error(e)
+            except Exception as e2:
+                print(f"Error running on_error: {e2}")
+            finally:
+                job.cleanup()
             if not recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e

@@ -9,6 +9,7 @@ import time
 import signal
 import concurrent.futures
 from PIL import Image
+from jobs.exceptions import JobReturnedToQueueException, JobStoppedException
 
 import torch
 from jobs.process import BaseExtensionProcess
@@ -314,11 +315,11 @@ class BaseCaptioner(BaseExtensionProcess):
         if self.should_stop():
             self._run_async_operation(self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
-            raise Exception("Job stopped")
+            raise JobStoppedException("Job stopped")
         if self.should_return_to_queue():
             self._run_async_operation(self._update_status("queued", "Job queued"))
             self.is_stopping = True
-            raise Exception("Job returning to queue")
+            raise JobReturnedToQueueException("Job returning to queue")
 
     async def _update_key(self, key, value):
         def _do_update():

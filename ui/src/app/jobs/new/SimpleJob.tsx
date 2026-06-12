@@ -543,6 +543,14 @@ export default function SimpleJob({
               min={1}
               required
             />
+            <NumberInput
+              label="Pause and re-add to queue every N checkpoints"
+              value={jobConfig.config.process[0].save.rolling_pause ?? 0}
+              onChange={value => setJobConfig(value, 'config.process[0].save.rolling_pause')}
+              placeholder="0 to disable"
+              min={0}
+              required
+            />
           </Card>
         </div>
         <div>

@@ -8,6 +8,7 @@ from typing import Literal, Optional
 import threading
 import time
 import signal
+from jobs.exceptions import JobReturnedToQueueException, JobStoppedException
 from toolkit.basic import flush
 from toolkit.print import print_acc
 
@@ -167,12 +168,12 @@ class DiffusionTrainer(SDTrainer):
             self._run_async_operation(
                 self._update_status("stopped", "Job stopped"))
             self.is_stopping = True
-            raise Exception("Job stopped")
+            raise JobStoppedException("Job stopped")
         if self.should_return_to_queue():
             self._run_async_operation(
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
-            raise Exception("Job returning to queue")
+            raise JobReturnedToQueueException("Job returning to queue")
 
     def should_save(self):
         if not self.is_ui_trainer:
@@ -237,6 +238,53 @@ class DiffusionTrainer(SDTrainer):
         """Non-blocking update a key in the database."""
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self._run_async_operation(self._update_key(key, value))
+
+    def _queue_job_to_bottom(self, info: Optional[str] = None):
+        if not self.is_ui_trainer:
+            return
+
+        def _queue_job():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    cursor.execute("SELECT COALESCE(MAX(queue_position), 0) FROM Job")
+                    highest_queue_position = cursor.fetchone()
+                    next_queue_position = (
+                        0 if highest_queue_position is None or highest_queue_position[0] is None else highest_queue_position[0]
+                    ) + 1000
+                    cursor.execute(
+                        "UPDATE Job SET queue_position = ?, return_to_queue = ?, info = ? WHERE id = ?",
+                        (next_queue_position, 1, info or "Job queued", self.job_id),
+                    )
+                finally:
+                    cursor.execute("COMMIT")
+
+        self._retry_db_operation(_queue_job)
+
+    def post_save_hook(self, save_path):
+        super(DiffusionTrainer, self).post_save_hook(save_path)
+        if not self.is_ui_trainer:
+            return
+
+        rolling_pause = getattr(self.save_config, "rolling_pause", 0) or 0
+        if rolling_pause <= 0 or not self.save_config.save_every:
+            return
+        if self.step_num <= 0 or self.step_num % self.save_config.save_every != 0:
+            return
+
+        checkpoint_count = self.step_num // self.save_config.save_every
+        if checkpoint_count <= 0 or checkpoint_count % rolling_pause != 0:
+            return
+
+        if self.accelerator.is_main_process:
+            print_acc(
+                f"Rolling pause triggered after checkpoint {checkpoint_count}; returning job to the back of the queue"
+            )
+            self._queue_job_to_bottom(f"Rolling pause after checkpoint {checkpoint_count}")
+
+        self.accelerator.wait_for_everyone()
+        self.maybe_stop()
 
     async def _update_status(self, status: AITK_Status, info: Optional[str] = None):
         if not self.accelerator.is_main_process or not self.is_ui_trainer:

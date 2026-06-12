@@ -60,9 +60,8 @@ const pages: Page[] = [
   },
 ];
 
-export default function JobPage({ params }: { params: { jobID: string } }) {
-  const usableParams = use(params as any) as { jobID: string };
-  const jobID = usableParams.jobID;
+export default function JobPage({ params }: { params: Promise<{ jobID: string }> }) {
+  const { jobID } = use(params);
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
 

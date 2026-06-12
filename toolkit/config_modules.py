@@ -25,6 +25,7 @@ class SaveConfig:
         self.save_every: int = kwargs.get('save_every', 1000)
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.max_step_saves_to_keep: int = kwargs.get('max_step_saves_to_keep', 5)
+        self.rolling_pause: int = kwargs.get('rolling_pause', 0)
         self.save_format: SaveFormat = kwargs.get('save_format', 'safetensors')
         if self.save_format not in ['safetensors', 'diffusers']:
             raise ValueError(f"save_format must be safetensors or diffusers, got {self.save_format}")
