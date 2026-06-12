@@ -2079,7 +2079,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_quantized = getattr(self.model_config, 'quantize', False) or \
                                getattr(self.model_config, 'quantize_te', False)
 
-                if is_quantized and is_unet_offloaded:
+                try:
+                    from torch.utils._triton import has_triton
+                    triton_available = has_triton()
+                except Exception:
+                    triton_available = False
+
+                if not triton_available:
+                    print_acc("WARNING: compile is disabled.")
+                    print_acc("Triton is not available or not working on this system.")
+                    print_acc("Install a working 'triton' package to use compile.")
+                    print_acc("Continuing without compilation.")
+                elif is_quantized and is_unet_offloaded:
                     print_acc("WARNING: compile is disabled.")
                     print_acc("Quantized models with Transformer offloading are incompatible.")
                     print_acc("Disable Transformer offload to use compile.")
