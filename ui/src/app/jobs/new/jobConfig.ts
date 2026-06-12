@@ -31,6 +31,14 @@ export const defaultSliderConfig: SliderConfig = {
   anchor_class: '',
 };
 
+export const defaultCompileOptions = {
+  block_compile: false,
+  compile_mode: 'default',
+  compile_fullgraph: false,
+  compile_dynamic: false,
+  cache_size_limit: undefined,
+};
+
 export const defaultJobConfig: JobConfig = {
   job: 'extension',
   config: {
@@ -94,6 +102,7 @@ export const defaultJobConfig: JobConfig = {
           diff_output_preservation_class: 'person',
           switch_boundary_every: 1,
           loss_type: 'mse',
+          compile: false,
         },
         logging: {
           log_every: 1,

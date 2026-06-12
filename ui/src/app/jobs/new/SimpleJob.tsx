@@ -9,7 +9,7 @@ import {
   jobTypeOptions,
   SampleTags,
 } from './options';
-import { defaultDatasetConfig } from './jobConfig';
+import { defaultCompileOptions, defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy, tagsToObj, objToTags } from '@/utils/basic';
 import {
@@ -368,7 +368,7 @@ export default function SimpleJob({
             )}
           </Card>
           {disableSections.includes('model.quantize') ? null : (
-            <Card title="Quantization">
+            <Card title="Quantize / Compile">
               <SelectInput
                 label="Transformer"
                 value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
@@ -401,6 +401,25 @@ export default function SimpleJob({
                   options={quantizationOptions}
                 />
               )}
+              <FormGroup label="Compile Options">
+                <></>
+              </FormGroup>
+              <Checkbox
+                label="Compile Model"
+                checked={jobConfig.config.process[0].train.compile || false}
+                onChange={value => {
+                  setJobConfig(value, 'config.process[0].train.compile');
+                  if (value) {
+                    for (const key in defaultCompileOptions) {
+                      setJobConfig((defaultCompileOptions as any)[key], `config.process[0].train.${key}`);
+                    }
+                  } else {
+                    for (const key in defaultCompileOptions) {
+                      setJobConfig(undefined, `config.process[0].train.${key}`);
+                    }
+                  }
+                }}
+              />
             </Card>
           )}
           {modelArch?.additionalSections?.includes('model.multistage') && (
