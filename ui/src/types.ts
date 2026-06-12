@@ -151,12 +151,6 @@ export interface TrainConfig {
   differential_guidance_scale?: number;
   audio_loss_multiplier?: number;
   max_loss?: number | null;
-  compile?: boolean;
-  block_compile?: boolean;
-  compile_mode?: 'default' | 'max-autotune' | 'fastest';
-  compile_fullgraph?: boolean;
-  compile_dynamic?: boolean;
-  cache_size_limit?: number;
 }
 
 export interface QuantizeKwargsConfig {
@@ -177,6 +171,12 @@ export interface ModelConfig {
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
   assistant_lora_path?: string;
+  compile?: boolean;
+  block_compile?: boolean;
+  compile_mode?: 'default' | 'max-autotune' | 'fastest';
+  compile_fullgraph?: boolean;
+  compile_dynamic?: boolean;
+  cache_size_limit?: number;
 }
 
 export interface SampleItem {

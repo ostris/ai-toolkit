@@ -406,16 +406,16 @@ export default function SimpleJob({
               </FormGroup>
               <Checkbox
                 label="Compile Model"
-                checked={jobConfig.config.process[0].train.compile || false}
+                checked={jobConfig.config.process[0].model.compile || false}
                 onChange={value => {
-                  setJobConfig(value, 'config.process[0].train.compile');
+                  setJobConfig(value, 'config.process[0].model.compile');
                   if (value) {
                     for (const key in defaultCompileOptions) {
-                      setJobConfig((defaultCompileOptions as any)[key], `config.process[0].train.${key}`);
+                      setJobConfig((defaultCompileOptions as any)[key], `config.process[0].model.${key}`);
                     }
                   } else {
                     for (const key in defaultCompileOptions) {
-                      setJobConfig(undefined, `config.process[0].train.${key}`);
+                      setJobConfig(undefined, `config.process[0].model.${key}`);
                     }
                   }
                 }}
