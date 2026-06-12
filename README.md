@@ -160,18 +160,11 @@ Please do not open a bug report unless it is a bug in the code. You are welcome 
 and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
 and I will answer when I can.
 
-## Gradio UI
+## Ostris Cloud
 
-To get started training locally with a with a custom UI, once you followed the steps above and `ai-toolkit` is installed:
+You can use many cloud providers to rent GPUs. If you want to help support this project in the largest way possible, please consider using [Ostris Cloud](https://cloud.ostris.com). Ostris Cloud is owned and operated by me, Ostris, and every dollar earned goes directly back into funding the development of this project.
 
-```bash
-cd ai-toolkit #in case you are not yet in the ai-toolkit folder
-huggingface-cli login #provide a `write` token to publish your LoRA at the end
-python flux_train_ui.py
-```
-
-You will instantiate a UI that will let you upload your images, caption them, train and publish your LoRA
-![image](assets/lora_ease_ui.png)
+<a href="https://cloud.ostris.com" target="_blank"><img src="https://cloud.ostris.com/api/og" alt="Ostris Cloud" style="max-width:100%;width:600px;height:auto;"></a>
 
 
 ## Training in RunPod
