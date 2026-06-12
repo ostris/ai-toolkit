@@ -12,9 +12,14 @@ interface Props {
 
 function formatNum(v: number) {
   if (!Number.isFinite(v)) return '';
-  if (Math.abs(v) >= 1000) return v.toFixed(0);
-  if (Math.abs(v) >= 10) return v.toFixed(3);
-  if (Math.abs(v) >= 1) return v.toFixed(4);
+  if (v === 0) return '0';
+  const abs = Math.abs(v);
+  // Very small / very large magnitudes read better as exponents (e.g. 1.00e-5)
+  // than as long decimal strings like 0.0000100.
+  if (abs < 1e-3 || abs >= 1e6) return v.toExponential(2);
+  if (abs >= 1000) return v.toFixed(0);
+  if (abs >= 10) return v.toFixed(3);
+  if (abs >= 1) return v.toFixed(4);
   return v.toPrecision(4);
 }
 
@@ -37,20 +42,58 @@ function computeCanvasSize(host: HTMLElement): { width: number; height: number }
   return { width, height: Math.max(MIN_CANVAS_HEIGHT, height - legendH) };
 }
 
-// EMA over a (number|null)[] series. Nulls are preserved as gaps and do not
-// advance the running average.
-function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
-  const out: (number | null)[] = new Array(ys.length);
-  let prev: number | null = null;
-  for (let i = 0; i < ys.length; i++) {
+// One-directional bias-corrected EMA. The accumulator starts at 0 and each
+// output is divided by w = 1-(1-alpha)^n (n = valid points seen so far) so early
+// outputs reflect the running mean rather than the raw accumulator. `w` doubles
+// as a confidence weight (→0 with one point seen, →1 once warmed up) used to
+// combine the two passes below. Nulls are preserved as gaps and do not advance
+// the average. `reverse` walks the series back-to-front (the backward pass).
+function emaPass(
+  ys: (number | null)[],
+  alpha: number,
+  reverse: boolean,
+): { vals: (number | null)[]; weights: number[] } {
+  const vals: (number | null)[] = new Array(ys.length).fill(null);
+  const weights: number[] = new Array(ys.length).fill(0);
+  let s = 0; // raw EMA accumulator
+  let n = 0; // valid points incorporated so far
+  const start = reverse ? ys.length - 1 : 0;
+  const step = reverse ? -1 : 1;
+  for (let i = start; i >= 0 && i < ys.length; i += step) {
     const v = ys[i];
-    if (v === null || !Number.isFinite(v)) {
+    if (v === null || !Number.isFinite(v)) continue;
+    s = alpha * (v as number) + (1 - alpha) * s;
+    n += 1;
+    const w = 1 - Math.pow(1 - alpha, n);
+    vals[i] = s / w;
+    weights[i] = w;
+  }
+  return { vals, weights };
+}
+
+// Zero-phase (forward-backward) EMA, combined by each pass's confidence weight.
+// A one-sided EMA pins the first point to its raw value and the last point is a
+// pure causal (lagging) estimate. Running a forward and backward pass and
+// blending them by how much data each has seen at that index gives the best of
+// both: at the start the forward pass has ~1 point (distrusted) so the
+// backward, future-informed pass dominates; at the latest points the backward
+// pass has ~1 point so the forward (causal) estimate dominates; the middle is
+// ~50/50, which also cancels EMA's lag. Nulls stay null (both passes align).
+function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
+  const fwd = emaPass(ys, alpha, false);
+  const bwd = emaPass(ys, alpha, true);
+  const out: (number | null)[] = new Array(ys.length);
+  for (let i = 0; i < ys.length; i++) {
+    const f = fwd.vals[i];
+    const b = bwd.vals[i];
+    if (f === null || b === null) {
       out[i] = null;
       continue;
     }
-    if (prev === null) prev = v as number;
-    else prev = alpha * (v as number) + (1 - alpha) * prev;
-    out[i] = prev;
+    const wf = fwd.weights[i];
+    const wb = bwd.weights[i];
+    const wsum = wf + wb;
+    out[i] = wsum > 0 ? (wf * (f as number) + wb * (b as number)) / wsum : ((f as number) + (b as number)) / 2;
   }
   return out;
 }
@@ -79,6 +122,23 @@ function strokeForKey(key: string) {
   return PALETTE[hashToIndex(key, PALETTE.length)];
 }
 
+// Persisted, per-URL graph settings. Sliders + display toggles + which loss
+// series are visible. Zoom / highlighted window is intentionally NOT persisted.
+interface PersistedSettings {
+  useLogScale: boolean;
+  showTrend: boolean;
+  smoothing: number;
+  plotStride: number;
+  clipOutliers: boolean;
+  enabled: Record<string, boolean>;
+}
+
+// Key by the exact URL so each job remembers its own settings independently.
+function settingsStorageKey(): string | null {
+  if (typeof window === 'undefined') return null;
+  return `jobLossGraph:${window.location.pathname}${window.location.search}`;
+}
+
 function dulledColor(rgba: string): string {
   const m = rgba.match(/rgba?\((\d+),(\d+),(\d+)/);
   if (!m) return 'rgba(120,120,120,1)';
@@ -93,8 +153,7 @@ export default function JobLossGraph({ job }: Props) {
 
   // Controls
   const [useLogScale, setUseLogScale] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
-  const [showSmoothed, setShowSmoothed] = useState(true);
+  const [showTrend, setShowTrend] = useState(true);
 
   // 0..100 slider. 100 = no smoothing, 0 = heavy smoothing.
   const [smoothing, setSmoothing] = useState(80);
@@ -113,12 +172,67 @@ export default function JobLossGraph({ job }: Props) {
 
   const [isZoomed, setIsZoomed] = useState(false);
 
-  // keep enabled map in sync with discovered keys (enable new ones automatically)
+  // Gate persistence writes until we've loaded any stored settings, so the
+  // initial defaults don't clobber what was saved before the load effect runs.
+  const [hydrated, setHydrated] = useState(false);
+
+  // Restored series selection, kept so the lossKeys-sync effect can honor it for
+  // keys that arrive after load rather than falling back to the default.
+  const persistedEnabledRef = useRef<Record<string, boolean> | null>(null);
+
+  // Load persisted settings for this job's URL. Re-runs when the job changes
+  // (navigating between jobs) so each URL restores its own saved state.
   useEffect(() => {
+    setHydrated(false);
+    persistedEnabledRef.current = null;
+    const key = settingsStorageKey();
+    if (!key) {
+      setHydrated(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const s = JSON.parse(raw) as Partial<PersistedSettings>;
+        if (typeof s.useLogScale === 'boolean') setUseLogScale(s.useLogScale);
+        if (typeof s.showTrend === 'boolean') setShowTrend(s.showTrend);
+        if (typeof s.smoothing === 'number') setSmoothing(s.smoothing);
+        if (typeof s.plotStride === 'number') setPlotStride(s.plotStride);
+        if (typeof s.clipOutliers === 'boolean') setClipOutliers(s.clipOutliers);
+        if (s.enabled && typeof s.enabled === 'object') {
+          persistedEnabledRef.current = s.enabled;
+          setEnabled(s.enabled);
+        }
+      }
+    } catch {
+      // ignore malformed / unavailable storage
+    }
+    setHydrated(true);
+  }, [job.id]);
+
+  // Persist settings whenever they change (after the initial load).
+  useEffect(() => {
+    if (!hydrated) return;
+    const key = settingsStorageKey();
+    if (!key) return;
+    try {
+      const payload: PersistedSettings = { useLogScale, showTrend, smoothing, plotStride, clipOutliers, enabled };
+      localStorage.setItem(key, JSON.stringify(payload));
+    } catch {
+      // ignore unavailable storage
+    }
+  }, [hydrated, useLogScale, showTrend, smoothing, plotStride, clipOutliers, enabled]);
+
+  // keep enabled map in sync with discovered keys. Only "loss/loss" is on by
+  // default; every other metric starts deactivated (user can toggle it on).
+  useEffect(() => {
+    // Nothing discovered yet — don't prune, or we'd wipe a restored selection
+    // before the keys have loaded.
+    if (lossKeys.length === 0) return;
     setEnabled(prev => {
       const next = { ...prev };
       for (const k of lossKeys) {
-        if (next[k] === undefined) next[k] = true;
+        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? k === 'loss/loss';
       }
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
@@ -155,7 +269,23 @@ export default function JobLossGraph({ job }: Props) {
     const data: (number[] | (number | null)[])[] = [xs];
     const seriesConfigs: uPlot.Series[] = [{}]; // x
 
-    for (const key of activeKeys) {
+    // Each metric gets its own y-scale (so unrelated magnitudes auto-range
+    // independently) plus a matching colored axis.
+    const scales: uPlot.Scales = { x: { time: false } };
+    const axes: uPlot.Axis[] = [
+      {
+        stroke: 'rgba(255,255,255,0.55)',
+        grid: { stroke: 'rgba(255,255,255,0.06)' },
+        ticks: { stroke: 'rgba(255,255,255,0.15)' },
+      },
+    ];
+
+    // Data columns belonging to each scale, for per-scale clip percentiles.
+    const scaleArrays: Record<string, (number | null)[][]> = {};
+
+    for (let ki = 0; ki < activeKeys.length; ki++) {
+      const key = activeKeys[ki];
+      const scaleKey = `y::${key}`;
       const pts: LossPoint[] = series[key] ?? [];
       const map = new Map<number, number>();
       for (const p of pts) {
@@ -169,61 +299,87 @@ export default function JobLossGraph({ job }: Props) {
       const fullSmooth = emaWithNulls(raw, fullAlpha);
 
       const color = strokeForKey(key);
-      const colorFaded = color.replace('1)', '0.40)');
       const colorDull = dulledColor(color);
 
-      if (showRaw) {
-        data.push(raw);
-        seriesConfigs.push({
-          label: `${key} (raw)`,
-          stroke: colorFaded,
-          width: 1.25,
-          spanGaps: false,
-          points: { show: false },
-        });
-      }
-      if (showSmoothed) {
-        data.push(smooth);
-        seriesConfigs.push({
-          label: key,
-          stroke: color,
-          width: 2,
-          spanGaps: false,
-          points: { show: false },
-        });
-      }
-      data.push(fullSmooth);
+      const colArrays: (number | null)[][] = [];
+
+      // Main series: smoothed by the slider (slider at 100% = raw), always shown.
+      data.push(smooth);
       seriesConfigs.push({
-        label: `${key} (trend)`,
-        stroke: colorDull,
-        width: 2.5,
+        label: key,
+        scale: scaleKey,
+        stroke: color,
+        width: 2,
         spanGaps: false,
         points: { show: false },
+        value: (_u, value) => formatNum(value),
+      });
+      colArrays.push(smooth);
+
+      if (showTrend) {
+        data.push(fullSmooth);
+        seriesConfigs.push({
+          label: `${key} (trend)`,
+          scale: scaleKey,
+          stroke: colorDull,
+          width: 2.5,
+          spanGaps: false,
+          points: { show: false },
+          value: (_u, value) => formatNum(value),
+        });
+        colArrays.push(fullSmooth);
+      }
+
+      scaleArrays[scaleKey] = colArrays;
+
+      scales[scaleKey] = {
+        distr: useLogScale ? 3 : 1,
+        range: (_u, dataMin, dataMax) => {
+          const c = yClipRef.current?.[scaleKey];
+          if (c) return [c.min, c.max];
+          return [dataMin, dataMax];
+        },
+      };
+
+      axes.push({
+        scale: scaleKey,
+        side: ki % 2 === 0 ? 3 : 1, // alternate left / right
+        stroke: color,
+        label: key,
+        labelSize: 14,
+        // Only the first scale draws gridlines; overlaying grids from multiple
+        // independent scales would be unreadable.
+        grid: { show: ki === 0, stroke: 'rgba(255,255,255,0.06)' },
+        ticks: { stroke: 'rgba(255,255,255,0.15)' },
+        size: 60,
+        values: (_u, ticks) => ticks.map(tk => formatNum(tk)),
       });
     }
 
-    // y-domain clipping (2nd–98th percentile of all visible y values).
-    let yClip: { min: number; max: number } | null = null;
+    // y-domain clipping (2nd–98th percentile), computed per scale.
+    let yClip: Record<string, { min: number; max: number }> | null = null;
     if (clipOutliers && xs.length >= 10) {
-      const vals: number[] = [];
-      for (let s = 1; s < data.length; s++) {
-        const arr = data[s] as (number | null)[];
-        for (const v of arr) {
-          if (v !== null && Number.isFinite(v)) vals.push(v as number);
+      yClip = {};
+      for (const scaleKey of Object.keys(scaleArrays)) {
+        const vals: number[] = [];
+        for (const arr of scaleArrays[scaleKey]) {
+          for (const v of arr) {
+            if (v !== null && Number.isFinite(v)) vals.push(v as number);
+          }
         }
-      }
-      if (vals.length >= 10) {
-        vals.sort((a, b) => a - b);
-        const lo = vals[Math.floor(vals.length * 0.02)];
-        const hi = vals[Math.ceil(vals.length * 0.98) - 1];
-        if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
-          yClip = { min: lo, max: hi };
+        if (vals.length >= 10) {
+          vals.sort((a, b) => a - b);
+          const lo = vals[Math.floor(vals.length * 0.02)];
+          const hi = vals[Math.ceil(vals.length * 0.98) - 1];
+          if (Number.isFinite(lo) && Number.isFinite(hi) && lo !== hi) {
+            yClip[scaleKey] = { min: lo, max: hi };
+          }
         }
       }
     }
 
-    return { data: data as uPlot.AlignedData, seriesConfigs, yClip };
-  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showRaw, showSmoothed, clipOutliers]);
+    return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip };
+  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
 
   // Layout wrapper we measure for sizing — uPlot collapses its own mount node
   // to width:min-content, so we can't read sizes off it.
@@ -231,8 +387,8 @@ export default function JobLossGraph({ job }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const uplotRef = useRef<uPlot | null>(null);
 
-  // Latest yClip read by the y-scale range fn — kept current via effect.
-  const yClipRef = useRef<{ min: number; max: number } | null>(null);
+  // Latest per-scale yClip read by the y-scale range fns — kept current via effect.
+  const yClipRef = useRef<Record<string, { min: number; max: number }> | null>(null);
   useEffect(() => {
     yClipRef.current = built.yClip;
   }, [built.yClip]);
@@ -247,8 +403,8 @@ export default function JobLossGraph({ job }: Props) {
   // axis distribution changes. Data updates go through setData.
   const hasData = (built.data[0]?.length ?? 0) > 1;
   const structuralKey = useMemo(
-    () => `${activeKeys.join('|')}|raw=${showRaw}|sm=${showSmoothed}|log=${useLogScale}|has=${hasData}`,
-    [activeKeys, showRaw, showSmoothed, useLogScale, hasData],
+    () => `${activeKeys.join('|')}|trend=${showTrend}|log=${useLogScale}|has=${hasData}`,
+    [activeKeys, showTrend, useLogScale, hasData],
   );
 
   useEffect(() => {
@@ -267,31 +423,8 @@ export default function JobLossGraph({ job }: Props) {
       height: initialHeight,
       padding: [12, 16, 0, 4],
       series: built.seriesConfigs,
-      scales: {
-        x: { time: false },
-        y: {
-          distr: useLogScale ? 3 : 1,
-          range: (_u, dataMin, dataMax) => {
-            const c = yClipRef.current;
-            if (c) return [c.min, c.max];
-            return [dataMin, dataMax];
-          },
-        },
-      },
-      axes: [
-        {
-          stroke: 'rgba(255,255,255,0.55)',
-          grid: { stroke: 'rgba(255,255,255,0.06)' },
-          ticks: { stroke: 'rgba(255,255,255,0.15)' },
-        },
-        {
-          stroke: 'rgba(255,255,255,0.55)',
-          grid: { stroke: 'rgba(255,255,255,0.06)' },
-          ticks: { stroke: 'rgba(255,255,255,0.15)' },
-          size: 60,
-          values: (_u, ticks) => ticks.map(tk => formatNum(tk)),
-        },
-      ],
+      scales: built.scales,
+      axes: built.axes,
       cursor: {
         drag: { x: true, y: false, setScale: true },
         points: { size: 6 },
@@ -314,12 +447,20 @@ export default function JobLossGraph({ job }: Props) {
     uplotRef.current = new uPlot(opts, built.data, containerRef.current);
     setIsZoomed(false);
 
-    // After uPlot mounts its legend, right-size the canvas against the actual
-    // legend height so the canvas fills the remaining vertical space.
-    const fitted = computeCanvasSize(host);
-    if (fitted) uplotRef.current.setSize(fitted);
+    // Right-size the canvas against the legend height so it fills the remaining
+    // vertical space. Defer to the next frame: the legend's height depends on
+    // how many series wrap, and that layout isn't settled synchronously after
+    // construction — measuring now would read a stale height (the bug that
+    // previously required a manual resize to correct).
+    const raf = requestAnimationFrame(() => {
+      const u = uplotRef.current;
+      if (!u) return;
+      const fitted = computeCanvasSize(host);
+      if (fitted) u.setSize(fitted);
+    });
 
     return () => {
+      cancelAnimationFrame(raf);
       uplotRef.current?.destroy();
       uplotRef.current = null;
     };
@@ -428,8 +569,7 @@ export default function JobLossGraph({ job }: Props) {
           <div className="bg-gray-950 border border-gray-800 rounded-lg p-3">
             <label className="block text-xs text-gray-400 mb-2">Display</label>
             <div className="flex flex-wrap gap-2">
-              <ToggleButton checked={showSmoothed} onClick={() => setShowSmoothed(v => !v)} label="Smoothed" />
-              <ToggleButton checked={showRaw} onClick={() => setShowRaw(v => !v)} label="Raw" />
+              <ToggleButton checked={showTrend} onClick={() => setShowTrend(v => !v)} label="Trend" />
               <ToggleButton checked={useLogScale} onClick={() => setUseLogScale(v => !v)} label="Log Y" />
               <ToggleButton checked={clipOutliers} onClick={() => setClipOutliers(v => !v)} label="Clip outliers" />
             </div>
@@ -475,7 +615,6 @@ export default function JobLossGraph({ job }: Props) {
               value={smoothing}
               onChange={e => setSmoothing(Number(e.target.value))}
               className="w-full accent-blue-500"
-              disabled={!showSmoothed}
             />
           </div>
 
