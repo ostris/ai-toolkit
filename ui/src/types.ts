@@ -268,6 +268,7 @@ export interface CaptionProcessConfig {
     extensions: string[];
     path_to_caption: string;
     recaption: boolean;
+    compile?: boolean;
     caption_prompt?: string;
     max_res?: number;
     max_new_tokens?: number;

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, use } from 'react';
+import { useState, useEffect, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
-import { MdDashboard, MdImage, MdShowChart, MdCode } from 'react-icons/md';
+import { MdDashboard, MdImage, MdShowChart, MdCode, MdExtension } from 'react-icons/md';
 import { Button } from '@headlessui/react';
 import { TopBar, MainContent } from '@/components/layout';
 import useJob from '@/hooks/useJob';
@@ -12,9 +12,11 @@ import { redirect } from 'next/navigation';
 import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import JobLossGraph from '@/components/JobLossGraph';
+import JobPlugin from '@/components/JobPlugin';
 import { Job } from '@prisma/client';
+import { apiClient } from '@/utils/api';
 
-type PageKey = 'overview' | 'samples' | 'config' | 'loss_log';
+type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'plugin';
 
 interface Page {
   name: string;
@@ -58,6 +60,13 @@ const pages: Page[] = [
     component: JobConfigViewer,
     mainCss: 'pt-[80px] px-0 pb-0',
   },
+  {
+    name: 'Plugin',
+    value: 'plugin',
+    icon: MdExtension,
+    component: JobPlugin,
+    mainCss: 'pt-[80px] px-0 pb-0',
+  },
 ];
 
 export default function JobPage({ params }: { params: { jobID: string } }) {
@@ -65,6 +74,21 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
+  const [hasPlugin, setHasPlugin] = useState(false);
+
+  // poll for plugin.html in the job folder; show the Plugin tab if it exists
+  useEffect(() => {
+    const checkPlugin = () => {
+      apiClient
+        .get(`/api/jobs/${jobID}/plugin?check=1`)
+        .then(res => res.data)
+        .then(data => setHasPlugin(!!data.exists))
+        .catch(() => {});
+    };
+    checkPlugin();
+    const interval = setInterval(checkPlugin, 5000);
+    return () => clearInterval(interval);
+  }, [jobID]);
 
   const page = pages.find(p => p.value === pageKey);
 
@@ -115,6 +139,9 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
       <div className="bg-gray-800 absolute top-12 left-0 w-full h-8 flex items-center px-0 sm:px-2 text-sm sm:overflow-x-auto whitespace-nowrap">
         {pages.map(page => {
           if (page.jobTypes && !page.jobTypes.includes(jobType)) {
+            return null;
+          }
+          if (page.value === 'plugin' && !hasPlugin) {
             return null;
           }
           return (

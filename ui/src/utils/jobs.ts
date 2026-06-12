@@ -107,6 +107,9 @@ export const getNumberOfSamples = (job: Job) => {
 };
 
 export const getTotalSteps = (job: Job) => {
+  if (job.total_steps != null) {
+    return job.total_steps;
+  }
   const jobConfig = getJobConfig(job);
   return jobConfig.config.process[0].train?.steps || 0;
 };

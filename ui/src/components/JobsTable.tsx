@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import useJobsList from '@/hooks/useJobsList';
 import Link from 'next/link';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
-import { GpuInfo, JobConfig } from '@/types';
+import { GpuInfo } from '@/types';
 import JobActionBar from './JobActionBar';
 import { Job, Queue } from '@prisma/client';
 import useQueueList from '@/hooks/useQueueList';
@@ -11,7 +11,7 @@ import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { openConfirm } from '@/components/ConfirmModal';
-import { deleteJob, stopJob } from '@/utils/jobs';
+import { deleteJob, getTotalSteps, stopJob } from '@/utils/jobs';
 import { Trash2 } from 'lucide-react';
 
 interface JobsTableProps {
@@ -150,11 +150,10 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       title: 'Steps',
       key: 'steps',
       render: row => {
-        const jobConfig: JobConfig = JSON.parse(row.job_config);
-        if (row.job_type !== 'train') {
+        const totalSteps = getTotalSteps(row);
+        if (!totalSteps) {
           return <></>;
         }
-        const totalSteps = jobConfig.config.process[0].train?.steps;
 
         return (
           <div>

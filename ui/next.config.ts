@@ -11,6 +11,14 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_APP_VERSION: appVersion,
   },
   serverExternalPackages: ['macstats', 'osx-temperature-sensor'],
+  async rewrites() {
+    return [
+      {
+        source: '/proxy-8866/:path*',
+        destination: 'http://localhost:8866/:path*',
+      },
+    ];
+  },
   webpack: (config, { isServer }) => {
     if (isServer) {
       config.externals.push('osx-temperature-sensor', 'macstats');

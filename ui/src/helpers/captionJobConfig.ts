@@ -21,6 +21,7 @@ export const defaultCaptionJobConfig: CaptionJobConfig = {
           extensions: ['mp3', 'wav', 'flac', 'ogg'],
           path_to_caption: '',
           recaption: false,
+          compile: false,
           caption_extension: 'txt',
         },
       },

@@ -43,6 +43,7 @@ class CaptionConfig:
         self.caption_prompt = kwargs.get(
             "caption_prompt", "Describe this image in detail."
         )
+        self.compile = kwargs.get("compile", False)
 
 
 class BaseCaptioner(BaseExtensionProcess):
@@ -82,6 +83,7 @@ class BaseCaptioner(BaseExtensionProcess):
         self.model2 = None
         self.processor2 = None
         self.file_paths = []
+        self.step_num = 0
         self.device_torch = torch.device(self.caption_config.device)
         self.torch_dtype = get_torch_dtype(self.caption_config.dtype)
 
@@ -91,8 +93,11 @@ class BaseCaptioner(BaseExtensionProcess):
             self.start_stop_watcher()
             self.update_status("running", "Loading Model")
             self.load_model()
+            self.maybe_compile_models()
             self.update_status("running", "Looking for files")
             self.find_files()
+            self.update_db_key("total_steps", len(self.file_paths))
+            self.update_step()
             self.update_status("running", f"Captioning {len(self.file_paths)} files")
             self.run_caption_loop()
             self.update_status("completed", "Captioning completed")
@@ -117,6 +122,9 @@ class BaseCaptioner(BaseExtensionProcess):
             except Exception as e:
                 print(f"Error captioning file {file_path}: {e}")
                 continue
+            finally:
+                self.step_num += 1
+                self.update_step()
 
     def load_pil_image(self, file_path: str, max_res: Optional[int] = None) -> Image:
         image = Image.open(file_path).convert("RGB")
@@ -182,6 +190,30 @@ class BaseCaptioner(BaseExtensionProcess):
 
     def load_model(self):
         raise NotImplementedError("Model loading not implemented for this captioner")
+
+    def maybe_compile_models(self):
+        if not self.caption_config.compile:
+            return
+        import importlib.util
+
+        if importlib.util.find_spec("triton") is None:
+            print(
+                "[AITK] compile requested but triton is not installed, skipping compilation."
+            )
+            return
+        try:
+            # compilation happens lazily on first forward, so fall back to
+            # eager there too if the backend fails (e.g. broken triton install)
+            torch._dynamo.config.suppress_errors = True
+            for model in [self.model, self.model2]:
+                if model is not None and isinstance(model, torch.nn.Module):
+                    # dynamic=True avoids recompiling for every new image/token shape
+                    model.compile(dynamic=True)
+            print(
+                "[AITK] Model compilation enabled. The first few items will be slow while the model compiles."
+            )
+        except Exception as e:
+            print(f"[AITK] Failed to compile model, continuing without compile: {e}")
 
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
