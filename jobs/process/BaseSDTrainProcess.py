@@ -2215,6 +2215,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                 fullgraph=compile_fullgraph,
                             )
 
+                    if not is_unet_offloaded:
+                        # once compiled, dynamo guards hold weakrefs to the params;
+                        # .to() on quantized params requires swap_tensors, which fails
+                        # on tensors with weakrefs. The model stays on device anyway,
+                        # so make .to() a no-op.
+                        unet_module = self.sd.unet
+                        unet_module.to = lambda *args, **kwargs: unet_module
+
             except Exception as e:
                 print_acc(f"Failed to compile model: {e}")
                 print_acc("Continuing without compilation")
