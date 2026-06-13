@@ -2317,6 +2317,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 user_set_cache_limit = cache_size_limit is not None
                 if user_set_cache_limit:
                     torch._dynamo.config.cache_size_limit = cache_size_limit
+                else:
+                    # Raise the per-graph dynamo recompile limit before compiling. Multi-resolution /
+                    # ARB-bucket training feeds the compiled unet several distinct input shapes (one
+                    # per bucket, plus edit-vs-t2i conditioning lengths); each is a recompile and the
+                    # torch default (8) is easily exceeded, after which dynamo bails to eager and the
+                    # compile speedup is silently lost. `recompile_limit` is the torch>=2.12 name and
+                    # is aliased to the legacy `cache_size_limit`; set whichever this torch exposes.
+                    _recompile_limit = int(getattr(self.model_config, "compile_recompile_limit", 64) or 64)
+                    if hasattr(torch._dynamo.config, "recompile_limit"):
+                        torch._dynamo.config.recompile_limit = _recompile_limit
+                    else:
+                        torch._dynamo.config.cache_size_limit = _recompile_limit
                 torch._dynamo.config.suppress_errors = False
                 # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
                 # crashes on some dynamic-shape index expressions (sympy PowByNatural

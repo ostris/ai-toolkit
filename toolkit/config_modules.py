@@ -760,6 +760,13 @@ class ModelConfig:
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
         self.cache_size_limit = kwargs.get("cache_size_limit", None)
 
+        # per-graph dynamo recompile limit for the compiled unet. Multi-resolution / ARB-bucket
+        # training feeds the compiled model several distinct input shapes (one per bucket, plus
+        # edit-vs-t2i conditioning lengths); each new shape is a recompile and the torch default
+        # (8) is easily exceeded, at which point dynamo silently falls back to eager and the
+        # compile speedup is lost. Raise it so every bucket shape stays compiled.
+        self.compile_recompile_limit = kwargs.get("compile_recompile_limit", 64)
+
         # mxfp8 stores weights as tensor subclasses. torch.compile leaves a weakref on the traced
         # params (torch's MetaConverter, see pytorch/pytorch#170770), which makes a GENUINE device
         # move (offloading) of the compiled weight crash inside torch.utils.swap_tensors
