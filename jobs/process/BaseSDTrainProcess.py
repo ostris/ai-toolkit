@@ -2076,8 +2076,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 text_encoder_check = unwrap_model(text_encoder) if text_encoder is not None else None
                 is_te_offloaded = hasattr(text_encoder_check, '_memory_manager') if text_encoder_check is not None else False
 
-                is_quantized = getattr(self.model_config, 'quantize', False) or \
-                               getattr(self.model_config, 'quantize_te', False)
+                is_unet_quantized = getattr(self.model_config, 'quantize', False)
+                is_quantized = is_unet_quantized or getattr(self.model_config, 'quantize_te', False)
 
                 try:
                     from torch.utils._triton import has_triton
@@ -2089,11 +2089,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc("WARNING: compile is disabled.")
                     print_acc("Triton is not available or not working on this system.")
                     print_acc("Install a working 'triton' package to use compile.")
-                    print_acc("Continuing without compilation.")
-                elif is_quantized and is_unet_offloaded:
-                    print_acc("WARNING: compile is disabled.")
-                    print_acc("Quantized models with Transformer offloading are incompatible.")
-                    print_acc("Disable Transformer offload to use compile.")
                     print_acc("Continuing without compilation.")
                 else:
 
@@ -2109,13 +2104,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     compile_fullgraph = getattr(self.model_config, 'compile_fullgraph', True)
                     block_compile = getattr(self.model_config, 'block_compile', False)
 
+                    # quantized + offloaded unet is incompatible with fullgraph; force it off
+                    if is_unet_quantized and is_unet_offloaded and compile_fullgraph:
+                        print_acc(
+                            "Quantized offloaded Transformer detected: fullgraph=True is incompatible, "
+                            "switching to fullgraph=False."
+                        )
+                        compile_fullgraph = False
+
                     cache_info = f", cache_size_limit={cache_size_limit}" if cache_size_limit != 8 else ""
                     # ====================================================
                     # BLOCK COMPILE
                     # ====================================================
                     if block_compile:
                         BLOCK_LIST_ATTRS = self.sd.get_transformer_block_names()
-                        
+
                         if BLOCK_LIST_ATTRS is None or len(BLOCK_LIST_ATTRS) == 0:
                             BLOCK_LIST_ATTRS = [
                                 'layers',
@@ -2170,7 +2173,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             )
                             print_acc("The first forward pass will hang for a while. This is normal.")
 
-                            if is_quantized and compile_fullgraph:
+                            if is_unet_quantized and not is_unet_offloaded and compile_fullgraph:
                                 print_acc(
                                     "Quantized model detected: fullgraph=True is incompatible "
                                     "for whole-model compile, switching to fullgraph=False."
@@ -2205,9 +2208,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             f"fullgraph={compile_fullgraph}{cache_info}"
                         )
 
-                        if is_quantized and compile_fullgraph:
+                        if compile_fullgraph:
                             print_acc(
-                                "Quantized model detected: fullgraph=True is incompatible, "
+                                "fullgraph=True is incompatible with whole-model compile, "
                                 "switching to fullgraph=False."
                             )
                             compile_fullgraph = False
