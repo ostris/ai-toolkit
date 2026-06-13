@@ -14,6 +14,7 @@ from .nucleus_image import NucleusImageModel
 from .hidream.hidream_o1_model import HidreamO1Model
 from .z_image.z_image_l2p_model import ZImageL2PModel
 from .ideogram4 import Ideogram4Model
+from .prx_pixel_t2i import PRXPixelT2IModel
 
 AI_TOOLKIT_MODELS = [
     # put a list of models here
@@ -42,4 +43,5 @@ AI_TOOLKIT_MODELS = [
     HidreamO1Model,
     ZImageL2PModel,
     Ideogram4Model,
+    PRXPixelT2IModel,
 ]
