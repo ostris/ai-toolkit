@@ -127,6 +127,7 @@ class HidreamO1Model(BaseModel):
         super().__init__(
             device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs
         )
+        self.use_old_lokr_format = False
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["Qwen3VLForConditionalGeneration"]
@@ -524,7 +525,7 @@ class HidreamO1Model(BaseModel):
         return self.arch
 
     def get_transformer_block_names(self) -> Optional[List[str]]:
-        return ["layers"]
+        return ["model.language_model.layers"]
 
     def convert_lora_weights_before_save(self, state_dict):
         new_sd = {}

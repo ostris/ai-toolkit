@@ -2135,7 +2135,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         compiled_block_count = 0
 
                         for attr_name in BLOCK_LIST_ATTRS:
-                            block_list = getattr(inner_unet, attr_name, None)
+                            # attr_name may be a dotted path for models that nest their
+                            # blocks (e.g. hidream_o1's "model.language_model.layers").
+                            block_list = inner_unet
+                            for part in attr_name.split('.'):
+                                block_list = getattr(block_list, part, None)
+                                if block_list is None:
+                                    break
 
                             if block_list is None:
                                 continue
