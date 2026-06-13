@@ -16,6 +16,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
+try:
+    from flash_attn import flash_attn_varlen_func
+
+    _FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    flash_attn_varlen_func = None
+    _FLASH_ATTN_AVAILABLE = False
+
+# Supported attention backends. "native" -> SDPA, "flash" -> Flash Attention 2.
+ATTENTION_BACKENDS = ("native", "flash")
+
 # Per-token role indicators used inside the packed sequence.
 SEQUENCE_PADDING_INDICATOR = -1
 OUTPUT_IMAGE_INDICATOR = 2
@@ -127,6 +138,48 @@ class Ideogram4RMSNorm(nn.Module):
         return F.rms_norm(x, self.weight.shape, self.weight, self.eps)
 
 
+def _build_flash_meta(
+    segment_ids: torch.Tensor,
+) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]:
+    """Derive Flash Attention 2 packing metadata from segment ids.
+
+    Tokens attend to each other iff they share a ``(batch_row, segment_id)``
+    group, exactly matching the SDPA block-diagonal mask. The groups are NOT
+    contiguous in the packed layout -- e.g. ``[real_text | text_pad | image]``
+    gives real-text and image the same segment id but splits them with the pad
+    run -- so flash (which only attends over contiguous ``cu_seqlens`` ranges)
+    can't consume the sequence as-is. We sort tokens into contiguous groups,
+    build ``cu_seqlens`` over the sorted order, and return the permutation plus
+    its inverse so the attention output can be scattered back to the original
+    token order.
+
+    Returns ``(cu_seqlens, max_seqlen, order, inv_order)`` where ``order`` and
+    ``inv_order`` index the flattened ``(B * L,)`` token axis.
+    """
+    batch_size, _ = segment_ids.shape
+    device = segment_ids.device
+
+    # Unique group id per (row, segment). Shift so the -1 pad segment is >= 0.
+    seg = segment_ids.to(torch.long)
+    seg_shifted = seg - int(seg.min())
+    num_seg = int(seg_shifted.max()) + 1
+    row = torch.arange(batch_size, device=device).unsqueeze(1)
+    group = (row * num_seg + seg_shifted).reshape(-1)
+
+    order = torch.argsort(group, stable=True)
+    inv_order = torch.argsort(order, stable=True)
+    sorted_group = group[order]
+
+    change = torch.ones_like(sorted_group, dtype=torch.bool)
+    change[1:] = sorted_group[1:] != sorted_group[:-1]
+    boundaries = torch.nonzero(change, as_tuple=False).flatten()
+
+    total = torch.tensor([sorted_group.numel()], device=device, dtype=boundaries.dtype)
+    cu_seqlens = torch.cat([boundaries, total]).to(torch.int32)
+    max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max())
+    return cu_seqlens, max_seqlen, order, inv_order
+
+
 class Ideogram4Attention(nn.Module):
     def __init__(self, hidden_size: int, num_heads: int, eps: float = 1e-5) -> None:
         super().__init__()
@@ -134,6 +187,7 @@ class Ideogram4Attention(nn.Module):
         self.hidden_size = hidden_size
         self.num_heads = num_heads
         self.head_dim = hidden_size // num_heads
+        self.attention_backend = "native"
 
         self.qkv = nn.Linear(hidden_size, hidden_size * 3, bias=False)
         self.norm_q = Ideogram4RMSNorm(self.head_dim, eps=eps)
@@ -146,6 +200,7 @@ class Ideogram4Attention(nn.Module):
         attn_mask: torch.Tensor,
         cos: torch.Tensor,
         sin: torch.Tensor,
+        flash_meta: tuple[torch.Tensor, int, torch.Tensor, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
 
@@ -156,15 +211,41 @@ class Ideogram4Attention(nn.Module):
         q = self.norm_q(q)
         k = self.norm_k(k)
 
-        # SDPA expects (B, num_heads, L, head_dim).
+        # SDPA / rope expect (B, num_heads, L, head_dim).
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
         q, k = _apply_rotary_pos_emb(q, k, cos, sin)
 
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
-        out = out.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
+        if self.attention_backend == "flash":
+            # Flash Attention 2 takes packed (total_tokens, num_heads, head_dim)
+            # tensors and expresses the block-diagonal structure via cu_seqlens
+            # over contiguous ranges. The attention groups aren't contiguous in
+            # the packed layout, so we reorder tokens into their groups, run
+            # flash, then scatter the result back to the original order.
+            cu_seqlens, max_seqlen, order, inv_order = flash_meta
+            qf = q.transpose(1, 2).reshape(-1, self.num_heads, self.head_dim)
+            kf = k.transpose(1, 2).reshape(-1, self.num_heads, self.head_dim)
+            vf = v.transpose(1, 2).reshape(-1, self.num_heads, self.head_dim)
+            qf = qf.index_select(0, order)
+            kf = kf.index_select(0, order)
+            vf = vf.index_select(0, order)
+            out = flash_attn_varlen_func(
+                qf,
+                kf,
+                vf,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                causal=False,
+            )
+            out = out.index_select(0, inv_order)
+            out = out.reshape(batch_size, seq_len, self.hidden_size)
+        else:
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+            out = out.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
         return self.o(out)
 
 
@@ -206,6 +287,7 @@ class Ideogram4TransformerBlock(nn.Module):
         cos: torch.Tensor,
         sin: torch.Tensor,
         adaln_input: torch.Tensor,
+        flash_meta: tuple[torch.Tensor, int, torch.Tensor, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         mod = self.adaln_modulation(adaln_input)
         scale_msa, gate_msa, scale_mlp, gate_mlp = mod.chunk(4, dim=-1)
@@ -219,6 +301,7 @@ class Ideogram4TransformerBlock(nn.Module):
             attn_mask=attn_mask,
             cos=cos,
             sin=sin,
+            flash_meta=flash_meta,
         )
         x = x + gate_msa * self.attention_norm2(attn_out)
         x = x + gate_mlp * self.ffn_norm2(
@@ -279,6 +362,7 @@ class Ideogram4Transformer2DModel(nn.Module):
         super().__init__()
         self.config = config
         self.gradient_checkpointing = False
+        self.attention_backend = "native"
 
         head_dim = config.emb_dim // config.num_heads
 
@@ -330,6 +414,30 @@ class Ideogram4Transformer2DModel(nn.Module):
 
     def disable_gradient_checkpointing(self):
         self.gradient_checkpointing = False
+
+    def set_attention_backend(self, backend: str) -> None:
+        """Select the attention implementation.
+
+        Args:
+          backend: "native" for ``F.scaled_dot_product_attention`` or "flash"
+            for Flash Attention 2 (``flash_attn_varlen_func``). Selecting "flash"
+            requires the ``flash_attn`` package to be installed.
+        """
+        backend = backend.lower()
+        if backend not in ATTENTION_BACKENDS:
+            raise ValueError(
+                f"Unknown attention backend {backend!r}. "
+                f"Expected one of {ATTENTION_BACKENDS}."
+            )
+        if backend == "flash" and not _FLASH_ATTN_AVAILABLE:
+            raise RuntimeError(
+                "Flash attention 2 backend requested but the `flash_attn` package "
+                "is not installed. Install it with `pip install flash-attn` or use "
+                "the 'native' backend."
+            )
+        self.attention_backend = backend
+        for layer in self.layers:
+            layer.attention.attention_backend = backend
 
     def forward(
         self,
@@ -396,15 +504,31 @@ class Ideogram4Transformer2DModel(nn.Module):
         sin = sin.to(h.dtype)
 
         # Block-diagonal mask from segment ids: (B, 1, L, L), True = attend.
-        attn_mask = (segment_ids.unsqueeze(2) == segment_ids.unsqueeze(1)).unsqueeze(1)
+        # Only built for the native (SDPA) backend; flash expresses the same
+        # block structure through cu_seqlens instead.
+        if self.attention_backend == "flash":
+            attn_mask = None
+            flash_meta = _build_flash_meta(segment_ids)
+        else:
+            attn_mask = (
+                segment_ids.unsqueeze(2) == segment_ids.unsqueeze(1)
+            ).unsqueeze(1)
+            flash_meta = None
 
         for layer in self.layers:
             if self.gradient_checkpointing and torch.is_grad_enabled():
                 h = checkpoint(
-                    layer, h, attn_mask, cos, sin, adaln_input, use_reentrant=False
+                    layer,
+                    h,
+                    attn_mask,
+                    cos,
+                    sin,
+                    adaln_input,
+                    flash_meta,
+                    use_reentrant=False,
                 )
             else:
-                h = layer(h, attn_mask, cos, sin, adaln_input)
+                h = layer(h, attn_mask, cos, sin, adaln_input, flash_meta)
 
         out = self.final_layer(h, c=adaln_input)
         return out.to(torch.float32)
