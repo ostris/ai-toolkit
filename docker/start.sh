@@ -64,6 +64,11 @@ export_env_vars() {
 
 echo "Pod Started"
 
+# Sync Prisma schema with bind-mounted DB to handle missing columns
+# This ensures columns like job_type, job_ref, save_now exist at runtime
+echo "Syncing Prisma schema..."
+cd /app/ai-toolkit/ui && npx prisma db push --accept-data-loss 2>&1 || echo "Prisma sync skipped"
+
 setup_ssh
 export_env_vars
 echo "Starting AI Toolkit UI..."
