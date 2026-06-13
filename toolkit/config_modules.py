@@ -708,7 +708,7 @@ class ModelConfig:
         self.compile = kwargs.get("compile", False)
 
         if self.compile and self.quantize:
-            print("Quantized model detected - allowing torch.compile (experimental - Does not work with offloaded transformer)")
+            print("Quantized model detected - allowing torch.compile (experimental)")
             # make it torchao instead of quantio for compatibility with torch compile
             if self.qtype == "qfloat8":
                 self.qtype = "float8"
