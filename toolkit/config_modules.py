@@ -714,7 +714,7 @@ class ModelConfig:
                 self.qtype = "float8"
         self.block_compile = kwargs.get("block_compile", False)
         self.compile_mode = kwargs.get("compile_mode", "default")
-        self.compile_fullgraph = kwargs.get("compile_fullgraph", True)
+        self.compile_fullgraph = kwargs.get("compile_fullgraph", False)
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
         self.cache_size_limit = kwargs.get("cache_size_limit", 8)
         
