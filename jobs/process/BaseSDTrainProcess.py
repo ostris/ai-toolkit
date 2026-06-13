@@ -721,6 +721,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.ema.train()
         flush()
 
+        # Persist the torch.compile Mega-Cache alongside the checkpoint. Each call captures every
+        # shape compiled so far, so the file converges to a complete (shippable) cache once all
+        # ARB-bucket shapes have been trained through; the final end-of-run save() is the complete
+        # one. Only active when compile_cache is on (path set in the compile block).
+        _compile_cache_path = getattr(self, "_compile_cache_path", None)
+        if _compile_cache_path:
+            from toolkit.util.compile_cache import save_compile_cache
+            save_compile_cache(_compile_cache_path, log=print_acc)
+
     # Called before the model is loaded
     def hook_before_model_load(self):
         # override in subclass
@@ -2329,6 +2338,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         torch._dynamo.config.recompile_limit = _recompile_limit
                     else:
                         torch._dynamo.config.cache_size_limit = _recompile_limit
+                # Mega-Cache: load a previously persisted portable compile cache (if present) BEFORE
+                # the first forward, so cold-start / migrated / fresh-container runs reuse the baked
+                # triton kernels instead of recompiling them. Re-saved at each checkpoint in save().
+                if getattr(self.model_config, "compile_cache", False):
+                    from toolkit.util.compile_cache import load_compile_cache
+                    self._compile_cache_path = os.path.join(self.save_root, "compile_cache.bin")
+                    load_compile_cache(self._compile_cache_path, log=print_acc)
                 torch._dynamo.config.suppress_errors = False
                 # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
                 # crashes on some dynamic-shape index expressions (sympy PowByNatural

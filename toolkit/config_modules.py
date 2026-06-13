@@ -767,6 +767,13 @@ class ModelConfig:
         # compile speedup is lost. Raise it so every bucket shape stays compiled.
         self.compile_recompile_limit = kwargs.get("compile_recompile_limit", 64)
 
+        # persist torch.compile's portable Mega-Cache (inductor + autotune + AOTAutograd
+        # artifacts) to <save_root>/compile_cache.bin. Loaded before compile, re-saved at each
+        # checkpoint. torch's default fx_graph_cache already persists to /tmp on a persistent box,
+        # so this mainly helps ephemeral / cloud / fresh-container runs (and 1-GPU -> N-GPU warmup)
+        # where the inductor cache would otherwise be lost and every kernel recompiled. Opt-in.
+        self.compile_cache = kwargs.get("compile_cache", False)
+
         # mxfp8 stores weights as tensor subclasses. torch.compile leaves a weakref on the traced
         # params (torch's MetaConverter, see pytorch/pytorch#170770), which makes a GENUINE device
         # move (offloading) of the compiled weight crash inside torch.utils.swap_tensors
