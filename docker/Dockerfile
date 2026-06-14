@@ -89,8 +89,12 @@ RUN echo "Cache bust: ${CACHEBUST}" && \
         /tmp/ai-toolkit-src/ /app/ai-toolkit/ && \
     rm -rf /tmp/ai-toolkit-src
 
-# Build UI (re-runs on code change, but reuses the cached node_modules above)
+# Build UI (re-runs on code change, but reuses the cached node_modules above).
+# prisma generate must run first: it creates the @prisma/client types the TS
+# build needs. In the old layout this happened as a side effect of npm install
+# seeing the schema; now the source arrives after npm ci, so generate explicitly.
 RUN cd /app/ai-toolkit/ui && \
+    npx prisma generate && \
     npm run build && \
     npm run update_db
 
