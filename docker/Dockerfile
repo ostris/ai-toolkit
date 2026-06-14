@@ -59,8 +59,8 @@ WORKDIR /app/ai-toolkit
 # not on every code change.
 # ---------------------------------------------------------------------------- #
 
-# Install Python dependencies (only re-runs when requirements.txt changes)
-COPY requirements.txt /app/ai-toolkit/requirements.txt
+# Install Python dependencies (only re-runs when the requirements files change)
+COPY requirements.txt requirements_base.txt /app/ai-toolkit/
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt && \
     pip install setuptools==69.5.1 --no-cache-dir --break-system-packages
 
