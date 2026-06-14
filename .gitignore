@@ -176,6 +176,7 @@ cython_debug/
 !/output/.gitkeep
 /extensions/*
 !/extensions/example
+!/extensions/pixlstash
 /temp
 /wandb
 .vscode/settings.json
