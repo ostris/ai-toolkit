@@ -962,6 +962,7 @@ class DatasetConfig:
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
         self.cache_clip_vision_to_disk: bool = kwargs.get('cache_clip_vision_to_disk', False)
         self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
+        self.load_image_when_caching_latents: bool = kwargs.get('load_image_when_caching_latents', False)
 
         self.standardize_images: bool = kwargs.get('standardize_images', False)
 
