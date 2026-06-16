@@ -2921,7 +2921,9 @@ class StableDiffusion:
                     te_has_grad = encoder.layers[0].mlp.gate_proj.weight.requires_grad
                 else:
                     try:
-                        te_has_grad = encoder.text_model.final_layer_norm.weight.requires_grad
+                        # transformers >=5.6 flattened CLIPTextModel (no .text_model wrapper);
+                        # CLIPTextModelWithProjection still nests it. getattr handles both.
+                        te_has_grad = getattr(encoder, "text_model", encoder).final_layer_norm.weight.requires_grad
                     except:
                         te_has_grad = False
                 self.device_state['text_encoder'].append({
@@ -2940,7 +2942,9 @@ class StableDiffusion:
             elif isinstance(self.text_encoder, LlamaModel):
                 te_has_grad = self.text_encoder.layers[0].mlp.gate_proj.weight.requires_grad
             else:
-                te_has_grad = self.text_encoder.text_model.final_layer_norm.weight.requires_grad
+                # transformers >=5.6 flattened CLIPTextModel (no .text_model wrapper).
+                te = self.text_encoder
+                te_has_grad = getattr(te, "text_model", te).final_layer_norm.weight.requires_grad
 
             self.device_state['text_encoder'] = {
                 'training': self.text_encoder.training,
