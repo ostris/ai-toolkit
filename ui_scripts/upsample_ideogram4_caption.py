@@ -21,6 +21,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from toolkit.ideogram_caption import normalize_caption_dict
+
 # The generation prompt lives here. It's a `name = """<content>"""` file, but the
 # content intentionally contains literal `\uNNNN` and `\n` sequences that are not
 # valid Python escapes, so it cannot be imported -- we read the triple-quoted
@@ -127,62 +129,22 @@ def sanitize_bbox(bbox):
     return [y1, x1, y2, x2]
 
 
-HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-
-
-def sanitize_palette(palette, max_len):
-    """Keep unique, valid hex colors in order, capped to max_len. Returns the
-    cleaned list, or None if nothing valid remains (drop the key)."""
-    if not isinstance(palette, (list, tuple)):
-        return None
-    seen = set()
-    out = []
-    for c in palette:
-        if not isinstance(c, str):
-            continue
-        c = c.strip()
-        if not HEX_COLOR_RE.match(c):
-            continue
-        key = c.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(c)
-        if len(out) >= max_len:
-            break
-    return out or None
-
-
 def sanitize_caption(data: dict) -> dict:
-    """Light cleanup: drop any aspect_ratio key (input-only context, not output),
-    clean each bbox, and cap color palettes (16 per image, 5 per element)."""
-    data.pop("aspect_ratio", None)
-    style = data.get("style_description")
-    if isinstance(style, dict) and "color_palette" in style:
-        pal = sanitize_palette(style["color_palette"], 16)
-        if pal is None:
-            style.pop("color_palette", None)
-        else:
-            style["color_palette"] = pal
+    """Clamp each bbox to valid 0-1000 [y1,x1,y2,x2], then hand off to the shared
+    normalizer for the rest: drop aspect_ratio, enforce the photo/art_style branch
+    and key order, canonicalize medium, and cap/uppercase color palettes (16 per
+    image, 5 per element)."""
     decon = data.get("compositional_deconstruction", {})
-    elements = decon.get("elements", [])
+    elements = decon.get("elements", []) if isinstance(decon, dict) else []
     if isinstance(elements, list):
         for el in elements:
-            if not isinstance(el, dict):
-                continue
-            if "bbox" in el:
+            if isinstance(el, dict) and "bbox" in el:
                 cleaned = sanitize_bbox(el["bbox"])
                 if cleaned is None:
                     el.pop("bbox", None)
                 else:
                     el["bbox"] = cleaned
-            if "color_palette" in el:
-                pal = sanitize_palette(el["color_palette"], 5)
-                if pal is None:
-                    el.pop("color_palette", None)
-                else:
-                    el["color_palette"] = pal
-    return data
+    return normalize_caption_dict(data)
 
 
 def upsample_one(

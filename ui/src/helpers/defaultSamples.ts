@@ -417,7 +417,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Cinematic, tense, candid realism.",
     "lighting": "Overcast afternoon daylight, soft and low-contrast, cool-neutral white balance.",
     "photo": "35mm film still, subtle grain, natural depth of field.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#8C9B82", "#B7402A", "#5A5F57", "#9AA7AE", "#D98A3D"]
   },
   "compositional_deconstruction": {
@@ -466,7 +466,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Cozy, relaxed, intimate.",
     "lighting": "Soft diffused window daylight, cool-neutral white balance, low contrast.",
     "photo": "35mm film still, shallow depth of field, subtle grain.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#9A5A3E", "#E0D2BA", "#7C7872", "#B07C45", "#33312D"]
   },
   "compositional_deconstruction": {
@@ -536,7 +536,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "High-energy, surreal, neon nightlife.",
     "lighting": "Dim club lighting with magenta and cyan washes and crisscrossing green and magenta laser beams cutting through haze.",
     "photo": "Fish-eye lens with strong barrel distortion, deep shadow contrast.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#0B0B12", "#D81E8F", "#1FB6C9", "#37C46A", "#6A4A2E"]
   },
   "compositional_deconstruction": {
@@ -596,7 +596,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Bright, playful, candid.",
     "lighting": "Bright overcast daylight, soft and shadowless, cool-neutral white balance.",
     "photo": "35mm film still, natural depth of field, subtle grain.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#C9B68C", "#2E6B7A", "#9FB7BE", "#1B3A5C", "#E7E2D6"]
   },
   "compositional_deconstruction": {
@@ -646,7 +646,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Serene, rugged, wintry.",
     "lighting": "Pale overcast winter daylight, even and shadowless, cool-neutral white balance.",
     "photo": "35mm film still, subtle grain, soft natural focus.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#E8EDF0", "#6B4A30", "#3C5240", "#9AA6AD", "#C8A877"]
   },
   "compositional_deconstruction": {
@@ -705,7 +705,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Gritty, energetic, high-contrast.",
     "lighting": "Dark stage lit by green and magenta laser beams through haze, deep shadow contrast, cool-neutral white balance.",
     "photo": "35mm concert photograph, subtle grain, deep contrast.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#0C0C10", "#37C46A", "#D81E8F", "#C9C9C9", "#5A4633"]
   },
   "compositional_deconstruction": {
@@ -775,7 +775,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Rustic, focused, artisanal.",
     "lighting": "Diffused overcast daylight from a high window, cool-neutral white balance, low contrast.",
     "photo": "35mm film still, subtle grain, natural depth of field.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#8A5A3C", "#6E4327", "#9A9488", "#4A5340", "#C7B299"]
   },
   "compositional_deconstruction": {
@@ -845,7 +845,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Clean, minimal, editorial.",
     "lighting": "Even diffused studio softbox lighting, neutral white balance, shadowless.",
     "photo": "Studio fashion photograph, sharp focus, seamless white cyclorama.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#F2F2F0", "#9A9CA0", "#2A2F3C", "#5B5E66", "#D8D8D6"]
   },
   "compositional_deconstruction": {
@@ -874,7 +874,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Plain, candid, documentary.",
     "lighting": "Overcast daylight, soft and even, cool-neutral white balance.",
     "photo": "35mm film still, eye-level, subtle grain.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#9AA0A4", "#7C4A38", "#3A3D44", "#1E3A66", "#E8E6E0"]
   },
   "compositional_deconstruction": {
@@ -924,7 +924,7 @@ export const defaultIdeogramSamplesConfig: SampleConfig = {
     "aesthetics": "Rugged, cinematic, post-apocalyptic.",
     "lighting": "Pale dust-choked daylight softened by airborne grit, cool-neutral white balance, low contrast.",
     "photo": "35mm film still, subtle grain, hazy distance.",
-    "medium": "Photograph.",
+    "medium": "photograph",
     "color_palette": ["#C2A878", "#6B4A2E", "#3A352E", "#9A8A6C", "#B5562A"]
   },
   "compositional_deconstruction": {

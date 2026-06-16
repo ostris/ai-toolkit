@@ -10,6 +10,7 @@ from toolkit.models.base_model import BaseModel
 from toolkit.basic import flush
 from toolkit.print import print_acc
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
+from toolkit.ideogram_caption import digest_caption_string
 from toolkit.samplers.custom_flowmatch_sampler import (
     CustomFlowMatchEulerDiscreteScheduler,
 )
@@ -419,6 +420,10 @@ class Ideogram4Model(BaseModel):
         # length -- important for the long structured (JSON) captions.
         features_list = []
         for p in prompt:
+            # Digest the prompt: migrate any old-format Ideogram caption into the
+            # current schema and serialize it compact (the form the renderer wants).
+            # Plain-text prompts pass straight through unchanged.
+            p = digest_caption_string(p)
             messages = [{"role": "user", "content": [{"type": "text", "text": p}]}]
             text = self.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True, tokenize=False
