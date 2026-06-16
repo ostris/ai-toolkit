@@ -3,8 +3,10 @@ import { GPUApiResponse } from '@/types';
 import Loading from '@/components/Loading';
 import GPUWidget from '@/components/GPUWidget';
 import { apiClient } from '@/utils/api';
+import { useLanguage } from './LanguageProvider';
 
 const GpuMonitor: React.FC = () => {
+  const { t } = useLanguage();
   const [gpuData, setGpuData] = useState<GPUApiResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +86,7 @@ const GpuMonitor: React.FC = () => {
     if (error) {
       return (
         <div className="bg-red-900 border border-red-600 text-red-200 px-4 py-3 rounded relative" role="alert">
-          <strong className="font-bold">Error!</strong>
+          <strong className="font-bold">{t('monitor.errorBang')}</strong>
           <span className="block sm:inline"> {error}</span>
         </div>
       );
@@ -93,7 +95,7 @@ const GpuMonitor: React.FC = () => {
     if (!gpuData) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
-          <span className="block sm:inline">No GPU data available.</span>
+          <span className="block sm:inline">{t('monitor.noGpuData')}</span>
         </div>
       );
     }
@@ -101,8 +103,8 @@ const GpuMonitor: React.FC = () => {
     if (!gpuData.hasNvidiaSmi && !gpuData.isMac) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
-          <strong className="font-bold">No NVIDIA GPUs detected!</strong>
-          <span className="block sm:inline"> nvidia-smi is not available on this system.</span>
+          <strong className="font-bold">{t('monitor.noNvidiaGpu')}</strong>
+          <span className="block sm:inline"> {t('monitor.noNvidiaSmi')}</span>
           {gpuData.error && <p className="mt-2 text-sm">{gpuData.error}</p>}
         </div>
       );
@@ -111,7 +113,7 @@ const GpuMonitor: React.FC = () => {
     if (gpuData.gpus.length === 0) {
       return (
         <div className="bg-yellow-900 border border-yellow-700 text-yellow-300 px-4 py-3 rounded relative" role="alert">
-          <span className="block sm:inline">No GPUs found, but nvidia-smi is available.</span>
+          <span className="block sm:inline">{t('monitor.noGpuFound')}</span>
         </div>
       );
     }
@@ -125,13 +127,15 @@ const GpuMonitor: React.FC = () => {
         ))}
       </div>
     );
-  }, [loading, gpuData, error]);
+  }, [loading, gpuData, error, t]);
 
   return (
     <div className="w-full">
       <div className="flex justify-between items-center mb-2">
-        <h1 className="text-md">GPU Monitor</h1>
-        <div className="text-xs text-gray-500">Last updated: {lastUpdated?.toLocaleTimeString()}</div>
+        <h1 className="text-md">{t('monitor.gpuMonitor')}</h1>
+        <div className="text-xs text-gray-500">
+          {t('monitor.lastUpdated')}: {lastUpdated?.toLocaleTimeString()}
+        </div>
       </div>
       {content}
     </div>

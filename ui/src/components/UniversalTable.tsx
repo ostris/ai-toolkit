@@ -1,5 +1,6 @@
 import Loading from './Loading';
 import classNames from 'classnames';
+import { useLanguage } from './LanguageProvider';
 
 export interface TableColumn {
   title: React.ReactNode;
@@ -27,6 +28,8 @@ export default function UniversalTable({
   theadClassName = 'text-gray-400',
   onRefresh = () => {},
 }: TableProps) {
+  const { t } = useLanguage();
+
   return (
     <div className="w-full bg-gray-900 rounded-md shadow-md">
       {isLoading ? (
@@ -35,12 +38,12 @@ export default function UniversalTable({
         </div>
       ) : rows.length === 0 ? (
         <div className="p-6 text-center text-gray-400">
-          <p className="text-sm">Empty</p>
+          <p className="text-sm">{t('common.empty')}</p>
           <button
             onClick={() => onRefresh()}
             className="mt-2 px-3 py-1 text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 rounded transition-colors"
           >
-            Refresh
+            {t('common.refresh')}
           </button>
         </div>
       ) : (

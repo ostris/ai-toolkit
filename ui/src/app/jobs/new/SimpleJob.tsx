@@ -32,6 +32,7 @@ import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
+import { formatMessage, useLanguage } from '@/components/LanguageProvider';
 
 type Props = {
   jobConfig: JobConfig;
@@ -60,6 +61,7 @@ export default function SimpleJob({
   datasetOptions,
   isLoading,
 }: Props) {
+  const { t } = useLanguage();
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
   }, [jobConfig.config.process[0].model.arch]);
@@ -229,7 +231,7 @@ export default function SimpleJob({
           <div className="absolute inset-0 z-50 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-400 border-t-blue-500" />
-              <span className="text-sm text-gray-400">Loading...</span>
+              <span className="text-sm text-gray-400">{t('common.loading')}</span>
             </div>
           </div>
         )}
@@ -865,7 +867,7 @@ export default function SimpleJob({
                         setJobConfig(datasets, 'config.process[0].datasets');
                       }}
                       className="bg-gray-700 hover:bg-gray-600 rounded-full p-2 text-sm transition-colors"
-                      title="Duplicate Dataset"
+                      title={t('form.Duplicate Dataset')}
                     >
                       <Copy className="w-4 h-4" />
                     </button>
@@ -878,12 +880,14 @@ export default function SimpleJob({
                         )
                       }
                       className="bg-red-600 hover:bg-red-700 text-white rounded-full p-2 text-sm transition-colors"
-                      title="Remove Dataset"
+                      title={t('form.Remove Dataset')}
                     >
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
+                  <h2 className="text-lg font-bold mb-4">
+                    {formatMessage(t('form.Dataset Number', 'Dataset {number}'), { number: i + 1 })}
+                  </h2>
                   <div className={datasetStyleClass}>
                     <div>
                       <SelectInput
@@ -1142,7 +1146,7 @@ export default function SimpleJob({
                 }}
                 className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
               >
-                Add Dataset
+                {t('form.Add Dataset')}
               </button>
             </>
           </Card>
@@ -1299,7 +1303,7 @@ export default function SimpleJob({
             </div>
             <div className="pt-2 mb-2 flex items-center justify-between">
               <label className="block text-xs text-gray-300">
-                Sample Prompts ({jobConfig.config.process[0].sample.samples.length})
+                {t('form.Sample Prompts')} ({jobConfig.config.process[0].sample.samples.length})
               </label>
               {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
                 <button
@@ -1322,7 +1326,7 @@ export default function SimpleJob({
                   className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md inline-flex items-center gap-2"
                 >
                   <Wand2 className="w-4 h-4" />
-                  Upsample Prompts
+                  {t('form.Upsample Prompts')}
                 </button>
               )}
             </div>
@@ -1430,7 +1434,7 @@ export default function SimpleJob({
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800 transition-colors"
                             >
                               <SquareDashed className="w-3.5 h-3.5" />
-                              Edit caption &amp; boxes
+                              {t('form.Edit caption & boxes')}
                             </button>
                           </div>
                         )}
@@ -1615,13 +1619,13 @@ export default function SimpleJob({
               }
               className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
             >
-              Add Prompt
+              {t('form.Add Prompt')}
             </button>
           </Card>
         </div>
 
-        {status === 'success' && <p className="text-green-500 text-center">Training saved successfully!</p>}
-        {status === 'error' && <p className="text-red-500 text-center">Error saving training. Please try again.</p>}
+        {status === 'success' && <p className="text-green-500 text-center">{t('form.Training saved successfully!')}</p>}
+        {status === 'error' && <p className="text-red-500 text-center">{t('form.Error saving training. Please try again.')}</p>}
       </form>
       <AddSingleImageModal />
     </>

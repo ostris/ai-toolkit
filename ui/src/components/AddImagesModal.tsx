@@ -5,6 +5,7 @@ import { FaUpload, FaTimesCircle, FaSpinner } from 'react-icons/fa';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { apiClient } from '@/utils/api';
+import { formatMessage, useLanguage } from './LanguageProvider';
 
 export interface AddImagesModalState {
   datasetName: string;
@@ -91,6 +92,7 @@ const VISIBLE_ROWS = 8;
 let nextId = 0;
 
 export default function AddImagesModal() {
+  const { t } = useLanguage();
   const [modalInfo, setModalInfo] = addImagesModalState.use();
   const open = modalInfo !== null;
 
@@ -135,7 +137,7 @@ export default function AddImagesModal() {
         setFileEntries(prev =>
           prev.map(e =>
             e.id === id
-              ? { ...e, status: 'error' as FileStatus, error: err instanceof Error ? err.message : 'Upload failed' }
+              ? { ...e, status: 'error' as FileStatus, error: err instanceof Error ? err.message : t('dataset.uploadFailed') }
               : e,
           ),
         );
@@ -143,7 +145,7 @@ export default function AddImagesModal() {
         return 'error';
       }
     },
-    [datasetName],
+    [datasetName, t],
   );
 
   const resetState = useCallback(() => {
@@ -254,7 +256,7 @@ export default function AddImagesModal() {
             <div className="bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
               <div className="text-center">
                 <DialogTitle as="h3" className="text-base font-semibold text-gray-200 mb-4">
-                  Add Images to: {datasetName}
+                  {formatMessage(t('dataset.addImagesTo'), { name: datasetName })}
                 </DialogTitle>
 
                 {/* Drop zone + click to select */}
@@ -270,11 +272,11 @@ export default function AddImagesModal() {
                     <FaUpload className="size-8 mb-3 text-gray-400" />
                     {!isUploading ? (
                       <>
-                        <p className="text-sm text-gray-200 text-center">Drag & drop files here or click to select</p>
-                        <p className="text-xs text-gray-400 mt-1">Images, videos, .txt or .json supported</p>
+                        <p className="text-sm text-gray-200 text-center">{t('dataset.dropFiles')}</p>
+                        <p className="text-xs text-gray-400 mt-1">{t('dataset.supportedFiles')}</p>
                       </>
                     ) : (
-                      <p className="text-sm text-gray-200 text-center">Drop more files to add to queue</p>
+                      <p className="text-sm text-gray-200 text-center">{t('dataset.dropMoreFiles')}</p>
                     )}
                   </div>
                 </div>
@@ -283,7 +285,7 @@ export default function AddImagesModal() {
                 {isUploading && (
                   <div className="mt-4">
                     <p className="text-sm font-semibold text-gray-200 mb-2">
-                      Uploading… {doneCount + errorCount} / {totalCount}
+                      {t('dataset.uploading')} {doneCount + errorCount} / {totalCount}
                     </p>
                     <div className="w-full h-2.5 bg-white/20 rounded-full overflow-hidden">
                       <div
@@ -293,7 +295,7 @@ export default function AddImagesModal() {
                     </div>
                     {errorCount > 0 && (
                       <p className="text-xs text-red-400 mt-1">
-                        {errorCount} file{errorCount !== 1 ? 's' : ''} failed
+                        {formatMessage(t('dataset.filesFailed'), { count: errorCount })}
                       </p>
                     )}
                   </div>
@@ -315,7 +317,7 @@ export default function AddImagesModal() {
                   isUploading ? 'bg-red-600 hover:bg-red-500' : 'bg-gray-600 hover:bg-gray-500'
                 }`}
               >
-                {isUploading ? 'Cancel Upload' : 'Close'}
+                {isUploading ? t('dataset.cancelUpload') : t('common.close', 'Close')}
               </button>
             </div>
           </DialogPanel>
@@ -363,6 +365,8 @@ function FileProgressList({ entries }: { entries: FileEntry[] }) {
 }
 
 function FileRow({ entry }: { entry: FileEntry }) {
+  const { t } = useLanguage();
+
   return (
     <div className="flex items-center gap-2 px-3 text-xs font-mono" style={{ height: ROW_HEIGHT }}>
       <span className="flex-shrink-0 w-4 text-center">
@@ -375,8 +379,8 @@ function FileRow({ entry }: { entry: FileEntry }) {
       </span>
       <span className="flex-shrink-0 w-16 text-right">
         {entry.status === 'uploading' && <span className="text-blue-300">{entry.progress}%</span>}
-        {entry.status === 'error' && <span className="text-red-400">Failed</span>}
-        {entry.status === 'pending' && <span className="text-white/30">Queued</span>}
+        {entry.status === 'error' && <span className="text-red-400">{t('dataset.failed')}</span>}
+        {entry.status === 'pending' && <span className="text-white/30">{t('dataset.queued')}</span>}
       </span>
     </div>
   );
