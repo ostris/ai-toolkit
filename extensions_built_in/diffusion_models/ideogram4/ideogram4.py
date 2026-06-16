@@ -272,16 +272,22 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update("Loading Ideogram4 model")
         base = self.model_config.name_or_path
 
+        # ------------------------------------------------------------
+        # 1. ALWAYS START DEVICE-NEUTRAL
+        # ------------------------------------------------------------
         transformer = self._load_transformer(base)
 
+        # ------------------------------------------------------------
+        # 2. QUANTIZE FIRST (if applicable)
+        # ------------------------------------------------------------
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
-        flush()
 
+        # ------------------------------------------------------------
+        # 3.
+        # ------------------------------------------------------------
         if (
             self.model_config.layer_offloading
             and self.model_config.layer_offloading_transformer_percent > 0
@@ -292,19 +298,27 @@ class Ideogram4Model(BaseModel):
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
                 ignore_modules=[transformer.rotary_emb.inv_freq, transformer.input_proj, transformer.llm_cond_proj],
             )
+
         elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
+
         else:
-            # quantize_model leaves the model on CPU; make sure it lands on device.
+            self.print_and_status_update("Moving transformer to device")
             transformer.to(self.device_torch)
         flush()
 
         tokenizer, text_encoder = self._load_text_encoder(base)
+
+        # always start device-agnostic
+        text_encoder.to("cpu")
+
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Text Encoder")
-            text_encoder.to(self.device_torch)
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
+
+            # IMPORTANT: allow CUDA-assisted quant like transformer dequant path
+            quantize_model(self, text_encoder)  # or equivalent unified API
+
             freeze(text_encoder)
             flush()
         if (
