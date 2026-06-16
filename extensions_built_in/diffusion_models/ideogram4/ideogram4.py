@@ -5,8 +5,9 @@ import torch
 import yaml
 from safetensors.torch import load_file, save_file
 
-from toolkit.config_modules import GenerateImageConfig, ModelConfig
+from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.models.base_model import BaseModel
+from toolkit.lora_special import LoRASpecialNetwork
 from toolkit.basic import flush
 from toolkit.print import print_acc
 from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
@@ -189,6 +190,11 @@ class Ideogram4Model(BaseModel):
         self._latent_shift = None
         self._latent_scale = None
 
+        # Optional LoRA that is only switched on during the unconditional (negative)
+        # CFG pass. Loaded from model_config.unconditional_lora_path if set; stays
+        # inactive everywhere else (training, conditional pass).
+        self.unconditional_lora: Optional[LoRASpecialNetwork] = None
+
     @property
     def text_embedding_space_version(self):
         # we changed the embeddings. invalidate cache.
@@ -267,6 +273,88 @@ class Ideogram4Model(BaseModel):
         vae.requires_grad_(False)
         return vae
 
+    def load_unconditional_lora(self, transformer: Ideogram4Transformer2DModel):
+        """Load the unconditional-pass LoRA and leave it applied but inactive.
+
+        The adapter is wired into the transformer via ``apply_to`` (no merge) so
+        the pipeline can flip ``is_active`` on for the unconditional CFG pass only.
+        It never affects the conditional pass or training, where it stays inactive.
+        """
+        lora_path = self.model_config.unconditional_lora_path
+        self.print_and_status_update(f"Loading unconditional LoRA from {lora_path}")
+
+        if not os.path.exists(lora_path):
+            # assume it is a "repo/owner/filename.safetensors" hub path
+            lora_splits = lora_path.split("/")
+            if len(lora_splits) != 3:
+                raise ValueError(
+                    f"Unconditional LoRA path {lora_path} is not a valid local path "
+                    "or hub path."
+                )
+            repo_id = "/".join(lora_splits[:2])
+            filename = lora_splits[2]
+            try:
+                lora_path = huggingface_hub.hf_hub_download(
+                    repo_id=repo_id, filename=filename, token=HF_TOKEN
+                )
+                self.model_config.unconditional_lora_path = lora_path
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to download unconditional LoRA from {lora_path}: {e}"
+                )
+
+        # Detect the LoRA rank from the first down-projection weight in the file.
+        lora_state_dict = load_file(lora_path)
+        lora_dim = None
+        for key, value in lora_state_dict.items():
+            if key.endswith("lora_A.weight") or key.endswith("lora_down.weight"):
+                lora_dim = int(value.shape[0])
+                break
+        if lora_dim is None:
+            raise ValueError(
+                f"Could not determine LoRA rank from {lora_path}: no lora_A/lora_down "
+                "weights found."
+            )
+
+        # transformer_only=False so every nn.Linear in the model is targeted (not
+        # just the transformer blocks) -- the extraction script factors all linears,
+        # so the adapter must wrap all of them to load every key.
+        network_config = NetworkConfig(
+            type="lora",
+            linear=lora_dim,
+            linear_alpha=lora_dim,
+            transformer_only=False,
+        )
+        network = LoRASpecialNetwork(
+            text_encoder=None,
+            unet=transformer,
+            lora_dim=lora_dim,
+            multiplier=1.0,
+            alpha=lora_dim,
+            # train_unet just gates module creation here; the network is applied,
+            # kept inactive, and never trained (the pipeline only toggles is_active).
+            train_unet=True,
+            train_text_encoder=False,
+            network_config=network_config,
+            network_type="lora",
+            transformer_only=False,
+            is_transformer=True,
+            target_lin_modules=self.target_lora_modules,
+            # base_model_ref lets load_weights run convert_lora_weights_before_load
+            # so saved "diffusion_model." keys map back to "transformer.".
+            base_model=self,
+        )
+        network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
+        network.force_to(self.device_torch, dtype=self.torch_dtype)
+        network._update_torch_multiplier()
+        network.load_weights(lora_path)
+        network.eval()
+
+        # Inactive by default; the pipeline flips this on only for the uncond pass.
+        network.is_active = False
+        self.unconditional_lora = network
+        self.print_and_status_update("Unconditional LoRA loaded (inactive)")
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Ideogram4 model")
@@ -290,7 +378,11 @@ class Ideogram4Model(BaseModel):
                 transformer,
                 self.device_torch,
                 offload_percent=self.model_config.layer_offloading_transformer_percent,
-                ignore_modules=[transformer.rotary_emb.inv_freq, transformer.input_proj, transformer.llm_cond_proj],
+                ignore_modules=[
+                    transformer.rotary_emb.inv_freq,
+                    transformer.input_proj,
+                    transformer.llm_cond_proj,
+                ],
             )
         elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")
@@ -337,6 +429,10 @@ class Ideogram4Model(BaseModel):
         self.tokenizer = tokenizer
         self.model = transformer
         self.pipeline = Ideogram4Pipeline(self)
+
+        if self.model_config.unconditional_lora_path is not None:
+            self.load_unconditional_lora(transformer)
+
         self.print_and_status_update("Model Loaded")
 
     # ------------------------------------------------------------------
