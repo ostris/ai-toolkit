@@ -12,6 +12,7 @@ import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import MergeLoRAsModal from '@/components/MergeLoRAsModal';
 import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
 import PromptBoxEditorModal from '@/components/PromptBoxEditorModal';
+import { LanguageProvider } from '@/components/LanguageProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,21 +53,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className={inter.className}>
         <script dangerouslySetInnerHTML={{ __html: `window.server_platform = "${platform}";` }} />
         <ThemeProvider>
-          <AuthWrapper authRequired={authRequired}>
-            <div className="flex h-screen bg-gray-950">
-              <Sidebar />
-              <main className="flex-1 overflow-auto bg-gray-950 text-gray-100 relative">
-                <Suspense>{children}</Suspense>
-              </main>
-            </div>
-          </AuthWrapper>
+          <LanguageProvider>
+            <AuthWrapper authRequired={authRequired}>
+              <div className="flex h-screen bg-gray-950">
+                <Sidebar />
+                <main className="flex-1 overflow-auto bg-gray-950 text-gray-100 relative">
+                  <Suspense>{children}</Suspense>
+                </main>
+              </div>
+            </AuthWrapper>
+            <ConfirmModal />
+            <DocModal />
+            <CaptionDatasetModal />
+            <MergeLoRAsModal />
+            <UpsamplePromptsModal />
+            <PromptBoxEditorModal />
+          </LanguageProvider>
         </ThemeProvider>
-        <ConfirmModal />
-        <DocModal />
-        <CaptionDatasetModal />
-        <MergeLoRAsModal />
-        <UpsamplePromptsModal />
-        <PromptBoxEditorModal />
       </body>
     </html>
   );

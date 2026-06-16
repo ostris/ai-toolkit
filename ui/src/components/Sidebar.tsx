@@ -10,12 +10,14 @@ import ThemeToggle from './ThemeToggle';
 import ThemeLogo from './ThemeLogo';
 import ActiveJobWidget from './ActiveJobWidget';
 import OstrisCloudBalance from './OstrisCloudBalance';
+import { useLanguage } from './LanguageProvider';
 
 export const mobileSidebarState = createGlobalState<boolean>(false);
 
 const Sidebar = () => {
   const [isMobileOpen, setIsMobileOpen] = mobileSidebarState.use();
   const pathname = usePathname();
+  const { t } = useLanguage();
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -35,11 +37,11 @@ const Sidebar = () => {
   }, [isMobileOpen]);
 
   const navigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: Home },
-    { name: 'New Job', href: '/jobs/new', icon: Plus },
-    { name: 'Queue', href: '/jobs', icon: BrainCircuit },
-    { name: 'Datasets', href: '/datasets', icon: Images },
-    { name: 'Settings', href: '/settings', icon: Settings },
+    { name: t('nav.dashboard'), href: '/dashboard', icon: Home },
+    { name: t('nav.newJob'), href: '/jobs/new', icon: Plus },
+    { name: t('nav.queue'), href: '/jobs', icon: BrainCircuit },
+    { name: t('nav.datasets'), href: '/datasets', icon: Images },
+    { name: t('nav.settings'), href: '/settings', icon: Settings },
   ];
 
   const socialsBoxClass =
@@ -98,7 +100,7 @@ const Sidebar = () => {
             fill="#c0392b"
           />
         </svg>
-        <span className="uppercase text-sm font-medium tracking-wide">Support AI-Toolkit</span>
+        <span className="uppercase text-sm font-medium tracking-wide">{t('nav.support')}</span>
       </a>
 
       {/* Social links grid */}
