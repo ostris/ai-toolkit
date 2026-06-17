@@ -361,21 +361,15 @@ class Ideogram4Model(BaseModel):
         base = self.model_config.name_or_path
 
         # ------------------------------------------------------------
-        # 1. ALWAYS START DEVICE-NEUTRAL
+        # MODEL LOADING + QUANTIZE + OFFLOAD
         # ------------------------------------------------------------
         transformer = self._load_transformer(base)
 
-        # ------------------------------------------------------------
-        # 2. QUANTIZE FIRST (if applicable)
-        # ------------------------------------------------------------
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
 
-        # ------------------------------------------------------------
-        # 3.
-        # ------------------------------------------------------------
         if (
             self.model_config.layer_offloading
             and self.model_config.layer_offloading_transformer_percent > 0
@@ -409,7 +403,7 @@ class Ideogram4Model(BaseModel):
             self.print_and_status_update("Quantizing Text Encoder")
 
             # IMPORTANT: allow CUDA-assisted quant like transformer dequant path
-            quantize_model(self, text_encoder)  # or equivalent unified API
+            quantize_model(self, text_encoder)
 
             freeze(text_encoder)
             flush()
