@@ -116,12 +116,14 @@ function TextAreaField({
   onChange,
   rows = 3,
   placeholder,
+  resizeY = false,
 }: {
   label?: string;
   value: string;
   onChange: (v: string) => void;
   rows?: number;
   placeholder?: string;
+  resizeY?: boolean;
 }) {
   return (
     <label className="flex flex-col gap-0.5">
@@ -131,7 +133,10 @@ function TextAreaField({
         rows={rows}
         placeholder={placeholder}
         onChange={e => onChange(e.target.value)}
-        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-blue-500 resize-none"
+        className={classNames(
+          'bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:border-blue-500',
+          resizeY ? 'resize-y min-h-20 max-h-[50vh]' : 'resize-none',
+        )}
       />
     </label>
   );
@@ -389,6 +394,7 @@ export default function IdeogramCaptionSidebar({
         onChange={v => update(d => (d.high_level_description = v))}
         rows={3}
         placeholder="One-sentence summary of the image..."
+        resizeY
       />
 
       <Section title="Style">
