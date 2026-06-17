@@ -2068,6 +2068,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         #     -> block-level compilation
         # ============================================================
         if self.model_config.compile:
+            compiled_refs = []  # (block_list, index, original_block) for rollback on failure
             try:
                 inner_unet_check = unwrap_model(self.sd.unet)
                 is_unet_offloaded = hasattr(inner_unet_check, '_memory_manager')
@@ -2145,6 +2146,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             if hasattr(block, '_hf_hook'):
                                 continue
 
+                            compiled_refs.append((block_list, i, block))
                             block_list[i] = torch.compile(
                                 block,
                                 mode=compile_mode,
@@ -2244,6 +2246,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     unet_module.to = lambda *args, **kwargs: unet_module
 
             except Exception as e:
+                # undo any block-level compiles that happened before the failure,
+                # so "continuing without compilation" is actually true
+                if len(compiled_refs) > 0:
+                    for block_list, i, original_block in compiled_refs:
+                        block_list[i] = original_block
+
                 if 'triton' in str(e).lower():
                     print_acc("WARNING: compile is disabled.")
                     print_acc("Triton is not available or not working on this system.")
