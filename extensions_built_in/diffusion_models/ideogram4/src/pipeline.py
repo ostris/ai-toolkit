@@ -7,6 +7,7 @@ sampling pipeline used to render preview images during training.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 import torch
@@ -23,6 +24,45 @@ from .transformer import (
     SEQUENCE_PADDING_INDICATOR,
     Ideogram4Transformer2DModel,
 )
+
+_LOGSNR_MIN = -15.0
+_LOGSNR_MAX = 18.0
+
+
+def _logit_normal_schedule(
+    u: torch.Tensor,
+    mean: float,
+    std: float,
+) -> torch.Tensor:
+    """Reference Ideogram time schedule, where 0 is noise and 1 is clean."""
+    u = torch.as_tensor(u, dtype=torch.float64)
+    t = 1.0 - torch.special.expit(mean + std * torch.special.ndtri(u))
+    t_min = 1.0 / (1.0 + math.exp(0.5 * _LOGSNR_MAX))
+    t_max = 1.0 / (1.0 + math.exp(0.5 * _LOGSNR_MIN))
+    return t.clamp(t_min, t_max)
+
+
+def get_ideogram4_sigmas(
+    num_steps: int,
+    width: int,
+    height: int,
+    mu: float = 0.0,
+    std: float = 1.75,
+    device: Optional[torch.device] = None,
+) -> torch.Tensor:
+    """Build the resolution-aware sigma schedule used by ComfyUI/Ideogram."""
+    if num_steps < 1:
+        raise ValueError("num_steps must be at least 1")
+    if width < 1 or height < 1:
+        raise ValueError("width and height must be positive")
+    if std <= 0:
+        raise ValueError("std must be positive")
+
+    mean = mu + 0.5 * math.log((width * height) / (512 * 512))
+    u = torch.linspace(0.0, 1.0, num_steps + 1, dtype=torch.float64)
+    sigmas = (1.0 - _logit_normal_schedule(u, mean, std)).flip(0)
+    sigmas[-1] = 0.0
+    return sigmas.to(device=device, dtype=torch.float32)
 
 
 # ---------------------------------------------------------------------------
@@ -287,10 +327,20 @@ class Ideogram4Pipeline:
         transformer = model.transformer
         patch = model.patch_size
 
-        # Use a fresh scheduler so we never mutate the training scheduler's state.
-        scheduler = model.get_train_scheduler()
-        scheduler.set_timesteps(num_inference_steps, device=device)
-        timesteps = scheduler.timesteps
+        schedule_mu = float(
+            model.model_config.model_kwargs.get("ideogram_schedule_mu", 0.0)
+        )
+        schedule_std = float(
+            model.model_config.model_kwargs.get("ideogram_schedule_std", 1.75)
+        )
+        sigmas = get_ideogram4_sigmas(
+            num_inference_steps,
+            width,
+            height,
+            mu=schedule_mu,
+            std=schedule_std,
+            device=device,
+        )
 
         ae_scale = model.vae_scale_factor  # 8
         gh = height // (ae_scale * patch)
@@ -309,7 +359,7 @@ class Ideogram4Pipeline:
                 shape, generator=generator, device=device, dtype=torch.float32
             )
         latents = latents.to(device, dtype=torch.float32)
-        latents = latents * scheduler.init_noise_sigma
+        latents = latents * sigmas[0]
 
         cond_feats, cond_mask = pad_text_features(
             conditional_embeds.text_embeds, device, dtype
@@ -325,21 +375,32 @@ class Ideogram4Pipeline:
             )
             uncond_mask = torch.zeros(batch_size, 0, dtype=torch.long, device=device)
 
-        for t in timesteps:
-            t01 = (t / 1000.0).to(device).expand(latents.shape[0])
+        # The unconditional LoRA (if present) must be active *only* on the
+        # unconditional pass. We force it off before each conditional pass since the
+        # outer sampling context (``with network:``) may switch it on globally.
+        uncond_lora = getattr(model, "unconditional_lora", None)
+
+        for sigma, sigma_next in zip(sigmas[:-1], sigmas[1:]):
+            t01 = sigma.expand(latents.shape[0])
+            if uncond_lora is not None:
+                uncond_lora.is_active = False
             v_cond = predict_velocity(
                 transformer, latents.to(dtype), t01, cond_feats, cond_mask
             )
             if do_cfg:
-                v_uncond = predict_velocity(
-                    transformer, latents.to(dtype), t01, uncond_feats, uncond_mask
-                )
+                if uncond_lora is not None:
+                    uncond_lora.is_active = True
+                try:
+                    v_uncond = predict_velocity(
+                        transformer, latents.to(dtype), t01, uncond_feats, uncond_mask
+                    )
+                finally:
+                    if uncond_lora is not None:
+                        uncond_lora.is_active = False
                 v = v_uncond + guidance_scale * (v_cond - v_uncond)
             else:
                 v = v_cond
-            latents = scheduler.step(
-                v.to(torch.float32), t, latents, return_dict=False
-            )[0]
+            latents = latents + v.to(torch.float32) * (sigma_next - sigma)
 
         images = model.decode_latents(latents, device=device, dtype=dtype)
         images = images.float().clamp(-1.0, 1.0)

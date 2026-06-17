@@ -32,6 +32,7 @@ type AdditionalSections =
   | 'model.low_vram'
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path'
+  | 'model.unconditional_lora_path'
   | 'ideogram_4_prompt';
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
@@ -993,6 +994,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
       'config.process[0].sample': [defaultIdeogramSamplesConfig, defaultSampleConfig],
+      'config.process[0].model.unconditional_lora_path': [
+        'ostris/ideogram_4_unconditional_lora/ideogram_4_unconditional_lora_r16.safetensors',
+        undefined,
+      ],
     },
     disableSections: [
       'network.conv',
@@ -1001,6 +1006,7 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'ideogram_4_prompt',
+      'model.unconditional_lora_path',
     ],
     hasMultiLinePrompts: true,
   },

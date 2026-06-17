@@ -307,6 +307,20 @@ export default function SimpleJob({
                 placeholder=""
               />
             )}
+            {modelArch?.additionalSections?.includes('model.unconditional_lora_path') && (
+              <TextInput
+                label="Unconditional Adapter Path"
+                value={jobConfig.config.process[0].model.unconditional_lora_path ?? ''}
+                docKey="config.process[0].model.unconditional_lora_path"
+                onChange={(value: string | undefined) => {
+                  if (value?.trim() === '') {
+                    value = undefined;
+                  }
+                  setJobConfig(value, 'config.process[0].model.unconditional_lora_path');
+                }}
+                placeholder=""
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.low_vram') && (
               <FormGroup label="Options">
                 <Checkbox
