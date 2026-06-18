@@ -31,6 +31,7 @@ export default function JobActionBar({
   if (!afterDelete) afterDelete = onRefresh;
 
   const iconSizeClass = 'w-5 h-5 sm:w-6 sm:h-6';
+  const actionClass = "ml-2 p-2 sm:ml-4 sm:p-1";
   return (
     <div className={`flex items-center flex-shrink-0 ${className ?? ''}`}>
       {canStart && (
@@ -44,7 +45,7 @@ export default function JobActionBar({
             }
             if (onRefresh) onRefresh();
           }}
-          className={`ml-1 sm:ml-2 opacity-100`}
+          className={`${actionClass} opacity-100`}
         >
           <Play className={iconSizeClass} />
         </Button>
@@ -56,7 +57,7 @@ export default function JobActionBar({
             await markJobAsStopped(job.id);
             if (onRefresh) onRefresh();
           }}
-          className={`ml-1 sm:ml-2 opacity-100`}
+          className={`${actionClass} opacity-100`}
         >
           <X className={iconSizeClass} />
         </Button>
@@ -76,7 +77,7 @@ export default function JobActionBar({
               },
             });
           }}
-          className={`ml-1 sm:ml-2 opacity-100`}
+          className={`${actionClass} opacity-100`}
         >
           <Pause className={iconSizeClass} />
         </Button>
@@ -131,7 +132,7 @@ export default function JobActionBar({
             },
           });
         }}
-        className={`ml-1 sm:ml-2 opacity-100`}
+        className={`${actionClass} opacity-100`}
       >
         <Trash2 className={iconSizeClass} />
       </Button>
