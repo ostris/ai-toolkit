@@ -1031,6 +1031,27 @@ export const modelArchs: ModelArch[] = [
       'model.layer_offloading',
     ],
   },
+  {
+    name: 'krea2',
+    label: 'Krea 2 (K2)',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['krea/krea2', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+    },
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
 ].sort((a, b) => {
   // Sort by label, case-insensitive
   return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
