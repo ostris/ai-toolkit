@@ -101,6 +101,17 @@ conditioning, preferred for all new models over the older `PromptEmbeds`:
   natural length and pad to the batch max only at the model call
   (`src/pipeline.py:pad_prompt_embeds`) — caches stay small and any prompts
   can share a batch.
+- **Keep each per-item tensor 2D `(L, D)`.** This is a hard requirement, not a
+  convention: `BaseModel.predict_noise` infers the text batch size from the
+  embed list, and it only counts the list as one-per-item when each tensor is
+  2D (`len(text_embeds[0].shape) == 2`). A 3D per-item tensor is read as an
+  already-batched `(B, L, D)` and its *first axis* is taken as the batch size —
+  so a single 3D prompt of length `L` looks like a batch of `L`, and training
+  dies with *"Batch size of latents must be the same or half the batch size of
+  text embeddings."* If your conditioning has an extra axis (e.g. a stack of N
+  encoder layers, giving `(L, N, D)`), **flatten it into the feature axis**
+  (`(L, N*D)`) in `get_prompt_embeds` and **restore it** (`reshape(B, Lt, N, D)`)
+  in `get_noise_prediction` / the pipeline, right before the model call.
 - Add as many keys as your model needs (`pooled_embeds`, image features, …).
 - Keys that must not be dtype-cast (token ids, masks) go in
   `embeds.frozen_dtype_keys`.
@@ -118,6 +129,21 @@ With `train.gradient_checkpointing: true`, `BaseSDTrainProcess` calls
 `torch.utils.checkpoint.checkpoint(..., use_reentrant=False)` when the flag is
 set **and** `torch.is_grad_enabled()` is true — never gate on `self.training`.
 See `src/model.py` for the full pattern and rationale.
+
+## Quantization
+
+With `quantize: true`, `quantize_model` swaps every `nn.Linear` for an
+`optimum.quanto` quantized one. Their matmul kernel **only accepts 2D or 3D
+activations** (`assert activations.ndim in (2, 3)`) — a `Linear` you feed a 4D
+tensor works fine in bf16 but throws once quantized. If your network applies a
+`Linear` over a 4D tensor (e.g. projecting a `(B, L, D, N)` layer axis),
+reshape to 3D for the call and back afterwards.
+
+Also watch out for **slow bf16 kernels on vendored components**: `Conv3d` has no
+fast cuDNN bf16 path (it falls back to a slow one). If a frozen sub-model carries
+a `Conv3d` you don't actually run — e.g. a vision tower's patch embed on a VL
+text encoder — drop it (`text_encoder.model.visual = None`) to skip loading it;
+if you must run one, consider running that component in fp16/fp32.
 
 ## Adapting this template
 
