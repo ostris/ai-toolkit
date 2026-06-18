@@ -13,7 +13,7 @@ import transformers
 import logging
 import warnings
 
-transformers.logging.set_verbosity_error()
+# transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
