@@ -111,6 +111,15 @@ class ExampleTransformerBlock(nn.Module):
         )  # each (B, 1, hidden), broadcasts over the sequence
 
         # --- attention ---
+        # ALWAYS default to torch's built-in scaled_dot_product_attention so the
+        # model runs with no extra dependency. If the reference repo you are
+        # porting hard-codes flash-attn (or xformers, sage, ...), do NOT carry
+        # that requirement over -- make it OPTIONAL. The clean pattern is a
+        # per-module ``attention_backend`` flag toggled in bulk from the parent
+        # model (e.g. ``set_attention_backend("flash")``), branching to the
+        # flash kernel only when explicitly selected AND the package is present.
+        # See ../../ideogram4/src/transformer.py and ../../boogu_image/src for
+        # working "native" (SDPA) + optional "flash" implementations.
         h = self.norm1(x) * (1 + scale_a) + shift_a
         q, k, v = self.qkv(h).chunk(3, dim=-1)
         q = q.view(b, s, self.num_heads, self.head_dim).transpose(1, 2)

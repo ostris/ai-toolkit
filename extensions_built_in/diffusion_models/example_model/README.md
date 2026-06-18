@@ -90,6 +90,11 @@ train:
   (`get_loss_target`), i.e. the velocity pointing from data to noise.
 - `self.model` / `self.transformer` / `self.unet` are aliases for the same
   thing on BaseModel.
+- **`use_old_lokr_format = False`** — set this class attribute on every NEW
+  model. `BaseModel` defaults it to `True` purely for backwards-compatibility
+  with LoKr checkpoints trained before the format change; all new architectures
+  should use the new LoKr format. (Plain LoRA training is unaffected — this only
+  matters for `network.type: "lokr"`.)
 
 ## AdvancedPromptEmbeds
 
@@ -144,6 +149,51 @@ fast cuDNN bf16 path (it falls back to a slow one). If a frozen sub-model carrie
 a `Conv3d` you don't actually run — e.g. a vision tower's patch embed on a VL
 text encoder — drop it (`text_encoder.model.visual = None`) to skip loading it;
 if you must run one, consider running that component in fp16/fp32.
+
+## Attention backends (don't force flash-attn)
+
+Reference repos very often hard-code an attention kernel — `flash_attn`,
+xformers, sage — and import it at module top level. **Do not carry that
+requirement over.** ai-toolkit has to import and load your model on machines
+where that package isn't installed (CPU boxes, headless CI, plain installs), so
+a top-level `from flash_attn import ...` turns "load the model" into an
+`ImportError`.
+
+The rule:
+
+- **Default to torch's built-in `F.scaled_dot_product_attention`** (the
+  "native" backend). It needs no extra dependency, runs on CPU and CUDA, and
+  already dispatches to a fused/flash kernel on supported hardware. `src/model.py`
+  does exactly this.
+- **Make any other kernel OPTIONAL**, selected at runtime — never required at
+  import. The clean pattern:
+  1. Guard the import so a missing package is a flag, not a crash:
+     ```python
+     try:
+         from flash_attn import flash_attn_varlen_func
+         _FLASH_ATTN_AVAILABLE = True
+     except ImportError:
+         flash_attn_varlen_func = None
+         _FLASH_ATTN_AVAILABLE = False
+     ```
+  2. Give each attention module an `attention_backend` flag (default
+     `"native"`) and **branch inside its forward** — `"flash"` runs the flash
+     kernel, anything else runs SDPA.
+  3. Expose a `set_attention_backend("native"|"flash")` on the parent model
+     that validates the name, raises a clear error if `"flash"` is requested
+     while `_FLASH_ATTN_AVAILABLE` is `False`, and propagates the flag to every
+     attention module.
+  4. Wire it to a config knob so it stays opt-in, e.g.
+     `model_kwargs.attention_backend: "flash"` read in `load_model`.
+
+Branch on a per-module **flag**, don't swap the processor/module instance:
+attention modules that own trained q/k/v weights (joint/dual-stream blocks)
+would lose those weights if you replaced them with a different instance.
+
+Worked implementations to copy: `../ideogram4/src/transformer.py`
+(`set_attention_backend`, native+flash in one `Attention.forward`) and
+`../boogu_image/src/attention_processor.py` (guarded import, per-processor
+`attention_backend` flag, flash varlen branch alongside SDPA).
 
 ## Adapting this template
 
