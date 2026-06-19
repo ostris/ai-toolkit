@@ -8,6 +8,65 @@ import { apiClient } from '@/utils/api';
 export default function Settings() {
   const { settings, setSettings } = useSettings();
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [restartState, setRestartState] = useState<'idle' | 'confirming' | 'restarting' | 'waiting' | 'back'>('idle');
+
+  const handleRestart = async () => {
+    if (restartState === 'idle') {
+      setRestartState('confirming');
+      return;
+    }
+    if (restartState !== 'confirming') return;
+    setRestartState('restarting');
+    try {
+      await apiClient.post('/api/restart', {});
+    } catch (err) {
+      // Network error is expected — the server dies while sending the response.
+    }
+    setRestartState('waiting');
+
+    // Poll for the server to come back. Look for a small, cheap endpoint.
+    const start = Date.now();
+    const maxWaitMs = 45_000;
+    const probe = async (): Promise<boolean> => {
+      try {
+        const res = await fetch('/api/settings', { cache: 'no-store' });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    };
+    // Give the supervisor (`concurrently`) a moment to relaunch.
+    await new Promise(r => setTimeout(r, 1500));
+    while (Date.now() - start < maxWaitMs) {
+      if (await probe()) {
+        setRestartState('back');
+        setTimeout(() => window.location.reload(), 800);
+        return;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    setRestartState('idle');
+    alert(
+      'The server did not come back online within 45 seconds.\n\n' +
+        'If you launched via Start-AI-Toolkit.bat the supervisor auto-restarts the server, ' +
+        'but if you launched it manually with `npm run dev` you will need to restart it yourself.',
+    );
+  };
+
+  const restartLabel = (() => {
+    switch (restartState) {
+      case 'idle':
+        return 'Restart Server';
+      case 'confirming':
+        return 'Click again to confirm restart';
+      case 'restarting':
+        return 'Restarting…';
+      case 'waiting':
+        return 'Waiting for server to come back…';
+      case 'back':
+        return 'Server is back — reloading…';
+    }
+  })();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,6 +182,38 @@ export default function Settings() {
           {status === 'success' && <p className="text-green-500 text-center">Settings saved successfully!</p>}
           {status === 'error' && <p className="text-red-500 text-center">Error saving settings. Please try again.</p>}
         </form>
+
+        <div className="mt-10 pt-6 border-t border-gray-800">
+          <h2 className="text-lg font-medium mb-1">Server</h2>
+          <p className="text-sm text-gray-400 mb-3">
+            Gracefully exit the Next.js process. The launcher's supervisor (
+            <code className="bg-gray-800 px-1 rounded">concurrently</code>) auto-restarts it within ~1 second.
+            This page will reload automatically once the server is back.
+          </p>
+          <button
+            type="button"
+            onClick={handleRestart}
+            disabled={restartState !== 'idle' && restartState !== 'confirming'}
+            className={`px-4 py-2 rounded-lg transition-colors disabled:cursor-wait ${
+              restartState === 'confirming'
+                ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                : restartState === 'idle'
+                  ? 'bg-red-700 hover:bg-red-600 text-white'
+                  : 'bg-gray-700 text-gray-200'
+            }`}
+          >
+            {restartLabel}
+          </button>
+          {restartState === 'confirming' && (
+            <button
+              type="button"
+              onClick={() => setRestartState('idle')}
+              className="ml-2 px-3 py-2 text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 rounded-lg"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </MainContent>
     </>
   );

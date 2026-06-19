@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { useState } from 'react';
 import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
@@ -8,6 +9,7 @@ import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
 import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import StopJobModal from '@/components/StopJobModal';
 
 interface JobActionBarProps {
   job: Job;
@@ -31,6 +33,7 @@ export default function JobActionBar({
   menuAnchor = 'bottom',
 }: JobActionBarProps) {
   const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
+  const [stopOpen, setStopOpen] = useState(false);
 
   if (!afterDelete) afterDelete = onRefresh;
 
@@ -69,22 +72,24 @@ export default function JobActionBar({
         <Button
           onClick={() => {
             if (!canStop) return;
-            openConfirm({
-              title: 'Stop Job',
-              message: `Are you sure you want to stop the job "${job.name}"? You CAN resume later.`,
-              type: 'info',
-              confirmText: 'Stop',
-              onConfirm: async () => {
-                await stopJob(job.id);
-                if (onRefresh) onRefresh();
-              },
-            });
+            setStopOpen(true);
           }}
           className={`ml-1 sm:ml-2 opacity-100`}
         >
           <Pause className={iconSizeClass} />
         </Button>
       )}
+      <StopJobModal
+        open={stopOpen}
+        job={job}
+        onClose={() => {
+          setStopOpen(false);
+          if (onRefresh) onRefresh();
+        }}
+        onComplete={() => {
+          if (onRefresh) onRefresh();
+        }}
+      />
       {!hideView && (
         <Link href={`/jobs/${job.id}`} className="ml-1 sm:ml-2 text-gray-200 hover:text-gray-100 inline-block">
           <Eye className={iconSizeClass} />
