@@ -719,7 +719,7 @@ class ModelConfig:
         self.compile_mode = kwargs.get("compile_mode", "default")
         self.compile_fullgraph = kwargs.get("compile_fullgraph", False)
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
-        self.cache_size_limit = kwargs.get("cache_size_limit", 8)
+        self.cache_size_limit = kwargs.get("cache_size_limit", None)
         
         # kwargs to pass to the model
         self.model_kwargs = kwargs.get("model_kwargs", {})
