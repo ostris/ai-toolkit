@@ -25,9 +25,11 @@ export default function ActiveJobWidget() {
             const isRunning = job.status === 'running' || job.status === 'stopping';
 
             let label = job.name;
+            let href = `/jobs/${job.id}`;
             if (job.job_type === 'caption') {
               const splits = (job.job_ref ?? '').split(/[/\\]/);
               label = splits[splits.length - 1] || job.name;
+              href = `/datasets/${label}`;
             }
 
             let statusColor = 'text-gray-400';
@@ -38,7 +40,7 @@ export default function ActiveJobWidget() {
             return (
               <li key={job.id} className="min-w-0">
                 <Link
-                  href={`/jobs/${job.id}`}
+                  href={href}
                   className="block px-3 py-2 bg-gray-800 hover:bg-gray-950 rounded-lg transition-colors min-w-0"
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
