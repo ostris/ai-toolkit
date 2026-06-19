@@ -9,6 +9,7 @@ export async function GET(request: Request) {
   const id = searchParams.get('id');
   const job_ref = searchParams.get('job_ref');
   const job_type = searchParams.get('job_type');
+  const status = searchParams.get('status');
 
   try {
     if (id) {
@@ -25,8 +26,18 @@ export async function GET(request: Request) {
       return NextResponse.json(job);
     }
 
+    const where: any = {};
+    if (job_type) where.job_type = job_type;
+    if (status) {
+      if (status.includes(',')) {
+        where.status = { in: status.split(',').map(s => s.trim()).filter(Boolean) };
+      } else {
+        where.status = status;
+      }
+    }
+
     const jobs = await prisma.job.findMany({
-      where: job_type ? { job_type } : undefined,
+      where: Object.keys(where).length > 0 ? where : undefined,
       orderBy: { created_at: 'desc' },
     });
     return NextResponse.json({ jobs: jobs });
@@ -39,7 +50,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { id, name, job_config } = body;
+    const { id, name, job_config, status } = body;
     let gpu_ids: string = body.gpu_ids;
 
     if (isMac()) {
@@ -50,25 +61,24 @@ export async function POST(request: Request) {
     if ("job_ref" in body) {
       extra["job_ref"] = body.job_ref;
     }
-
     if ("job_type" in body) {
       extra["job_type"] = body.job_type;
     }
 
     if (id) {
-      // Update existing training
+      const data: any = {
+        name,
+        gpu_ids,
+        job_config: JSON.stringify(job_config),
+        ...extra,
+      };
+      if (status) data.status = status;
       const training = await prisma.job.update({
         where: { id },
-        data: {
-          name,
-          gpu_ids,
-          job_config: JSON.stringify(job_config),
-          ...extra,
-        },
+        data,
       });
       return NextResponse.json(training);
     } else {
-      // find the highest queue position and add 1000
       const highestQueuePosition = await prisma.job.aggregate({
         _max: {
           queue_position: true,
@@ -76,13 +86,13 @@ export async function POST(request: Request) {
       });
       const newQueuePosition = (highestQueuePosition._max.queue_position || 0) + 1000;
 
-      // Create new training
       const training = await prisma.job.create({
         data: {
           name,
           gpu_ids,
           job_config: JSON.stringify(job_config),
           queue_position: newQueuePosition,
+          status: status || 'stopped',
           ...extra,
         },
       });
@@ -90,11 +100,9 @@ export async function POST(request: Request) {
     }
   } catch (error: any) {
     if (error.code === 'P2002') {
-      // Handle unique constraint violation, 409=Conflict
       return NextResponse.json({ error: 'Job name already exists' }, { status: 409 });
     }
     console.error(error);
-    // Handle other errors
     return NextResponse.json({ error: 'Failed to save training data' }, { status: 500 });
   }
 }

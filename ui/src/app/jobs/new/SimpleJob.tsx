@@ -1,5 +1,7 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import PromptLibraryModal from '@/components/PromptLibraryModal';
+import { BookText } from 'lucide-react';
 import {
   modelArchs,
   ModelArch,
@@ -60,6 +62,7 @@ export default function SimpleJob({
   datasetOptions,
   isLoading,
 }: Props) {
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
   }, [jobConfig.config.process[0].model.arch]);
@@ -133,13 +136,15 @@ export default function SimpleJob({
     return count;
   }, [modelArch, disableSections]);
 
-  let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
+  // Each card holds long-labeled selects (Model Architecture, Quantization, etc.) so we
+  // wrap aggressively at narrow widths and only pack tightly once the viewport is wide.
+  let topBarClass = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6';
 
   if (numTopCards == 5) {
-    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6';
+    topBarClass = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-6';
   }
   if (numTopCards == 6) {
-    topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6 gap-6';
+    topBarClass = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-6';
   }
 
   const numTrainingCols = useMemo(() => {
@@ -150,10 +155,10 @@ export default function SimpleJob({
     return count;
   }, [disableSections]);
 
-  let trainingBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
+  let trainingBarClass = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6';
 
   if (numTrainingCols == 5) {
-    trainingBarClass = 'grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6';
+    trainingBarClass = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-6';
   }
 
   const transformerQuantizationOptions: GroupedSelectOption[] | SelectOption[] = useMemo(() => {
@@ -827,7 +832,7 @@ export default function SimpleJob({
         </div>
         <div>
           <Card title="Advanced" collapsible>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
               <div>
                 <Checkbox
                   label="Do Differential Guidance"
@@ -1179,8 +1184,25 @@ export default function SimpleJob({
                   value={jobConfig.config.process[0].sample.sampler}
                   onChange={value => setJobConfig(value, 'config.process[0].sample.sampler')}
                   options={[
-                    { value: 'flowmatch', label: 'FlowMatch' },
+                    // Flow-matching schedulers (modern models: FLUX, Qwen, Wan, LTX, HiDream, etc.)
+                    { value: 'flowmatch', label: 'FlowMatch (default for modern models)' },
+                    { value: 'mean_flow', label: 'Mean Flow' },
+                    // Classic noise schedulers (SDXL, SD1.5)
+                    { value: 'ddim', label: 'DDIM' },
                     { value: 'ddpm', label: 'DDPM' },
+                    { value: 'pndm', label: 'PNDM' },
+                    { value: 'euler', label: 'Euler' },
+                    { value: 'euler_a', label: 'Euler Ancestral' },
+                    { value: 'heun', label: 'Heun' },
+                    { value: 'lms', label: 'LMS' },
+                    { value: 'dpm_2', label: 'DPM2' },
+                    { value: 'dpm_2_a', label: 'DPM2 Ancestral' },
+                    { value: 'dpmsolver', label: 'DPM Solver' },
+                    { value: 'dpmsolver++', label: 'DPM Solver++' },
+                    { value: 'k_dpmsolver++', label: 'K-DPM Solver++' },
+                    { value: 'dpmsingle', label: 'DPM Single' },
+                    { value: 'lcm', label: 'LCM' },
+                    { value: 'custom_lcm', label: 'Custom LCM' },
                   ]}
                 />
                 <NumberInput
@@ -1252,9 +1274,8 @@ export default function SimpleJob({
                   label="Seed"
                   value={jobConfig.config.process[0].sample.seed}
                   onChange={value => setJobConfig(value, 'config.process[0].sample.seed')}
-                  placeholder="eg. 0"
+                  placeholder="42"
                   min={0}
-                  required
                 />
                 <Checkbox
                   label="Walk Seed"
@@ -1311,34 +1332,43 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
             </div>
-            <div className="pt-2 mb-2 flex items-center justify-between">
+            <div className="pt-2 mb-2 flex items-center justify-between gap-2 flex-wrap">
               <label className="block text-xs text-gray-300">
                 Sample Prompts ({jobConfig.config.process[0].sample.samples.length})
               </label>
-              {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={jobConfig.config.process[0].sample.samples.length === 0}
-                  onClick={() => {
-                    const sampleCfg = jobConfig.config.process[0].sample;
-                    const items = sampleCfg.samples
-                      .map((s, i) => ({
-                        index: i,
-                        prompt: s.prompt || '',
-                        aspectRatio: toAspectRatio(s.width || sampleCfg.width, s.height || sampleCfg.height),
-                      }))
-                      .filter(it => it.prompt.trim() !== '');
-                    if (items.length === 0) return;
-                    openUpsamplePromptsModal(items, (index, newPrompt) => {
-                      setJobConfig(newPrompt, `config.process[0].sample.samples[${index}].prompt`);
-                    });
-                  }}
-                  className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md inline-flex items-center gap-2"
+                  onClick={() => setPromptLibraryOpen(true)}
+                  className="flex items-center gap-1 text-xs px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white rounded-md"
                 >
-                  <Wand2 className="w-4 h-4" />
-                  Upsample Prompts
+                  <BookText className="w-4 h-4" /> Open Prompt Library
                 </button>
-              )}
+                {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
+                  <button
+                    type="button"
+                    disabled={jobConfig.config.process[0].sample.samples.length === 0}
+                    onClick={() => {
+                      const sampleCfg = jobConfig.config.process[0].sample;
+                      const items = sampleCfg.samples
+                        .map((s, i) => ({
+                          index: i,
+                          prompt: s.prompt || '',
+                          aspectRatio: toAspectRatio(s.width || sampleCfg.width, s.height || sampleCfg.height),
+                        }))
+                        .filter(it => it.prompt.trim() !== '');
+                      if (items.length === 0) return;
+                      openUpsamplePromptsModal(items, (index, newPrompt) => {
+                        setJobConfig(newPrompt, `config.process[0].sample.samples[${index}].prompt`);
+                      });
+                    }}
+                    className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md inline-flex items-center gap-2"
+                  >
+                    <Wand2 className="w-4 h-4" />
+                    Upsample Prompts
+                  </button>
+                )}
+              </div>
             </div>
             {jobConfig.config.process[0].sample.samples.map((sample, i) => (
               <div key={i} className="rounded-lg pl-4 pr-1 mb-4 bg-gray-950">
@@ -1638,6 +1668,28 @@ export default function SimpleJob({
         {status === 'error' && <p className="text-red-500 text-center">Error saving training. Please try again.</p>}
       </form>
       <AddSingleImageModal />
+      <PromptLibraryModal
+        open={promptLibraryOpen}
+        onClose={() => setPromptLibraryOpen(false)}
+        onConfirm={items => {
+          if (items.length === 0) return;
+          const existing = jobConfig.config.process[0].sample.samples || [];
+          const additions = items.map(p => {
+            const s: any = { prompt: p.text };
+            if (p.width) s.width = p.width;
+            if (p.height) s.height = p.height;
+            if (p.seed !== undefined) s.seed = p.seed;
+            if (p.network_multiplier !== undefined) s.network_multiplier = p.network_multiplier;
+            return s;
+          });
+          // drop trailing empty prompts before appending
+          const trimmed = existing.filter(
+            (s: any, idx: number) =>
+              idx < existing.length - 1 || (s.prompt && s.prompt.trim().length > 0),
+          );
+          setJobConfig([...trimmed, ...additions], 'config.process[0].sample.samples');
+        }}
+      />
     </>
   );
 }

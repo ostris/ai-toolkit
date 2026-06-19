@@ -33,7 +33,9 @@ export default function TrainingForm() {
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
   const { datasets, status: datasetFetchStatus } = useDatasetList();
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
-  const [showAdvancedView, setShowAdvancedView] = useState(false);
+  const [viewMode, setViewMode] = useState<'simple' | 'advanced' | 'split'>('simple');
+  const showAdvancedView = viewMode === 'advanced';
+  const isSplit = viewMode === 'split';
 
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(migrateJobConfig(defaultJobConfig)));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
@@ -148,7 +150,7 @@ export default function TrainingForm() {
     }
   }, [settings, isSettingsLoaded]);
 
-  const saveJob = async () => {
+  const saveJob = async (asDraft = false) => {
     if (status === 'saving') return;
     setStatus('saving');
 
@@ -158,9 +160,14 @@ export default function TrainingForm() {
         name: jobConfig.config.name,
         gpu_ids: gpuIDs,
         job_config: jobConfig,
+        ...(asDraft ? { status: 'draft' } : {}),
       })
       .then(res => {
         setStatus('success');
+        if (asDraft) {
+          router.push('/jobs/drafts');
+          return;
+        }
         if (runId) {
           router.push(`/jobs/${runId}`);
         } else {
@@ -184,7 +191,7 @@ export default function TrainingForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    saveJob();
+    saveJob(false);
   };
 
   return (
@@ -201,7 +208,7 @@ export default function TrainingForm() {
           </h1>
         </div>
         <div className="flex-1"></div>
-        {showAdvancedView && (
+        {(showAdvancedView || isSplit) && (
           <>
             <div className="hidden sm:block">
               <SelectInput
@@ -252,13 +259,28 @@ export default function TrainingForm() {
           </>
         )}
 
-        <div className="pr-1 sm:pr-2 flex-shrink-0">
+        <div className="pr-1 sm:pr-2 flex bg-gray-800 rounded-md overflow-hidden text-xs sm:text-sm flex-shrink-0">
+          {(['simple', 'advanced', 'split'] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`px-2 sm:px-3 py-1 capitalize ${
+                viewMode === mode ? 'bg-slate-600 text-white' : 'text-gray-300 hover:bg-gray-700'
+              }`}
+              title={mode === 'split' ? 'Simple + Advanced side-by-side (live-syncs)' : undefined}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+        <div className="pr-1 sm:pr-2">
           <Button
-            className="text-gray-200 bg-gray-800 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
-            onClick={() => setShowAdvancedView(!showAdvancedView)}
+            className="text-white bg-amber-600 hover:bg-amber-700 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
+            onClick={() => saveJob(true)}
+            disabled={status === 'saving'}
           >
-            <span className="sm:hidden">{showAdvancedView ? 'Simple' : 'Advanced'}</span>
-            <span className="hidden sm:inline">{showAdvancedView ? 'Show Simple' : 'Show Advanced'}</span>
+            <span className="sm:hidden">Draft</span>
+            <span className="hidden sm:inline">Save as Draft</span>
           </Button>
         </div>
         <div className="flex-shrink-0">
@@ -287,7 +309,55 @@ export default function TrainingForm() {
         onChange={handleFileSelected}
       />
 
-      {showAdvancedView ? (
+      {isSplit ? (
+        <div className="pt-[48px] absolute top-0 left-0 w-full h-full flex">
+          <div className="w-1/2 h-full overflow-auto border-r border-gray-800">
+            <div className="sticky top-0 z-10 bg-gray-900/90 backdrop-blur border-b border-gray-800 px-4 py-1 text-xs uppercase tracking-wide text-gray-400">
+              Simple
+            </div>
+            <div className="p-4">
+              <ErrorBoundary
+                fallback={
+                  <div className="flex items-center justify-center h-64 text-sm text-red-600 font-medium bg-red-100 dark:bg-red-900/20 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-lg">
+                    Advanced-only job detected. Use the Advanced pane on the right.
+                  </div>
+                }
+              >
+                <SimpleJob
+                  jobConfig={jobConfig}
+                  setJobConfig={setJobConfig}
+                  status={status}
+                  handleSubmit={handleSubmit}
+                  runId={runId}
+                  gpuIDs={gpuIDs}
+                  setGpuIDs={setGpuIDs}
+                  gpuList={gpuList}
+                  datasetOptions={datasetOptions}
+                  isLoading={!isSettingsLoaded || !isGPUInfoLoaded || datasetFetchStatus !== 'success'}
+                />
+              </ErrorBoundary>
+              <div className="pt-12"></div>
+            </div>
+          </div>
+          <div className="w-1/2 h-full overflow-auto">
+            <div className="sticky top-0 z-10 bg-gray-900/90 backdrop-blur border-b border-gray-800 px-4 py-1 text-xs uppercase tracking-wide text-gray-400">
+              Advanced — edits sync live to the Simple pane
+            </div>
+            <AdvancedJob
+              jobConfig={jobConfig}
+              setJobConfig={setJobConfig}
+              status={status}
+              handleSubmit={handleSubmit}
+              runId={runId}
+              gpuIDs={gpuIDs}
+              setGpuIDs={setGpuIDs}
+              gpuList={gpuList}
+              datasetOptions={datasetOptions}
+              settings={settings}
+            />
+          </div>
+        </div>
+      ) : showAdvancedView ? (
         <div className="pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto">
           <AdvancedConfigEditor
             config={jobConfig}
