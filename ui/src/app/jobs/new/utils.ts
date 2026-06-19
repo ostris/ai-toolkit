@@ -70,6 +70,7 @@ export const handleModelArchChange = (
   const hasControlPath = newArch?.additionalSections?.includes('datasets.control_path') || false;
   const hasMultiControlPaths = newArch?.additionalSections?.includes('datasets.multi_control_paths') || false;
   const hasNumFrames = newArch?.additionalSections?.includes('datasets.num_frames') || false;
+  const hasAutoFrameCount = newArch?.additionalSections?.includes('datasets.auto_frame_count') || false;
   const controls = newArch?.controls ?? [];
   const datasets = jobConfig.config.process[0].datasets.map(dataset => {
     const newDataset = objectCopy(dataset);
@@ -119,6 +120,9 @@ export const handleModelArchChange = (
     }
     if (!hasNumFrames) {
       newDataset.num_frames = 1; // reset num_frames if not applicable
+    }
+    if (!hasAutoFrameCount) {
+      delete newDataset.auto_frame_count;
     }
     return newDataset;
   });
