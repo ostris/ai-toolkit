@@ -1,4 +1,5 @@
 import torch
+import math
 from typing import Optional
 from diffusers.optimization import SchedulerType, TYPE_TO_SCHEDULER_FUNCTION, get_constant_schedule_with_warmup
 
@@ -9,28 +10,34 @@ def get_lr_scheduler(
         **kwargs,
 ):
     if name == "cosine":
-        import math
+            if 'total_iters' in kwargs:
+                kwargs['T_max'] = kwargs.pop('total_iters')
 
-        if 'total_iters' in kwargs:
-            kwargs['T_max'] = kwargs.pop('total_iters')
+            total_steps = kwargs.get('T_max') 
+            warmup_steps = kwargs.get('num_warmup_steps', 0)
+            eta_min = kwargs.get('eta_min', 0.0)
 
-        total_steps = kwargs.get('T_max')
-        warmup_steps = kwargs.pop('num_warmup_steps', 0)
-        eta_min = kwargs.get('eta_min', 0.0)
+            if warmup_steps > 0:
+                base_lr = optimizer.param_groups[0]['lr']
+                if total_steps is None:
+                    print("WARNING: total_steps(T_max) not found in kwargs, defaulting to 2000")
+                    total_steps = 2000
 
-        if warmup_steps > 0:
-            def lr_lambda(step):
-                if step < warmup_steps:
-                    return float(step) / float(max(1, warmup_steps))
-                else:
-                    progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                    cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
-                    base_ratio = eta_min / max(1e-8, 1.0)
-                    return base_ratio + (1.0 - base_ratio) * cosine_factor
+                def lr_lambda(step):
+                    if step < warmup_steps:
+                        return float(step) / float(max(1, warmup_steps))
+                    else:
+                        progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+                        progress = min(1.0, progress)
+                        
+                        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+                        base_ratio = eta_min / max(1e-8, base_lr)
+                        
+                        return base_ratio + (1.0 - base_ratio) * cosine_factor
 
-            return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-        else:
-            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
+                return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+            else:
+                return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
 
     elif name == "cosine_with_restarts":
         if 'total_iters' in kwargs:
