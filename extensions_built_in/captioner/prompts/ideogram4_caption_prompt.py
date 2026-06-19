@@ -67,11 +67,11 @@ Field meanings:
 
 Each element is one of (keys in EXACTLY this order):
 ```
-{"type":"obj","bbox":[x1,y1,x2,y2],"desc":"...","color_palette":["#RRGGBB"]}
-{"type":"text","bbox":[x1,y1,x2,y2],"text":"LINE ONE\\nLINE TWO","desc":"...","color_palette":["#RRGGBB"]}
+{"type":"obj","bbox":[x1,y1,x2,y2],"desc":"..."}
+{"type":"text","bbox":[x1,y1,x2,y2],"text":"LINE ONE\\nLINE TWO","desc":"..."}
 ```
 
-`bbox` and `color_palette` are both OPTIONAL per-element; when present they keep the order shown above (`color_palette` is always LAST). `bbox`: see BBOX section below. `color_palette`: up to 5 UPPERCASE `#RRGGBB` strings of that element's own dominant colours — include it when the element has distinctive colours worth pinning (a red jacket, a brand logo, coloured text), omit it for colour-neutral elements.
+`bbox` is OPTIONAL per-element (see BBOX section below). Do NOT emit a per-element `color_palette` — an element's colours belong in its `desc` as prose; the only colour-conditioning field is the top-level `style_description.color_palette`.
 
 ### SINGLE SUBJECT = SINGLE ELEMENT
 

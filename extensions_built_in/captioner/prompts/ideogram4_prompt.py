@@ -53,11 +53,11 @@ Name a recognized style ONCE here (see PLANNING → Style commitment); do not ap
 
 Each element is one of (keys in EXACTLY this order):
 ```
-{"type":"obj","bbox":[y1,x1,y2,x2],"desc":"...","color_palette":["#RRGGBB"]}
-{"type":"text","bbox":[y1,x1,y2,x2],"text":"LINE ONE\nLINE TWO","desc":"...","color_palette":["#RRGGBB"]}
+{"type":"obj","bbox":[y1,x1,y2,x2],"desc":"..."}
+{"type":"text","bbox":[y1,x1,y2,x2],"text":"LINE ONE\nLINE TWO","desc":"..."}
 ```
 
-`bbox` and `color_palette` are both OPTIONAL per-element; when present they keep the order shown (`color_palette` is always LAST). `bbox`: see BBOX section below. `color_palette`: up to 5 UPPERCASE `#RRGGBB` strings steering that element's own dominant colours — include it when the element has a distinctive colour (a red jacket, a brand logo, coloured text), omit it otherwise.
+`bbox` is OPTIONAL per-element (see BBOX section below). Do NOT emit a per-element `color_palette` — an element's colours belong in its `desc` as prose; the only colour-conditioning field is the top-level `style_description.color_palette`.
 
 ### SINGLE SUBJECT = SINGLE ELEMENT
 
