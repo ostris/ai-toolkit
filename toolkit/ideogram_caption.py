@@ -244,6 +244,43 @@ def normalize_caption_dict(data):
     return out
 
 
+# --- bbox coordinate adaptation that does NOT require valid JSON -------------
+# Captioners emit boxes as [x1,y1,x2,y2] but we store [y1,x1,y2,x2]. The
+# structured normalizer can only swap per-element when the JSON parses; if the
+# model returns malformed JSON, that path is skipped and the boxes stay in the
+# wrong order. This regex rewrites every `"bbox":[...]` array in the raw text
+# directly, so the swap still happens on un-parseable output.
+_BBOX_TEXT_RE = re.compile(
+    r'"bbox"\s*:\s*\[\s*'
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*,\s*"
+    r"(-?\d+(?:\.\d+)?)\s*\]"
+)
+
+
+def _clamp_1000(v):
+    return max(0, min(1000, round(float(v))))
+
+
+def swap_bbox_xy_in_text(text):
+    """Swap every [x1,y1,x2,y2] bbox to the stored [y1,x1,y2,x2] order directly in
+    the raw model output -- clamping each value to 0-1000 and ordering each axis
+    pair. It never parses the surrounding JSON, so it works even when the output is
+    malformed. Only `"bbox":[n,n,n,n]` arrays are touched; everything else is left
+    byte-for-byte. Returns the rewritten text."""
+    if not isinstance(text, str):
+        return text
+
+    def _repl(m):
+        x1, y1, x2, y2 = m.groups()
+        cx1, cx2 = sorted((_clamp_1000(x1), _clamp_1000(x2)))
+        cy1, cy2 = sorted((_clamp_1000(y1), _clamp_1000(y2)))
+        return f'"bbox":[{cy1},{cx1},{cy2},{cx2}]'
+
+    return _BBOX_TEXT_RE.sub(_repl, text)
+
+
 def is_ideogram_caption_str(text):
     """True if text parses as a JSON object with a compositional_deconstruction block."""
     t = (text or "").strip()
