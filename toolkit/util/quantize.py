@@ -318,6 +318,28 @@ def quantize_model(
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first
         base_model.print_and_status_update(" - quantizing extras")
-        # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
-        quantize(model_to_quantize, weights=quantization_type)
+        # collect block-list module ids (already quantized on GPU)
+        _block_module_ids = set()
+        for name in transformer_block_names:
+            bl = model_to_quantize
+            for part in name.split('.'):
+                bl = getattr(bl, part, None)
+                if bl is None:
+                    break
+            if bl is not None:
+                _block_module_ids.add(id(bl))
+                for blk in bl:
+                    _block_module_ids.add(id(blk))
+
+        # quantize each non-block top-level child individually on GPU
+        for child_name, child in model_to_quantize.named_children():
+            if id(child) in _block_module_ids:
+                continue
+            param_mb = sum(p.numel() * p.element_size() for p in child.parameters()) / 1024**2
+            child.to(base_model.device_torch, dtype=base_model.torch_dtype)
+            quantize(child, weights=quantization_type)
+            freeze(child)
+            child.to("cpu")
+
+        # freeze the top-level model (no-op for already-frozen params)
         freeze(model_to_quantize)
