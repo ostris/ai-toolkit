@@ -81,7 +81,6 @@ RUN echo "Cache bust: ${CACHEBUST}" && \
     cd /tmp/ai-toolkit-src && \
     git checkout ${GIT_COMMIT} && \
     rsync -a --delete \
-        --exclude '.git' \
         --exclude 'ui/node_modules' \
         --exclude 'requirements.txt' \
         --exclude 'ui/package.json' \
