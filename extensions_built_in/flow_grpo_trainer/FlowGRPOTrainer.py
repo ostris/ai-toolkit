@@ -357,6 +357,27 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
         self._retry_db_operation(_op)
 
+    def _recover_stale_generating_tasks(self) -> None:
+        rows = self._db_execute(
+            """
+            SELECT task.id
+            FROM FlowGRPOVoteTask task
+            WHERE task.job_id = ? AND task.status = 'generating'
+            ORDER BY task.created_at ASC
+            """,
+            (self.job_id,),
+        )
+        for row in rows:
+            task_id = row["id"]
+            self._db_execute_write(
+                "UPDATE FlowGRPOVoteTask SET status = 'failed', error = ? WHERE id = ? AND job_id = ?",
+                ("Generation was stopped before completion.", task_id, self.job_id),
+            )
+            self._db_execute_write(
+                "UPDATE FlowGRPOCandidate SET status = 'failed' WHERE vote_task_id = ? AND job_id = ?",
+                (task_id, self.job_id),
+            )
+
     def _count_open_tasks(self) -> int:
         rows = self._db_execute(
             "SELECT COUNT(*) AS count FROM FlowGRPOVoteTask WHERE job_id = ? AND status = 'open'",
@@ -593,16 +614,20 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 quad_count=4,
             )
 
+        is_ideogram4 = getattr(self.sd, "arch", None) == "ideogram4"
         sample_prompts_cache = getattr(self.sd, "sample_prompts_cache", None)
         if sample_prompts_cache is not None:
             conditional_embeds = sample_prompts_cache[sample_index]["conditional"].to(
                 self.device_torch,
                 dtype=self.sd.torch_dtype,
             )
-            unconditional_embeds = sample_prompts_cache[sample_index]["unconditional"].to(
-                self.device_torch,
-                dtype=self.sd.torch_dtype,
-            )
+            if is_ideogram4:
+                unconditional_embeds = None
+            else:
+                unconditional_embeds = sample_prompts_cache[sample_index]["unconditional"].to(
+                    self.device_torch,
+                    dtype=self.sd.torch_dtype,
+                )
         else:
             control_images = self._get_text_encoding_control_images(gen_config)
             if control_tensor is None:
@@ -616,29 +641,40 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 control_images=control_images,
             )
 
-            if isinstance(adapter, CustomAdapter):
+            if is_ideogram4:
+                unconditional_embeds = None
+            elif isinstance(adapter, CustomAdapter):
                 adapter.is_unconditional_run = True
-            unconditional_embeds = self.sd.encode_prompt(
-                gen_config.negative_prompt,
-                gen_config.negative_prompt_2,
-                force_all=True,
-                control_images=control_images,
-            )
-            if isinstance(adapter, CustomAdapter):
+                unconditional_embeds = self.sd.encode_prompt(
+                    gen_config.negative_prompt,
+                    gen_config.negative_prompt_2,
+                    force_all=True,
+                    control_images=control_images,
+                )
                 adapter.is_unconditional_run = False
+            else:
+                unconditional_embeds = self.sd.encode_prompt(
+                    gen_config.negative_prompt,
+                    gen_config.negative_prompt_2,
+                    force_all=True,
+                    control_images=control_images,
+                )
 
-        gen_config.post_process_embeddings(conditional_embeds, unconditional_embeds)
+        if unconditional_embeds is not None:
+            gen_config.post_process_embeddings(conditional_embeds, unconditional_embeds)
 
         decorator = getattr(self.sd, "decorator", None)
         if decorator is not None:
             conditional_embeds.text_embeds = decorator(conditional_embeds.text_embeds)
-            unconditional_embeds.text_embeds = decorator(unconditional_embeds.text_embeds, is_unconditional=True)
+            if unconditional_embeds is not None:
+                unconditional_embeds.text_embeds = decorator(unconditional_embeds.text_embeds, is_unconditional=True)
 
         if isinstance(adapter, IPAdapter) and gen_config.adapter_image_path is not None:
             conditional_clip_embeds = adapter.get_clip_image_embeds_from_tensors(validation_image)
             unconditional_clip_embeds = adapter.get_clip_image_embeds_from_tensors(validation_image, True)
             conditional_embeds = adapter(conditional_embeds, conditional_clip_embeds, is_unconditional=False)
-            unconditional_embeds = adapter(unconditional_embeds, unconditional_clip_embeds, is_unconditional=True)
+            if unconditional_embeds is not None:
+                unconditional_embeds = adapter(unconditional_embeds, unconditional_clip_embeds, is_unconditional=True)
 
         if isinstance(adapter, CustomAdapter):
             conditional_embeds = adapter.condition_encoded_embeds(
@@ -648,14 +684,15 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 has_been_preprocessed=False,
                 is_generating_samples=True,
             )
-            unconditional_embeds = adapter.condition_encoded_embeds(
-                tensors_0_1=validation_image,
-                prompt_embeds=unconditional_embeds,
-                is_training=False,
-                has_been_preprocessed=False,
-                is_unconditional=True,
-                is_generating_samples=True,
-            )
+            if unconditional_embeds is not None:
+                unconditional_embeds = adapter.condition_encoded_embeds(
+                    tensors_0_1=validation_image,
+                    prompt_embeds=unconditional_embeds,
+                    is_training=False,
+                    has_been_preprocessed=False,
+                    is_unconditional=True,
+                    is_generating_samples=True,
+                )
 
         if isinstance(adapter, CustomAdapter) and len(gen_config.extra_values) > 0:
             extra_values = torch.tensor([gen_config.extra_values], device=self.device_torch, dtype=self.sd.torch_dtype)
@@ -663,7 +700,8 @@ class FlowGRPOTrainer(DiffusionTrainer):
             adapter.add_extra_values(torch.zeros_like(extra_values), is_unconditional=True)
 
         conditional_embeds = conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
-        unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
+        if unconditional_embeds is not None:
+            unconditional_embeds = unconditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
         if gen_config.guidance_scale <= 1.0:
             unconditional_embeds = None
         return _RolloutSampleConditioning(
@@ -819,6 +857,116 @@ class FlowGRPOTrainer(DiffusionTrainer):
             pred_kwargs["down_block_additional_residuals"] = down_block_res_samples
             pred_kwargs["mid_block_additional_residual"] = mid_block_res_sample
         return pred_kwargs
+
+    def _predict_rollout_noise(
+        self,
+        *,
+        latents: torch.Tensor,
+        model_latents: torch.Tensor,
+        timestep: torch.Tensor,
+        conditional_embeds: PromptEmbeds,
+        unconditional_embeds: Optional[PromptEmbeds],
+        guidance_scale: float,
+        rollout_batch: _RolloutBatch,
+        adapter_predict_kwargs: dict[str, Any],
+        requires_grad: bool = False,
+    ) -> torch.Tensor:
+        if getattr(self.sd, "arch", None) == "ideogram4":
+            return self._predict_ideogram4_rollout_noise(
+                latents=model_latents,
+                timestep=timestep,
+                conditional_embeds=conditional_embeds,
+                guidance_scale=guidance_scale,
+            )
+
+        predict_kwargs: dict[str, Any] = {
+            "latents": model_latents,
+            "conditional_embeddings": conditional_embeds,
+            "unconditional_embeddings": unconditional_embeds,
+            "timestep": timestep,
+            "guidance_scale": guidance_scale,
+            "batch": rollout_batch,
+            **adapter_predict_kwargs,
+        }
+        predict_signature = inspect.signature(self.sd.predict_noise)
+        if "requires_grad" in predict_signature.parameters:
+            predict_kwargs["requires_grad"] = requires_grad
+        return self.sd.predict_noise(**predict_kwargs)
+
+    def _predict_ideogram4_rollout_noise(
+        self,
+        *,
+        latents: torch.Tensor,
+        timestep: torch.Tensor,
+        conditional_embeds: PromptEmbeds,
+        guidance_scale: float,
+    ) -> torch.Tensor:
+        from extensions_built_in.diffusion_models.ideogram4.src.pipeline import (
+            pad_text_features,
+            predict_velocity,
+        )
+
+        if self.sd.model.device == torch.device("cpu"):
+            self.sd.model.to(self.device_torch)
+
+        latents = latents.to(self.device_torch)
+        t01 = torch.as_tensor(timestep, device=self.device_torch, dtype=torch.float32) / 1000.0
+        if t01.dim() == 0:
+            t01 = t01.unsqueeze(0)
+        if t01.shape[0] == 1 and latents.shape[0] > 1:
+            t01 = t01.repeat(latents.shape[0])
+        elif t01.shape[0] != latents.shape[0]:
+            t01 = t01.expand(latents.shape[0])
+
+        conditional_embeds = conditional_embeds.to(self.device_torch, dtype=self.sd.torch_dtype)
+        cond_feats, cond_mask = pad_text_features(
+            conditional_embeds.text_embeds,
+            self.device_torch,
+            self.sd.torch_dtype,
+        )
+
+        uncond_lora = getattr(self.sd, "unconditional_lora", None)
+        if uncond_lora is not None:
+            uncond_lora.is_active = False
+        v_cond = predict_velocity(
+            self.sd.transformer,
+            latents.to(self.device_torch, dtype=self.sd.torch_dtype),
+            t01,
+            cond_feats,
+            cond_mask,
+        )
+
+        if float(guidance_scale) <= 1.0:
+            return v_cond
+
+        batch_size = latents.shape[0]
+        text_dim = cond_feats.shape[-1]
+        uncond_feats = torch.zeros(
+            batch_size,
+            0,
+            text_dim,
+            device=self.device_torch,
+            dtype=self.sd.torch_dtype,
+        )
+        uncond_mask = torch.zeros(batch_size, 0, dtype=torch.long, device=self.device_torch)
+
+        if uncond_lora is not None:
+            uncond_lora.is_active = True
+        try:
+            with torch.no_grad():
+                v_uncond = predict_velocity(
+                    self.sd.transformer,
+                    latents.to(self.device_torch, dtype=self.sd.torch_dtype),
+                    t01,
+                    uncond_feats,
+                    uncond_mask,
+                )
+        finally:
+            if uncond_lora is not None:
+                uncond_lora.is_active = False
+
+        v_uncond = v_uncond.detach()
+        return v_uncond + float(guidance_scale) * (v_cond - v_uncond)
 
     @contextlib.contextmanager
     def _sample_assistant_lora_state(self, *, offload_on_exit: bool = True):
@@ -1088,14 +1236,15 @@ class FlowGRPOTrainer(DiffusionTrainer):
                     adapter_conditioning_scale=float(first_config.adapter_conditioning_scale),
                 )
                 with torch.no_grad():
-                    noise_pred = self.sd.predict_noise(
-                        latents=model_latents,
-                        conditional_embeddings=conditional_embeds,
-                        unconditional_embeddings=unconditional_embeds,
+                    noise_pred = self._predict_rollout_noise(
+                        latents=latents,
+                        model_latents=model_latents,
                         timestep=timestep,
+                        conditional_embeds=conditional_embeds,
+                        unconditional_embeds=unconditional_embeds,
                         guidance_scale=float(first_config.guidance_scale),
-                        batch=rollout_batch,
-                        **adapter_predict_kwargs,
+                        rollout_batch=rollout_batch,
+                        adapter_predict_kwargs=adapter_predict_kwargs,
                     )
 
                 step_output = rollout_scheduler.step(
@@ -1535,21 +1684,16 @@ class FlowGRPOTrainer(DiffusionTrainer):
                 adapter_conditioning=adapter_conditioning,
                 adapter_conditioning_scale=float(first_state.adapter_conditioning_scale),
             )
-            predict_kwargs: dict[str, Any] = {
-                "latents": model_latents,
-                "conditional_embeddings": conditional_embeds,
-                "unconditional_embeddings": unconditional_embeds,
-                "timestep": timesteps,
-                "guidance_scale": float(first_state.guidance_scale),
-                "batch": rollout_batch,
-                **adapter_predict_kwargs,
-            }
-            predict_signature = inspect.signature(self.sd.predict_noise)
-            if "requires_grad" in predict_signature.parameters:
-                predict_kwargs["requires_grad"] = (not disable_lora)
-
-            noise_pred = self.sd.predict_noise(
-                **predict_kwargs,
+            noise_pred = self._predict_rollout_noise(
+                latents=latents,
+                model_latents=model_latents,
+                timestep=timesteps,
+                conditional_embeds=conditional_embeds,
+                unconditional_embeds=unconditional_embeds,
+                guidance_scale=float(first_state.guidance_scale),
+                rollout_batch=rollout_batch,
+                adapter_predict_kwargs=adapter_predict_kwargs,
+                requires_grad=not disable_lora,
             )
             if not disable_lora and not noise_pred.requires_grad:
                 raise RuntimeError(
@@ -1960,6 +2104,7 @@ class FlowGRPOTrainer(DiffusionTrainer):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
+        self._recover_stale_generating_tasks()
         self._promote_requested_vote_tasks()
 
     def hook_train_loop(self, batch):
