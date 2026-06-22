@@ -13,6 +13,7 @@ import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import CaptionMonitor from '@/components/CaptionMonitor';
 import { CreatableSelectInput } from '@/components/formInputs';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
@@ -26,6 +27,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [captionExt, setCaptionExt] = useState<string>('txt');
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const [captionBarHeight, setCaptionBarHeight] = useState(0);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
 
   const refreshImageList = (dbName: string) => {
@@ -174,8 +176,17 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
             computeItemKey={index => imgList[index]?.img_path ?? index}
           />
         )}
+        {/* Spacer so the last cards stay accessible above the floating caption bar.
+            Always keeps a baseline gap, plus the bar height when it is showing. */}
+        <div style={{ height: `${captionBarHeight + 24}px` }} className="transition-[height] duration-300" />
       </MainContent>
       <AddImagesModal />
+      {isSettingsLoaded && (
+        <CaptionMonitor
+          datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
+          onHeightChange={setCaptionBarHeight}
+        />
+      )}
       <DatasetImageViewer
         imgPath={selectedImgPath}
         imageList={imgPaths}

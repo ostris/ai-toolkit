@@ -56,6 +56,11 @@ class ExampleModel(BaseModel):
     #  - it is the default cache key for text-embedding / latent caches
     arch = "example"
 
+    # ALL NEW MODELS should set this to False. ``BaseModel`` defaults it to True
+    # only for backwards-compatibility with already-released LoKr checkpoints; the
+    # newer LoKr weight format is the correct one for any new architecture.
+    use_old_lokr_format = False
+
     def __init__(
         self,
         device,                  # "cuda:0" etc.

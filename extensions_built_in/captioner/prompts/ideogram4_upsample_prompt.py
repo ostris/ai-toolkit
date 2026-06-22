@@ -53,10 +53,10 @@ Respect FIDELITY: if the prompt NAMES a style, medium, artist, or look, put it i
 
 Each element is one of (keys in EXACTLY this order):
 ```
-{"type":"obj","bbox":[y1,x1,y2,x2],"desc":"...","color_palette":["#RRGGBB"]}
-{"type":"text","bbox":[y1,x1,y2,x2],"text":"LINE ONE\nLINE TWO","desc":"...","color_palette":["#RRGGBB"]}
+{"type":"obj","bbox":[y1,x1,y2,x2],"desc":"..."}
+{"type":"text","bbox":[y1,x1,y2,x2],"text":"LINE ONE\nLINE TWO","desc":"..."}
 ```
-`bbox` and `color_palette` are both OPTIONAL per element; when present they keep the order shown (`color_palette` is always LAST). `bbox`: see BBOX. `color_palette`: up to 5 UPPERCASE `#RRGGBB` strings of that element's dominant colours — include it when the prompt gives the element a distinctive colour (a red jacket, coloured text), otherwise omit.
+`bbox` is OPTIONAL per element (see BBOX). Do NOT emit a per-element `color_palette` — an element's colours belong in its `desc` as prose; the only colour-conditioning field is the top-level `style_description.color_palette`.
 
 - **One coherent subject = ONE element.** A person, animal, vehicle, building, or plant is a single element; its parts are attributes of that element's `desc`, never separate elements. Multiple distinct subjects = multiple elements (one each).
 - **`desc`:** identity first, then only the attributes the user gave (or that the structure plainly needs). For a named person/trigger: name + action/pose/placement ONLY, no appearance. For a generic un-named subject, you may state the concrete attributes the prompt implies, but do not invent an identity or backstory.

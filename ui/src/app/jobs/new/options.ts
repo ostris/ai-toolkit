@@ -181,9 +181,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [41, 1],
       'config.process[0].sample.fps': [16, 1],
+      'config.process[0].datasets[x].fps': [16, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.low_vram'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram', 'datasets.auto_frame_count'],
   },
   {
     name: 'wan21_i2v:14b480p',
@@ -200,9 +201,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.num_frames': [41, 1],
       'config.process[0].sample.fps': [16, 1],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].datasets[x].fps': [16, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.auto_frame_count'],
   },
   {
     name: 'wan21_i2v:14b',
@@ -219,9 +221,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.num_frames': [41, 1],
       'config.process[0].sample.fps': [16, 1],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].datasets[x].fps': [16, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.auto_frame_count'],
   },
   {
     name: 'wan21:14b',
@@ -237,9 +240,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].sample.num_frames': [41, 1],
       'config.process[0].sample.fps': [16, 1],
+      'config.process[0].datasets[x].fps': [16, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.low_vram'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram', 'datasets.auto_frame_count'],
   },
   {
     name: 'wan22_14b:t2v',
@@ -257,6 +261,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.fps': [16, 1],
       'config.process[0].model.low_vram': [true, false],
       'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].datasets[x].fps': [16, undefined],
       'config.process[0].model.model_kwargs': [
         {
           train_high_noise: true,
@@ -266,7 +271,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage', 'model.layer_offloading'],
+    additionalSections: ['datasets.num_frames', 'model.low_vram', 'model.multistage', 'model.layer_offloading', 'datasets.auto_frame_count'],
     accuracyRecoveryAdapters: {
       // '3 bit with ARA': 'uint3|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint3.safetensors',
       '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint4.safetensors',
@@ -288,6 +293,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.fps': [16, 1],
       'config.process[0].model.low_vram': [true, false],
       'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].datasets[x].fps': [16, undefined],
       'config.process[0].model.model_kwargs': [
         {
           train_high_noise: true,
@@ -303,6 +309,7 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.multistage',
       'model.layer_offloading',
+      'datasets.auto_frame_count',
     ],
     accuracyRecoveryAdapters: {
       '4 bit with ARA': 'uint4|ostris/accuracy_recovery_adapters/wan22_14b_i2v_torchao_uint4.safetensors',
@@ -327,9 +334,10 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].sample.height': [768, 1024],
       'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
       'config.process[0].datasets[x].do_i2v': [true, undefined],
+      'config.process[0].datasets[x].fps': [24, undefined],
     },
     disableSections: ['network.conv'],
-    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.do_i2v'],
+    additionalSections: ['sample.ctrl_img', 'datasets.num_frames', 'model.low_vram', 'datasets.do_i2v', 'datasets.auto_frame_count'],
   },
   {
     name: 'lumina2',
@@ -1050,6 +1058,58 @@ export const modelArchs: ModelArch[] = [
     additionalSections: [
       'model.low_vram',
       'model.layer_offloading',
+    ],
+  },
+  {
+    name: 'boogu_image',
+    label: 'Boogu Image',
+    group: 'image',
+    defaults: {
+      'config.process[0].model.name_or_path': ['Boogu/Boogu-Image-0.1-Base', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+    },
+    disableSections: [
+      'network.conv',
+    ],
+    additionalSections: [
+      'model.low_vram',
+      'model.layer_offloading',
+    ],
+  },
+  {
+    name: 'boogu_image_edit',
+    label: 'Boogu Image Edit',
+    group: 'instruction',
+    defaults: {
+      'config.process[0].model.name_or_path': ['Boogu/Boogu-Image-0.1-Edit', defaultNameOrPath],
+      'config.process[0].model.quantize': [true, false],
+      'config.process[0].model.quantize_te': [true, false],
+      'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
+      'config.process[0].network.conv': [undefined, 16],
+      'config.process[0].network.conv_alpha': [undefined, 16],
+      'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
+      'config.process[0].model.model_kwargs': [
+        {
+          match_target_res: false,
+        },
+        {},
+      ],
+    },
+    disableSections: [
+      'network.conv', 'train.unload_text_encoder',
+    ],
+    additionalSections: [
+      'datasets.multi_control_paths',
+      'sample.multi_ctrl_imgs',
+      'model.low_vram',
+      'model.layer_offloading',
+      'model.qie.match_target_res',
     ],
   },
 ].sort((a, b) => {

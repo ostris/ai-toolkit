@@ -126,10 +126,12 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       key: 'name',
       render: row => {
         let title = row.name;
+        let href = `/jobs/${row.id}`;
         // if (row.job_type === 'train') title = `Train: ${title}`;
         if (row.job_type === 'caption') {
           let splits = row.job_ref.split(/[/\\]/);
           const datasetPath = `${splits[splits.length - 1]}`;
+          href = `/datasets/${datasetPath}`;
           title = (
             <>
               <small className="opacity-50">CAPTION: </small> {datasetPath}
@@ -137,7 +139,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
           );
         }
         return (
-          <Link href={`/jobs/${row.id}`} className="font-medium whitespace-nowrap">
+          <Link href={href} className="font-medium whitespace-nowrap">
             {['running', 'stopping'].includes(row.status) ? (
               <CgSpinner className="inline animate-spin mr-2 text-blue-400" />
             ) : null}

@@ -8,12 +8,12 @@ from PIL import Image
 
 from .Qwen3VLCaptioner import Qwen3VLCaptioner
 from .prompts.ideogram4_caption_prompt import ideogram4_caption_prompt
-from toolkit.ideogram_caption import normalize_caption_dict
+from toolkit.ideogram_caption import normalize_caption_dict, swap_bbox_xy_in_text
 import transformers
 import logging
 import warnings
 
-transformers.logging.set_verbosity_error()
+# transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
 logging.disable(logging.WARNING)
 
@@ -169,9 +169,11 @@ class Ideogram4Captioner(Qwen3VLCaptioner):
             if data is None:
                 print(
                     f"[IdeogramCaptioner] Could not parse JSON for {file_path}; "
-                    f"saving raw output."
+                    f"saving raw output with regex-adapted bboxes."
                 )
-                return output_text
+                # JSON is malformed so we can't swap bboxes per-element. Adapt them
+                # directly in the raw text instead, so the boxes still render right.
+                return swap_bbox_xy_in_text(output_text)
 
             data = self._normalize_caption(data)
             # Store pretty JSON for QC/editing; the dataloader minifies at load.
