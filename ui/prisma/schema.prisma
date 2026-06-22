@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../../aitk_db.db"
+}
+
+model Settings {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+}
+
+model Queue {
+  id         Int     @id @default(autoincrement())
+  gpu_ids    String  @unique
+  is_running Boolean @default(false)
+
+  @@index([gpu_ids])
+}
+
+model Job {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  gpu_ids         String
+  job_config      String // JSON string
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  status          String   @default("stopped")
+  stop            Boolean  @default(false)
+  return_to_queue Boolean  @default(false) // same as stop, but will be set to 'queued' when stopped
+  step            Int      @default(0)
+  total_steps     Int?
+  info            String   @default("")
+  speed_string    String   @default("")
+  queue_position  Int      @default(0)
+  pid             Int?
+  job_type        String   @default("train") // 'train', 'caption'
+  job_ref         String? // can be used for anything for special jobs, like dataset path for caption jobs
+  save_now        Boolean  @default(false) // if true, the job will be saved on the next step
+
+  @@index([status])
+  @@index([gpu_ids])
+  @@index([job_type])
+  @@index([job_ref])
+
+}

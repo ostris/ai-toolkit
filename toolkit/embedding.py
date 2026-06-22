@@ -86,18 +86,19 @@ class Embedding:
         self.orig_embeds_params = [x.get_input_embeddings().weight.data.clone() for x in self.text_encoder_list]
 
     def restore_embeddings(self):
-        # Let's make sure we don't update any embedding weights besides the newly added token
-        for text_encoder, tokenizer, orig_embeds, placeholder_token_ids in zip(self.text_encoder_list,
-                                                                               self.tokenizer_list,
-                                                                               self.orig_embeds_params,
-                                                                               self.placeholder_token_ids):
-            index_no_updates = torch.ones((len(tokenizer),), dtype=torch.bool)
-            index_no_updates[
-            min(placeholder_token_ids): max(placeholder_token_ids) + 1] = False
-            with torch.no_grad():
+        with torch.no_grad():
+            # Let's make sure we don't update any embedding weights besides the newly added token
+            for text_encoder, tokenizer, orig_embeds, placeholder_token_ids in zip(self.text_encoder_list,
+                                                                                   self.tokenizer_list,
+                                                                                   self.orig_embeds_params,
+                                                                                   self.placeholder_token_ids):
+                index_no_updates = torch.ones((len(tokenizer),), dtype=torch.bool)
+                index_no_updates[ min(placeholder_token_ids): max(placeholder_token_ids) + 1] = False
                 text_encoder.get_input_embeddings().weight[
                     index_no_updates
                 ] = orig_embeds[index_no_updates]
+                weight = text_encoder.get_input_embeddings().weight
+                pass
 
     def get_trainable_params(self):
         params = []

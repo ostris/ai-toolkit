@@ -8,6 +8,8 @@ import random
 
 from toolkit.train_tools import get_torch_dtype
 import itertools
+from safetensors import safe_open
+from toolkit.advanced_prompt_embeds import AdvancedPromptEmbeds
 
 if TYPE_CHECKING:
     from toolkit.config_modules import SliderTargetConfig
@@ -19,10 +21,11 @@ class ACTION_TYPES_SLIDER:
 
 
 class PromptEmbeds:
-    text_embeds: torch.Tensor
-    pooled_embeds: Union[torch.Tensor, None]
+    # text_embeds: torch.Tensor
+    # pooled_embeds: Union[torch.Tensor, None]
+    # attention_mask: Union[torch.Tensor, List[torch.Tensor], None]
 
-    def __init__(self, args: Union[Tuple[torch.Tensor], List[torch.Tensor], torch.Tensor]) -> None:
+    def __init__(self, args: Union[Tuple[torch.Tensor], List[torch.Tensor], torch.Tensor], attention_mask=None) -> None:
         if isinstance(args, list) or isinstance(args, tuple):
             # xl
             self.text_embeds = args[0]
@@ -32,23 +35,154 @@ class PromptEmbeds:
             self.text_embeds = args
             self.pooled_embeds = None
 
+        self.attention_mask = attention_mask
+
     def to(self, *args, **kwargs):
-        self.text_embeds = self.text_embeds.to(*args, **kwargs)
+        if isinstance(self.text_embeds, list) or isinstance(self.text_embeds, tuple):
+            self.text_embeds = [t.to(*args, **kwargs) for t in self.text_embeds]
+        else:
+            self.text_embeds = self.text_embeds.to(*args, **kwargs)
         if self.pooled_embeds is not None:
             self.pooled_embeds = self.pooled_embeds.to(*args, **kwargs)
+        if self.attention_mask is not None:
+            if isinstance(self.attention_mask, list) or isinstance(self.attention_mask, tuple):
+                self.attention_mask = [t.to(*args, **kwargs) for t in self.attention_mask]
+            else:
+                self.attention_mask = self.attention_mask.to(*args, **kwargs)
         return self
 
     def detach(self):
-        self.text_embeds = self.text_embeds.detach()
-        if self.pooled_embeds is not None:
-            self.pooled_embeds = self.pooled_embeds.detach()
-        return self
+        new_embeds = self.clone()
+        if isinstance(new_embeds.text_embeds, list) or isinstance(new_embeds.text_embeds, tuple):
+            new_embeds.text_embeds = [t.detach() for t in new_embeds.text_embeds]
+        else:
+            new_embeds.text_embeds = new_embeds.text_embeds.detach()
+        if new_embeds.pooled_embeds is not None:
+            new_embeds.pooled_embeds = new_embeds.pooled_embeds.detach()
+        if new_embeds.attention_mask is not None:
+            if isinstance(new_embeds.attention_mask, list) or isinstance(new_embeds.attention_mask, tuple):
+                new_embeds.attention_mask = [t.detach() for t in new_embeds.attention_mask]
+            else:
+                new_embeds.attention_mask = new_embeds.attention_mask.detach()
+        return new_embeds
 
     def clone(self):
-        if self.pooled_embeds is not None:
-            return PromptEmbeds([self.text_embeds.clone(), self.pooled_embeds.clone()])
+        if isinstance(self.text_embeds, list) or isinstance(self.text_embeds, tuple):
+            cloned_text_embeds = [t.clone() for t in self.text_embeds]
         else:
-            return PromptEmbeds(self.text_embeds.clone())
+            cloned_text_embeds = self.text_embeds.clone()
+        if self.pooled_embeds is not None:
+            prompt_embeds = PromptEmbeds([cloned_text_embeds, self.pooled_embeds.clone()])
+        else:
+            if isinstance(cloned_text_embeds, list) or isinstance(cloned_text_embeds, tuple):
+                prompt_embeds = PromptEmbeds([cloned_text_embeds, None])
+            else:
+                prompt_embeds = PromptEmbeds(cloned_text_embeds)
+
+        if self.attention_mask is not None:
+            if isinstance(self.attention_mask, list) or isinstance(self.attention_mask, tuple):
+                prompt_embeds.attention_mask = [t.clone() for t in self.attention_mask]
+            else:
+                prompt_embeds.attention_mask = self.attention_mask.clone()
+        return prompt_embeds
+
+    def expand_to_batch(self, batch_size):
+        pe = self.clone()
+        if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
+            if len(pe.text_embeds[0].shape) == 2:
+                current_batch_size = len(pe.text_embeds)
+            else:
+                current_batch_size = pe.text_embeds[0].shape[0]
+        else:
+            current_batch_size = pe.text_embeds.shape[0]
+        if current_batch_size == batch_size:
+            return pe
+        if current_batch_size != 1:
+            raise Exception("Can only expand batch size for batch size 1")
+        if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
+            if len(pe.text_embeds[0].shape) == 2:
+                # batch is a list of tensors
+                pe.text_embeds = pe.text_embeds * batch_size
+            else:
+                pe.text_embeds = [t.expand(batch_size, -1) for t in pe.text_embeds]
+        else:
+            pe.text_embeds = pe.text_embeds.expand(batch_size, -1)
+        if pe.pooled_embeds is not None:
+            pe.pooled_embeds = pe.pooled_embeds.expand(batch_size, -1)
+        if pe.attention_mask is not None:
+            if isinstance(pe.attention_mask, list) or isinstance(pe.attention_mask, tuple):
+                pe.attention_mask = [t.expand(batch_size, -1) for t in pe.attention_mask]
+            else:
+                pe.attention_mask = pe.attention_mask.expand(batch_size, -1)
+        return pe
+
+    def save(self, path: str):
+        """
+        Save the prompt embeds to a file.
+        :param path: The path to save the prompt embeds.
+        """
+        pe = self.clone()
+        state_dict = {}
+        if isinstance(pe.text_embeds, list) or isinstance(pe.text_embeds, tuple):
+            for i, text_embed in enumerate(pe.text_embeds):
+                state_dict[f"text_embed_{i}"] = text_embed.cpu()
+        else:
+            state_dict["text_embed"] = pe.text_embeds.cpu()
+            
+        if pe.pooled_embeds is not None:
+            state_dict["pooled_embed"] = pe.pooled_embeds.cpu()
+        if pe.attention_mask is not None:
+            if isinstance(pe.attention_mask, list) or isinstance(pe.attention_mask, tuple):
+                for i, attn in enumerate(pe.attention_mask):
+                    state_dict[f"attention_mask_{i}"] = attn.cpu()
+            else:
+                state_dict["attention_mask"] = pe.attention_mask.cpu()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        save_file(state_dict, path)
+    
+    @classmethod
+    def load(cls, path: str) -> 'PromptEmbeds':
+        """
+        Load the prompt embeds from a file.
+        :param path: The path to load the prompt embeds from.
+        :return: An instance of PromptEmbeds.
+        """
+        # first check if it is advanced prompt embed file
+        f = safe_open(path, framework='pt')
+        metadata = f.metadata()
+        if metadata is not None and metadata.get("class_name", "") == "AdvancedPromptEmbeds":
+            return AdvancedPromptEmbeds.load(path=path)
+        
+        state_dict = load_file(path, device='cpu')
+        text_embeds = []
+        pooled_embeds = None
+        attention_mask = []
+        is_list = False
+        for key in sorted(state_dict.keys()):
+            if key.startswith("text_embed_"):
+                is_list = True
+                text_embeds.append(state_dict[key])
+            elif key == "text_embed":
+                text_embeds.append(state_dict[key])
+            elif key == "pooled_embed":
+                pooled_embeds = state_dict[key]
+            elif key.startswith("attention_mask_"):
+                attention_mask.append(state_dict[key])
+            elif key == "attention_mask":
+                attention_mask.append(state_dict[key])
+        pe = cls(None)
+        pe.text_embeds = text_embeds
+        if len(text_embeds) == 1 and not is_list:
+            pe.text_embeds = text_embeds[0]
+        if pooled_embeds is not None:
+            pe.pooled_embeds = pooled_embeds
+        if len(attention_mask) > 0:
+            if len(attention_mask) == 1:
+                pe.attention_mask = attention_mask[0]
+            else:
+                pe.attention_mask = attention_mask
+        return pe
+
 
 
 class EncodedPromptPair:
@@ -118,12 +252,62 @@ class EncodedPromptPair:
         return self
 
 
-def concat_prompt_embeds(prompt_embeds: list[PromptEmbeds]):
-    text_embeds = torch.cat([p.text_embeds for p in prompt_embeds], dim=0)
+def concat_prompt_embeds(prompt_embeds: list["PromptEmbeds"], padding_side: str = "right") -> PromptEmbeds:
+    # check if first item has a classmethod of concat_prompt_embeds
+    if hasattr(prompt_embeds[0].__class__, "concat_prompt_embeds"):
+        return prompt_embeds[0].__class__.concat_prompt_embeds(prompt_embeds, padding_side=padding_side)
+    # --- pad text_embeds ---
+    if isinstance(prompt_embeds[0].text_embeds, (list, tuple)):
+        text_embeds = []
+        for p in prompt_embeds:
+            text_embeds += p.text_embeds
+    else:
+        max_len = max(p.text_embeds.shape[1] for p in prompt_embeds)
+        padded = []
+        for p in prompt_embeds:
+            t = p.text_embeds
+            if t.shape[1] < max_len:
+                pad = torch.zeros(
+                    (t.shape[0], max_len - t.shape[1], *t.shape[2:]),
+                    dtype=t.dtype,
+                    device=t.device,
+                )
+                if padding_side == "right":
+                    t = torch.cat([t, pad], dim=1)
+                else:
+                    t = torch.cat([pad, t], dim=1)
+            padded.append(t)
+        text_embeds = torch.cat(padded, dim=0)
+
+    # --- pooled embeds ---
     pooled_embeds = None
     if prompt_embeds[0].pooled_embeds is not None:
         pooled_embeds = torch.cat([p.pooled_embeds for p in prompt_embeds], dim=0)
-    return PromptEmbeds([text_embeds, pooled_embeds])
+
+    # --- attention mask ---
+    attention_mask = None
+    if prompt_embeds[0].attention_mask is not None:
+        max_len = max(p.attention_mask.shape[1] for p in prompt_embeds)
+        padded = []
+        for p in prompt_embeds:
+            m = p.attention_mask
+            if m.shape[1] < max_len:
+                pad = torch.zeros(
+                    (m.shape[0], max_len - m.shape[1]),
+                    dtype=m.dtype,
+                    device=m.device,
+                )
+                if padding_side == "right":
+                    m = torch.cat([m, pad], dim=1)
+                else:
+                    m = torch.cat([pad, m], dim=1)
+            padded.append(m)
+        attention_mask = torch.cat(padded, dim=0)
+
+    # wrap back into PromptEmbeds
+    pe = PromptEmbeds([text_embeds, pooled_embeds])
+    pe.attention_mask = attention_mask
+    return pe
 
 
 def concat_prompt_pairs(prompt_pairs: list[EncodedPromptPair]):
@@ -162,10 +346,21 @@ def concat_prompt_pairs(prompt_pairs: list[EncodedPromptPair]):
 
 
 def split_prompt_embeds(concatenated: PromptEmbeds, num_parts=None) -> List[PromptEmbeds]:
+    if hasattr(concatenated.__class__, "split_prompt_embeds"):
+        return concatenated.__class__.split_prompt_embeds(concatenated, num_parts=num_parts)
     if num_parts is None:
         # use batch size
         num_parts = concatenated.text_embeds.shape[0]
-    text_embeds_splits = torch.chunk(concatenated.text_embeds, num_parts, dim=0)
+        
+    if isinstance(concatenated.text_embeds, list) or isinstance(concatenated.text_embeds, tuple):
+        # split each part
+        text_embeds_splits = [
+            torch.chunk(text, num_parts, dim=0)
+            for text in concatenated.text_embeds
+        ]
+        text_embeds_splits = list(zip(*text_embeds_splits))
+    else:
+        text_embeds_splits = torch.chunk(concatenated.text_embeds, num_parts, dim=0)
 
     if concatenated.pooled_embeds is not None:
         pooled_embeds_splits = torch.chunk(concatenated.pooled_embeds, num_parts, dim=0)

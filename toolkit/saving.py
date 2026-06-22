@@ -97,7 +97,7 @@ def convert_state_dict_to_ldm_with_mapping(
 
 def get_ldm_state_dict_from_diffusers(
         state_dict: 'OrderedDict',
-        sd_version: Literal['1', '2', 'sdxl', 'ssd', 'sdxl_refiner'] = '2',
+        sd_version: Literal['1', '2', 'sdxl', 'ssd', 'vega', 'sdxl_refiner'] = '2',
         device='cpu',
         dtype=get_torch_dtype('fp32'),
 ):
@@ -115,6 +115,10 @@ def get_ldm_state_dict_from_diffusers(
         # load our base
         base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_ssd_ldm_base.safetensors')
         mapping_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_ssd.json')
+    elif sd_version == 'vega':
+        # load our base
+        base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_vega_ldm_base.safetensors')
+        mapping_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_vega.json')
     elif sd_version == 'sdxl_refiner':
         # load our base
         base_path = os.path.join(KEYMAPS_ROOT, 'stable_diffusion_refiner_ldm_base.safetensors')
@@ -137,7 +141,7 @@ def save_ldm_model_from_diffusers(
         output_file: str,
         meta: 'OrderedDict',
         save_dtype=get_torch_dtype('fp16'),
-        sd_version: Literal['1', '2', 'sdxl', 'ssd'] = '2'
+        sd_version: Literal['1', '2', 'sdxl', 'ssd', 'vega'] = '2'
 ):
     converted_state_dict = get_ldm_state_dict_from_diffusers(
         sd.state_dict(),
@@ -156,11 +160,11 @@ def save_lora_from_diffusers(
         output_file: str,
         meta: 'OrderedDict',
         save_dtype=get_torch_dtype('fp16'),
-        sd_version: Literal['1', '2', 'sdxl', 'ssd'] = '2'
+        sd_version: Literal['1', '2', 'sdxl', 'ssd', 'vega'] = '2'
 ):
     converted_state_dict = OrderedDict()
     # only handle sxdxl for now
-    if sd_version != 'sdxl' and sd_version != 'ssd':
+    if sd_version != 'sdxl' and sd_version != 'ssd' and sd_version != 'vega':
         raise ValueError(f"Invalid sd_version {sd_version}")
     for key, value in lora_state_dict.items():
         # todo verify if this works with ssd
@@ -204,19 +208,24 @@ def load_t2i_model(
     return converted_state_dict
 
 
-IP_ADAPTER_MODULES = ['image_proj', 'ip_adapter']
+
 
 def save_ip_adapter_from_diffusers(
         combined_state_dict: 'OrderedDict',
         output_file: str,
         meta: 'OrderedDict',
         dtype=get_torch_dtype('fp16'),
+        direct_save: bool = False
 ):
     # todo: test compatibility with non diffusers
+
     converted_state_dict = OrderedDict()
     for module_name, state_dict in combined_state_dict.items():
-        for key, value in state_dict.items():
-            converted_state_dict[f"{module_name}.{key}"] = value.detach().to('cpu', dtype=dtype)
+        if direct_save:
+            converted_state_dict[module_name] = state_dict.detach().to('cpu', dtype=dtype)
+        else:
+            for key, value in state_dict.items():
+                converted_state_dict[f"{module_name}.{key}"] = value.detach().to('cpu', dtype=dtype)
 
     # make sure parent folder exists
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
@@ -226,12 +235,15 @@ def save_ip_adapter_from_diffusers(
 def load_ip_adapter_model(
         path_to_file,
         device: Union[str] = 'cpu',
-        dtype: torch.dtype = torch.float32
+        dtype: torch.dtype = torch.float32,
+        direct_load: bool = False
 ):
     # check if it is safetensors or checkpoint
     if path_to_file.endswith('.safetensors'):
         raw_state_dict = load_file(path_to_file, device)
         combined_state_dict = OrderedDict()
+        if direct_load:
+            return raw_state_dict
         for combo_key, value in raw_state_dict.items():
             key_split = combo_key.split('.')
             module_name = key_split.pop(0)
@@ -241,3 +253,78 @@ def load_ip_adapter_model(
         return combined_state_dict
     else:
         return torch.load(path_to_file, map_location=device)
+
+def load_custom_adapter_model(
+        path_to_file,
+        device: Union[str] = 'cpu',
+        dtype: torch.dtype = torch.float32
+):
+    # check if it is safetensors or checkpoint
+    if path_to_file.endswith('.safetensors'):
+        raw_state_dict = load_file(path_to_file, device)
+        combined_state_dict = OrderedDict()
+        device = device if isinstance(device, torch.device) else torch.device(device)
+        dtype = dtype if isinstance(dtype, torch.dtype) else get_torch_dtype(dtype)
+        for combo_key, value in raw_state_dict.items():
+            key_split = combo_key.split('.')
+            module_name = key_split.pop(0)
+            if module_name not in combined_state_dict:
+                combined_state_dict[module_name] = OrderedDict()
+            combined_state_dict[module_name]['.'.join(key_split)] = value.detach().to(device, dtype=dtype)
+        return combined_state_dict
+    else:
+        return torch.load(path_to_file, map_location=device)
+
+
+def get_lora_keymap_from_model_keymap(model_keymap: 'OrderedDict') -> 'OrderedDict':
+    lora_keymap = OrderedDict()
+
+    # see if we have dual text encoders " a key that starts with conditioner.embedders.1
+    has_dual_text_encoders = False
+    for key in model_keymap:
+        if key.startswith('conditioner.embedders.1'):
+            has_dual_text_encoders = True
+            break
+    # map through the keys and values
+    for key, value in model_keymap.items():
+        # ignore bias weights
+        if key.endswith('bias'):
+            continue
+        if key.endswith('.weight'):
+            # remove the .weight
+            key = key[:-7]
+        if value.endswith(".weight"):
+            # remove the .weight
+            value = value[:-7]
+
+        # unet for all
+        key = key.replace('model.diffusion_model', 'lora_unet')
+        if value.startswith('unet'):
+            value = f"lora_{value}"
+
+        # text encoder
+        if has_dual_text_encoders:
+            key = key.replace('conditioner.embedders.0', 'lora_te1')
+            key = key.replace('conditioner.embedders.1', 'lora_te2')
+            if value.startswith('te0') or value.startswith('te1'):
+                value = f"lora_{value}"
+            value.replace('lora_te1', 'lora_te2')
+            value.replace('lora_te0', 'lora_te1')
+
+        key = key.replace('cond_stage_model.transformer', 'lora_te')
+
+        if value.startswith('te_'):
+            value = f"lora_{value}"
+
+        # replace periods with underscores
+        key = key.replace('.', '_')
+        value = value.replace('.', '_')
+
+        # add all the weights
+        lora_keymap[f"{key}.lora_down.weight"] = f"{value}.lora_down.weight"
+        lora_keymap[f"{key}.lora_down.bias"] = f"{value}.lora_down.bias"
+        lora_keymap[f"{key}.lora_up.weight"] = f"{value}.lora_up.weight"
+        lora_keymap[f"{key}.lora_up.bias"] = f"{value}.lora_up.bias"
+        lora_keymap[f"{key}.alpha"] = f"{value}.alpha"
+
+    return lora_keymap

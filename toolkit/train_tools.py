@@ -3,17 +3,11 @@ import hashlib
 import json
 import os
 import time
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Union, List
 import sys
 
-from torch.cuda.amp import GradScaler
-
-from toolkit.paths import SD_SCRIPTS_ROOT
-
-sys.path.append(SD_SCRIPTS_ROOT)
 
 from diffusers import (
-    StableDiffusionPipeline,
     DDPMScheduler,
     EulerAncestralDiscreteScheduler,
     DPMSolverMultistepScheduler,
@@ -24,11 +18,11 @@ from diffusers import (
     EulerDiscreteScheduler,
     HeunDiscreteScheduler,
     KDPM2DiscreteScheduler,
-    KDPM2AncestralDiscreteScheduler,
+    KDPM2AncestralDiscreteScheduler
 )
-from library.lpw_stable_diffusion import StableDiffusionLongPromptWeightingPipeline
 import torch
 import re
+from transformers import T5Tokenizer, T5EncoderModel, UMT5EncoderModel
 
 SCHEDULER_LINEAR_START = 0.00085
 SCHEDULER_LINEAR_END = 0.0120
@@ -50,6 +44,8 @@ def get_torch_dtype(dtype_str):
         return torch.float16
     if dtype_str == "bf16" or dtype_str == "bfloat16":
         return torch.bfloat16
+    if dtype_str == "8bit" or dtype_str == "e4m3fn" or dtype_str == "float8":
+        return torch.float8_e4m3fn
     return dtype_str
 
 
@@ -132,265 +128,12 @@ def match_noise_to_target_mean_offset(noise, target, mix=0.5, dim=None):
     return noise
 
 
-def sample_images(
-        accelerator,
-        args: argparse.Namespace,
-        epoch,
-        steps,
-        device,
-        vae,
-        tokenizer,
-        text_encoder,
-        unet,
-        prompt_replacement=None,
-        force_sample=False
-):
-    """
-    StableDiffusionLongPromptWeightingPipelineの改造版を使うようにしたので、clip skipおよびプロンプトの重みづけに対応した
-    """
-    if not force_sample:
-        if args.sample_every_n_steps is None and args.sample_every_n_epochs is None:
-            return
-        if args.sample_every_n_epochs is not None:
-            # sample_every_n_steps は無視する
-            if epoch is None or epoch % args.sample_every_n_epochs != 0:
-                return
-        else:
-            if steps % args.sample_every_n_steps != 0 or epoch is not None:  # steps is not divisible or end of epoch
-                return
-
-    is_sample_only = args.sample_only
-    is_generating_only = hasattr(args, "is_generating_only") and args.is_generating_only
-
-    print(f"\ngenerating sample images at step / サンプル画像生成 ステップ: {steps}")
-    if not os.path.isfile(args.sample_prompts):
-        print(f"No prompt file / プロンプトファイルがありません: {args.sample_prompts}")
-        return
-
-    org_vae_device = vae.device  # CPUにいるはず
-    vae.to(device)
-
-    # read prompts
-
-    # with open(args.sample_prompts, "rt", encoding="utf-8") as f:
-    #     prompts = f.readlines()
-
-    if args.sample_prompts.endswith(".txt"):
-        with open(args.sample_prompts, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        prompts = [line.strip() for line in lines if len(line.strip()) > 0 and line[0] != "#"]
-    elif args.sample_prompts.endswith(".json"):
-        with open(args.sample_prompts, "r", encoding="utf-8") as f:
-            prompts = json.load(f)
-
-    # schedulerを用意する
-    sched_init_args = {}
-    if args.sample_sampler == "ddim":
-        scheduler_cls = DDIMScheduler
-    elif args.sample_sampler == "ddpm":  # ddpmはおかしくなるのでoptionから外してある
-        scheduler_cls = DDPMScheduler
-    elif args.sample_sampler == "pndm":
-        scheduler_cls = PNDMScheduler
-    elif args.sample_sampler == "lms" or args.sample_sampler == "k_lms":
-        scheduler_cls = LMSDiscreteScheduler
-    elif args.sample_sampler == "euler" or args.sample_sampler == "k_euler":
-        scheduler_cls = EulerDiscreteScheduler
-    elif args.sample_sampler == "euler_a" or args.sample_sampler == "k_euler_a":
-        scheduler_cls = EulerAncestralDiscreteScheduler
-    elif args.sample_sampler == "dpmsolver" or args.sample_sampler == "dpmsolver++":
-        scheduler_cls = DPMSolverMultistepScheduler
-        sched_init_args["algorithm_type"] = args.sample_sampler
-    elif args.sample_sampler == "dpmsingle":
-        scheduler_cls = DPMSolverSinglestepScheduler
-    elif args.sample_sampler == "heun":
-        scheduler_cls = HeunDiscreteScheduler
-    elif args.sample_sampler == "dpm_2" or args.sample_sampler == "k_dpm_2":
-        scheduler_cls = KDPM2DiscreteScheduler
-    elif args.sample_sampler == "dpm_2_a" or args.sample_sampler == "k_dpm_2_a":
-        scheduler_cls = KDPM2AncestralDiscreteScheduler
-    else:
-        scheduler_cls = DDIMScheduler
-
-    if args.v_parameterization:
-        sched_init_args["prediction_type"] = "v_prediction"
-
-    scheduler = scheduler_cls(
-        num_train_timesteps=SCHEDULER_TIMESTEPS,
-        beta_start=SCHEDULER_LINEAR_START,
-        beta_end=SCHEDULER_LINEAR_END,
-        beta_schedule=SCHEDLER_SCHEDULE,
-        **sched_init_args,
-    )
-
-    # clip_sample=Trueにする
-    if hasattr(scheduler.config, "clip_sample") and scheduler.config.clip_sample is False:
-        # print("set clip_sample to True")
-        scheduler.config.clip_sample = True
-
-    pipeline = StableDiffusionLongPromptWeightingPipeline(
-        text_encoder=text_encoder,
-        vae=vae,
-        unet=unet,
-        tokenizer=tokenizer,
-        scheduler=scheduler,
-        clip_skip=args.clip_skip,
-        safety_checker=None,
-        feature_extractor=None,
-        requires_safety_checker=False,
-    )
-    pipeline.to(device)
-
-    if is_generating_only:
-        save_dir = args.output_dir
-    else:
-        save_dir = args.output_dir + "/sample"
-    os.makedirs(save_dir, exist_ok=True)
-
-    rng_state = torch.get_rng_state()
-    cuda_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
-
-    with torch.no_grad():
-        with accelerator.autocast():
-            for i, prompt in enumerate(prompts):
-                if not accelerator.is_main_process:
-                    continue
-
-                if isinstance(prompt, dict):
-                    negative_prompt = prompt.get("negative_prompt")
-                    sample_steps = prompt.get("sample_steps", 30)
-                    width = prompt.get("width", 512)
-                    height = prompt.get("height", 512)
-                    scale = prompt.get("scale", 7.5)
-                    seed = prompt.get("seed")
-                    prompt = prompt.get("prompt")
-
-                    prompt = replace_filewords_prompt(prompt, args)
-                    negative_prompt = replace_filewords_prompt(negative_prompt, args)
-                else:
-                    prompt = replace_filewords_prompt(prompt, args)
-                    # prompt = prompt.strip()
-                    # if len(prompt) == 0 or prompt[0] == "#":
-                    #     continue
-
-                    # subset of gen_img_diffusers
-                    prompt_args = prompt.split(" --")
-                    prompt = prompt_args[0]
-                    negative_prompt = None
-                    sample_steps = 30
-                    width = height = 512
-                    scale = 7.5
-                    seed = None
-                    for parg in prompt_args:
-                        try:
-                            m = re.match(r"w (\d+)", parg, re.IGNORECASE)
-                            if m:
-                                width = int(m.group(1))
-                                continue
-
-                            m = re.match(r"h (\d+)", parg, re.IGNORECASE)
-                            if m:
-                                height = int(m.group(1))
-                                continue
-
-                            m = re.match(r"d (\d+)", parg, re.IGNORECASE)
-                            if m:
-                                seed = int(m.group(1))
-                                continue
-
-                            m = re.match(r"s (\d+)", parg, re.IGNORECASE)
-                            if m:  # steps
-                                sample_steps = max(1, min(1000, int(m.group(1))))
-                                continue
-
-                            m = re.match(r"l ([\d\.]+)", parg, re.IGNORECASE)
-                            if m:  # scale
-                                scale = float(m.group(1))
-                                continue
-
-                            m = re.match(r"n (.+)", parg, re.IGNORECASE)
-                            if m:  # negative prompt
-                                negative_prompt = m.group(1)
-                                continue
-
-                        except ValueError as ex:
-                            print(f"Exception in parsing / 解析エラー: {parg}")
-                            print(ex)
-
-                if seed is not None:
-                    torch.manual_seed(seed)
-                    torch.cuda.manual_seed(seed)
-
-                if prompt_replacement is not None:
-                    prompt = prompt.replace(prompt_replacement[0], prompt_replacement[1])
-                    if negative_prompt is not None:
-                        negative_prompt = negative_prompt.replace(prompt_replacement[0], prompt_replacement[1])
-
-                height = max(64, height - height % 8)  # round to divisible by 8
-                width = max(64, width - width % 8)  # round to divisible by 8
-                print(f"prompt: {prompt}")
-                print(f"negative_prompt: {negative_prompt}")
-                print(f"height: {height}")
-                print(f"width: {width}")
-                print(f"sample_steps: {sample_steps}")
-                print(f"scale: {scale}")
-                image = pipeline(
-                    prompt=prompt,
-                    height=height,
-                    width=width,
-                    num_inference_steps=sample_steps,
-                    guidance_scale=scale,
-                    negative_prompt=negative_prompt,
-                ).images[0]
-
-                ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
-                num_suffix = f"e{epoch:06d}" if epoch is not None else f"{steps:06d}"
-                seed_suffix = "" if seed is None else f"_{seed}"
-
-                if is_generating_only:
-                    img_filename = (
-                        f"{'' if args.output_name is None else args.output_name + '_'}{ts_str}_{num_suffix}_{i:02d}{seed_suffix}.png"
-                    )
-                else:
-                    img_filename = (
-                        f"{'' if args.output_name is None else args.output_name + '_'}{ts_str}_{i:04d}{seed_suffix}.png"
-                    )
-                if is_sample_only:
-                    # make prompt txt file
-                    img_path_no_ext = os.path.join(save_dir, img_filename[:-4])
-                    with open(img_path_no_ext + ".txt", "w") as f:
-                        # put prompt in txt file
-                        f.write(prompt)
-                        # close file
-                        f.close()
-
-                image.save(os.path.join(save_dir, img_filename))
-
-                # wandb有効時のみログを送信
-                try:
-                    wandb_tracker = accelerator.get_tracker("wandb")
-                    try:
-                        import wandb
-                    except ImportError:  # 事前に一度確認するのでここはエラー出ないはず
-                        raise ImportError("No wandb / wandb がインストールされていないようです")
-
-                    wandb_tracker.log({f"sample_{i}": wandb.Image(image)})
-                except:  # wandb 無効時
-                    pass
-
-    # clear pipeline and cache to reduce vram usage
-    del pipeline
-    torch.cuda.empty_cache()
-
-    torch.set_rng_state(rng_state)
-    if cuda_rng_state is not None:
-        torch.cuda.set_rng_state(cuda_rng_state)
-    vae.to(org_vae_device)
-
-
 # https://www.crosslabs.org//blog/diffusion-with-offset-noise
 def apply_noise_offset(noise, noise_offset):
-    if noise_offset is None or noise_offset < 0.0000001:
+    if noise_offset is None or (noise_offset < 0.000001 and noise_offset > -0.000001):
         return noise
+    if len(noise.shape) > 4:
+        raise ValueError("Applying noise offset not supported for video models at this time.")
     noise = noise + noise_offset * torch.randn((noise.shape[0], noise.shape[1], 1, 1), device=noise.device)
     return noise
 
@@ -402,7 +145,7 @@ if TYPE_CHECKING:
 def concat_prompt_embeddings(
         unconditional: 'PromptEmbeds',
         conditional: 'PromptEmbeds',
-        n_imgs: int,
+        n_imgs: int=0,
 ):
     from toolkit.stable_diffusion_model import PromptEmbeds
     text_embeds = torch.cat(
@@ -579,6 +322,58 @@ def encode_prompts_xl(
 
     return torch.concat(text_embeds_list, dim=-1), pooled_text_embeds
 
+def encode_prompts_sd3(
+        tokenizers: list['CLIPTokenizer'],
+        text_encoders: list[Union['CLIPTextModel', 'CLIPTextModelWithProjection', T5EncoderModel]],
+        prompts: list[str],
+        num_images_per_prompt: int = 1,
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
+        pipeline = None,
+):
+    text_embeds_list = []
+    pooled_text_embeds = None  # always text_encoder_2's pool
+
+    prompt_2 = prompts
+    prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
+
+    prompt_3 = prompts
+    prompt_3 = [prompt_3] if isinstance(prompt_3, str) else prompt_3
+
+    device = text_encoders[0].device
+
+    prompt_embed, pooled_prompt_embed = pipeline._get_clip_prompt_embeds(
+        prompt=prompts,
+        device=device,
+        num_images_per_prompt=num_images_per_prompt,
+        clip_skip=None,
+        clip_model_index=0,
+    )
+    prompt_2_embed, pooled_prompt_2_embed = pipeline._get_clip_prompt_embeds(
+        prompt=prompt_2,
+        device=device,
+        num_images_per_prompt=num_images_per_prompt,
+        clip_skip=None,
+        clip_model_index=1,
+    )
+    clip_prompt_embeds = torch.cat([prompt_embed, prompt_2_embed], dim=-1)
+
+    t5_prompt_embed = pipeline._get_t5_prompt_embeds(
+        prompt=prompt_3,
+        num_images_per_prompt=num_images_per_prompt,
+        device=device
+    )
+
+    clip_prompt_embeds = torch.nn.functional.pad(
+        clip_prompt_embeds, (0, t5_prompt_embed.shape[-1] - clip_prompt_embeds.shape[-1])
+    )
+
+    prompt_embeds = torch.cat([clip_prompt_embeds, t5_prompt_embed], dim=-2)
+    pooled_prompt_embeds = torch.cat([pooled_prompt_embed, pooled_prompt_2_embed], dim=-1)
+
+    return prompt_embeds, pooled_prompt_embeds
+
 
 # ref for long prompts https://github.com/huggingface/diffusers/issues/2136
 def text_encode(text_encoder: 'CLIPTextModel', tokens, truncate: bool = True, max_length=None):
@@ -625,6 +420,157 @@ def encode_prompts(
     text_embeddings = text_encode(text_encoder, text_tokens, truncate=truncate, max_length=max_length)
 
     return text_embeddings
+
+
+def encode_prompts_pixart(
+        tokenizer: 'T5Tokenizer',
+        text_encoder: 'T5EncoderModel',
+        prompts: list[str],
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
+):
+    if max_length is None:
+        # See Section 3.1. of the paper.
+        max_length = 120
+
+    if dropout_prob > 0.0:
+        # randomly drop out prompts
+        prompts = [
+            prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompts
+        ]
+
+    text_inputs = tokenizer(
+        prompts,
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+        add_special_tokens=True,
+        return_tensors="pt",
+    )
+    text_input_ids = text_inputs.input_ids
+    untruncated_ids = tokenizer(prompts, padding="longest", return_tensors="pt").input_ids
+
+    if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+            text_input_ids, untruncated_ids
+    ):
+        removed_text = tokenizer.batch_decode(untruncated_ids[:, max_length - 1: -1])
+
+    prompt_attention_mask = text_inputs.attention_mask
+    prompt_attention_mask = prompt_attention_mask.to(text_encoder.device)
+
+    text_input_ids = text_input_ids.to(text_encoder.device)
+
+    prompt_embeds = text_encoder(text_input_ids, attention_mask=prompt_attention_mask)
+
+    return prompt_embeds.last_hidden_state, prompt_attention_mask
+
+
+def encode_prompts_auraflow(
+        tokenizer: 'T5Tokenizer',
+        text_encoder: 'UMT5EncoderModel',
+        prompts: list[str],
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
+):
+    if max_length is None:
+        max_length = 256
+
+    if dropout_prob > 0.0:
+        # randomly drop out prompts
+        prompts = [
+            prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompts
+        ]
+
+    device = text_encoder.device
+
+    text_inputs = tokenizer(
+        prompts,
+        truncation=True,
+        max_length=max_length,
+        padding="max_length",
+        return_tensors="pt",
+    )
+    text_input_ids = text_inputs["input_ids"]
+    untruncated_ids = tokenizer(prompts, padding="longest", return_tensors="pt").input_ids
+
+    if untruncated_ids.shape[-1] >= text_input_ids.shape[-1] and not torch.equal(
+            text_input_ids, untruncated_ids
+    ):
+        removed_text = tokenizer.batch_decode(untruncated_ids[:, max_length - 1: -1])
+
+    text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+    prompt_embeds = text_encoder(**text_inputs)[0]
+    prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_embeds.shape)
+    prompt_embeds = prompt_embeds * prompt_attention_mask
+
+    return prompt_embeds, prompt_attention_mask
+
+def encode_prompts_flux(
+        tokenizer: List[Union['CLIPTokenizer','T5Tokenizer']],
+        text_encoder: List[Union['CLIPTextModel', 'T5EncoderModel']],
+        prompts: list[str],
+        truncate: bool = True,
+        max_length=None,
+        dropout_prob=0.0,
+        attn_mask: bool = False,
+):
+    if max_length is None:
+        max_length = 512
+
+    if dropout_prob > 0.0:
+        # randomly drop out prompts
+        prompts = [
+            prompt if torch.rand(1).item() > dropout_prob else "" for prompt in prompts
+        ]
+
+    device = text_encoder[0].device
+    dtype = text_encoder[0].dtype
+
+    batch_size = len(prompts)
+
+    # clip
+    text_inputs = tokenizer[0](
+        prompts,
+        padding="max_length",
+        max_length=tokenizer[0].model_max_length,
+        truncation=True,
+        return_overflowing_tokens=False,
+        return_length=False,
+        return_tensors="pt",
+    )
+
+    text_input_ids = text_inputs.input_ids
+
+    prompt_embeds = text_encoder[0](text_input_ids.to(device), output_hidden_states=False)
+
+    # Use pooled output of CLIPTextModel
+    pooled_prompt_embeds = prompt_embeds.pooler_output
+    pooled_prompt_embeds = pooled_prompt_embeds.to(dtype=dtype, device=device)
+
+    # T5
+    text_inputs = tokenizer[1](
+        prompts,
+        padding="max_length",
+        max_length=max_length,
+        truncation=True,
+        return_length=False,
+        return_overflowing_tokens=False,
+        return_tensors="pt",
+    )
+    text_input_ids = text_inputs.input_ids
+
+    prompt_embeds = text_encoder[1](text_input_ids.to(device), output_hidden_states=False)[0]
+
+    dtype = text_encoder[1].dtype
+    prompt_embeds = prompt_embeds.to(dtype=dtype, device=device)
+
+    if attn_mask:
+        prompt_attention_mask = text_inputs["attention_mask"].unsqueeze(-1).expand(prompt_embeds.shape)
+        prompt_embeds = prompt_embeds * prompt_attention_mask.to(dtype=prompt_embeds.dtype, device=prompt_embeds.device)
+
+    return prompt_embeds, pooled_prompt_embeds
 
 
 # for XL
@@ -675,18 +621,22 @@ def concat_embeddings(
 
 
 def add_all_snr_to_noise_scheduler(noise_scheduler, device):
-    if hasattr(noise_scheduler, "all_snr"):
-        return
-    # compute it
-    with torch.no_grad():
-        alphas_cumprod = noise_scheduler.alphas_cumprod
-        sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
-        sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
-        alpha = sqrt_alphas_cumprod
-        sigma = sqrt_one_minus_alphas_cumprod
-        all_snr = (alpha / sigma) ** 2
-        all_snr.requires_grad = False
-    noise_scheduler.all_snr = all_snr.to(device)
+    try:
+        if hasattr(noise_scheduler, "all_snr"):
+            return
+        # compute it
+        with torch.no_grad():
+            alphas_cumprod = noise_scheduler.alphas_cumprod
+            sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+            sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
+            alpha = sqrt_alphas_cumprod
+            sigma = sqrt_one_minus_alphas_cumprod
+            all_snr = (alpha / sigma) ** 2
+            all_snr.requires_grad = False
+        noise_scheduler.all_snr = all_snr.to(device)
+    except Exception as e:
+        # just move on
+        pass
 
 
 def get_all_snr(noise_scheduler, device):
@@ -776,8 +726,19 @@ def apply_snr_weight(
 ):
     # will get it from noise scheduler if exist or will calculate it if not
     all_snr = get_all_snr(noise_scheduler, loss.device)
-    step_indices = [(noise_scheduler.timesteps == t).nonzero().item() for t in timesteps]
-    snr = torch.stack([all_snr[t] for t in step_indices])
+    # step_indices = []
+    # for t in timesteps:
+    #     for i, st in enumerate(noise_scheduler.timesteps):
+    #         if st == t:
+    #             step_indices.append(i)
+    #             break
+    # this breaks on some schedulers
+    # step_indices = [(noise_scheduler.timesteps == t).nonzero().item() for t in timesteps]
+
+    offset = 0
+    if noise_scheduler.timesteps[0] == 1000:
+        offset = 1
+    snr = torch.stack([all_snr[(t - offset).int()] for t in timesteps])
     gamma_over_snr = torch.div(torch.ones_like(snr) * gamma, snr)
     if fixed:
         snr_weight = gamma_over_snr.float().to(loss.device)  # directly using gamma over snr
@@ -786,3 +747,19 @@ def apply_snr_weight(
     snr_adjusted_loss = loss * snr_weight
 
     return snr_adjusted_loss
+
+
+def precondition_model_outputs_flow_match(model_output, model_input, timestep_tensor, noise_scheduler):
+    mo_chunks = torch.chunk(model_output, model_output.shape[0], dim=0)
+    mi_chunks = torch.chunk(model_input, model_input.shape[0], dim=0)
+    timestep_chunks = torch.chunk(timestep_tensor, timestep_tensor.shape[0], dim=0)
+    out_chunks = []
+    # unsqueeze if timestep is zero dim
+    for idx in range(model_output.shape[0]):
+        sigmas = noise_scheduler.get_sigmas(timestep_chunks[idx], n_dim=model_output.ndim,
+                                                 dtype=model_output.dtype, device=model_output.device)
+        # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
+        # Preconditioning of the model outputs.
+        out = mo_chunks[idx] * (-sigmas) + mi_chunks[idx]
+        out_chunks.append(out)
+    return torch.cat(out_chunks, dim=0)

@@ -1,4 +1,5 @@
 import gc
+import os
 
 import torch
 
@@ -8,7 +9,11 @@ def value_map(inputs, min_in, max_in, min_out, max_out):
 
 
 def flush(garbage_collect=True):
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    # if is mps, also clear the mps cache
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
     if garbage_collect:
         gc.collect()
 
@@ -31,12 +36,18 @@ def get_mean_std(tensor):
 def adain(content_features, style_features):
     # Assumes that the content and style features are of shape (batch_size, channels, width, height)
 
+    dims = [2, 3]
+    if len(content_features.shape) == 3:
+        # content_features = content_features.unsqueeze(0)
+        # style_features = style_features.unsqueeze(0)
+        dims = [1]
+
     # Step 1: Calculate mean and variance of content features
-    content_mean, content_var = torch.mean(content_features, dim=[2, 3], keepdim=True), torch.var(content_features,
-                                                                                                  dim=[2, 3],
+    content_mean, content_var = torch.mean(content_features, dim=dims, keepdim=True), torch.var(content_features,
+                                                                                                  dim=dims,
                                                                                                   keepdim=True)
     # Step 2: Calculate mean and variance of style features
-    style_mean, style_var = torch.mean(style_features, dim=[2, 3], keepdim=True), torch.var(style_features, dim=[2, 3],
+    style_mean, style_var = torch.mean(style_features, dim=dims, keepdim=True), torch.var(style_features, dim=dims,
                                                                                             keepdim=True)
 
     # Step 3: Normalize content features
@@ -48,3 +59,12 @@ def adain(content_features, style_features):
     stylized_content = normalized_content * style_std + style_mean
 
     return stylized_content
+
+def get_quick_signature_string(file_path):
+    try:
+        file_stats = os.stat(file_path)
+        # Combine size and mtime into a single string
+        return f"{file_stats.st_size}:{int(file_stats.st_mtime)}"
+    except Exception as e:
+        print(f"Error accessing file {file_path}: {e}")
+        return None

@@ -1,0 +1,112 @@
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_flex_redux_finetune_v1"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: cuda:0
+      adapter:
+        type: "redux"
+        # you can finetune an existing adapter or start from scratch. Set to null to start from scratch
+        name_or_path: '/local/path/to/redux_adapter_to_finetune.safetensors'
+        # name_or_path: null
+        # image_encoder_path: 'google/siglip-so400m-patch14-384' # Flux.1 redux adapter
+        image_encoder_path: 'google/siglip2-so400m-patch16-512' # Flex.1 512 redux adapter
+        # image_encoder_arch: 'siglip' # for Flux.1
+        image_encoder_arch: 'siglip2'
+        # You need a control input for each sample. Best to do squares for both images
+        test_img_path: 
+          - "/path/to/x_01.jpg"
+          - "/path/to/x_02.jpg"
+          - "/path/to/x_03.jpg"
+          - "/path/to/x_04.jpg"
+          - "/path/to/x_05.jpg"
+          - "/path/to/x_06.jpg"
+          - "/path/to/x_07.jpg"
+          - "/path/to/x_08.jpg"
+          - "/path/to/x_09.jpg"
+          - "/path/to/x_10.jpg"
+        clip_layer: 'last_hidden_state'
+        train: true
+      save:
+        dtype: bf16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt. Only jpg, jpeg, and png are supported currently
+        # images will automatically be resized and bucketed into the resolution specified
+        # on windows, escape back slashes with another backslash so
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/folder"
+          # clip_image_path is directory containting your control images. They must have filename as their train image. (extension does not matter)
+          # for normal redux, we are just recreating the same image, so you can use the same folder path above
+          clip_image_path: "/path/to/control/images/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          resolution: [ 512, 768, 1024 ]  # flex enjoys multiple resolutions
+      train:
+        # this is what I used for the 24GB card, but feel free to adjust
+        # total batch size is 6 here
+        batch_size: 3
+        gradient_accumulation: 2
+
+        # captions are not needed for this training, we cache a blank proompt and rely on the vision encoder
+        unload_text_encoder: true
+
+        loss_type: "mse"
+        train_unet: true
+        train_text_encoder: false
+        steps: 4000000  # I set this very high and stop when I like the results
+        content_or_style: balanced  # content, style, balanced
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch" # or "ddpm", "lms", "euler_a"
+        timestep_type: "flux_shift" 
+        optimizer: "adamw8bit"
+        lr: 1e-4
+
+        # this is for Flex.1, comment this out for FLUX.1-dev
+        bypass_guidance_embedding: true
+
+        dtype: bf16
+        ema_config:
+          use_ema: true
+          ema_decay: 0.99
+      model:
+        name_or_path: "ostris/Flex.1-alpha"
+        is_flux: true
+        quantize: true
+        text_encoder_bits: 8
+      sample:
+        sampler: "flowmatch" # must match train.noise_scheduler
+        sample_every: 250 # sample every this many steps
+        width: 1024
+        height: 1024
+        # I leave half blank to test prompt and unprompted
+        prompts:
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - ""
+          - ""
+          - ""
+          - ""
+          - ""
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 4
+        sample_steps: 25
+        network_multiplier: 1.0
+
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

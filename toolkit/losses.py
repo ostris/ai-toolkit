@@ -13,6 +13,22 @@ def total_variation(image):
     n_elements = image.shape[1] * image.shape[2] * image.shape[3]
     return ((torch.sum(torch.abs(image[:, :, :, :-1] - image[:, :, :, 1:])) +
              torch.sum(torch.abs(image[:, :, :-1, :] - image[:, :, 1:, :]))) / n_elements)
+    
+def total_variation_deltas(image):
+    """
+    Compute per-pixel total variation deltas.
+    Input:
+    - image: Tensor of shape (N, C, H, W)
+    Returns:
+    - Tensor with shape (N, C, H, W), padded to match input shape
+    """
+    dh = torch.zeros_like(image)
+    dv = torch.zeros_like(image)
+
+    dh[:, :, :, :-1] = torch.abs(image[:, :, :, 1:] - image[:, :, :, :-1])
+    dv[:, :, :-1, :] = torch.abs(image[:, :, 1:, :] - image[:, :, :-1, :])
+
+    return dh + dv
 
 
 class ComparativeTotalVariation(torch.nn.Module):

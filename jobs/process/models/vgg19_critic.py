@@ -33,11 +33,20 @@ class Vgg19Critic(nn.Module):
         super(Vgg19Critic, self).__init__()
         self.main = nn.Sequential(
             # input (bs, 512, 32, 32)
-            nn.Conv2d(512, 1024, kernel_size=3, stride=2, padding=1),
+            # nn.Conv2d(512, 1024, kernel_size=3, stride=2, padding=1),
+            nn.utils.spectral_norm(  # SN keeps D’s scale in check
+                nn.Conv2d(512, 1024, kernel_size=3, stride=2, padding=1)
+            ),
             nn.LeakyReLU(0.2),  # (bs, 512, 16, 16)
-            nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
+            # nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
+            nn.utils.spectral_norm(
+                nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1)
+            ),
             nn.LeakyReLU(0.2),  # (bs, 512, 8, 8)
-            nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
+            # nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1),
+            nn.utils.spectral_norm(
+                nn.Conv2d(1024, 1024, kernel_size=3, stride=2, padding=1)
+            ),
             # (bs, 1, 4, 4)
             MeanReduce(),  # (bs, 1, 1, 1)
             nn.Flatten(),  # (bs, 1)
@@ -47,7 +56,9 @@ class Vgg19Critic(nn.Module):
         )
 
     def forward(self, inputs):
-        return self.main(inputs)
+        # return self.main(inputs)
+        with torch.cuda.amp.autocast(False):
+            return self.main(inputs.float())
 
 
 if TYPE_CHECKING:
@@ -92,7 +103,7 @@ class Critic:
         print(f" Critic config: {self.__dict__}")
 
     def setup(self):
-        self.model = Vgg19Critic().to(self.device, dtype=self.torch_dtype)
+        self.model = Vgg19Critic().to(self.device)
         self.load_weights()
         self.model.train()
         self.model.requires_grad_(True)
@@ -142,7 +153,8 @@ class Critic:
         # set model to not train for generator loss
         self.model.eval()
         self.model.requires_grad_(False)
-        vgg_pred, vgg_target = torch.chunk(vgg_output, 2, dim=0)
+        # vgg_pred, vgg_target = torch.chunk(vgg_output, 2, dim=0)
+        vgg_pred, vgg_target = torch.chunk(vgg_output.float(), 2, dim=0)
 
         # run model
         stacked_output = self.model(vgg_pred)
@@ -157,20 +169,34 @@ class Critic:
         self.optimizer.zero_grad()
 
         critic_losses = []
-        inputs = vgg_output.detach()
-        inputs = inputs.to(self.device, dtype=self.torch_dtype)
+        # inputs = vgg_output.detach()
+        # inputs = inputs.to(self.device, dtype=self.torch_dtype)
+        inputs = vgg_output.detach().to(self.device, dtype=torch.float32)
         self.optimizer.zero_grad()
 
         vgg_pred, vgg_target = torch.chunk(inputs, 2, dim=0)
 
+        # stacked_output = self.model(inputs).float()
+        # out_pred, out_target = torch.chunk(stacked_output, 2, dim=0)
+
+        # # Compute gradient penalty
+        # gradient_penalty = get_gradient_penalty(self.model, vgg_target, vgg_pred, self.device)
+
+        # # Compute WGAN-GP critic loss
+        # critic_loss = -(torch.mean(out_target) - torch.mean(out_pred)) + self.lambda_gp * gradient_penalty
+        
         stacked_output = self.model(inputs).float()
         out_pred, out_target = torch.chunk(stacked_output, 2, dim=0)
 
-        # Compute gradient penalty
+        # ── hinge loss ──
+        loss_real = torch.relu(1.0 - out_target).mean()
+        loss_fake = torch.relu(1.0 + out_pred).mean()
+
+        # gradient penalty (unchanged helper)
         gradient_penalty = get_gradient_penalty(self.model, vgg_target, vgg_pred, self.device)
 
-        # Compute WGAN-GP critic loss
-        critic_loss = -(torch.mean(out_target) - torch.mean(out_pred)) + self.lambda_gp * gradient_penalty
+        critic_loss = loss_real + loss_fake + self.lambda_gp * gradient_penalty
+        
         critic_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()

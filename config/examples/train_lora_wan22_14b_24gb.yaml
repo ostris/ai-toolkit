@@ -1,0 +1,111 @@
+# this example focuses mainly for training Wan2.2 14b on images. It will work for video as well by increasing
+# the number of frames in the dataset and samples. Training on and generating video is very VRAM intensive.
+---
+job: extension
+config:
+  # this name will be the folder and filename name
+  name: "my_first_wan22_14b_lora_v1"
+  process:
+    - type: 'sd_trainer'
+      # root folder to save training sessions/samples/weights
+      training_folder: "output"
+      # uncomment to see performance stats in the terminal every N steps
+#      performance_log_every: 1000
+      device: cuda:0
+      # Use a trigger word if train.unload_text_encoder is true, however, if caching text embeddings, do not use a trigger word
+      # trigger_word: "p3r5on"
+      network:
+        type: "lora"
+        linear: 32
+        linear_alpha: 32
+      save:
+        dtype: float16 # precision to save
+        save_every: 250 # save every this many steps
+        max_step_saves_to_keep: 4 # how many intermittent saves to keep
+      datasets:
+        # datasets are a folder of images. captions need to be txt files with the same name as the image
+        # for instance image2.jpg and image2.txt.
+        # "C:\\path\\to\\images\\folder"
+        - folder_path: "/path/to/images/or/video/folder"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05  # will drop out the caption 5% of time
+          # number of frames to extract from your video. It will automatically extract them evenly spaced
+          # set to 1 frame for images
+          num_frames: 1
+          resolution: [ 512, 768, 1024]
+      train:
+        batch_size: 1
+        steps: 2000  # total number of steps to train 500 - 4000 is a good range
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false  # probably won't work with wan
+        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        noise_scheduler: "flowmatch" # for training only
+        timestep_type: 'linear'
+        optimizer: "adamw8bit"
+        lr: 1e-4
+        optimizer_params:
+          weight_decay: 1e-4
+        # uncomment this to skip the pre training sample
+#        skip_first_sample: true
+        # uncomment to completely disable sampling
+#        disable_sampling: true
+        dtype: bf16
+
+        # IMPORTANT: this is for Wan 2.2 MOE. It will switch training one stage or the other every this many steps
+        switch_boundary_every: 10
+
+        # required for 24GB cards. You must do either unload_text_encoder or cache_text_embeddings but not both
+
+        # this will encode your trigger word and use those embeddings for every image in the dataset, captions will be ignored
+        # unload_text_encoder: true
+
+        # this will cache all captions in your dataset.
+        cache_text_embeddings: true
+
+      model:
+        # huggingface model name or path, this one if bf16, vs the float32 of the official repo
+        name_or_path: "ai-toolkit/Wan2.2-T2V-A14B-Diffusers-bf16"
+        arch: 'wan22_14b'
+        quantize: true
+        # This will pull and use a custom Accuracy Recovery Adapter to train at 4bit
+        qtype: "uint4|ostris/accuracy_recovery_adapters/wan22_14b_t2i_torchao_uint4.safetensors"
+        quantize_te: true
+        qtype_te: "qfloat8"
+        low_vram: true
+        model_kwargs:
+          # you can train high noise, low noise, or both. With low vram it will automatically unload the one not being trained.
+          train_high_noise: true
+          train_low_noise: true
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250 # sample every this many steps
+        width: 1024
+        height: 1024
+        # set to 1 for images
+        num_frames: 1
+        fps: 16
+        # samples take a long time. so use them sparingly
+        # samples will be animated webp files, if you don't see them animated, open in a browser.
+        prompts:
+          # you can add [trigger] to the prompts here and it will be replaced with the trigger word
+#          - "[trigger] holding a sign that says 'I LOVE PROMPTS!'"\
+          - "woman with red hair, playing chess at the park, bomb going off in the background"
+          - "a woman holding a coffee cup, in a beanie, sitting at a cafe"
+          - "a horse is a DJ at a night club, fish eye lens, smoke machine, lazer lights, holding a martini"
+          - "a man showing off his cool new t shirt at the beach, a shark is jumping out of the water in the background"
+          - "a bear building a log cabin in the snow covered mountains"
+          - "woman playing the guitar, on stage, singing a song, laser lights, punk rocker"
+          - "hipster man with a beard, building a chair, in a wood shop"
+          - "photo of a man, white background, medium shot, modeling clothing, studio lighting, white backdrop"
+          - "a man holding a sign that says, 'this is a sign'"
+          - "a bulldog, in a post apocalyptic world, with a shotgun, in a leather jacket, in a desert, with a motorcycle"
+        neg: ""  
+        seed: 42
+        walk_seed: true
+        guidance_scale: 3.5
+        sample_steps: 25
+# you can add any additional meta info here. [name] is replaced with config name at top
+meta:
+  name: "[name]"
+  version: '1.0'

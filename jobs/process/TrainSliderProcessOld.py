@@ -6,19 +6,15 @@ import os
 from typing import Optional
 
 from toolkit.config_modules import SliderConfig
-from toolkit.paths import REPOS_ROOT
 import sys
 
 from toolkit.stable_diffusion_model import PromptEmbeds
 
-sys.path.append(REPOS_ROOT)
-sys.path.append(os.path.join(REPOS_ROOT, 'leco'))
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 import gc
 from toolkit import train_tools
 
 import torch
-from leco import train_util, model_util
 from .BaseSDTrainProcess import BaseSDTrainProcess, StableDiffusion
 
 
