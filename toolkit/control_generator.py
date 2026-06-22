@@ -156,7 +156,7 @@ class ControlGenerator:
                 self.control_bg_remover = AutoModelForImageSegmentation.from_pretrained(
                     'ZhengPeng7/BiRefNet_HR',
                     trust_remote_code=True,
-                    revision="595e212b3eaa6a1beaad56cee49749b1e00b1596",
+                    revision="a7a562f6fd16021180f2f4348f4de003a2d3d1e1",
                     torch_dtype=torch.float16
                 ).to(device)
                 self.control_bg_remover.eval()
