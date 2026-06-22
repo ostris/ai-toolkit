@@ -10,34 +10,50 @@ def get_lr_scheduler(
         **kwargs,
 ):
     if name == "cosine":
-            if 'total_iters' in kwargs:
-                kwargs['T_max'] = kwargs.pop('total_iters')
+        if 'total_iters' in kwargs:
+            kwargs['T_max'] = kwargs.pop('total_iters')
 
-            total_steps = kwargs.get('T_max') 
-            warmup_steps = kwargs.get('num_warmup_steps', 0)
-            eta_min = kwargs.get('eta_min', 0.0)
+        total_steps = kwargs.pop('steps', None)
+        cosine_decay_steps = kwargs.pop('cosine_decay_steps', None)
+        warmup_steps = kwargs.pop('num_warmup_steps', 0)
+        eta_min = kwargs.pop('eta_min', 0.0)
 
-            if warmup_steps > 0:
-                base_lr = optimizer.param_groups[0]['lr']
-                if total_steps is None:
-                    print("WARNING: total_steps(T_max) not found in kwargs, defaulting to 2000")
-                    total_steps = 2000
+        if total_steps is None:
+            total_steps = kwargs.get('T_max')
 
-                def lr_lambda(step):
-                    if step < warmup_steps:
-                        return float(step) / float(max(1, warmup_steps))
-                    else:
-                        progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-                        progress = min(1.0, progress)
-                        
-                        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
-                        base_ratio = eta_min / max(1e-8, base_lr)
-                        
-                        return base_ratio + (1.0 - base_ratio) * cosine_factor
+        if total_steps is None:
+            print("WARNING: total_steps/steps/T_max not found in kwargs, defaulting to 2000")
+            total_steps = 2000
 
-                return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-            else:
-                return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, **kwargs)
+        if cosine_decay_steps is None:
+            cosine_decay_steps = total_steps
+        else:
+            if cosine_decay_steps <= 0:
+                raise ValueError("cosine_decay_steps must be > 0")
+            if cosine_decay_steps > total_steps:
+                print(f"WARNING: cosine_decay_steps({cosine_decay_steps}) > steps({total_steps}); clamping to steps")
+                cosine_decay_steps = total_steps
+
+        base_lr = optimizer.param_groups[0]['lr']
+        min_ratio = eta_min / max(1e-8, base_lr)
+
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return float(step) / float(max(1, warmup_steps))
+
+            decay_start = warmup_steps
+            decay_end = warmup_steps + cosine_decay_steps
+
+            if step >= decay_end:
+                return min_ratio
+
+            progress = float(step - decay_start) / float(max(1, cosine_decay_steps))
+            progress = min(1.0, max(0.0, progress))
+            cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_ratio + (1.0 - min_ratio) * cosine_factor
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
 
     elif name == "cosine_with_restarts":
         if 'total_iters' in kwargs:
