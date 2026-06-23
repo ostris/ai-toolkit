@@ -1044,7 +1044,7 @@ export const modelArchs: ModelArch[] = [
     label: 'Krea 2 (K2)',
     group: 'image',
     defaults: {
-      'config.process[0].model.name_or_path': ['krea/krea2', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['krea/Krea-2-Raw', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].train.timestep_type': ['linear', 'sigmoid'],

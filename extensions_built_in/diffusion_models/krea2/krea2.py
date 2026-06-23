@@ -106,8 +106,10 @@ def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
             f"{candidates}. Set model.model_kwargs.checkpoint_filename."
         )
 
-    # Treat as a hub repo id.
-    fname = filename or "model.safetensors"
+    # Treat as a hub repo id. When no filename is given, derive it from the repo
+    # name's trailing segment (e.g. "krea/Krea-2-Raw" -> "raw.safetensors",
+    # "krea/Krea-2-Turbo" -> "turbo.safetensors").
+    fname = filename or (name_or_path.split("/")[-1].split("-")[-1].lower() + ".safetensors")
     try:
         path = huggingface_hub.hf_hub_download(
             repo_id=name_or_path, filename=fname, token=HF_TOKEN
