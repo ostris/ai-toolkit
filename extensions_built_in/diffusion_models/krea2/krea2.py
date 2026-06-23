@@ -157,6 +157,7 @@ class Krea2Model(BaseModel):
         # Qwen2TokenizerFast used to tokenize the assistant suffix (matches the
         # reference's separate processor pass).
         self.processor = None
+        self.use_old_lokr_format = False
 
     @staticmethod
     def get_train_scheduler():
