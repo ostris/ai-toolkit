@@ -2607,12 +2607,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.progress_bar.close()
         if self.train_config.free_u:
             self.sd.pipeline.disable_freeu()
+        if self.accelerator.is_main_process:
+            self.save()
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
-            self.save()
             self.logger.finish()
         self.accelerator.end_training()
 
