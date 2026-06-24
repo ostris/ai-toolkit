@@ -467,7 +467,16 @@ class Krea2Model(BaseModel):
         )
         latents = latents * latents_std + latents_mean
 
-        images = self.vae.decode(latents).sample
+        # Full-resolution decode spikes VRAM; tile it when low on VRAM (decode
+        # only -- encode stays untiled).
+        tiled = self.model_config.low_vram
+        if tiled:
+            self.vae.enable_tiling()
+        try:
+            images = self.vae.decode(latents).sample
+        finally:
+            if tiled:
+                self.vae.disable_tiling()
         images = images.squeeze(2)  # drop frame dim
         return images.to(device, dtype=dtype)
 
