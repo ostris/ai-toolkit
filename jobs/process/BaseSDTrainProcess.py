@@ -1798,7 +1798,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
 
                 # todo switch everything to proper mixed precision like this
-                self.network.force_to(self.device_torch, dtype=torch.float32)
+                # use model dtype for optimizers that support low precision, float32 for others
+                _fp32_optimizers = ["adam", "adamw", "sgd", "adagrad"]
+                _network_dtype = torch.float32 if self.train_config.optimizer.lower() in _fp32_optimizers else self.sd.torch_dtype
+                self.network.force_to(self.device_torch, dtype=_network_dtype)
                 # give network to sd so it can use it
                 self.sd.network = self.network
                 self.network._update_torch_multiplier()
