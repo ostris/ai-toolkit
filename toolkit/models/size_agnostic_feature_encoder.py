@@ -8,7 +8,7 @@ from transformers.image_processing_utils import BaseImageProcessor
 
 class SAFEReducerBlock(nn.Module):
     """
-    This is the block that reduces the size of an vactor w and h be half. It is designed to be iterative
+    This is the block that reduces the size of an vector w and h be half. It is designed to be iterative
     So it is run multiple times to reduce an image to a desired dimension while carrying a shrinking residual
     along for the ride. This is done to preserve information.
     """
@@ -195,7 +195,7 @@ class SAFEImageProcessor(BaseImageProcessor):
             images = nn.functional.interpolate(images, size=(new_height, new_width), mode='bilinear',
                                                align_corners=False)
 
-        # if wither side is not divisible by 16, mirror pad to make it so
+        # if either side is not divisible by 16, mirror pad to make it so
         if images.shape[2] % 16 != 0:
             pad = 16 - (images.shape[2] % 16)
             pad1 = pad // 2
@@ -236,7 +236,7 @@ class SAFEVMConfig:
 class SAFEVMReturn:
     def __init__(self, output):
         self.output = output
-        # todo actually do hidden states. This is just for code compatability for now
+        # todo actually do hidden states. This is just for code compatibility for now
         self.hidden_states = [output for _ in range(13)]
 
 

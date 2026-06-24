@@ -224,7 +224,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             loras = []
             # remove this
             named_modules = root_module.named_modules()
-            # add a few to tthe generator
+            # add a few to the generator
 
             for name, module in named_modules:
                 module_name = module.__class__.__name__

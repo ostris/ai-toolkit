@@ -296,7 +296,7 @@ class StableDiffusion:
             return
         dtype = get_torch_dtype(self.dtype)
 
-        # move the betas alphas and  alphas_cumprod to device. Sometimed they get stuck on cpu, not sure why
+        # move the betas alphas and  alphas_cumprod to device. Sometimes they get stuck on cpu, not sure why
         # self.noise_scheduler.betas = self.noise_scheduler.betas.to(self.device_torch)
         # self.noise_scheduler.alphas = self.noise_scheduler.alphas.to(self.device_torch)
         # self.noise_scheduler.alphas_cumprod = self.noise_scheduler.alphas_cumprod.to(self.device_torch)
@@ -1959,7 +1959,7 @@ class StableDiffusion:
                     add_time_ids = self.get_time_ids_from_latents(latents)
 
                     if do_classifier_free_guidance:
-                        # todo check this with larget batches
+                        # todo check this with larger batches
                         add_time_ids = torch.cat([add_time_ids] * 2)
 
                 if do_classifier_free_guidance:
@@ -2178,7 +2178,7 @@ class StableDiffusion:
                     # with torch.amp.autocast(device_type='cuda', dtype=cast_dtype):
                     noise_pred = self.unet(
                         hidden_states=latent_model_input_packed.to(self.device_torch, cast_dtype),  # [1, 4096, 64]
-                        # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transforme rmodel (we should not keep it but I want to keep the inputs same for the model for testing)
+                        # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transformer model (we should not keep it but I want to keep the inputs same for the model for testing)
                         # todo make sure this doesnt change
                         timestep=timestep / 1000,  # timestep is 1000 scale
                         encoder_hidden_states=text_embeddings.text_embeds.to(self.device_torch, cast_dtype),
@@ -2703,7 +2703,7 @@ class StableDiffusion:
             for name, param in self.refiner_unet.named_parameters(recurse=True, prefix=f"{SD_PREFIX_REFINER_UNET}"):
                 named_params[name] = param
 
-        # convert to state dict keys, jsut replace . with _ on keys
+        # convert to state dict keys, just replace . with _ on keys
         if state_dict_keys:
             new_named_params = OrderedDict()
             for k, v in named_params.items():
@@ -2778,7 +2778,7 @@ class StableDiffusion:
         if self.is_xl:
             version_string = 'sdxl'
         if self.is_ssd:
-            # overwrite sdxl because both wil be true here
+            # overwrite sdxl because both will be true here
             version_string = 'ssd'
         if self.is_ssd and self.is_vega:
             version_string = 'vega'

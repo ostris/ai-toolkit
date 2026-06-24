@@ -22,7 +22,7 @@ const extensionsImage = ['jpg', 'jpeg', 'png', 'bmp', 'webp'];
 
 const defaultExtensions = [...extensionsImage];
 
-const defaultImageCaptionPrompt = "Caption this image as if you were going to try to generate it with an image generator. Be thurough and describe everything in the image. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". Start out with things like \"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.";
+const defaultImageCaptionPrompt = "Caption this image as if you were going to try to generate it with an image generator. Be thorough and describe everything in the image. Be decisive by stating things as they are. Do not say things like \"It appears that\" Or \"possibly\". Start out with things like \"A person on the beach\" or \"A black dragon\". No preamble. Just get to the point.";
 
 // Editable ADDITIONAL INSTRUCTIONS block injected into the Ideogram system prompt.
 // Users can tweak this for dataset-specific guidance without altering the fixed

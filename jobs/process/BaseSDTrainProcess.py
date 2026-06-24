@@ -1215,7 +1215,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     min_noise_steps = first_idx
                     max_noise_steps = last_idx
 
-            # clip min max indicies
+            # clip min max indices
             min_noise_steps = max(min_noise_steps, 0)
             max_noise_steps = min(max_noise_steps, num_train_timesteps - 1)
             

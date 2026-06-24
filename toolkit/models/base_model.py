@@ -1280,7 +1280,7 @@ class BaseModel:
             for name, param in self.refiner_unet.named_parameters(recurse=True, prefix=f"{SD_PREFIX_REFINER_UNET}"):
                 named_params[name] = param
 
-        # convert to state dict keys, jsut replace . with _ on keys
+        # convert to state dict keys, just replace . with _ on keys
         if state_dict_keys:
             new_named_params = OrderedDict()
             for k, v in named_params.items():
