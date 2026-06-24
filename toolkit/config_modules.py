@@ -1224,9 +1224,17 @@ class GenerateImageConfig:
         elif self.output_ext in ['wav', 'mp3', 'flac', 'ogg']:
             # save audio file
             audio_path = self.get_image_path(count, max_count)
+            waveform = image[0] if isinstance(image, (list, tuple)) else image
+            # torchaudio/ffmpeg cannot encode bf16/fp16 waveforms; cast to float32
+            waveform = waveform.to('cpu', dtype=torch.float32)
+            # torchaudio.save expects a 2D [channels, time] tensor
+            if waveform.dim() == 3:
+                waveform = waveform[0]
+            elif waveform.dim() == 1:
+                waveform = waveform.unsqueeze(0)
             torchaudio.save(
                 audio_path, 
-                image[0].to('cpu'),
+                waveform,
                 sample_rate=48000, 
                 format=None, 
                 backend=None
