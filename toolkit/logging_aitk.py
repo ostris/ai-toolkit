@@ -121,7 +121,10 @@ class UILogger:
             os.makedirs(parent, exist_ok=True)
 
         self._con = sqlite3.connect(self.log_file, timeout=30.0, isolation_level=None)
-        self._con.execute("PRAGMA journal_mode=WAL;")
+        try:
+            self._con.execute("PRAGMA journal_mode=WAL;")
+        except sqlite3.OperationalError:
+            self._con.execute("PRAGMA journal_mode=DELETE;")
         self._con.execute("PRAGMA synchronous=NORMAL;")
         self._con.execute("PRAGMA temp_store=MEMORY;")
         self._con.execute("PRAGMA foreign_keys=ON;")
