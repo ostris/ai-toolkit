@@ -108,6 +108,7 @@ class AIToolkitOxenLogger:
                 "loss": 0.0,
                 "learning_rate": 0.0,
                 "epoch": 0,
+                "peak_mem_gb": 0.0,
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
 

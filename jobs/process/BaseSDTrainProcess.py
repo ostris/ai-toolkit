@@ -2459,6 +2459,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             # log to Oxen if enabled
                             if self.oxen_logger and self.oxen_config.enabled:
                                 try:
+                                    # Peak since the last logged row, so the column graphs memory over time
+                                    peak_mem_gb = 0.0
+                                    if torch.cuda.is_available():
+                                        peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9
                                     # Prepare metrics for Oxen
                                     oxen_metrics = {
                                         'step': self.step_num,
@@ -2466,9 +2470,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                         'loss': loss_dict.get('loss', 0.0),
                                         'epoch': self.step_num / len(self.data_loader.dataset) if self.data_loader and hasattr(self.data_loader, 'dataset') else 0.0,
+                                        'peak_mem_gb': peak_mem_gb,
                                     }
 
                                     self.oxen_logger.log_metrics(oxen_metrics, self.step_num)
+                                    # Reset only after a row records the window's peak
+                                    if torch.cuda.is_available():
+                                        torch.cuda.reset_peak_memory_stats()
                                 except Exception as e:
                                     print_acc(f"Warning: Failed to log metrics to Oxen: {e}")
                     elif self.logging_config.log_every is None:
@@ -2485,6 +2493,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                             # log to Oxen if enabled (every step)
                             if self.oxen_logger and self.oxen_config.enabled:
                                 try:
+                                    # Peak since the last logged row, so the column graphs memory over time
+                                    peak_mem_gb = 0.0
+                                    if torch.cuda.is_available():
+                                        peak_mem_gb = torch.cuda.max_memory_allocated() / 1e9
                                     # Prepare metrics for Oxen
                                     oxen_metrics = {
                                         'step': self.step_num,
@@ -2492,9 +2504,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
                                         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                         'loss': loss_dict.get('loss', 0.0),
                                         'epoch': self.step_num / len(self.data_loader.dataset) if self.data_loader and hasattr(self.data_loader, 'dataset') else 0.0,
+                                        'peak_mem_gb': peak_mem_gb,
                                     }
 
                                     self.oxen_logger.log_metrics(oxen_metrics, self.step_num)
+                                    # Reset only after a row records the window's peak
+                                    if torch.cuda.is_available():
+                                        torch.cuda.reset_peak_memory_stats()
                                 except Exception as e:
                                     print_acc(f"Warning: Failed to log metrics to Oxen: {e}")
 
