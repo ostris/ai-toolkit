@@ -135,6 +135,16 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         # del self.org_module
 
 
+def _is_quantized_tensor(t) -> bool:
+    # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
+    # that are still nn.Parameter instances and expose .dequantize(). (quanto is intentionally not handled.)
+    return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
+
+
+def _dequantize_if_needed(t):
+    return t.dequantize() if _is_quantized_tensor(t) else t
+
+
 class FullModule(ToolkitModuleMixin, torch.nn.Module):
     """
     Full weight "lora" for layers that have no sensible low rank decomposition (norm layers, embeddings,
@@ -142,6 +152,9 @@ class FullModule(ToolkitModuleMixin, torch.nn.Module):
     the original weight (and bias) of the wrapped module. On save it emits `<name>.diff` (and `<name>.diff_b`
     for bias) which ComfyUI applies as `weight += strength * diff`, so it merges directly into the model
     weights without any extra adapter.
+
+    If the wrapped module's weight is torchao-quantized, the delta is kept in full precision and the original
+    weight is dequantized on the fly in the forward pass (the original quantized tensor is left untouched).
     """
 
     def __init__(
@@ -167,7 +180,10 @@ class FullModule(ToolkitModuleMixin, torch.nn.Module):
         self.is_checkpointing = False
 
         # trainable delta, zero initialized so an untrained layer is a no-op (zero diff)
-        self.diff = torch.nn.Parameter(torch.zeros_like(org_module.weight))
+        # dequantize first so the delta is full precision and shaped like the real (unpacked) weight
+        self.weight_is_quantized = _is_quantized_tensor(org_module.weight)
+        ref_weight = _dequantize_if_needed(org_module.weight)
+        self.diff = torch.nn.Parameter(torch.zeros_like(ref_weight))
         # some modules (e.g. Embedding) have no bias attribute at all
         org_bias = getattr(org_module, 'bias', None)
         if org_bias is not None:
@@ -191,7 +207,10 @@ class FullModule(ToolkitModuleMixin, torch.nn.Module):
         mult = multiplier.mean() if isinstance(multiplier, torch.Tensor) else multiplier
 
         orig_weight = om._parameters['weight']
-        eff_weight = orig_weight + (self.diff.to(orig_weight.device) * mult).to(orig_weight.dtype)
+        # dequantize quantized weights to full precision so the delta can be added (the original
+        # quantized tensor is restored in the finally block below)
+        base_weight = _dequantize_if_needed(orig_weight)
+        eff_weight = base_weight + (self.diff.to(base_weight.device) * mult).to(base_weight.dtype)
 
         has_bias = self.diff_b is not None and om._parameters.get('bias', None) is not None
         if has_bias:
@@ -215,16 +234,23 @@ class FullModule(ToolkitModuleMixin, torch.nn.Module):
     def merge_in(self: 'FullModule', merge_weight=1.0):
         if not self.can_merge_in:
             return
-        org_sd = self.org_module[0].state_dict()
-        if 'weight._data' in org_sd:
-            # quantized weight, can't merge
+        om = self.org_module[0]
+        if 'weight._data' in om.state_dict():
+            # quanto quantized weight, can't merge
             return
-        weight = org_sd['weight']
-        org_sd['weight'] = (weight.float() + merge_weight * self.diff.float().to(weight.device)).to(weight.dtype)
-        if self.diff_b is not None and 'bias' in org_sd:
-            bias = org_sd['bias']
-            org_sd['bias'] = (bias.float() + merge_weight * self.diff_b.float().to(bias.device)).to(bias.dtype)
-        self.org_module[0].load_state_dict(org_sd)
+        org_weight = om.weight
+        orig_dtype = org_weight.dtype
+        # dequantize torchao weights so we can fold the full precision delta in
+        merged_weight = _dequantize_if_needed(org_weight).float() + merge_weight * self.diff.float().to(org_weight.device)
+        if self.weight_is_quantized:
+            # re-quantize so the model stays quantized across continuous merge/reset cycles
+            from toolkit.util.quantize import get_torchao_config, requantize_module_weight
+            requantize_module_weight(om, merged_weight, orig_dtype, get_torchao_config(self._get_base_qtype()))
+        else:
+            om.weight.data = merged_weight.to(org_weight.device, orig_dtype)
+        # bias is never quantized
+        if self.diff_b is not None and getattr(om, 'bias', None) is not None:
+            om.bias.data = (om.bias.data.float() + merge_weight * self.diff_b.float().to(om.bias.device)).to(om.bias.dtype)
 
     def reset_weights(self: 'FullModule'):
         with torch.no_grad():

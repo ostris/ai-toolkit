@@ -256,18 +256,18 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
 
         # extract weight from org_module
         org_sd = self.org_module[0].state_dict()
-        # todo find a way to merge in weights when doing quantized model
+        # todo find a way to merge in weights when doing quanto quantized model
         if 'weight._data' in org_sd:
-            # quantized weight
+            # quanto quantized weight
             return
 
         weight_key = "weight"
-        if 'weight._data' in org_sd:
-            # quantized weight
-            weight_key = "weight._data"
-
-        orig_dtype = org_sd[weight_key].dtype
-        weight = org_sd[weight_key].float()
+        from toolkit.util.quantize import is_quantized_tensor
+        org_weight = self.org_module[0].weight
+        is_ao_quantized = is_quantized_tensor(org_weight)
+        orig_dtype = org_weight.dtype
+        # dequantize torchao weights so the delta can be merged in full precision
+        weight = (org_weight.dequantize() if is_ao_quantized else org_weight).float()
 
         scale = self.scale
         # handle trainable scaler method locon does
@@ -281,9 +281,16 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             + (lokr_weight * merge_weight).to(weight.device, dtype=weight.dtype)
         )
 
-        # set weight to org_module
-        org_sd[weight_key] = merged_weight.to(orig_dtype)
-        self.org_module[0].load_state_dict(org_sd)
+        # write the merged weight back, re-quantizing if the original was torchao quantized so the
+        # model stays quantized across continuous merge/reset cycles
+        if is_ao_quantized:
+            from toolkit.util.quantize import get_torchao_config, requantize_module_weight
+            requantize_module_weight(
+                self.org_module[0], merged_weight, orig_dtype, get_torchao_config(self._get_base_qtype())
+            )
+        else:
+            org_sd[weight_key] = merged_weight.to(orig_dtype)
+            self.org_module[0].load_state_dict(org_sd)
 
     def get_orig_weight(self, device):
         weight = self.org_module[0].weight

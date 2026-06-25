@@ -62,6 +62,36 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
         return qtype
 
 
+def is_quantized_tensor(t) -> bool:
+    # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
+    # that still report as nn.Parameter and expose .dequantize(). (quanto is handled separately.)
+    return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
+
+
+def dequantize_if_quantized(t):
+    return t.dequantize() if is_quantized_tensor(t) else t
+
+
+def get_torchao_config(qtype):
+    # returns the torchao quantization config for a given qtype string, or None if it isn't torchao
+    if qtype is None:
+        return None
+    try:
+        q = get_qtype(qtype)
+    except Exception:
+        return None
+    return q.config if isinstance(q, aotype) else None
+
+
+def requantize_module_weight(module, fp_weight, orig_dtype, config) -> None:
+    """Write a full precision weight back into module.weight, re-quantizing in place if a torchao
+    config is provided so the module stays quantized (used by the continuous merge/reset method).
+    If config is None the weight is left in full precision."""
+    module.weight = torch.nn.Parameter(fp_weight.to(orig_dtype), requires_grad=False)
+    if config is not None:
+        torchao_quantize_(module, config)
+
+
 def quantize(
     model: torch.nn.Module,
     weights: Optional[Union[str, qtype, aotype]] = None,
@@ -141,6 +171,9 @@ def quantize_model(
 
     # patch the state dict method
     patch_dequantization_on_save(model_to_quantize)
+
+    # sensitive modules to keep in full precision (fnmatch patterns)
+    exclude_modules = base_model.get_quantization_exclude_modules() or []
 
     if base_model.model_config.accuracy_recovery_adapter is not None:
         from toolkit.config_modules import NetworkConfig
@@ -287,7 +320,7 @@ def quantize_model(
         quantize(
             model_to_quantize,
             weights=quantization_type,
-            exclude=lora_exclude_modules
+            exclude=lora_exclude_modules + exclude_modules
         )
     else:
         # quantize model the original way without an accuracy recovery adapter
@@ -319,5 +352,5 @@ def quantize_model(
         # device without having to move the transformer blocks to the device first
         base_model.print_and_status_update(" - quantizing extras")
         # model_to_quantize.to(base_model.device_torch, dtype=base_model.torch_dtype)
-        quantize(model_to_quantize, weights=quantization_type)
+        quantize(model_to_quantize, weights=quantization_type, exclude=exclude_modules)
         freeze(model_to_quantize)

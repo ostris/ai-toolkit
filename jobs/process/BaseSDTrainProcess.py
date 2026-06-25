@@ -626,18 +626,26 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     )
         else:
             if self.network is not None and self.train_config.merge_network_on_save:
-                # merge the network weights into a full model and save that
-                if not self.network.can_merge_in:
+                # merge the network weights into a full model and save that.
+                # torchao quantized weights can be force merged here (dequantize -> merge -> re-quantize)
+                # even though can_merge_in is False (kept False so sampling never merges). quanto and
+                # layer_offloading still cannot merge.
+                from toolkit.util.quantize import get_torchao_config
+                can_force_quantized_merge = (
+                    self.model_config.quantize and not self.model_config.layer_offloading
+                    and get_torchao_config(self.model_config.qtype) is not None
+                )
+                if not self.network.can_merge_in and not can_force_quantized_merge:
                     raise ValueError("Network cannot merge in weights. Cannot save full model.")
-                
+
                 print_acc("Merging network weights into full model for saving...")
-                
+
                 self.network.merge_in(merge_weight=self.train_config.merge_network_on_save_strength)
                 # reset weights to zero
                 self.network.reset_weights()
                 self.network.is_merged_in = False
                 
-                print_acc("Done merging network weights.")
+                print_acc("Done merging network weights. Saving model...")
                 
             if self.save_config.save_format == "diffusers":
                 # saving as a folder path
@@ -1810,7 +1818,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_unet
                 )
 
-                # we cannot merge in if quantized
+                # we cannot merge in if quantized or offloading. note: torchao quantized weights can
+                # still be force merged at save time for the merge-and-reset method (see save logic),
+                # but we keep can_merge_in False here so sampling never merges in/out.
                 if self.model_config.quantize or self.model_config.layer_offloading:
                     # todo find a way around this
                     self.network.can_merge_in = False
