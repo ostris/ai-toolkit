@@ -57,38 +57,109 @@ class ControlGenerator:
         if self.debug:
             print(*args, **kwargs)
 
-    def _generate_control(self, img_path, control_type):
-        device = self.device
-        image: Image = None
-
-        coltrols_folder = os.path.join(os.path.dirname(img_path), '_controls')
-        file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
-
-        # we need to generate the control. Unload model if not unloaded
+    def ensure_unloaded(self):
+        # unload the training model (if any) before generating controls
         if not self.has_unloaded:
             if self.sd is not None:
                 print("Unloading model to generate controls")
                 self.sd.set_device_state_preset('unload')
             self.has_unloaded = True
 
-        if image is None:
-            # make sure image is loaded if we havent loaded it with another control
-            image = Image.open(img_path).convert('RGB')
-            image = exif_transpose(image)
+    def load_image(self, img_path):
+        # CPU/disk stage: read, orient, and downscale to a max of 1mp
+        image = Image.open(img_path).convert('RGB')
+        image = exif_transpose(image)
 
-            # resize to a max of 1mp
-            max_size = 1024 * 1024
+        max_size = 1024 * 1024
+        w, h = image.size
+        if w * h > max_size:
+            scale = math.sqrt(max_size / (w * h))
+            w = int(w * scale)
+            h = int(h * scale)
+            image = image.resize((w, h), Image.BICUBIC)
+        return image
 
-            w, h = image.size
-            if w * h > max_size:
-                scale = math.sqrt(max_size / (w * h))
-                w = int(w * scale)
-                h = int(h * scale)
-                image = image.resize((w, h), Image.BICUBIC)
+    def control_save_path(self, img_path, control_type):
+        coltrols_folder = os.path.join(os.path.dirname(img_path), '_controls')
+        file_name_no_ext = os.path.splitext(os.path.basename(img_path))[0]
+        # inpaint needs alpha and mask is a near-binary single channel; webp
+        # compresses both far smaller than jpg. The rest stay jpg.
+        ext = 'webp' if control_type in ('inpaint', 'mask') else 'jpg'
+        return os.path.join(
+            coltrols_folder, f"{file_name_no_ext}.{control_type}.{ext}")
 
-        save_path = os.path.join(
-            coltrols_folder, f"{file_name_no_ext}.{control_type}.jpg")
-        os.makedirs(coltrols_folder, exist_ok=True)
+    def save_control(self, out_image, save_path):
+        # CPU/disk stage: encode and write the generated control
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        if save_path.lower().endswith('.webp'):
+            # method=6 trades CPU (already off the GPU thread) for smaller files
+            out_image.save(save_path, quality=80, method=6)
+        else:
+            out_image.save(save_path)
+
+    def _bg_transform(self):
+        return transforms.Compose([
+            transforms.Resize((1024, 1024)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+
+    def _ensure_bg_remover(self):
+        if self.control_bg_remover is None:
+            from transformers import AutoModelForImageSegmentation
+            self.control_bg_remover = AutoModelForImageSegmentation.from_pretrained(
+                'ZhengPeng7/BiRefNet_HR',
+                trust_remote_code=True,
+                revision="a7a562f6fd16021180f2f4348f4de003a2d3d1e1",
+                dtype=torch.float16
+            ).to(self.device)
+            self.control_bg_remover.eval()
+
+    def preprocess(self, image, control_type):
+        # CPU stage. For the bg-remover path this does the expensive resize +
+        # normalize and returns a ready-to-run float16 tensor, so the GPU thread
+        # never has to. Other control types preprocess inside their model, so we
+        # just pass the PIL image straight through.
+        if control_type in ('inpaint', 'mask'):
+            return self._bg_transform()(image).unsqueeze(0).to(torch.float16)
+        return image
+
+    def run_inference(self, payload, control_type):
+        # GPU stage. Returns an intermediate result for postprocess(). Models are
+        # lazily loaded here, so call from a single thread per generator instance.
+        self.ensure_unloaded()
+        if control_type in ('inpaint', 'mask'):
+            self._ensure_bg_remover()
+            x = payload.to(self.device).to(torch.float16)
+            with torch.inference_mode():
+                preds = self.control_bg_remover(x)[-1].sigmoid().cpu()
+            return preds[0].squeeze()  # CPU mask tensor, 1024x1024
+        # everything else does preprocessing + inference together on this thread
+        return self.run_control(payload, control_type)
+
+    def postprocess(self, result, image, control_type):
+        # CPU stage. Turns the inference result into the final control image.
+        if control_type in ('inpaint', 'mask'):
+            mask = transforms.ToPILImage()(result).resize(image.size)
+            if control_type == 'inpaint':
+                # inpainting currently only supports the "erased" section to inpaint
+                mask = ImageOps.invert(mask)
+                out = image.copy()
+                out.putalpha(mask)
+                return out
+            # keep the mask single-channel grayscale; the loader converts as
+            # needed and this roughly thirds the file size vs RGB
+            return mask
+        # the fallback path already produced a finished PIL image
+        return result
+
+    def run_control(self, image, control_type):
+        # GPU stage: run inference on an already-loaded image and return the
+        # resulting PIL image (no disk IO). Models are lazily loaded here, so
+        # this must be called from a single thread per generator instance.
+        device = self.device
+        self.ensure_unloaded()
+
         if control_type == 'depth':
             self.debug_print("Generating depth control")
             if self.control_depth_model is None:
@@ -107,8 +178,7 @@ class ControlGenerator:
             out_tensor = out_tensor.squeeze(0).cpu().numpy()
             img = Image.fromarray(out_tensor.astype('uint8'))
             img = img.resize(in_size, Image.LANCZOS)
-            img.save(save_path)
-            return save_path
+            return img
         elif control_type == 'pose':
             self.debug_print("Generating pose control")
             if self.control_pose_model is None:
@@ -131,8 +201,7 @@ class ControlGenerator:
             img = self.control_pose_model(
                 img, output_type="pil", include_hands=True, include_face=True, detect_resolution=detect_res)
             img = img.convert('RGB')
-            img.save(save_path)
-            return save_path
+            return img
 
         elif control_type == 'line':
             self.debug_print("Generating line control")
@@ -146,62 +215,33 @@ class ControlGenerator:
             # img = img.filter(ImageFilter.GaussianBlur(radius=1))
             img = img.point(lambda p: p > 128 and 255)
             img = img.convert('RGB')
-            img.save(save_path)
-            return save_path
+            return img
         elif control_type in ['inpaint', 'mask']:
             self.debug_print("Generating inpaint/mask control")
-            img = image.copy()
-            if self.control_bg_remover is None:
-                from transformers import AutoModelForImageSegmentation
-                self.control_bg_remover = AutoModelForImageSegmentation.from_pretrained(
-                    'ZhengPeng7/BiRefNet_HR',
-                    trust_remote_code=True,
-                    revision="a7a562f6fd16021180f2f4348f4de003a2d3d1e1",
-                    torch_dtype=torch.float16
-                ).to(device)
-                self.control_bg_remover.eval()
-
-            image_size = (1024, 1024)
-            transform_image = transforms.Compose([
-                transforms.Resize(image_size),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [
-                                     0.229, 0.224, 0.225])
-            ])
-
-            input_images = transform_image(img).unsqueeze(
-                0).to('cuda').to(torch.float16)
-
-            # Prediction
-            preds = self.control_bg_remover(input_images)[-1].sigmoid().cpu()
-            pred = preds[0].squeeze()
-            pred_pil = transforms.ToPILImage()(pred)
-            mask = pred_pil.resize(img.size)
-            if control_type == 'inpaint':
-                # inpainting feature currently only supports "erased" section desired to inpaint
-                mask = ImageOps.invert(mask)
-                img.putalpha(mask)
-                save_path = os.path.join(
-                    coltrols_folder, f"{file_name_no_ext}.{control_type}.webp")
-            else:
-                img = mask
-                img = img.convert('RGB')
-            img.save(save_path)
-            return save_path
+            # delegate to the staged methods so this matches the threaded path
+            payload = self.preprocess(image, control_type)
+            result = self.run_inference(payload, control_type)
+            return self.postprocess(result, image, control_type)
         elif control_type in ['sapiens2_mask']:
             self.debug_print("Generating sapiens2_mask control")
             if self.control_bg_remover is None:
                 from toolkit.models.sapiens2 import Sapiens2Matting
                 self.control_bg_remover = Sapiens2Matting.from_pretrained(
-                    device=device, 
+                    device=device,
                     dtype=torch.float16
                 )
             img = image.copy()
             img = self.control_bg_remover(img)
-            img.save(save_path)
-            return save_path
+            return img
         else:
             raise Exception(f"Error: unknown control type {control_type}")
+
+    def _generate_control(self, img_path, control_type):
+        image = self.load_image(img_path)
+        out_image = self.run_control(image, control_type)
+        save_path = self.control_save_path(img_path, control_type)
+        self.save_control(out_image, save_path)
+        return save_path
 
     def cleanup(self):
         if self.control_depth_model is not None:
