@@ -3161,3 +3161,7 @@ class StableDiffusion:
 
     def get_model_to_train(self):
         return self.unet
+        
+    def scale_loss(self, loss):
+        # called to get the loss scaler for the model. Can be overridden in child classes
+        return loss

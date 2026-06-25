@@ -827,6 +827,9 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
             
             loss = loss * local_loss_scale
+            
+            # apply model specific loss scaling
+            loss = self.sd.scale_loss(loss)
                 
             do_weighted_timesteps = False
             if self.sd.is_flow_matching:
