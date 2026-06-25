@@ -220,6 +220,10 @@ class NetworkConfig:
         
         # start from a pretrained lora
         self.pretrained_lora_path = kwargs.get('pretrained_lora_path', None)
+        
+        # will create diffirential full weight modules for layers not conv/linear
+        # only useful in very special cases. 
+        self.all_layers = kwargs.get('all_layers', False)
 
 
 AdapterTypes = Literal['t2i', 'ip', 'ip+', 'clip', 'ilora', 'photo_maker', 'control_net', 'control_lora', 'i2v']

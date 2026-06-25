@@ -135,6 +135,104 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         # del self.org_module
 
 
+class FullModule(ToolkitModuleMixin, torch.nn.Module):
+    """
+    Full weight "lora" for layers that have no sensible low rank decomposition (norm layers, embeddings,
+    stray biases, etc). It does not have an up/down projection. It holds a trainable delta that is added to
+    the original weight (and bias) of the wrapped module. On save it emits `<name>.diff` (and `<name>.diff_b`
+    for bias) which ComfyUI applies as `weight += strength * diff`, so it merges directly into the model
+    weights without any extra adapter.
+    """
+
+    def __init__(
+            self,
+            lora_name,
+            org_module: torch.nn.Module,
+            multiplier=1.0,
+            network: 'LoRASpecialNetwork' = None,
+            **kwargs
+    ):
+        self.can_merge_in = True
+        ToolkitModuleMixin.__init__(self, network=network)
+        torch.nn.Module.__init__(self)
+        self.lora_name = lora_name
+        # keep the original module out of our state_dict (list hides it from nn.Module registration)
+        self.org_module = [org_module]
+        self.orig_module_ref = weakref.ref(org_module)
+        self.multiplier: Union[float, List[float]] = multiplier
+        # these are unused for full modules but the mixin/forward path expects them to exist
+        self.dropout = None
+        self.rank_dropout = None
+        self.module_dropout = None
+        self.is_checkpointing = False
+
+        # trainable delta, zero initialized so an untrained layer is a no-op (zero diff)
+        self.diff = torch.nn.Parameter(torch.zeros_like(org_module.weight))
+        # some modules (e.g. Embedding) have no bias attribute at all
+        org_bias = getattr(org_module, 'bias', None)
+        if org_bias is not None:
+            self.diff_b = torch.nn.Parameter(torch.zeros_like(org_bias))
+        else:
+            self.diff_b = None
+
+    def apply_to(self):
+        self.org_forward = self.org_module[0].forward
+        self.org_module[0].forward = self.forward
+
+    def forward(self, x, *args, **kwargs):
+        network: 'LoRASpecialNetwork' = self.network_ref()
+        skip = (not network.is_active) or network.is_merged_in or network._multiplier == 0 or network.is_lorm
+        if skip:
+            return self.org_forward(x, *args, **kwargs)
+
+        om = self.org_module[0]
+        multiplier = network.torch_multiplier
+        # weight space application can't be done per sample, so use the mean (same as the DoRA path)
+        mult = multiplier.mean() if isinstance(multiplier, torch.Tensor) else multiplier
+
+        orig_weight = om._parameters['weight']
+        eff_weight = orig_weight + (self.diff.to(orig_weight.device) * mult).to(orig_weight.dtype)
+
+        has_bias = self.diff_b is not None and om._parameters.get('bias', None) is not None
+        if has_bias:
+            orig_bias = om._parameters['bias']
+            eff_bias = orig_bias + (self.diff_b.to(orig_bias.device) * mult).to(orig_bias.dtype)
+
+        # temporarily swap in the effective weights so the original forward (norm/linear/etc) uses them.
+        # this keeps autograd flowing into our delta while supporting any layer type.
+        om._parameters['weight'] = eff_weight
+        if has_bias:
+            om._parameters['bias'] = eff_bias
+        try:
+            out = self.org_forward(x, *args, **kwargs)
+        finally:
+            om._parameters['weight'] = orig_weight
+            if has_bias:
+                om._parameters['bias'] = orig_bias
+        return out
+
+    @torch.no_grad()
+    def merge_in(self: 'FullModule', merge_weight=1.0):
+        if not self.can_merge_in:
+            return
+        org_sd = self.org_module[0].state_dict()
+        if 'weight._data' in org_sd:
+            # quantized weight, can't merge
+            return
+        weight = org_sd['weight']
+        org_sd['weight'] = (weight.float() + merge_weight * self.diff.float().to(weight.device)).to(weight.dtype)
+        if self.diff_b is not None and 'bias' in org_sd:
+            bias = org_sd['bias']
+            org_sd['bias'] = (bias.float() + merge_weight * self.diff_b.float().to(bias.device)).to(bias.dtype)
+        self.org_module[0].load_state_dict(org_sd)
+
+    def reset_weights(self: 'FullModule'):
+        with torch.no_grad():
+            self.diff.zero_()
+            if self.diff_b is not None:
+                self.diff_b.zero_()
+
+
 class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
     NUM_OF_BLOCKS = 12  # フルモデル相当でのup,downの層の数
 
@@ -342,6 +440,17 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         is_conv2d = child_module.__class__.__name__ in CONV_MODULES
                         is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
+                        # when all_layers is active, target every remaining weight bearing leaf
+                        # (norm layers, embeddings, stray biases, etc) with a full weight diff module
+                        all_layers = self.network_config is not None and getattr(self.network_config, 'all_layers', False)
+                        is_full_layer = (
+                            all_layers
+                            and not is_linear
+                            and not is_conv2d
+                            and len(list(child_module.children())) == 0
+                            and isinstance(getattr(child_module, 'weight', None), torch.nn.Parameter)
+                        )
+
 
                         lora_name = [prefix, name, child_name]
                         # filter out blank
@@ -465,6 +574,21 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                     lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape)]
                                 else:
                                     lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)]
+
+                        elif is_full_layer and not skip:
+                            if self.only_if_contains is not None:
+                                if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
+                                    continue
+
+                            lora = FullModule(
+                                lora_name,
+                                child_module,
+                                self.multiplier,
+                                network=self,
+                                parent=module,
+                            )
+                            loras.append(lora)
+                            lora_shape_dict[lora_name] = [list(lora.diff.shape)]
             return loras, skipped
 
         text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]

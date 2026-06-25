@@ -650,7 +650,13 @@ class ToolkitNetworkMixin:
                 load_key = load_key.replace('.', '$$')
                 load_key = load_key.replace('$$lora_down$$', '.lora_down.')
                 load_key = load_key.replace('$$lora_up$$', '.lora_up.')
-                
+                # full weight modules store their delta as `.diff` / `.diff_b` (anchored at the
+                # end so this is a no-op for any non-full-weight key)
+                if load_key.endswith('$$diff'):
+                    load_key = load_key[:-len('$$diff')] + '.diff'
+                elif load_key.endswith('$$diff_b'):
+                    load_key = load_key[:-len('$$diff_b')] + '.diff_b'
+
                 # patch lokr, not sure why we need to but whatever
                 if self.network_type.lower() == "lokr":
                     load_key = load_key.replace('$$lokr_w1', '.lokr_w1')
@@ -752,6 +758,10 @@ class ToolkitNetworkMixin:
             dtype = first_module.lokr_w1_a.dtype
             if hasattr(first_module.lokr_w1_a, '_memory_management_device'):
                 device = first_module.lokr_w1_a._memory_management_device
+        elif hasattr(first_module, 'diff'):
+            # full weight module
+            device = first_module.diff.device
+            dtype = first_module.diff.dtype
         else:
             raise ValueError("Unknown module type")
         with torch.no_grad():
