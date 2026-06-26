@@ -311,6 +311,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             is_lorm: bool = False,
             ignore_if_contains = None,
             only_if_contains = None,
+            full_if_contains = None,
             parameter_threshold: float = 0.0,
             attn_only: bool = False,
             target_lin_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE,
@@ -347,6 +348,13 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if ignore_if_contains is None:
             ignore_if_contains = []
         self.ignore_if_contains = ignore_if_contains
+        # full_if_contains: any layer (even linear/conv) whose name matches becomes a full weight
+        # module instead of a normal lora module
+        if full_if_contains is None:
+            full_if_contains = []
+        elif isinstance(full_if_contains, str):
+            full_if_contains = [full_if_contains]
+        self.full_if_contains = full_if_contains
         self.transformer_only = transformer_only
         self.base_model_ref = None
         if base_model is not None:
@@ -466,18 +474,6 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         is_conv2d = child_module.__class__.__name__ in CONV_MODULES
                         is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
-                        # when all_layers is active, target every remaining weight bearing leaf
-                        # (norm layers, embeddings, stray biases, etc) with a full weight diff module
-                        all_layers = self.network_config is not None and getattr(self.network_config, 'all_layers', False)
-                        is_full_layer = (
-                            all_layers
-                            and not is_linear
-                            and not is_conv2d
-                            and len(list(child_module.children())) == 0
-                            and isinstance(getattr(child_module, 'weight', None), torch.nn.Parameter)
-                        )
-
-
                         lora_name = [prefix, name, child_name]
                         # filter out blank
                         lora_name = [x for x in lora_name if x and x != ""]
@@ -490,6 +486,25 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                             lora_name = lora_name.replace(".", "$$")
                         else:
                             lora_name = lora_name.replace(".", "_")
+
+                        # decide if this should be a full weight module instead of a normal lora.
+                        # - all_layers: every remaining weight bearing leaf that isn't linear/conv
+                        #   (norm layers, embeddings, stray biases, etc)
+                        # - full_if_contains: any matching layer, INCLUDING linear/conv, overriding the
+                        #   normal lora for it
+                        all_layers = self.network_config is not None and getattr(self.network_config, 'all_layers', False)
+                        is_leaf_with_weight = (
+                            len(list(child_module.children())) == 0
+                            and isinstance(getattr(child_module, 'weight', None), torch.nn.Parameter)
+                        )
+                        matches_full_if_contains = len(self.full_if_contains) > 0 and (
+                            any([word in clean_name for word in self.full_if_contains])
+                            or any([word in lora_name for word in self.full_if_contains])
+                        )
+                        is_full_layer = is_leaf_with_weight and (
+                            matches_full_if_contains
+                            or (all_layers and not is_linear and not is_conv2d)
+                        )
 
                         skip = False
                         if any([word in clean_name for word in self.ignore_if_contains]):
@@ -537,7 +552,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                     if "single_blocks" not in lora_name and "double_blocks" not in lora_name:
                                         skip = True
 
-                        if (is_linear or is_conv2d) and not skip:
+                        if (is_linear or is_conv2d) and not skip and not is_full_layer:
 
                             if self.only_if_contains is not None:
                                 if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
