@@ -228,6 +228,32 @@ export interface SliderConfig {
   anchor_class?: string | null;
 }
 
+export interface FlowGRPOConfig {
+  clip_range: number;
+  adv_clip_max: number;
+  beta: number;
+  noise_level: number;
+  sde_type: 'sde' | 'cps';
+  timestep_fraction: number;
+  group_size: number;
+}
+
+export interface FlowGRPOLiveTaskConfig {
+  prompt: string;
+  negative_prompt?: string;
+  width: number;
+  height: number;
+  seed?: number | null;
+  ctrl_img?: string | null;
+  ctrl_img_1?: string | null;
+  ctrl_img_2?: string | null;
+  ctrl_img_3?: string | null;
+  guidance_scale: number;
+  num_inference_steps: number;
+  sampler: string;
+  scheduler?: string | null;
+}
+
 export interface ProcessConfig {
   type: string;
   sqlite_db_path?: string;
@@ -237,8 +263,9 @@ export interface ProcessConfig {
   device: string;
   network?: NetworkConfig;
   slider?: SliderConfig;
+  grpo?: FlowGRPOConfig;
   save: SaveConfig;
-  datasets: DatasetConfig[];
+  datasets?: DatasetConfig[];
   train: TrainConfig;
   logging: LoggingConfig;
   model: ModelConfig;

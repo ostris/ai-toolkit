@@ -11,7 +11,7 @@ import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { openConfirm } from '@/components/ConfirmModal';
-import { deleteJob, getTotalSteps, stopJob } from '@/utils/jobs';
+import { deleteJob, getTotalSteps, isFlowGRPOJob, stopJob } from '@/utils/jobs';
 import { Trash2 } from 'lucide-react';
 
 interface JobsTableProps {
@@ -135,6 +135,13 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
           title = (
             <>
               <small className="opacity-50">CAPTION: </small> {datasetPath}
+            </>
+          );
+        }
+        if (row.job_type === 'train' && isFlowGRPOJob(row)) {
+          title = (
+            <>
+              <small className="opacity-50">FLOW-GRPO: </small> {row.name}
             </>
           );
         }
