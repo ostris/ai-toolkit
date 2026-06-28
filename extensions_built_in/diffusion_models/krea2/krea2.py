@@ -27,7 +27,7 @@ from transformers import (
     Qwen2TokenizerFast,
     Qwen3VLForConditionalGeneration,
 )
-from optimum.quanto import freeze, QTensor
+from optimum.quanto import freeze
 
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
 from toolkit.lora_special import LoRASpecialNetwork
@@ -576,15 +576,15 @@ class Krea2Model(BaseModel):
     # Saving / bookkeeping
     # ------------------------------------------------------------------
     def save_model(self, output_path, meta, save_dtype):
+        from toolkit.util.quantize import dequantize_if_quantized
         if not output_path.endswith(".safetensors"):
             output_path = output_path + ".safetensors"
         transformer: SingleStreamDiT = unwrap_model(self.model)
         state_dict = transformer.state_dict()
         save_dict = {}
         for k, v in state_dict.items():
-            if isinstance(v, QTensor):
-                v = v.dequantize()
-            save_dict[k] = v.clone().to("cpu", dtype=save_dtype)
+            # dequantize any quantized (e.g. quanto/torchao) weights so we save plain full precision tensors
+            save_dict[k] = dequantize_if_quantized(v).clone().to("cpu", dtype=save_dtype)
         meta = get_meta_for_safetensors(meta, name="krea2")
         save_file(save_dict, output_path, metadata=meta)
 
