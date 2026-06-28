@@ -87,7 +87,13 @@ scheduler_config = {
 
 # Defaults; both overridable via model.model_kwargs.
 QWEN3_VL_PATH = "Qwen/Qwen3-VL-4B-Instruct"
-QWEN_IMAGE_VAE_PATH = "Qwen/Qwen-Image"
+# NOTE: the base "Qwen/Qwen-Image" VAE checkpoint ships with all-zero
+# quant_conv / post_quant_conv weights, which AutoencoderKLQwenImage applies on
+# encode AND decode -- that zeros the latent path, so encode returns pure noise
+# and decode returns a constant flat field (every sample comes out the same
+# muddy-brown image). "Qwen/Qwen-Image-2512" is the same VAE with those convs
+# populated correctly, so we use it here.
+QWEN_IMAGE_VAE_PATH = "Qwen/Qwen-Image-2512"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
@@ -229,6 +235,19 @@ class Krea2Model(BaseModel):
         vae = AutoencoderKLQwenImage.from_pretrained(
             vae_path, subfolder="vae", torch_dtype=self.vae_torch_dtype, token=HF_TOKEN
         )
+        # Guard against the known-bad Qwen-Image VAE checkpoint whose quant_conv /
+        # post_quant_conv weights are all zero: applying them zeros the latent path
+        # so encode -> noise and decode -> flat field, silently ruining training and
+        # samples. Fail loudly instead of wasting hours on muddy-brown output.
+        for cname in ("quant_conv", "post_quant_conv"):
+            conv = getattr(vae, cname, None)
+            if conv is not None and not torch.any(conv.weight != 0):
+                raise RuntimeError(
+                    f"The VAE at {vae_path!r} has an all-zero {cname}; its latent path "
+                    "is dead (samples would be a flat field and training would learn "
+                    "noise). Use 'Qwen/Qwen-Image-2512' (set model.model_kwargs.vae_path) "
+                    "or re-download a VAE with populated quant convs."
+                )
         vae.eval()
         vae.requires_grad_(False)
         return vae
