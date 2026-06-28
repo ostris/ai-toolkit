@@ -202,7 +202,6 @@ class DiffusionTrainer(SDTrainer):
             flush()
             if self.progress_bar is not None:
                 self.progress_bar.unpause()
-            self.save(self.step_num)
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:
