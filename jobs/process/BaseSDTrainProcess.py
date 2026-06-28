@@ -803,7 +803,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def hook_after_sd_init_before_load(self):
         pass
 
-    def get_latest_save_path(self, name=None, post=''):
+    def get_latest_save_path(self, name=None, post='', include_pretrained_lora=True):
         if name == None:
             name = self.job.name
         # get latest saved step
@@ -836,7 +836,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if len(paths) > 0:
                     latest_path = max(paths, key=os.path.getctime)
         
-        if latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
+        if include_pretrained_lora and latest_path is None and self.network_config is not None and self.network_config.pretrained_lora_path is not None:
             # set pretrained lora path as load path if we do not have a checkpoint to resume from
             if os.path.exists(self.network_config.pretrained_lora_path):
                 latest_path = self.network_config.pretrained_lora_path
@@ -1583,7 +1583,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.is_fine_tuning or self.train_config.merge_network_on_save:
             # get the latest checkpoint
             # check to see if we have a latest save
-            latest_save_path = self.get_latest_save_path()
+            # exclude pretrained_lora_path here so a pretrained lora is not loaded as full model
+            # weights. It is loaded as the initial lora later when building the network.
+            latest_save_path = self.get_latest_save_path(include_pretrained_lora=False)
 
             if latest_save_path is not None:
                 print_acc(f"#### IMPORTANT RESUMING FROM {latest_save_path} ####")
@@ -1873,6 +1875,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     print_acc(f"Loading from {latest_save_path}")
                     extra_weights = self.load_weights(latest_save_path)
                     self.network.multiplier = 1.0
+                elif self.train_config.merge_network_on_save and self.network_config.pretrained_lora_path is not None:
+                    # with merge_network_on_save, saved checkpoints are full models that get loaded as the
+                    # base model. Only load the pretrained lora as the initial lora when we are not resuming
+                    # from a saved checkpoint (otherwise it is already merged into the loaded model).
+                    resume_save_path = self.get_latest_save_path(include_pretrained_lora=False)
+                    if resume_save_path is None and os.path.exists(self.network_config.pretrained_lora_path):
+                        print_acc(f"Loading initial lora from pretrained lora path: {self.network_config.pretrained_lora_path}")
+                        extra_weights = self.load_weights(self.network_config.pretrained_lora_path)
+                        self.network.multiplier = 1.0
                 
                 if self.network_config.layer_offloading:
                     MemoryManager.attach(
