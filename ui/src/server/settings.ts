@@ -67,6 +67,19 @@ export const getHFToken = async () => {
   return token;
 };
 
+/**
+ * Load multiple settings keys in a single DB query.
+ * Returns a map of key → value (empty string if not set).
+ */
+export const getSettingsByKeys = async (keys: string[]): Promise<Record<string, string>> => {
+  const rows = await prisma.settings.findMany({ where: { key: { in: keys } } });
+  const result: Record<string, string> = Object.fromEntries(keys.map(k => [k, '']));
+  for (const row of rows) {
+    if (row.value) result[row.key] = row.value;
+  }
+  return result;
+};
+
 export const getDataRoot = async () => {
   const key = 'DATA_ROOT';
   let dataRoot = myCache.get(key) as string;
