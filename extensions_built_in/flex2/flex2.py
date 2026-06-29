@@ -379,7 +379,7 @@ class Flex2(BaseModel):
         with torch.no_grad():
             # inpainting input is 0-1 (bs, 4, h, w) on batch.inpaint_tensor
             # 4th channel is the mask with 1 being keep area and 0 being area to inpaint.
-            # todo handle dropout on a batch item level, this frops out the entire batch
+            # todo handle dropout on a batch item level, this drops out the entire batch
             do_dropout = random.random() < self.inpaint_dropout if self.inpaint_dropout > 0.0 else False
             # do random mask if we dont have one
             inpaint_tensor = batch.inpaint_tensor
@@ -395,7 +395,7 @@ class Flex2(BaseModel):
             
             if inpaint_tensor is None and not do_dropout and self.do_random_inpainting:
                 # generate a random one since we dont have one
-                # this will make random blobs, invert the blobs for now as we normanlly inpaint the alpha
+                # this will make random blobs, invert the blobs for now as we normally inpaint the alpha
                 inpaint_tensor = 1 - generate_random_mask(
                     batch_size=latents.shape[0],
                     height=latents.shape[2],
@@ -415,7 +415,7 @@ class Flex2(BaseModel):
                 else:
                     inpainting_tensor_mask = inpaint_tensor
                 
-                # # use our batch latents so we cna avoid encoding again
+                # # use our batch latents so we can avoid encoding again
                 inpainting_latent = batch.latents
                 
                 # resize the mask to match the new encoded size
@@ -444,10 +444,10 @@ class Flex2(BaseModel):
                     inpainting_tensor_mask = 1 - inpainting_tensor_mask
                 
                 # mask out the inpainting area, it is currently 0 for inpaint area, and 1 for keep area
-                # we are zeroing our the latents in the inpaint area not on the pixel space.
+                # we are zeroing out the latents in the inpaint area not on the pixel space.
                 inpainting_latent = inpainting_latent * inpainting_tensor_mask
                 
-                # do the random dialation after the mask is applied so it does not match perfectly. 
+                # do the random dilation after the mask is applied so it does not match perfectly.
                 # this will make the model learn to prevent weird edges
                 if self.random_dialate_mask:
                     inpainting_tensor_mask = random_dialate_mask(
@@ -460,7 +460,7 @@ class Flex2(BaseModel):
                 # leave the mask as 0-1 and concat on channel of latents
                 inpainting_latent = torch.cat((inpainting_latent, inpainting_tensor_mask), dim=1)
             else:
-                # we have iinpainting but didnt get a control. or we are doing a dropout
+                # we have inpainting but didnt get a control. or we are doing a dropout
                 # the input needs to be all zeros for the latents and all 1s for the mask
                 inpainting_latent = torch.zeros_like(latents)
                 # add ones for the mask since we are technically inpainting everything

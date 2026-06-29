@@ -574,7 +574,7 @@ class DoubleStreamBlock(nn.Module):
         attn = attention(q, k, v, pe=pe, mask=mask)
         txt_attn, img_attn = attn[:, : txt.shape[1]], attn[:, txt.shape[1] :]
 
-        # calculate the img bloks
+        # calculate the img blocks
         # replaced with compiled fn
         # img = img + img_mod1.gate * self.img_attn.proj(img_attn)
         # img = img + img_mod2.gate * self.img_mlp((1 + img_mod2.scale) * self.img_norm2(img) + img_mod2.shift)
@@ -589,7 +589,7 @@ class DoubleStreamBlock(nn.Module):
             ),
         )
 
-        # calculate the txt bloks
+        # calculate the txt blocks
         # replaced with compiled fn
         # txt = txt + txt_mod1.gate * self.txt_attn.proj(txt_attn)
         # txt = txt + txt_mod2.gate * self.txt_mlp((1 + txt_mod2.scale) * self.txt_norm2(txt) + txt_mod2.shift)

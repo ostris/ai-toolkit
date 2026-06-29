@@ -478,7 +478,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         # filter out blank
                         lora_name = [x for x in lora_name if x and x != ""]
                         lora_name = ".".join(lora_name)
-                        # if it doesnt have a name, it wil have two dots
+                        # if it doesnt have a name, it will have two dots
                         lora_name.replace("..", ".")
                         clean_name = lora_name
                         if self.peft_format:

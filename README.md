@@ -95,8 +95,8 @@ pip install -r requirements.txt
 MacOS:
 
 Experimental support for Silicon Macs is available. I do not have a Mac with enough RAM to fully test this
-so please let me know if there are issues. There is a convience script to install and run on MacOS 
-locates at `./run_mac.zsh` that will install the dependencies locally and run the UI. To run this, 
+so please let me know if there are issues. There is a convenience script to install and run on MacOS
+located at `./run_mac.zsh` that will install the dependencies locally and run the UI. To run this,
 do the following:
 
 ```bash
@@ -226,7 +226,7 @@ pip install --upgrade accelerate transformers diffusers huggingface_hub #Optiona
 
 ### Screenshot from Modal
 
-<img width="1728" alt="Modal Traning Screenshot" src="https://github.com/user-attachments/assets/7497eb38-0090-49d6-8ad9-9c8ea7b5388b">
+<img width="1728" alt="Modal Training Screenshot" src="https://github.com/user-attachments/assets/7497eb38-0090-49d6-8ad9-9c8ea7b5388b">
 
 ---
 

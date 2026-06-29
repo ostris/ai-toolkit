@@ -94,7 +94,7 @@ def standardize_images(images):
     return standardized_images
 
 def clean_caption(caption):
-    # this doesnt make any sense anymore in a world that is not based on comma seperated tokens
+    # this doesnt make any sense anymore in a world that is not based on comma separated tokens
     # # remove any newlines
     # caption = caption.replace('\n', ', ')
     # # remove new lines for all operating systems
@@ -506,7 +506,7 @@ class ImageProcessingDTOMixin:
             frames_to_extract = []
             
             if self.dataset_config.auto_frame_count:
-                # allow for any length video here but make sure it is temporally compressable.
+                # allow for any length video here but make sure it is temporally compressible.
                 vid_length_seconds = total_frames / video_fps
                 
                 desired_num_frames = int(vid_length_seconds * self.dataset_config.fps)
@@ -904,7 +904,7 @@ class InpaintControlFileItemDTOMixin:
         try:
             # image must have alpha channel for inpaint
             img = Image.open(self.inpaint_path)
-            # make sure has aplha
+            # make sure has alpha
             if img.mode != 'RGBA':
                 return
             img = exif_transpose(img)
