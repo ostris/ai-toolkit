@@ -8,6 +8,7 @@ import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
 import { openCaptionDatasetModal } from '@/components/CaptionDatasetModal';
+import { formatMessage, useLanguage } from './LanguageProvider';
 
 interface JobActionBarProps {
   job: Job;
@@ -30,6 +31,7 @@ export default function JobActionBar({
   autoStartQueue = false,
   menuAnchor = 'bottom',
 }: JobActionBarProps) {
+  const { t } = useLanguage();
   const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
 
   if (!afterDelete) afterDelete = onRefresh;
@@ -70,10 +72,10 @@ export default function JobActionBar({
           onClick={() => {
             if (!canStop) return;
             openConfirm({
-              title: 'Stop Job',
-              message: `Are you sure you want to stop the job "${job.name}"? You CAN resume later.`,
+              title: t('jobActions.stopJob'),
+              message: formatMessage(t('jobActions.stopJobMessage'), { name: job.name }),
               type: 'info',
-              confirmText: 'Stop',
+              confirmText: t('jobActions.stop'),
               onConfirm: async () => {
                 await stopJob(job.id);
                 if (onRefresh) onRefresh();
@@ -113,15 +115,15 @@ export default function JobActionBar({
       )}
       <Button
         onClick={() => {
-          let message = `Are you sure you want to delete the job "${job.name}"? This will also permanently remove it from your disk.`;
+          let message = formatMessage(t('jobActions.deleteJobMessage'), { name: job.name });
           if (job.status === 'running') {
-            message += ' WARNING: The job is currently running. You should stop it first if you can.';
+            message += ` ${t('jobActions.deleteRunningWarning')}`;
           }
           openConfirm({
-            title: 'Delete Job',
+            title: t('jobActions.deleteJob'),
             message: message,
             type: 'warning',
-            confirmText: 'Delete',
+            confirmText: t('common.delete'),
             onConfirm: async () => {
               if (job.status === 'running') {
                 try {
@@ -155,7 +157,7 @@ export default function JobActionBar({
                 className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
               >
                 <Copy className="w-4 h-4" />
-                Clone Job
+                {t('jobActions.cloneJob')}
               </Link>
             </MenuItem>
           )}
@@ -169,7 +171,7 @@ export default function JobActionBar({
                 }}
               >
                 <Save className="w-4 h-4" />
-                Save Next Step
+                {t('jobActions.saveNextStep')}
               </div>
             </MenuItem>
           )}
@@ -177,12 +179,12 @@ export default function JobActionBar({
             <div
               className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
               onClick={() => {
-                let message = `Are you sure you want to mark this job as stopped? This will set the job status to 'stopped' if the status is hung. Only do this if you are 100% sure the job is stopped. This will NOT stop the job.`;
+                let message = t('jobActions.markStoppedMessage');
                 openConfirm({
-                  title: 'Mark Job as Stopped',
+                  title: t('jobActions.markStopped'),
                   message: message,
                   type: 'warning',
-                  confirmText: 'Mark as Stopped',
+                  confirmText: t('jobActions.markStopped'),
                   onConfirm: async () => {
                     await markJobAsStopped(job.id);
                     onRefresh && onRefresh();
@@ -191,7 +193,7 @@ export default function JobActionBar({
               }}
             >
               <OctagonX className="w-4 h-4" />
-              Mark as Stopped
+              {t('jobActions.markStopped')}
             </div>
           </MenuItem>
         </MenuItems>

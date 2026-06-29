@@ -4,6 +4,7 @@ import { CaptionDatasetModal, openCaptionDatasetModal } from '@/components/Capti
 import useJobByRef from '@/hooks/useJobByRef';
 import Link from 'next/link';
 import { Loader2 } from 'lucide-react';
+import { useLanguage } from './LanguageProvider';
 
 type AutoCaptionButtonProps = {
   datasetPath: string;
@@ -12,6 +13,7 @@ type AutoCaptionButtonProps = {
 };
 
 export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning, captionExt }: AutoCaptionButtonProps) {
+  const { t } = useLanguage();
   const { job, status, refreshJob } = useJobByRef(datasetPath, 5000);
   useEffect(() => {
     if (setIsAutoCaptioning) {
@@ -26,8 +28,8 @@ export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning, ca
         className="text-white bg-gray-400 px-2 sm:px-3 py-1 rounded-md mr-1 sm:mr-2 inline-flex items-center gap-1 sm:gap-1.5 text-sm sm:text-base whitespace-nowrap"
       >
         <Loader2 className="w-4 h-4 animate-spin" />
-        <span className="hidden sm:inline">Auto Captioning...</span>
-        <span className="sm:hidden">Captioning</span>
+        <span className="hidden sm:inline">{t('dataset.autoCaptioning')}</span>
+        <span className="sm:hidden">{t('dataset.captioning')}</span>
       </Link>
     );
   }
@@ -44,8 +46,8 @@ export default function AutoCaptionButton({ datasetPath, setIsAutoCaptioning, ca
         )
       }
     >
-      <span className="hidden sm:inline">Auto Caption</span>
-      <span className="sm:hidden">Caption</span>
+      <span className="hidden sm:inline">{t('dataset.autoCaption')}</span>
+      <span className="sm:hidden">{t('dataset.caption')}</span>
     </Button>
   );
 }

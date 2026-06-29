@@ -17,6 +17,7 @@ import CaptionSimpleJob from '@/components/CaptionSimpleJob';
 import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import { SelectInput } from '@/components/formInputs';
 import { Loader2 } from 'lucide-react';
+import { useLanguage } from './LanguageProvider';
 
 export interface CaptionDatasetModalState {
   datasetPath: string;
@@ -43,6 +44,7 @@ export const openCaptionDatasetModal = (
 };
 
 export const CaptionDatasetModal: React.FC = () => {
+  const { t } = useLanguage();
   const [modalInfo, setModalInfo] = captionDatasetModalState.use();
   const [jobConfig, setJobConfig] = useNestedState<CaptionJobConfig>(objectCopy(defaultCaptionJobConfig));
   const [gpuIDs, setGpuIDs] = useState<string | null>(null);
@@ -125,7 +127,7 @@ export const CaptionDatasetModal: React.FC = () => {
   const saveJob = async () => {
     if (isSavingRef.current) return;
     if (!modalInfo?.datasetPath) {
-      alert('Dataset path is missing. Please try again.');
+      alert(t('dataset.datasetPathMissing'));
       return;
     }
     isSavingRef.current = true;
@@ -153,9 +155,9 @@ export const CaptionDatasetModal: React.FC = () => {
       })
       .catch(error => {
         if (error.response?.status === 409) {
-          alert('A caption job for this dataset already exists. Please check your jobs list.');
+          alert(t('dataset.captionJobExists'));
         } else {
-          alert('Failed to save job. Please try again.');
+          alert(t('jobs.saveFailed'));
         }
         console.log('Error saving training:', error);
         isSavingRef.current = false;
@@ -171,7 +173,7 @@ export const CaptionDatasetModal: React.FC = () => {
     }`;
 
   return (
-    <Modal isOpen={open} onClose={handleClose} title="Caption Dataset" size={activeTab === 'advanced' ? 'xl' : 'lg'}>
+    <Modal isOpen={open} onClose={handleClose} title={t('dataset.captionDataset')} size={activeTab === 'advanced' ? 'xl' : 'lg'}>
       <div className="relative space-y-4 text-gray-200">
         {showLoadingOverlay && (
           <div className="absolute -left-6 -right-6 -top-4 -bottom-4 z-10 flex items-center justify-center backdrop-blur-sm bg-gray-900/40">
@@ -180,10 +182,10 @@ export const CaptionDatasetModal: React.FC = () => {
         )}
         <div className="flex items-center border-b border-gray-700 -mt-2">
           <button type="button" className={tabButtonClass('simple')} onClick={() => setActiveTab('simple')}>
-            Simple
+            {t('common.simple')}
           </button>
           <button type="button" className={tabButtonClass('advanced')} onClick={() => setActiveTab('advanced')}>
-            Advanced
+            {t('common.advanced')}
           </button>
           <div className="flex-1" />
           {activeTab === 'advanced' && showGPUSelect && (
@@ -223,13 +225,13 @@ export const CaptionDatasetModal: React.FC = () => {
               className="rounded-md bg-gray-700 px-4 py-2 text-gray-200 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500"
               onClick={handleClose}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              Add to Queue
+              {t('dataset.addToQueue')}
             </button>
           </div>
         </form>

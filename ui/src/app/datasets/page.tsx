@@ -12,9 +12,11 @@ import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { apiClient } from '@/utils/api';
 import { useRouter } from 'next/navigation';
+import { formatMessage, useLanguage } from '@/components/LanguageProvider';
 
 export default function Datasets() {
   const router = useRouter();
+  const { t } = useLanguage();
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
@@ -27,7 +29,7 @@ export default function Datasets() {
 
   const columns: TableColumn[] = [
     {
-      title: 'Dataset Name',
+      title: t('datasets.datasetName'),
       key: 'name',
       render: row => (
         <Link href={`/datasets/${row.name}`} className="text-gray-200 hover:text-gray-100">
@@ -36,7 +38,7 @@ export default function Datasets() {
       ),
     },
     {
-      title: 'Actions',
+      title: t('common.actions'),
       key: 'actions',
       className: 'w-20 text-right',
       render: row => (
@@ -52,10 +54,10 @@ export default function Datasets() {
 
   const handleDeleteDataset = (datasetName: string) => {
     openConfirm({
-      title: 'Delete Dataset',
-      message: `Are you sure you want to delete the dataset "${datasetName}"? This action cannot be undone.`,
+      title: t('datasets.deleteDataset'),
+      message: formatMessage(t('datasets.deleteDatasetMessage'), { name: datasetName }),
       type: 'warning',
-      confirmText: 'Delete',
+      confirmText: t('common.delete'),
       onConfirm: () => {
         apiClient
           .post('/api/datasets/delete', { name: datasetName })
@@ -85,14 +87,14 @@ export default function Datasets() {
 
   const openNewDatasetModal = () => {
     openConfirm({
-      title: 'New Dataset',
-      message: 'Enter the name of the new dataset:',
+      title: t('datasets.newDataset'),
+      message: t('datasets.newDatasetMessage'),
       type: 'info',
-      confirmText: 'Create',
-      inputTitle: 'Dataset Name',
+      confirmText: t('common.create'),
+      inputTitle: t('datasets.datasetName'),
       onConfirm: async (name?: string) => {
         if (!name) {
-          console.error('Dataset name is required.');
+          console.error(t('datasets.nameRequired'));
           return;
         }
         try {
@@ -114,7 +116,7 @@ export default function Datasets() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-base sm:text-lg">Datasets</h1>
+          <h1 className="text-base sm:text-lg">{t('datasets.title')}</h1>
         </div>
         <div className="flex-1"></div>
         <div>
@@ -122,8 +124,8 @@ export default function Datasets() {
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md hover:bg-slate-500 transition-colors text-sm sm:text-base whitespace-nowrap"
             onClick={() => openNewDatasetModal()}
           >
-            <span className="sm:hidden">+ New</span>
-            <span className="hidden sm:inline">New Dataset</span>
+            <span className="sm:hidden">{t('datasets.newShort')}</span>
+            <span className="hidden sm:inline">{t('datasets.newDataset')}</span>
           </Button>
         </div>
       </TopBar>
@@ -140,16 +142,16 @@ export default function Datasets() {
       <Modal
         isOpen={isNewDatasetModalOpen}
         onClose={() => setIsNewDatasetModalOpen(false)}
-        title="New Dataset"
+        title={t('datasets.newDataset')}
         size="md"
       >
         <div className="space-y-4 text-gray-200">
           <form onSubmit={handleCreateDataset}>
             <div className="text-sm text-gray-400">
-              This will create a new folder with the name below in your dataset folder.
+              {t('datasets.createFolderHelp')}
             </div>
             <div className="mt-4">
-              <TextInput label="Dataset Name" value={newDatasetName} onChange={value => setNewDatasetName(value)} />
+              <TextInput label={t('datasets.datasetName')} value={newDatasetName} onChange={value => setNewDatasetName(value)} />
             </div>
 
             <div className="mt-6 flex justify-end space-x-3">
@@ -158,13 +160,13 @@ export default function Datasets() {
                 className="rounded-md bg-gray-700 px-4 py-2 text-gray-200 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500"
                 onClick={() => setIsNewDatasetModalOpen(false)}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                Confirm
+                {t('common.confirm')}
               </button>
             </div>
           </form>

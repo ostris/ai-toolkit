@@ -4,10 +4,20 @@ import { useEffect, useState } from 'react';
 import useSettings from '@/hooks/useSettings';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
+import { useLanguage } from '@/components/LanguageProvider';
 
 export default function Settings() {
   const { settings, setSettings } = useSettings();
+  const { locale, setLocale, t } = useLanguage();
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [languages, setLanguages] = useState<{ locale: string; name: string }[]>([{ locale: 'en_US', name: 'English' }]);
+
+  useEffect(() => {
+    apiClient
+      .get('/api/lang')
+      .then(res => setLanguages(res.data))
+      .catch(error => console.error('Error fetching languages:', error));
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +46,7 @@ export default function Settings() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-base sm:text-lg">Settings</h1>
+          <h1 className="text-base sm:text-lg">{t('settings.title')}</h1>
         </div>
         <div className="flex-1"></div>
       </TopBar>
@@ -46,15 +56,31 @@ export default function Settings() {
             <div>
               <div className="space-y-4">
                 <div>
+                  <label htmlFor="language" className="block text-sm font-medium mb-2">
+                    {t('common.language')}
+                  </label>
+                  <select
+                    id="language"
+                    value={locale}
+                    onChange={e => setLocale(e.target.value)}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                  >
+                    {languages.map(language => (
+                      <option key={language.locale} value={language.locale}>
+                        {language.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label htmlFor="HF_TOKEN" className="block text-sm font-medium mb-2">
-                    Hugging Face Token
+                    {t('settings.huggingFaceToken')}
                     <div className="text-gray-500 text-sm ml-1">
-                      Create a Read token on{' '}
+                      {t('settings.huggingFaceTokenHelp')}{' '}
                       <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
-                        {' '}
                         Huggingface
-                      </a>{' '}
-                      if you need to access gated/private models.
+                      </a>
                     </div>
                   </label>
                   <input
@@ -64,16 +90,15 @@ export default function Settings() {
                     value={settings.HF_TOKEN}
                     onChange={handleChange}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
-                    placeholder="Enter your Hugging Face token"
+                    placeholder={t('settings.huggingFaceTokenPlaceholder')}
                   />
                 </div>
 
                 <div>
                   <label htmlFor="TRAINING_FOLDER" className="block text-sm font-medium mb-2">
-                    Training Folder Path
+                    {t('settings.trainingFolderPath')}
                     <div className="text-gray-500 text-sm ml-1">
-                      We will store your training information here. Must be an absolute path. If blank, it will default
-                      to the output folder in the project root.
+                      {t('settings.trainingFolderHelp')}
                     </div>
                   </label>
                   <input
@@ -83,19 +108,16 @@ export default function Settings() {
                     value={settings.TRAINING_FOLDER}
                     onChange={handleChange}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
-                    placeholder="Enter training folder path"
+                    placeholder={t('settings.trainingFolderPlaceholder')}
                   />
                 </div>
 
                 <div>
                   <label htmlFor="DATASETS_FOLDER" className="block text-sm font-medium mb-2">
-                    Dataset Folder Path
+                    {t('settings.datasetFolderPath')}
                     <div className="text-gray-500 text-sm ml-1">
-                      Where we store and find your datasets.{' '}
-                      <span className="text-orange-800">
-                        Warning: This software may modify datasets so it is recommended you keep a backup somewhere else
-                        or have a dedicated folder for this software.
-                      </span>
+                      {t('settings.datasetFolderHelp')}{' '}
+                      <span className="text-orange-800">{t('settings.datasetFolderWarning')}</span>
                     </div>
                   </label>
                   <input
@@ -105,7 +127,7 @@ export default function Settings() {
                     value={settings.DATASETS_FOLDER}
                     onChange={handleChange}
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
-                    placeholder="Enter datasets folder path"
+                    placeholder={t('settings.datasetFolderPlaceholder')}
                   />
                 </div>
               </div>
@@ -117,11 +139,11 @@ export default function Settings() {
             disabled={status === 'saving'}
             className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {status === 'saving' ? 'Saving...' : 'Save Settings'}
+            {status === 'saving' ? t('common.saving') : t('common.saveSettings')}
           </button>
 
-          {status === 'success' && <p className="text-green-500 text-center">Settings saved successfully!</p>}
-          {status === 'error' && <p className="text-red-500 text-center">Error saving settings. Please try again.</p>}
+          {status === 'success' && <p className="text-green-500 text-center">{t('settings.saved')}</p>}
+          {status === 'error' && <p className="text-red-500 text-center">{t('settings.saveError')}</p>}
         </form>
       </MainContent>
     </>
