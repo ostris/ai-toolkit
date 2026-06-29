@@ -2,8 +2,6 @@
 
 AI Toolkit is an easy to use all in one training suite for diffusion models. I try to support all the latest models on consumer grade hardware. Image and video models. It can be run as a GUI or CLI. It is designed to be easy to use but still have every feature imaginable. Free and open source.
 
-
-
 ## Supported Models
 
 ### Image
@@ -28,6 +26,7 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 - [NucleusAI/Nucleus-Image](https://huggingface.co/NucleusAI/Nucleus-Image) (Nucleus-Image)
 - [HiDream-ai/HiDream-O1-Image](https://huggingface.co/HiDream-ai/HiDream-O1-Image) (HiDream O1)
 - [Photoroom/prxpixel-t2i](https://huggingface.co/Photoroom/prxpixel-t2i) (PRXPixel)
+- [krea/Krea-2-Raw](https://huggingface.co/krea/Krea-2-Raw) (Krea 2)
 
 ### Instruction / Edit
 - [black-forest-labs/FLUX.1-Kontext-dev](https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev) (FLUX.1-Kontext-dev)
@@ -46,7 +45,6 @@ AI Toolkit is an easy to use all in one training suite for diffusion models. I t
 - [Wan-AI/Wan2.2-TI2V-5B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers) (Wan 2.2 TI2V 5B)
 - [Lightricks/LTX-2](https://huggingface.co/Lightricks/LTX-2) (LTX-2)
 - [Lightricks/LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3) (LTX-2.3)
-- [krea/Krea-2-Raw](https://huggingface.co/krea/Krea-2-Raw) (Krea 2)
 
 ### Audio
 - [ACE-Step/Ace-Step1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) (Ace Step 1.5)
@@ -63,7 +61,6 @@ Requirements:
 - Nvidia GPU with enough ram to do what you need
 - python venv
 - git
-
 
 Linux:
 ```bash
@@ -105,7 +102,6 @@ cd ai-toolkit
 chmod +x run_mac.zsh
 ./run_mac.zsh
 ```
-
 
 # AI Toolkit UI
 
@@ -301,7 +297,6 @@ To learn more about LoKr, read more about it at [KohakuBlueleaf/LyCORIS](https:/
 ```
 
 Everything else should work the same including layer targeting.
-
 
 ## Support My Work
 
