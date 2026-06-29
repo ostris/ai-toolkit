@@ -146,8 +146,17 @@ class AceStep15Model(BaseAudioModel):
         self.vae = models["vae"]
         
         # move back to device
-        self.model.to(device)
-        self.text_encoder.to(device)
+        if self.model_config.low_vram:
+            # Honor low_vram: keep the large transformer and text encoder on the CPU
+            # and let them be moved to the GPU on demand (see get_prompt_embeds,
+            # get_noise_prediction, generate_single_audio). Only the VAE needs to be
+            # resident for latent caching, which otherwise OOMs when the full quantized
+            # DiT + text encoder are also occupying VRAM.
+            self.model.to("cpu")
+            self.text_encoder.to("cpu")
+        else:
+            self.model.to(device)
+            self.text_encoder.to(device)
         self.vae.to(device)
         self.tokenizer = models["tokenizer"]
         
