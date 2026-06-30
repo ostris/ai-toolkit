@@ -334,7 +334,8 @@ class SingleStreamBlock(nn.Module):
 
         # compute activation in mlp stream, cat again and run second linear layer
         output = self.linear2(torch.cat((attn, self.mlp_act(mlp)), 2))
-        return x + mod_gate * output
+        # FLUX.2-klein-base fix: clamp residual stream (see DoubleStreamBlock)
+        return (x + mod_gate * output).clamp(-30000.0, 30000.0)
 
 
 class DoubleStreamBlock(nn.Module):
@@ -429,17 +430,18 @@ class DoubleStreamBlock(nn.Module):
         attn = attention(q, k, v, pe)
         txt_attn, img_attn = attn[:, : txt_q.shape[2]], attn[:, txt_q.shape[2] :]
 
-        # calculate the img blocks
-        img = img + img_mod1_gate * self.img_attn.proj(img_attn)
-        img = img + img_mod2_gate * self.img_mlp(
+        # FLUX.2-klein-base fix: clamp residual stream to bf16-safe range.
+        # Without this, txt overflows to +Inf around the 8th block.
+        _CLAMP = 30000.0
+        img = (img + img_mod1_gate * self.img_attn.proj(img_attn)).clamp(-_CLAMP, _CLAMP)
+        img = (img + img_mod2_gate * self.img_mlp(
             (1 + img_mod2_scale) * (self.img_norm2(img)) + img_mod2_shift
-        )
+        )).clamp(-_CLAMP, _CLAMP)
 
-        # calculate the txt blocks
-        txt = txt + txt_mod1_gate * self.txt_attn.proj(txt_attn)
-        txt = txt + txt_mod2_gate * self.txt_mlp(
+        txt = (txt + txt_mod1_gate * self.txt_attn.proj(txt_attn)).clamp(-_CLAMP, _CLAMP)
+        txt = (txt + txt_mod2_gate * self.txt_mlp(
             (1 + txt_mod2_scale) * (self.txt_norm2(txt)) + txt_mod2_shift
-        )
+        )).clamp(-_CLAMP, _CLAMP)
         return img, txt
 
 
