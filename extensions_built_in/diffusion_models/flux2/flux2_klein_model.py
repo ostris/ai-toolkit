@@ -1,4 +1,4 @@
-from .flux2_model import Flux2Model
+from .flux2_model import Flux2Model, HF_TOKEN
 from transformers import Qwen3ForCausalLM, Qwen2Tokenizer
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype
@@ -33,16 +33,22 @@ class Flux2KleinModel(Flux2Model):
         )
         # use the new format on this new model by default
         self.use_old_lokr_format = False
+        # Allow overriding the default Qwen3 checkpoint via model config (e.g. for
+        # community fine-tunes or gated HF repos). te_name_or_path is the canonical
+        # ModelConfig field; if set it takes precedence over the class-level default.
+        if model_config.te_name_or_path:
+            self.flux2_klein_te_path = model_config.te_name_or_path
 
     def load_te(self):
         if self.flux2_klein_te_path is None:
             raise ValueError("flux2_klein_te_path must be set for Flux2KleinModel")
         dtype = self.torch_dtype
-        self.print_and_status_update("Loading Qwen3")
+        self.print_and_status_update(f"Loading Qwen3 ({self.flux2_klein_te_path})")
 
         text_encoder: Qwen3ForCausalLM = Qwen3ForCausalLM.from_pretrained(
             self.flux2_klein_te_path,
             torch_dtype=dtype,
+            token=HF_TOKEN,
         )
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Qwen3")
@@ -63,8 +69,30 @@ class Flux2KleinModel(Flux2Model):
                 offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
-        tokenizer = Qwen2Tokenizer.from_pretrained(self.flux2_klein_te_path)
+        # Some community fine-tunes (abliterated, merged, etc.) strip chat_template
+        # from tokenizer_config.json. The transformers Jinja renderer then falls back
+        # to a generic template that calls .startswith() on a bool and crashes at
+        # inference time. Detect the missing template early and fall back to loading
+        # the tokenizer from the canonical Qwen3 class default, which is always complete.
+        # The model weights loaded above are unaffected.
+        tokenizer = Qwen2Tokenizer.from_pretrained(
+            self.flux2_klein_te_path, token=HF_TOKEN
+        )
+        if not getattr(tokenizer, "chat_template", None):
+            fallback_path = self.__class__.flux2_klein_te_path
+            self.print_and_status_update(
+                f"Tokenizer at '{self.flux2_klein_te_path}' has no chat_template; "
+                f"falling back to '{fallback_path}' for tokenizer"
+            )
+            tokenizer = Qwen2Tokenizer.from_pretrained(fallback_path, token=HF_TOKEN)
         return text_encoder, tokenizer
+
+    def get_prompt_embeds(self, prompt, **kwargs):
+        # Guard against None or non-string values (e.g. an empty negative prompt
+        # passed as False) that cause the Qwen3 chat template to crash.
+        if not isinstance(prompt, str):
+            prompt = "" if not prompt else str(prompt)
+        return super().get_prompt_embeds(prompt, **kwargs)
 
 
 class Flux2Klein4BModel(Flux2KleinModel):
