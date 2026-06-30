@@ -528,6 +528,13 @@ def encode_prompts_flux(
     device = text_encoder[0].device
     dtype = text_encoder[0].dtype
 
+    # Normalize prompts: ensure every element is a non-None string so the
+    # CLIP/T5 tokenizers never receive None or False as input
+    if isinstance(prompts, list):
+        prompts = [str(p) if p is not None and p is not False else '' for p in prompts]
+    else:
+        prompts = [str(prompts) if prompts is not None and prompts is not False else '']
+
     batch_size = len(prompts)
 
     # clip
