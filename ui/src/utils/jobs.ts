@@ -34,6 +34,22 @@ export const stopJob = (jobID: string) => {
   });
 };
 
+export const saveAndStopJob = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/save_and_stop`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job stopped with checkpoint:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error stopping job with checkpoint:', error);
+        reject(error);
+      });
+  });
+};
+
 export const deleteJob = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

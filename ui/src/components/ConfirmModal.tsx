@@ -15,7 +15,8 @@ export interface ConfirmState {
   confirmText?: string;
   type?: 'danger' | 'warning' | 'info';
   inputTitle?: string;
-  onConfirm?: (value?: string) => void | Promise<void>;
+  checkboxLabel?: string;
+  onConfirm?: (checked?: boolean, value?: string) => void | Promise<void>;
   onCancel?: () => void;
 }
 
@@ -29,6 +30,7 @@ export default function ConfirmModal() {
   const [confirm, setConfirm] = confirmstate.use();
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState<string>('');
+  const [checkboxChecked, setCheckboxChecked] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useFromNull(() => {
@@ -64,7 +66,7 @@ export default function ConfirmModal() {
 
   const onConfirm = () => {
     if (confirm?.onConfirm) {
-      confirm.onConfirm(inputValue);
+      confirm.onConfirm(checkboxChecked, inputValue);
     }
     setIsOpen(false);
   };
@@ -159,6 +161,17 @@ export default function ConfirmModal() {
                   </DialogTitle>
                   <div className="mt-2">
                     <p className="text-sm text-gray-200">{confirm?.message}</p>
+                    {confirm?.checkboxLabel && (
+                      <label className="mt-4 flex items-center gap-2 text-sm text-gray-200 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={checkboxChecked}
+                          onChange={(e) => setCheckboxChecked(e.target.checked)}
+                          className="size-4 rounded accent-blue-500 cursor-pointer"
+                        />
+                        {confirm.checkboxLabel}
+                      </label>
+                    )}
                     <div className={classNames('mt-4 w-full', { hidden: !confirm?.inputTitle })}>
                       <form onSubmit={(e) => {
                         e.preventDefault()
