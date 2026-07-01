@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import path from 'path';
 import fs from 'fs';
+import type { FileHandle } from 'fs/promises';
 import { getTrainingFolder } from '@/server/settings';
 
 const prisma = new PrismaClient();
@@ -21,7 +22,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const jobFolder = path.join(trainingFolder, job.name);
   const logPath = path.join(jobFolder, 'log.txt');
 
-  if (!fs.existsSync(logPath)) {
+  try {
+    await fs.promises.access(logPath);
+  } catch {
     return NextResponse.json({ log: '', offset: 0, reset: true });
   }
 
@@ -31,28 +34,28 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const offsetParam = request.nextUrl.searchParams.get('offset');
   const offset = offsetParam === null ? NaN : parseInt(offsetParam, 10);
 
-  const readRange = (fd: number, start: number, end: number): string => {
+  const readRange = async (fh: FileHandle, start: number, end: number): Promise<string> => {
     const length = end - start;
     if (length <= 0) return '';
     const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, start);
+    await fh.read(buffer, 0, length, start);
     return buffer.toString('utf-8');
   };
 
   try {
-    const stats = fs.statSync(logPath);
+    const stats = await fs.promises.stat(logPath);
     const size = stats.size;
     // If the client's offset is past the current end, the log was reset/truncated
     // (e.g. a fresh run overwrote it) — fall back to a fresh tail load.
     const isReset = Number.isNaN(offset) || offset > size;
 
-    const fd = fs.openSync(logPath, 'r');
+    const fh = await fs.promises.open(logPath, 'r');
     try {
       if (isReset) {
         // Read only the tail of the file to avoid loading huge logs into memory.
         // Assume an average line length so we grab enough bytes to cover MAX_LINES.
         const start = Math.max(0, size - MAX_LINES * 512);
-        let log = readRange(fd, start, size);
+        let log = await readRange(fh, start, size);
         // Drop a partial first line if we started mid-file.
         if (start > 0) {
           const newlineIdx = log.indexOf('\n');
@@ -67,10 +70,10 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
         return NextResponse.json({ log, offset: size, reset: true });
       }
       // Incremental: return only the bytes appended since the last offset.
-      const log = readRange(fd, offset, size);
+      const log = await readRange(fh, offset, size);
       return NextResponse.json({ log, offset: size, reset: false });
     } finally {
-      fs.closeSync(fd);
+      await fh.close();
     }
   } catch (error) {
     console.error('Error reading log file:', error);

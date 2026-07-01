@@ -41,10 +41,8 @@ export async function POST(request: NextRequest) {
       return new NextResponse('Not a directory', { status: 400 });
     }
 
-    // delete current one if it exists
-    if (fs.existsSync(outputPath)) {
-      await fsp.unlink(outputPath);
-    }
+    // delete current one if it exists (force:true => no error if missing)
+    await fsp.rm(outputPath, { force: true });
 
     // Create write stream & archive
     await new Promise<void>((resolve, reject) => {

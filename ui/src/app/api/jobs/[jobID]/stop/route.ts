@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
+const execAsync = promisify(exec);
 const prisma = new PrismaClient();
 const isWindows = process.platform === 'win32';
 
@@ -30,8 +33,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
       if (isWindows) {
         // Windows doesn't support SIGINT for arbitrary processes.
         // Use taskkill with /T (tree) to send a CTRL+C-like termination.
-        const { execSync } = require('child_process');
-        execSync(`taskkill /PID ${job.pid} /T /F`, { stdio: 'ignore' });
+        await execAsync(`taskkill /PID ${job.pid} /T /F`, { windowsHide: true });
       } else {
         process.kill(job.pid, 'SIGINT');
       }

@@ -13,7 +13,9 @@ export async function POST(request: Request) {
     }
 
     // if img doesnt exist, ignore
-    if (!fs.existsSync(imgPath)) {
+    try {
+      await fs.promises.access(imgPath);
+    } catch {
       return NextResponse.json({ error: 'Image does not exist' }, { status: 404 });
     }
 
@@ -21,7 +23,7 @@ export async function POST(request: Request) {
     const captionExt = ((ext || 'txt') as string).replace(/^\.+/, '').trim() || 'txt';
     const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
     // save caption to file
-    fs.writeFileSync(captionPath, caption);
+    await fs.promises.writeFile(captionPath, caption);
 
     return NextResponse.json({ success: true });
   } catch (error) {

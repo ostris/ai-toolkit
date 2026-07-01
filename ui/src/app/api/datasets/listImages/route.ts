@@ -16,12 +16,14 @@ export async function POST(request: Request) {
 
   try {
     // Check if folder exists
-    if (!fs.existsSync(datasetFolder)) {
+    try {
+      await fs.promises.access(datasetFolder);
+    } catch {
       return NextResponse.json({ error: `Folder '${datasetName}' not found` }, { status: 404 });
     }
 
     // Find all images recursively
-    const imageFiles = findImagesRecursively(datasetFolder);
+    const imageFiles = await findImagesRecursively(datasetFolder);
 
     // Sort server-side so the client doesn't have to sort large lists
     imageFiles.sort((a, b) => a.localeCompare(b));
@@ -64,13 +66,15 @@ export async function POST(request: Request) {
  * @param dir Directory to search
  * @returns Array of absolute paths to image files
  */
-function findImagesRecursively(dir: string): string[] {
+async function findImagesRecursively(dir: string): Promise<string[]> {
   const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv', '.mp3', '.wav', '.flac', '.ogg'];
   let results: string[] = [];
 
-  // withFileTypes avoids a separate statSync per entry — a big win on large datasets
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  // withFileTypes avoids a separate stat per entry — a big win on large datasets.
+  // Async readdir yields between directories so other requests aren't blocked.
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
 
+  const subdirs: string[] = [];
   for (const entry of entries) {
     const name = entry.name;
     if (name.startsWith('.')) continue;
@@ -78,13 +82,19 @@ function findImagesRecursively(dir: string): string[] {
 
     if (entry.isDirectory()) {
       if (name === '_controls') continue;
-      results = results.concat(findImagesRecursively(itemPath));
+      subdirs.push(itemPath);
     } else if (entry.isFile()) {
       const ext = path.extname(name).toLowerCase();
       if (imageExtensions.includes(ext)) {
         results.push(itemPath);
       }
     }
+  }
+
+  // Recurse into subdirectories concurrently.
+  const nested = await Promise.all(subdirs.map(subdir => findImagesRecursively(subdir)));
+  for (const list of nested) {
+    results = results.concat(list);
   }
 
   return results;
