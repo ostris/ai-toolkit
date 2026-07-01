@@ -22,14 +22,58 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const logPath = path.join(jobFolder, 'log.txt');
 
   if (!fs.existsSync(logPath)) {
-    return NextResponse.json({ log: '' });
+    return NextResponse.json({ log: '', offset: 0, reset: true });
   }
-  let log = '';
+
+  const MAX_LINES = 2000;
+  // Client sends the byte offset it has already consumed so we only return new
+  // content. `offset` omitted (or NaN) => initial load / full tail.
+  const offsetParam = request.nextUrl.searchParams.get('offset');
+  const offset = offsetParam === null ? NaN : parseInt(offsetParam, 10);
+
+  const readRange = (fd: number, start: number, end: number): string => {
+    const length = end - start;
+    if (length <= 0) return '';
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, start);
+    return buffer.toString('utf-8');
+  };
+
   try {
-    log = fs.readFileSync(logPath, 'utf-8');
+    const stats = fs.statSync(logPath);
+    const size = stats.size;
+    // If the client's offset is past the current end, the log was reset/truncated
+    // (e.g. a fresh run overwrote it) — fall back to a fresh tail load.
+    const isReset = Number.isNaN(offset) || offset > size;
+
+    const fd = fs.openSync(logPath, 'r');
+    try {
+      if (isReset) {
+        // Read only the tail of the file to avoid loading huge logs into memory.
+        // Assume an average line length so we grab enough bytes to cover MAX_LINES.
+        const start = Math.max(0, size - MAX_LINES * 512);
+        let log = readRange(fd, start, size);
+        // Drop a partial first line if we started mid-file.
+        if (start > 0) {
+          const newlineIdx = log.indexOf('\n');
+          if (newlineIdx !== -1) {
+            log = log.slice(newlineIdx + 1);
+          }
+        }
+        const lines = log.split('\n');
+        if (lines.length > MAX_LINES) {
+          log = lines.slice(-MAX_LINES).join('\n');
+        }
+        return NextResponse.json({ log, offset: size, reset: true });
+      }
+      // Incremental: return only the bytes appended since the last offset.
+      const log = readRange(fd, offset, size);
+      return NextResponse.json({ log, offset: size, reset: false });
+    } finally {
+      fs.closeSync(fd);
+    }
   } catch (error) {
     console.error('Error reading log file:', error);
-    log = 'Error reading log file';
+    return NextResponse.json({ log: 'Error reading log file', offset: 0, reset: true });
   }
-  return NextResponse.json({ log: log });
 }
