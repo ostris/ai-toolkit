@@ -32,6 +32,7 @@ import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
+import useDatasetItemCounts from '@/hooks/useDatasetItemCounts';
 
 type Props = {
   jobConfig: JobConfig;
@@ -81,6 +82,10 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
   const isAudioModel = !!(modelArch?.group === 'audio');
+  const datasetPaths = useMemo(() => {
+    return jobConfig.config.process[0].datasets.map(dataset => dataset.folder_path || '');
+  }, [jobConfig.config.process[0].datasets]);
+  const datasetItemCounts = useDatasetItemCounts(datasetPaths);
 
   const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
     if (!modelArch) return null;
@@ -897,7 +902,13 @@ export default function SimpleJob({
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  <h2 className="text-lg font-bold mb-4">Dataset {i + 1}</h2>
+                  <h2 className="text-lg font-bold mb-4">
+                    Dataset {i + 1}
+                    {datasetItemCounts[dataset.folder_path] === undefined ||
+                    datasetItemCounts[dataset.folder_path] === null
+                      ? ''
+                      : ` - ${datasetItemCounts[dataset.folder_path]} items`}
+                  </h2>
                   <div className={datasetStyleClass}>
                     <div>
                       <SelectInput
