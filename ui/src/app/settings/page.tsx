@@ -68,6 +68,23 @@ export default function Settings() {
                   />
                 </div>
 
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="OFFLINE_MODE"
+                    name="OFFLINE_MODE"
+                    checked={settings.OFFLINE_MODE}
+                    onChange={e => setSettings(prev => ({ ...prev, OFFLINE_MODE: e.target.checked }))}
+                    className="mt-1 h-4 w-4 rounded border-gray-700 bg-gray-800 text-blue-500 focus:ring-blue-600"
+                  />
+                  <label htmlFor="OFFLINE_MODE" className="block text-sm font-medium">
+                    Offline mode
+                    <div className="text-gray-500 text-sm">
+                      Prevent spawned jobs from accessing the Hugging Face Hub. Required models must already be cached.
+                    </div>
+                  </label>
+                </div>
+
                 <div>
                   <label htmlFor="TRAINING_FOLDER" className="block text-sm font-medium mb-2">
                     Training Folder Path
