@@ -80,13 +80,14 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
 
 
 def is_quantized_tensor(t) -> bool:
-    # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
-    # that still report as nn.Parameter and expose .dequantize(). (quanto is handled separately.)
-    # OstrisLinear.weight returns an already-dequantized tensor tagged with _is_ostris_weight
-    # (its .dequantize() is a no-op) so the merge paths route through requantize_module_weight.
+    # torchao and quanto both store quantized weights as tensor subclasses (e.g. AffineQuantizedTensor)
+    # that report as nn.Parameter and expose .dequantize(). OstrisLinear.weight returns an
+    # already-dequantized tensor tagged with _is_ostris_weight (its .dequantize() is a no-op) so the
+    # merge paths route through requantize_module_weight instead.
     if getattr(t, '_is_ostris_weight', False):
         return True
-    return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
+    mod = type(t).__module__
+    return ('torchao' in mod or mod.startswith('optimum.quanto')) and hasattr(t, 'dequantize')
 
 
 def dequantize_if_quantized(t):
@@ -110,11 +111,16 @@ def get_torchao_config(qtype):
 
 
 def requantize_module_weight(module, fp_weight, orig_dtype, config) -> None:
-    """Write a full precision weight back into module.weight, re-quantizing in place if a
-    requantization config is provided so the module stays quantized (used by the continuous
-    merge/reset method). If config is None the weight is left in full precision."""
+    """Write a full precision weight back into module.weight, re-quantizing in place so the module
+    stays quantized (used by the continuous merge/reset method).
+    - ostris: the module's backend reuses its existing quantization state; config is not needed,
+      module.requantize_() handles it directly.
+    - torchao: needs an external config, applied via torchao_quantize_.
+    - quanto: QLinear modules retain their own weight_qtype/optimizer from creation, so calling
+      .freeze() again re-quantizes from the current (now full precision) self.weight. freeze() is a
+      no-op if weight_qtype is None, so this is safe to call on any quanto QModuleMixin instance.
+    If none of the above apply, the weight is left in full precision."""
     if isinstance(module, OstrisLinear):
-        # the module's backend reuses its existing quantization state; config is not needed
         module.requantize_(fp_weight)
         return
     if isinstance(config, ostristype):
@@ -124,6 +130,8 @@ def requantize_module_weight(module, fp_weight, orig_dtype, config) -> None:
     module.weight = torch.nn.Parameter(fp_weight.to(orig_dtype), requires_grad=False)
     if config is not None:
         torchao_quantize_(module, config)
+    elif hasattr(module, "freeze") and hasattr(module, "weight_qtype"):
+        module.freeze()
 
 
 def quantize(
