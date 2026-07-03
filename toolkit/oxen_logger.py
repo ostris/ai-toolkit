@@ -33,6 +33,78 @@ def monitor_train_status(url: str, want_stop_event: threading.Event, finished_ev
 
         finished_event.wait(timeout=10)
 
+
+def sampling_row(step=0, sample_round=0, sample_index=-1, elapsed_s=0.0, mem_allocated_gb=0.0, mem_reserved_gb=0.0):
+    """Schema for sampling_logs.jsonl: one row per polled tick of a VRAM time
+    series during a sampling round. sample_round = 0-based round counter,
+    sample_index = which sample was rendering at that tick, elapsed_s = offset
+    within the round. Kept separate from the per-step training metrics."""
+    return {
+        "step": step,
+        "sample_round": sample_round,
+        "sample_index": sample_index,
+        "elapsed_s": elapsed_s,
+        "mem_allocated_gb": mem_allocated_gb,
+        "mem_reserved_gb": mem_reserved_gb,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+class SampleMemoryMonitor:
+    """Records a CUDA memory time series during a sampling round. Polls the
+    allocator counters (memory_allocated / memory_reserved) on a daemon thread:
+    no cudaSynchronize, no kernel, no allocation, so it costs no GPU memory and
+    no measurable throughput. set_index() tags each tick with the sample being
+    rendered. Used as a context manager around generation."""
+
+    def __init__(self, sample_round=0, interval_s=1.0):
+        self.sample_round = sample_round
+        self.interval_s = interval_s
+        self.current_index = -1
+        self.samples = []
+        self._stop = threading.Event()
+        self._thread = None
+
+    def set_index(self, index):
+        self.current_index = index
+
+    def __enter__(self):
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                self._thread = threading.Thread(target=self._poll, daemon=True)
+                self._thread.start()
+        except Exception:
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def _poll(self):
+        import contextlib
+        import time
+
+        import torch
+
+        start = time.monotonic()
+        while not self._stop.is_set():
+            with contextlib.suppress(Exception):
+                self.samples.append(
+                    {
+                        "sample_round": self.sample_round,
+                        "sample_index": self.current_index,
+                        "elapsed_s": time.monotonic() - start,
+                        "mem_allocated_gb": torch.cuda.memory_allocated() / 1e9,
+                        "mem_reserved_gb": torch.cuda.memory_reserved() / 1e9,
+                    }
+                )
+            self._stop.wait(self.interval_s)
+
+
 class AIToolkitOxenLogger:
     """
     Logs metrics and saves checkpoints to an Oxen Workspace during AI-toolkit training.
@@ -64,8 +136,11 @@ class AIToolkitOxenLogger:
         self.enabled = True
         self.log_file_name = "training_logs.jsonl"
         self.log_file_path: Optional[str] = None
+        self.sampling_log_file_name = "sampling_logs.jsonl"
+        self.sampling_log_file_path: Optional[str] = None
         self.workspace: Optional[Workspace] = None
         self.df: Optional[DataFrame] = None
+        self.sampling_df: Optional[DataFrame] = None
         self.step_count = 0
 
         if (
@@ -135,7 +210,18 @@ class AIToolkitOxenLogger:
             except Exception as e:
                 print(f"Main process: Warning: Could not add initial dataframe to repo: {e}")
 
-            # Initialize workspace and DataFrame
+            # Sampling metrics get their own DataFrame (different cadence and
+            # columns). Bootstrap it before the workspace so the workspace sees
+            # both files.
+            self.sampling_log_file_path = os.path.join(self.experiment.name, self.sampling_log_file_name)
+            pd.DataFrame([sampling_row()]).to_json(self.sampling_log_file_path, orient="records", lines=True)
+            try:
+                self.experiment.repo.add(self.sampling_log_file_path, dst=os.path.dirname(self.sampling_log_file_path))
+                self.experiment.repo.commit(f"Initial sampling metrics dataframe: {self.sampling_log_file_path}")
+            except Exception as e:
+                print(f"Main process: Warning: Could not add initial sampling dataframe to repo: {e}")
+
+            # Initialize workspace and DataFrames
             self.workspace = Workspace(
                 self.experiment.repo,
                 branch=self.experiment.name,
@@ -144,9 +230,12 @@ class AIToolkitOxenLogger:
             )
 
             self.df = DataFrame(
-                self.workspace, 
-                self.log_file_path, 
+                self.workspace,
+                self.log_file_path,
                 workspace_name=self.fine_tune_id
+            )
+            self.sampling_df = DataFrame(
+                self.workspace, self.sampling_log_file_path, workspace_name=self.fine_tune_id
             )
             print(f"Main process: DataFrame created successfully")
 
@@ -185,6 +274,31 @@ class AIToolkitOxenLogger:
 
         except Exception as e:
             print(f"Main process: Error logging metrics to Oxen: {e}")
+
+    def log_sample_series(self, samples, sample_round, step):
+        """Write a sampling round's VRAM time series to the sampling DataFrame.
+        Runs after generation, off the GPU path; one row per polled tick."""
+        if not self.enabled or not self.is_main_process or self.sampling_df is None or not samples:
+            return
+        try:
+            self.sampling_df = DataFrame(
+                self.workspace, self.sampling_log_file_path, workspace_name=self.fine_tune_id
+            )
+            for s in samples:
+                self.sampling_df.insert_row(
+                    sampling_row(
+                        step=step,
+                        sample_round=sample_round,
+                        sample_index=s["sample_index"],
+                        elapsed_s=s["elapsed_s"],
+                        mem_allocated_gb=s["mem_allocated_gb"],
+                        mem_reserved_gb=s["mem_reserved_gb"],
+                    ),
+                    self.workspace,
+                )
+            print(f"Main process: Logged {len(samples)} sampling memory points for round {sample_round}")
+        except Exception as e:
+            print(f"Main process: Error logging sample memory series to Oxen: {e}")
 
     def is_stopping(self):
         if not self.is_main_process:
