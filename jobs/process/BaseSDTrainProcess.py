@@ -394,19 +394,29 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # Record a VRAM time series across this sampling round. The monitor only
         # reads allocator counters on a side thread (no GPU memory, no sync); the
         # per-image hook tags each tick with the sample being rendered.
+        mem_monitor = None
         if SampleMemoryMonitor is not None and self.oxen_logger and self.oxen_config.enabled:
             mem_monitor = SampleMemoryMonitor(sample_round=self._sample_round)
             mem_monitor.set_index(0)
             self._sample_mem_monitor = mem_monitor
-            try:
+        try:
+            if mem_monitor is not None:
                 with mem_monitor:
                     self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
-            finally:
-                self._sample_mem_monitor = None
+            else:
+                self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        finally:
+            self._sample_mem_monitor = None
+            # Sampling spikes the shared CUDA peak counter; clear it so the next
+            # training row's peak_mem_gb reflects training, not this sample. Runs
+            # even if generation failed, so a partial spike can't leak either.
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+            except Exception:
+                pass
+        if mem_monitor is not None:
             self._sample_round += 1
-        else:
-            mem_monitor = None
-            self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
 
         
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
