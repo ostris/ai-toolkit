@@ -56,7 +56,20 @@ def attention(
     scale: float | None = None,
     gqa: bool = False,
 ) -> Tensor:
-    with sdpa_kernel(SDPBackend.CUDNN_ATTENTION):
+    # cuDNN attention is NVIDIA-only, so hardcoding SDPBackend.CUDNN_ATTENTION
+    # raises "No available kernel" on non-NVIDIA backends (AMD ROCm, Intel XPU,
+    # Apple MPS). Pass a priority list instead: cuDNN is still preferred on
+    # NVIDIA, and the dispatcher falls back to flash/efficient/math elsewhere.
+    # (On ROCm gfx11xx the flash path needs
+    # TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1; masked attention uses math.)
+    with sdpa_kernel(
+        [
+            SDPBackend.CUDNN_ATTENTION,
+            SDPBackend.FLASH_ATTENTION,
+            SDPBackend.EFFICIENT_ATTENTION,
+            SDPBackend.MATH,
+        ]
+    ):
         x = F.scaled_dot_product_attention(
             q, k, v, attn_mask=mask, scale=scale, enable_gqa=gqa
         )
