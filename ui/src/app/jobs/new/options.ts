@@ -1100,6 +1100,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].network.conv': [undefined, 16],
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
+      'config.process[0].train.unload_text_encoder': [false, false],
       'config.process[0].model.model_kwargs': [
         {
           edit: true,
@@ -1109,7 +1110,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: [
-      'network.conv',
+      'network.conv', 'train.unload_text_encoder'
     ],
     additionalSections: [
       'datasets.multi_control_paths',
@@ -1137,6 +1138,7 @@ export const modelArchs: ModelArch[] = [
       ],
       'config.process[0].sample.guidance_scale': [1, 4],
       'config.process[0].sample.sample_steps': [8, 25],
+      'config.process[0].train.unload_text_encoder': [false, false],
       'config.process[0].model.model_kwargs': [
         {
           edit: true,
@@ -1146,7 +1148,7 @@ export const modelArchs: ModelArch[] = [
       ],
     },
     disableSections: [
-      'network.conv',
+      'network.conv', 'train.unload_text_encoder'
     ],
     additionalSections: [
       'datasets.multi_control_paths',
