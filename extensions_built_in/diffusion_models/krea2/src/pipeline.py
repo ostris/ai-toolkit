@@ -90,20 +90,78 @@ def prepare(
     return img, pos, mask
 
 
+def pack_ref_latents(
+    ref_latents: List[List[torch.Tensor]], patch: int, device, dtype
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Patchify per-sample reference latents into padded ref tokens / pos / mask.
+
+    ``ref_latents`` is a list (one entry per batch item) of lists of ``(C, h, w)``
+    reference latents. The i-th reference of a sample is placed on RoPE axis 0 at
+    index ``i + 1`` with its own y/x grid starting at 0 -- the ComfyUI Kontext
+    "index" placement (axis 0 is otherwise always 0, so the base weights see the
+    references as a new "frame" axis). Samples with fewer reference tokens are
+    right-padded and masked out. Returns ``(tokens (B, Lr, C*p*p),
+    pos (B, Lr, 3), mask (B, Lr))``.
+    """
+    token_dim = None
+    seqs, ids = [], []
+    for refs in ref_latents:
+        toks, rpos = [], []
+        for i, ref in enumerate(refs):
+            ref = ref.to(device, dtype)
+            _, h, w = ref.shape
+            h_, w_ = h // patch, w // patch
+            toks.append(
+                rearrange(ref, "c (h ph) (w pw) -> (h w) (c ph pw)", ph=patch, pw=patch)
+            )
+            token_dim = toks[-1].shape[-1]
+            refids = torch.zeros((h_, w_, 3), device=device)
+            refids[..., 0] = i + 1
+            refids[..., 1] = torch.arange(h_, device=device)[:, None]
+            refids[..., 2] = torch.arange(w_, device=device)[None, :]
+            rpos.append(refids.reshape(-1, 3))
+        seqs.append(toks)
+        ids.append(rpos)
+
+    b = len(seqs)
+    # a sample may have no references (its span is fully masked/padded)
+    seqs = [
+        torch.cat(t, dim=0)
+        if t
+        else torch.zeros(0, token_dim, device=device, dtype=dtype)
+        for t in seqs
+    ]
+    ids = [torch.cat(p, dim=0) if p else torch.zeros(0, 3, device=device) for p in ids]
+    max_len = max(s.shape[0] for s in seqs)
+    tokens = torch.zeros(b, max_len, token_dim, device=device, dtype=dtype)
+    pos = torch.zeros(b, max_len, 3, device=device)
+    mask = torch.zeros(b, max_len, device=device, dtype=torch.bool)
+    for i, (s, p) in enumerate(zip(seqs, ids)):
+        ln = s.shape[0]
+        tokens[i, :ln] = s
+        pos[i, :ln] = p
+        mask[i, :ln] = True
+    return tokens, pos, mask
+
+
 def predict_velocity(
     model: SingleStreamDiT,
     latents: torch.Tensor,  # (B, C, h, w)
     t: torch.Tensor,  # (B,) flow time in [0, 1] (1 = pure noise)
     context: torch.Tensor,  # (B, Lt, n*d) flattened stacked Qwen3-VL features
     text_mask: torch.Tensor,  # (B, Lt) 1 for real text tokens
+    ref_latents: Optional[List[List[torch.Tensor]]] = None,  # per-sample (C, h, w) refs
 ) -> torch.Tensor:
-    """Run the MMDiT on the packed [text | image] sequence.
+    """Run the MMDiT on the packed [text | image | refs] sequence.
 
     ``latents`` stay in the unpacked ``(B, C, h, w)`` latent layout; image-token
     packing is internal to this function. ``context`` arrives 2D-per-sample
     flattened ``(B, Lt, n*d)`` and is restored to ``(B, Lt, n, d)`` for the MMDiT.
-    Returns the velocity ``noise - clean`` reshaped back to ``(B, C, h, w)``. No
-    time flip / negation: Krea's convention matches toolkit's.
+    ``ref_latents`` (optional) are clean reference latents appended after the
+    image tokens and conditioned at t=0 ("index_timestep_zero"); the prediction
+    only ever covers the noisy target tokens. Returns the velocity
+    ``noise - clean`` reshaped back to ``(B, C, h, w)``. No time flip / negation:
+    Krea's convention matches toolkit's.
     """
     patch = model.config.patch
     b, c, h, w = latents.shape
@@ -116,7 +174,17 @@ def predict_velocity(
 
     img_tokens, pos, mask = prepare(latents, context.shape[1], patch, text_mask)
 
-    out = model(img=img_tokens, context=context, t=t, pos=pos, mask=mask)
+    reflen = 0
+    if ref_latents is not None and any(len(r) > 0 for r in ref_latents):
+        ref_tokens, ref_pos, ref_mask = pack_ref_latents(
+            ref_latents, patch, img_tokens.device, img_tokens.dtype
+        )
+        reflen = ref_tokens.shape[1]
+        img_tokens = torch.cat((img_tokens, ref_tokens), dim=1)
+        pos = torch.cat((pos, ref_pos), dim=1)
+        mask = torch.cat((mask, ref_mask), dim=1)
+
+    out = model(img=img_tokens, context=context, t=t, pos=pos, mask=mask, reflen=reflen)
 
     # (B, imglen, c*p*p) -> (B, c, h, w)
     velocity = rearrange(
@@ -193,6 +261,7 @@ class Krea2Pipeline:
         guidance_scale: float = 4.5,
         latents: Optional[torch.Tensor] = None,
         generator: Optional[torch.Generator] = None,
+        ref_latents: Optional[List[List[torch.Tensor]]] = None,
         **kwargs,
     ) -> List[Image.Image]:
         model = self.model
@@ -242,11 +311,21 @@ class Krea2Pipeline:
         for tcurr, tprev in zip(ts[:-1], ts[1:]):
             t = torch.full((latents.shape[0],), tcurr, dtype=dtype, device=device)
             v_cond = predict_velocity(
-                transformer, latents.to(dtype), t, cond_feats, cond_mask
+                transformer,
+                latents.to(dtype),
+                t,
+                cond_feats,
+                cond_mask,
+                ref_latents=ref_latents,
             )
             if do_cfg:
                 v_uncond = predict_velocity(
-                    transformer, latents.to(dtype), t, uncond_feats, uncond_mask
+                    transformer,
+                    latents.to(dtype),
+                    t,
+                    uncond_feats,
+                    uncond_mask,
+                    ref_latents=ref_latents,
                 )
                 v = v_cond + guidance_scale * (v_cond - v_uncond)
             else:

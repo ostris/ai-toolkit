@@ -328,6 +328,33 @@ class SingleStreamBlock(nn.Module):
     def forward(
         self, x: Tensor, vec: Tensor, freqs: Tensor, mask: Tensor | None = None
     ) -> Tensor:
+        # ``vec`` is the (B, 1, 6*features) modulation input, or a tuple
+        # ``(vec, refvec, split)`` for reference-image conditioning: tokens
+        # ``[:split]`` (text + noisy image) are modulated with ``vec`` while
+        # tokens ``[split:]`` (clean reference tokens) use ``refvec`` built from
+        # t=0 (ComfyUI Kontext "index_timestep_zero"). Applied per span rather
+        # than materializing a per-token (B, L, 6*features) tensor.
+        if isinstance(vec, tuple):
+            vec, refvec, split = vec
+            m = self.mod(vec)
+            r = self.mod(refvec)
+
+            def mod(h, scale, shift):
+                return torch.cat(
+                    (
+                        (1 + m[scale]) * h[:, :split] + m[shift],
+                        (1 + r[scale]) * h[:, split:] + r[shift],
+                    ),
+                    dim=1,
+                )
+
+            def gate(h, g):
+                return torch.cat((m[g] * h[:, :split], r[g] * h[:, split:]), dim=1)
+
+            x = x + gate(self.attn(mod(self.prenorm(x), 0, 1), freqs, mask), 2)
+            x = x + gate(self.mlp(mod(self.postnorm(x), 3, 4)), 5)
+            return x
+
         prescale, preshift, pregate, postscale, postshift, postgate = self.mod(vec)
         x = x + pregate * self.attn(
             (1 + prescale) * self.prenorm(x) + preshift, freqs, mask
@@ -417,6 +444,7 @@ class SingleStreamDiT(nn.Module):
         t: Tensor,
         pos: Tensor,
         mask: Tensor | None = None,
+        reflen: int = 0,
     ) -> Tensor:
         img = self.first(img)
         t = self.tmlp(temb(t, self.config.tdim, device=img.device, dtype=img.dtype))
@@ -438,6 +466,23 @@ class SingleStreamDiT(nn.Module):
             mask = F.pad(mask, (0, _padlen), value=False)
             pos = F.pad(pos, (0, 0, 0, _padlen))
 
+        blockvec = tvec
+        if reflen > 0:
+            # The last ``reflen`` image tokens are clean reference tokens: they
+            # get t=0 modulation (ComfyUI Kontext "index_timestep_zero") while
+            # text + noisy image tokens keep the real t. Padding tokens fall in
+            # the t=0 span, but they are masked from attention and sliced off
+            # the output, so their values never matter.
+            t0 = self.tmlp(
+                temb(
+                    torch.zeros_like(t[:, 0, 0]),
+                    self.config.tdim,
+                    device=img.device,
+                    dtype=img.dtype,
+                )
+            )
+            blockvec = (tvec, self.tproj(t0), txtlen + imglen - reflen)
+
         mask = _mask(mask)
 
         freqs = self.posemb(pos)
@@ -447,15 +492,15 @@ class SingleStreamDiT(nn.Module):
                 combined = checkpoint(
                     block,
                     combined,
-                    tvec,
+                    blockvec,
                     freqs,
                     mask,
                     use_reentrant=False,
                 )
             else:
-                combined = block(combined, tvec, freqs, mask)
+                combined = block(combined, blockvec, freqs, mask)
 
         final = self.last(combined, t)
-        output = final[:, txtlen : txtlen + imglen, :]
+        output = final[:, txtlen : txtlen + imglen - reflen, :]
 
         return output

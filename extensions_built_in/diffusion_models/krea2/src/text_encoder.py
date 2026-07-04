@@ -13,6 +13,8 @@ its hidden states are sliced off the returned features, exactly like the
 reference.
 """
 
+from typing import List, Optional
+
 import torch
 from torch import Tensor
 
@@ -43,6 +45,9 @@ def encode_krea_prompt(
     max_length: int = 512,
     select_layers: tuple[int, ...] = SELECT_LAYERS,
     prefix_idx: int = PROMPT_TEMPLATE_ENCODE_START_IDX,
+    images: Optional[List[Tensor]] = None,
+    vl_processor=None,
+    dtype: Optional[torch.dtype] = None,
 ) -> Tensor:
     """Encode a single prompt into stacked Qwen3-VL hidden states.
 
@@ -50,6 +55,15 @@ def encode_krea_prompt(
     dtype) holding the prompt + suffix token features -- the system prefix has
     been sliced off. ``L`` is the natural (unpadded) length so the caller stores
     one tensor per prompt and pads to the batch max at the model call.
+
+    ``images`` (optional) are reference images -- ``(C, H, W)`` tensors in
+    ``[0, 1]`` -- embedded in the user message ahead of the prompt via named
+    vision placeholders (``Picture 1: <|vision_start|><|image_pad|><|vision_end|>``,
+    the ComfyUI ``TextEncodeQwenImageEditPlus`` layout). The ``vl_processor``
+    (Qwen3-VL AutoProcessor) expands each ``<|image_pad|>`` to the image's token
+    grid, so the returned features carry the vision tokens as extra conditioning.
+    The system prefix is unchanged, so ``prefix_idx`` slicing stays valid and the
+    image + prompt tokens all survive the slice.
     """
     device = qwen.device
 
@@ -61,21 +75,59 @@ def encode_krea_prompt(
     suffix_ids = suffix_inputs["input_ids"]
     suffix_mask = suffix_inputs["attention_mask"].bool()
 
-    # Prefix + prompt at natural length (no padding); truncate very long prompts.
-    text = PROMPT_TEMPLATE_ENCODE_PREFIX + prompt
-    inputs = tokenizer(
-        [text],
-        truncation=True,
-        return_length=False,
-        return_overflowing_tokens=False,
-        max_length=max_length + prefix_idx,
-        return_tensors="pt",
-    ).to(device, non_blocking=True)
+    extra_inputs = {}
+    if images is not None and len(images) > 0:
+        image_prompt = "".join(
+            f"Picture {i + 1}: <|vision_start|><|image_pad|><|vision_end|>"
+            for i in range(len(images))
+        )
+        text = PROMPT_TEMPLATE_ENCODE_PREFIX + image_prompt + prompt
+        # No truncation here: the expanded image-pad runs must stay intact.
+        inputs = vl_processor(
+            text=[text],
+            images=list(images),
+            return_tensors="pt",
+            do_rescale=False,
+        ).to(device)
+        for k, v in inputs.items():
+            if k in ("input_ids", "attention_mask"):
+                continue
+            if (
+                isinstance(v, torch.Tensor)
+                and v.is_floating_point()
+                and dtype is not None
+            ):
+                v = v.to(dtype)
+            extra_inputs[k] = v
+    else:
+        # Prefix + prompt at natural length (no padding); truncate very long prompts.
+        text = PROMPT_TEMPLATE_ENCODE_PREFIX + prompt
+        inputs = tokenizer(
+            [text],
+            truncation=True,
+            return_length=False,
+            return_overflowing_tokens=False,
+            max_length=max_length + prefix_idx,
+            return_tensors="pt",
+        ).to(device, non_blocking=True)
 
     input_ids = torch.cat([inputs["input_ids"], suffix_ids], dim=1)
     mask = torch.cat([inputs["attention_mask"].bool(), suffix_mask], dim=1)
 
-    states = qwen(input_ids=input_ids, attention_mask=mask, output_hidden_states=True)
+    # mm_token_type_ids (used for M-RoPE) must cover the appended suffix tokens
+    # too; they are plain text -> type 0.
+    if "mm_token_type_ids" in extra_inputs:
+        tt = extra_inputs["mm_token_type_ids"]
+        extra_inputs["mm_token_type_ids"] = torch.cat(
+            [tt, torch.zeros_like(suffix_ids, dtype=tt.dtype)], dim=1
+        )
+
+    states = qwen(
+        input_ids=input_ids,
+        attention_mask=mask,
+        output_hidden_states=True,
+        **extra_inputs,
+    )
 
     # (1, L, num_layers, hidden)
     hiddens = torch.stack([states.hidden_states[i] for i in select_layers], dim=2)
