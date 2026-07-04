@@ -219,9 +219,6 @@ class Automagic3(torch.optim.Optimizer):
                     )
                     self._hook_handles.append(handle)
 
-        total = sum(p.numel() for g in self.param_groups for p in g["params"])
-        print(f"Total training paramiters: {total:,}")
-
     # ------------------------------------------------------------------ utils
 
     @staticmethod
