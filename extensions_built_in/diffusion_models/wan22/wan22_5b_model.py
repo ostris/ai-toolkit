@@ -104,6 +104,9 @@ class Wan225bModel(Wan21):
         )
 
         self._wan_cache = None
+
+        # loss mask for i2v conditioning (1 = train, 0 = conditioned token), set per step in get_noise_prediction
+        self._i2v_loss_mask = None
     
     def load_model(self):
         super().load_model()
@@ -245,7 +248,8 @@ class Wan225bModel(Wan21):
         # for wan, only do i2v for video for now. Images do normal t2i
         conditioned_latent = latent_model_input
         noise_mask = None
-        
+        self._i2v_loss_mask = None
+
         if batch.dataset_config.do_i2v:
             with torch.no_grad():
                 frames = batch.tensor
@@ -261,6 +265,8 @@ class Wan225bModel(Wan21):
                         first_frame=first_frames.to(self.device_torch, self.torch_dtype),
                         vae=self.vae,
                     )
+                    # conditioned tokens are clean with timestep 0 and must not contribute to the loss
+                    self._i2v_loss_mask = noise_mask
                 else:
                     raise ValueError(f"Unknown frame shape {frames.shape}")
 
@@ -290,3 +296,12 @@ class Wan225bModel(Wan21):
             **kwargs,
         )[0]
         return noise_pred
+
+    def scale_loss(self, loss):
+        # zero out the loss on i2v conditioned tokens, renormalized so the loss
+        # magnitude matches unconditioned batches (masked mean)
+        if self._i2v_loss_mask is not None:
+            loss_mask = self._i2v_loss_mask.to(loss.device, dtype=loss.dtype)
+            loss = loss * loss_mask / loss_mask.mean().clamp(min=1e-8)
+            self._i2v_loss_mask = None
+        return loss
