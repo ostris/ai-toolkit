@@ -1,0 +1,8 @@
+*
+!requirements.txt
+!requirements_base.txt
+!ui/
+!ui/package.json
+!ui/package-lock.json
+!docker/
+!docker/start.sh

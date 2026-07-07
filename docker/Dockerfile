@@ -46,6 +46,13 @@ RUN curl -sL https://deb.nodesource.com/setup_23.x -o nodesource_setup.sh && \
 
 RUN useradd -m app
 RUN mkdir -p /app && chown -R app:app /app
+
+COPY --chown=app:app ui/package.json ui/package-lock.json /app/ui/
+COPY --chown=app:app requirements.txt requirements_base.txt /app/
+COPY --chown=app:app docker/start.sh /app/start.sh
+
+RUN touch /etc/rp_environment && chown app:app /etc/rp_environment
+
 USER app
 
 WORKDIR /app
@@ -53,7 +60,7 @@ WORKDIR /app
 RUN python3.12 -m venv .venv
 
 # install pytorch before cache bust to avoid redownloading pytorch
-RUN /app/.venv/bin/python -m pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128 --break-system-packages
+RUN /app/.venv/bin/python -m pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
 
 # ---------------------------------------------------------------------------- #
 # Dependency layers come BEFORE the source clone so they are only rebuilt (and
@@ -62,12 +69,10 @@ RUN /app/.venv/bin/python -m pip install --no-cache-dir torch==2.9.1 torchvision
 # ---------------------------------------------------------------------------- #
 
 # Install Python dependencies (only re-runs when the requirements files change)
-COPY requirements.txt requirements_base.txt /app/
-RUN /app/.venv/bin/python -m pip install --no-cache-dir --break-system-packages -r requirements.txt && \
-    /app/.venv/bin/python -m pip install --no-cache-dir  setuptools==69.5.1 -break-system-packages
+RUN /app/.venv/bin/python -m pip install --no-cache-dir -r requirements.txt && \
+    /app/.venv/bin/python -m pip install --no-cache-dir  setuptools==69.5.1
 
 # Install Node dependencies (only re-runs when package.json / package-lock.json change)
-COPY ui/package.json ui/package-lock.json /app/ui/
 RUN cd /app/ui && npm ci
 
 # ---------------------------------------------------------------------------- #
@@ -83,6 +88,7 @@ RUN echo "Cache bust: ${CACHEBUST}" && \
     cd /tmp/ai-toolkit-src && \
     git checkout ${GIT_COMMIT} && \
     rsync -a --delete \
+        --exclude 'start.sh' \
         --exclude 'ui/node_modules' \
         --exclude 'requirements.txt' \
         --exclude 'ui/package.json' \
@@ -102,7 +108,6 @@ RUN cd /app/ui && \
 # Expose port (assuming the application runs on port 3000)
 EXPOSE 8675
 
-COPY docker/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 CMD ["/app/start.sh"]
