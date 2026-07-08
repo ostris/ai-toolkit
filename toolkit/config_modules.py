@@ -923,6 +923,10 @@ class DatasetConfig:
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
+        # pull a random control image from the same folder as the image. Useful for folder grouped pairs.
+        self.control_from_same_folder: bool = kwargs.get('control_from_same_folder', False)
+        self.num_controls_from_same_folder: int = kwargs.get('num_controls_from_same_folder', 1)
+        
         if self.control_path == '':
             self.control_path = None
         
