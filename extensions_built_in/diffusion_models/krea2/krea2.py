@@ -494,6 +494,9 @@ class Krea2Model(BaseModel):
             ref_latents = [
                 self._encode_ref_latents(ctrl_tensors, target_pixels=target_pixels)
             ]
+        
+        # CFG is 0 normalized for this model
+        guidance = max(0.0, gen_config.guidance_scale - 1.0)
 
         img = pipeline(
             conditional_embeds=conditional_embeds,
@@ -501,7 +504,7 @@ class Krea2Model(BaseModel):
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
+            guidance_scale=guidance,
             latents=gen_config.latents,
             generator=generator,
             ref_latents=ref_latents,

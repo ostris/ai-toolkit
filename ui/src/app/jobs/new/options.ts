@@ -621,7 +621,7 @@ export const modelArchs: ModelArch[] = [
         undefined,
       ],
       'config.process[0].sample.guidance_scale': [1, 4],
-      'config.process[0].sample.sample_steps': [8, 25],
+      'config.process[0].sample.sample_steps': [9, 25],
     },
     disableSections: ['network.conv'],
     additionalSections: ['model.low_vram', 'model.layer_offloading', 'model.assistant_lora_path'],
@@ -1077,7 +1077,7 @@ export const modelArchs: ModelArch[] = [
         undefined,
       ],
       'config.process[0].sample.guidance_scale': [1, 4],
-      'config.process[0].sample.sample_steps': [8, 25],
+      'config.process[0].sample.sample_steps': [9, 25],
     },
     disableSections: [
       'network.conv',
