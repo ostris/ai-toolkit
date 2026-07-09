@@ -16,6 +16,12 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
 from toolkit.print import print_acc
+from toolkit.util.ostris_quant import (
+    OstrisLinear,
+    OstrisQuantizer,
+    convert_linear_to_ostris,
+    get_ostris_quantizer,
+)
 import os
 
 if TYPE_CHECKING:
@@ -31,6 +37,7 @@ Q_MODULES = [
     "QLayerNorm",
     "QConvTranspose2d",
     "QEmbeddingBag",
+    "OstrisLinear",
 ]
 
 torchao_qtypes = {
@@ -53,10 +60,20 @@ class aotype:
         self.config = torchao_qtypes[name]
 
 
+class ostristype:
+    # custom quantization backend (see toolkit/util/ostris_quant.py), e.g. orbit2/3/4
+    def __init__(self, name: str, quantizer: OstrisQuantizer):
+        self.name = name
+        self.quantizer = quantizer
+
+
 def get_qtype(qtype: Union[str, qtype]) -> qtype:
     if qtype in torchao_qtypes:
         return aotype(qtype)
     if isinstance(qtype, str):
+        ostris_quantizer = get_ostris_quantizer(qtype)
+        if ostris_quantizer is not None:
+            return ostristype(qtype, ostris_quantizer)
         return qtypes[qtype]
     else:
         return qtype
@@ -65,6 +82,10 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
 def is_quantized_tensor(t) -> bool:
     # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
     # that still report as nn.Parameter and expose .dequantize(). (quanto is handled separately.)
+    # OstrisLinear.weight returns an already-dequantized tensor tagged with _is_ostris_weight
+    # (its .dequantize() is a no-op) so the merge paths route through requantize_module_weight.
+    if getattr(t, '_is_ostris_weight', False):
+        return True
     return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
 
 
@@ -73,20 +94,33 @@ def dequantize_if_quantized(t):
 
 
 def get_torchao_config(qtype):
-    # returns the torchao quantization config for a given qtype string, or None if it isn't torchao
+    # returns the requantization config for a given qtype string (a torchao config, or the
+    # ostristype for custom backends), or None if the qtype supports neither
     if qtype is None:
         return None
     try:
         q = get_qtype(qtype)
     except Exception:
         return None
-    return q.config if isinstance(q, aotype) else None
+    if isinstance(q, aotype):
+        return q.config
+    if isinstance(q, ostristype):
+        return q
+    return None
 
 
 def requantize_module_weight(module, fp_weight, orig_dtype, config) -> None:
-    """Write a full precision weight back into module.weight, re-quantizing in place if a torchao
-    config is provided so the module stays quantized (used by the continuous merge/reset method).
-    If config is None the weight is left in full precision."""
+    """Write a full precision weight back into module.weight, re-quantizing in place if a
+    requantization config is provided so the module stays quantized (used by the continuous
+    merge/reset method). If config is None the weight is left in full precision."""
+    if isinstance(module, OstrisLinear):
+        # the module's backend reuses its existing quantization state; config is not needed
+        module.requantize_(fp_weight)
+        return
+    if isinstance(config, ostristype):
+        # custom backend config but the module was never converted (e.g. skipped at
+        # quantize time); leave it in full precision
+        config = None
     module.weight = torch.nn.Parameter(fp_weight.to(orig_dtype), requires_grad=False)
     if config is not None:
         torchao_quantize_(module, config)
@@ -142,7 +176,10 @@ def quantize(
             if m.__class__.__name__ in Q_MODULES:
                 continue
             else:
-                if isinstance(weights, aotype):
+                if isinstance(weights, ostristype):
+                    if isinstance(m, torch.nn.Linear):
+                        convert_linear_to_ostris(m, weights.quantizer)
+                elif isinstance(weights, aotype):
                     torchao_quantize_(m, weights.config)
                 else:
                     _quantize_submodule(
