@@ -16,6 +16,7 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
 from toolkit.print import print_acc
+from toolkit.basic import flush
 import os
 
 if TYPE_CHECKING:
@@ -342,11 +343,16 @@ def quantize_model(
         base_model.print_and_status_update(
             f" - quantizing {len(all_blocks)} transformer blocks"
         )
+        model_to_quantize.to("cpu")
+        flush()
         for block in tqdm(all_blocks):
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)
-            block.to("cpu", non_blocking=True)
+            block.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            flush()
 
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first

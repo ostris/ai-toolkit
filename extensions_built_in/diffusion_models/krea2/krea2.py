@@ -395,6 +395,10 @@ class Krea2Model(BaseModel):
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing transformer")
+            transformer.to("cpu")
+            if self.assistant_lora is not None:
+                self.assistant_lora.force_to("cpu", dtype=self.torch_dtype)
+            flush()
             quantize_model(self, transformer)
             flush()
 
