@@ -118,6 +118,11 @@ class Wan225bModel(Wan21):
         # 16x compression  and 2x2 patch size
         return 32
 
+    def get_quantization_exclude_modules(self):
+        # the timestep/text conditioning embedders and the final projection feed
+        # every downstream modulation; keep them in full precision when quantizing
+        return ["condition_embedder*", "proj_out*"]
+
     def get_generation_pipeline(self):
         # todo unipc got broken in a diffusers update. Use euler for now.
         # scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
