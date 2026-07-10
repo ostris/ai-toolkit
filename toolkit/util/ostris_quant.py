@@ -93,7 +93,9 @@ class OstrisLinear(torch.nn.Linear):
         # emit a plain full precision weight so full-model saves need no special casing
         destination[prefix + "weight"] = self.dequantize_weight()
         if self.bias is not None:
-            destination[prefix + "bias"] = self.bias if keep_vars else self.bias.detach()
+            destination[prefix + "bias"] = (
+                self.bias if keep_vars else self.bias.detach()
+            )
 
 
 def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
@@ -101,16 +103,21 @@ def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
     does not belong to a custom backend. Add new backends here."""
     from toolkit.util.orbit_quant import ORBIT_QTYPES, OrbitQuantizer
     from toolkit.util.orbit_vq_quant import ORBIT_VQ_QTYPES, OrbitVQQuantizer
+    from toolkit.util.convrot_quant import CONVROT_QTYPES, get_convrot_quantizer
 
     if qtype in ORBIT_QTYPES:
         return OrbitQuantizer(ORBIT_QTYPES[qtype])
     if qtype in ORBIT_VQ_QTYPES:
         return OrbitVQQuantizer(**ORBIT_VQ_QTYPES[qtype])
+    if qtype in CONVROT_QTYPES:
+        return get_convrot_quantizer(qtype)
     return None
 
 
 @torch.no_grad()
-def convert_linear_to_ostris(module: torch.nn.Linear, quantizer: OstrisQuantizer) -> bool:
+def convert_linear_to_ostris(
+    module: torch.nn.Linear, quantizer: OstrisQuantizer
+) -> bool:
     """Quantize an nn.Linear in place (class swap). Returns True if the module was
     converted (or already was), False if it is not a candidate."""
     if isinstance(module, OstrisLinear):
