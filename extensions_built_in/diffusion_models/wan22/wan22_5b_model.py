@@ -210,7 +210,7 @@ class Wan225bModel(Wan21):
                 latent_model_input=latents, first_frame=first_frame_n1p1, vae=self.vae
             )
 
-        if self.model_config.low_vram:
+        if self.use_vae_tiling:
             # set vae to tile decode
             pipeline.vae.enable_tiling()
 
@@ -234,7 +234,7 @@ class Wan225bModel(Wan21):
             **extra,
         )[0]
 
-        if self.model_config.low_vram:
+        if self.use_vae_tiling:
             # restore no tiling
             pipeline.vae.disable_tiling()
 

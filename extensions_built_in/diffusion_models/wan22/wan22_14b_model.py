@@ -555,6 +555,11 @@ class Wan2214bModel(Wan21):
     ):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
+
+        if self.use_vae_tiling:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         # todo, figure out how to do video
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
@@ -572,6 +577,10 @@ class Wan2214bModel(Wan21):
             output_type="pil",
             **extra
         )[0]
+
+        if self.use_vae_tiling:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
