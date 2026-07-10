@@ -205,6 +205,10 @@ class Wan225bModel(Wan21):
                 latent_model_input=latents, first_frame=first_frame_n1p1, vae=self.vae
             )
 
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
@@ -224,6 +228,10 @@ class Wan225bModel(Wan21):
             noise_mask=noise_mask,
             **extra,
         )[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
