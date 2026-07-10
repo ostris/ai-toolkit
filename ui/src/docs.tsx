@@ -153,6 +153,98 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'datasets.shuffle_caption': {
+    title: 'Shuffle Caption',
+    description: (
+      <>
+        Randomly shuffles comma-separated caption tags each time an item is loaded for training. For example,{' '}
+        <code>a, b, c, d, e</code> may become <code>b, d, a, e, c</code>. This only changes tag order; it does not
+        change the caption files on disk. When Keep Tokens Separator is set, only tags after the separator are shuffled.
+        Tags joined by Secondary Separator are shuffled as one group. Disable text embedding caching when using this
+        option so a new order can be encoded during training.
+      </>
+    ),
+  },
+  'datasets.caption_mode': {
+    title: 'Caption Mode',
+    description: (
+      <>
+        Single mode uses the caption file matching the image name, such as <code>a.txt</code> for <code>a.png</code>.
+        Mixed mode also reads <code>a_nl.txt</code> and randomly chooses tags, natural language, tags followed by
+        natural language, or natural language followed by tags whenever the image is loaded. Disable text embedding
+        caching so the selection can change during training. If the tags caption contains Keep Tokens Separator, its
+        protected prefix is placed first in every mixed variant, including the natural-language-only variant. Shuffle
+        Caption and Caption Tag Dropout only process the tag section; the natural-language section remains unchanged.
+      </>
+    ),
+  },
+  'datasets.mixed_weights': {
+    title: 'Mixed Caption Weight',
+    description: (
+      <>
+        Relative selection weights for the four mixed caption variants. With weights <code>40</code>, <code>30</code>,{' '}
+        <code>20</code>, and <code>10</code>, the variants are selected 40%, 30%, 20%, and 10% of the time. The values
+        do not need to total 100 because they are normalized automatically.
+      </>
+    ),
+  },
+  'datasets.token_dropout_rate': {
+    title: 'Caption Tag Dropout Rate',
+    description: (
+      <>
+        Randomly removes each comma-separated caption tag at the configured probability whenever an item is loaded for
+        training. For example, <code>0.1</code> gives every tag a 10% chance of being omitted. Set this to{' '}
+        <code>0</code> to disable it. When Keep Tokens Separator is set, only tags after the separator can be removed.
+        Tags joined by Secondary Separator share one dropout decision. Text embedding caching must be disabled for the
+        tag selection to change during training.
+      </>
+    ),
+  },
+  'datasets.keep_tokens': {
+    title: 'Keep First Tags',
+    description: (
+      <>
+        Protects this many tags or secondary-separated groups at the beginning of the processable caption section from
+        caption tag dropout. For example, setting this to <code>1</code> always keeps its first unit. These units can
+        still move when Shuffle Caption is enabled.
+      </>
+    ),
+  },
+  'datasets.keep_tokens_separator': {
+    title: 'Keep Tokens Separator',
+    description: (
+      <>
+        Separates a protected caption prefix from tags that may be dropped or shuffled. With <code>|||</code>{' '}
+        configured, a caption such as <code>character name, portrait ||| red hair, blue eyes</code> always keeps the
+        text before <code>|||</code> in place and only processes the tags after it. The separator itself is removed
+        before training.
+      </>
+    ),
+  },
+  'datasets.secondary_separator': {
+    title: 'Secondary Separator',
+    description: (
+      <>
+        Joins adjacent tags into one processing group. With <code>;;;</code> configured, <code>a, b, c;;;d;;;e, f</code>{' '}
+        is processed as four units: <code>a</code>, <code>b</code>, <code>c, d, e</code>, and <code>f</code>. The
+        grouped tags are dropped together and remain adjacent in their original order when shuffled. The separator
+        itself is converted to commas before training.
+      </>
+    ),
+  },
+  'logging.log_captions_every_n_steps': {
+    title: 'Log Captions Every N Steps',
+    description: (
+      <>
+        Prints each training item's final dataset caption to the live job log at this step interval. This is useful for
+        checking mixed-caption selection, tag shuffling, and tag dropout. The caption is recorded before
+        encoder-specific prompt transformations such as adapter injection or prompt saturation. A{' '}
+        <code>cached_embedding=true</code> marker means training used a cached text embedding, so the displayed text is
+        diagnostic rather than a newly encoded prompt. Set this option to <code>0</code> to disable caption logging.
+        Small intervals can produce large logs, especially with larger batches or gradient accumulation.
+      </>
+    ),
+  },
   'train.unload_text_encoder': {
     title: 'Unload Text Encoder',
     description: (

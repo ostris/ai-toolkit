@@ -89,6 +89,19 @@ export interface DatasetConfig {
   default_caption: string;
   caption_ext: string;
   caption_dropout_rate: number;
+  caption_mode?: 'single' | 'mixed';
+  mixed_weights?: {
+    tags: number;
+    nl: number;
+    tags_nl: number;
+    nl_tags: number;
+  };
+  token_dropout_rate?: number;
+  keep_tokens?: number;
+  keep_tokens_separator?: string;
+  secondary_separator?: string;
+  shuffle_caption?: boolean;
+  /** @deprecated Use shuffle_caption. Kept for loading older job configs. */
   shuffle_tokens?: boolean;
   is_reg: boolean;
   network_weight: number;
@@ -217,6 +230,7 @@ export interface SampleConfig {
 export interface LoggingConfig {
   log_every: number;
   use_ui_logger: boolean;
+  log_captions_every_n_steps?: number;
 }
 
 export interface SliderConfig {

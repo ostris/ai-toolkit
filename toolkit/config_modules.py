@@ -1,3 +1,4 @@
+import math
 import os
 import time
 from typing import List, Optional, Literal, Tuple, Union, TYPE_CHECKING, Dict
@@ -35,6 +36,28 @@ class SaveConfig:
 class LoggingConfig:
     def __init__(self, **kwargs):
         self.log_every: int = kwargs.get('log_every', 100)
+        raw_caption_log_interval = kwargs.get('log_captions_every_n_steps', 0)
+        if raw_caption_log_interval is None:
+            raw_caption_log_interval = 0
+        if isinstance(raw_caption_log_interval, bool):
+            raise ValueError(
+                'log_captions_every_n_steps must be a finite whole number greater than or equal to 0'
+            )
+        try:
+            caption_log_interval = float(raw_caption_log_interval)
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError(
+                'log_captions_every_n_steps must be a finite whole number greater than or equal to 0'
+            ) from exc
+        if (
+            not math.isfinite(caption_log_interval)
+            or caption_log_interval < 0
+            or not caption_log_interval.is_integer()
+        ):
+            raise ValueError(
+                'log_captions_every_n_steps must be a finite whole number greater than or equal to 0'
+            )
+        self.log_captions_every_n_steps: int = int(caption_log_interval)
         self.verbose: bool = kwargs.get('verbose', False)
         self.use_wandb: bool = kwargs.get('use_wandb', False)
         self.use_ui_logger: bool = kwargs.get('use_ui_logger', False)
@@ -906,6 +929,39 @@ class DatasetConfig:
         # if caption_ext doesnt start with a dot, add it
         if self.caption_ext and not self.caption_ext.startswith('.'):
             self.caption_ext = '.' + self.caption_ext
+        self.caption_mode: str = str(kwargs.get('caption_mode', 'single')).lower()
+        if self.caption_mode not in ['single', 'mixed']:
+            raise ValueError(
+                f"caption_mode must be 'single' or 'mixed', got {self.caption_mode}"
+            )
+        default_mixed_weights = {
+            'tags': 40.0,
+            'nl': 30.0,
+            'tags_nl': 20.0,
+            'nl_tags': 10.0,
+        }
+        raw_mixed_weights = kwargs.get('mixed_weights', None)
+        if raw_mixed_weights is None:
+            raw_mixed_weights = default_mixed_weights
+        if not isinstance(raw_mixed_weights, dict):
+            raise ValueError('mixed_weights must be a mapping')
+        try:
+            self.mixed_weights: Dict[str, float] = {
+                key: float(raw_mixed_weights.get(key, 0.0))
+                for key in default_mixed_weights
+            }
+        except (OverflowError, TypeError, ValueError) as exc:
+            raise ValueError('mixed_weights must contain finite numeric values') from exc
+        mixed_weight_total = sum(self.mixed_weights.values())
+        if (
+            any(not math.isfinite(weight) for weight in self.mixed_weights.values())
+            or not math.isfinite(mixed_weight_total)
+        ):
+            raise ValueError('mixed_weights must contain finite numeric values')
+        if any(weight < 0 for weight in self.mixed_weights.values()):
+            raise ValueError('mixed_weights cannot contain negative values')
+        if self.caption_mode == 'mixed' and mixed_weight_total <= 0:
+            raise ValueError('mixed_weights must contain at least one positive value')
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
@@ -916,9 +972,21 @@ class DatasetConfig:
         self.prior_reg: bool = kwargs.get('prior_reg', False)
         self.network_weight: float = float(kwargs.get('network_weight', 1.0))
         self.token_dropout_rate: float = float(kwargs.get('token_dropout_rate', 0.0))
-        self.shuffle_tokens: bool = kwargs.get('shuffle_tokens', False)
+        # ``shuffle_tokens`` is the legacy name for caption tag shuffling.
+        # Keep accepting it so existing configs continue to work, while using
+        # the clearer ``shuffle_caption`` name for new configs and the UI.
+        self.shuffle_caption: bool = kwargs.get(
+            'shuffle_caption', kwargs.get('shuffle_tokens', False)
+        )
+        self.shuffle_tokens: bool = self.shuffle_caption
         self.caption_dropout_rate: float = float(kwargs.get('caption_dropout_rate', 0.0))
         self.keep_tokens: int = kwargs.get('keep_tokens', 0)  # #of first tokens to always keep unless caption dropped
+        self.keep_tokens_separator: str = kwargs.get('keep_tokens_separator', None)
+        if self.keep_tokens_separator == '':
+            self.keep_tokens_separator = None
+        self.secondary_separator: str = kwargs.get('secondary_separator', None)
+        if self.secondary_separator == '':
+            self.secondary_separator = None
         self.flip_x: bool = kwargs.get('flip_x', False)
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])

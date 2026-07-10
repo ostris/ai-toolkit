@@ -41,7 +41,7 @@ config:
         - folder_path: "/path/to/images/folder"
           caption_ext: "txt"
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
-          shuffle_tokens: false  # shuffle caption order, split by commas
+          shuffle_caption: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you know what you're doing
           resolution: [ 632 ]  # will be around 480p
       train:

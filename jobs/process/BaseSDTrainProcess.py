@@ -23,6 +23,11 @@ from huggingface_hub import HfApi, interpreter_login
 from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
+from toolkit.caption_logging import (
+    emit_caption_log,
+    format_caption_debug_log,
+    should_log_captions,
+)
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
@@ -2501,6 +2506,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
                     if self.progress_bar is not None:
                         self.progress_bar.set_postfix_str(prog_bar_string)
+
+                completed_step = self.step_num + 1
+                caption_log_interval = getattr(
+                    self.logging_config,
+                    'log_captions_every_n_steps',
+                    0,
+                )
+                if (
+                    not did_oom
+                    and self.accelerator.is_main_process
+                    and should_log_captions(completed_step, caption_log_interval)
+                ):
+                    caption_debug_log = format_caption_debug_log(completed_step, batch_list)
+                    if caption_debug_log is not None:
+                        print(caption_debug_log, flush=True)
+                        emit_caption_log(caption_debug_log)
 
                 # if the batch is a DataLoaderBatchDTO, then we need to clean it up
                 if isinstance(batch, DataLoaderBatchDTO):

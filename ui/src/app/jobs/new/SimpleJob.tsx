@@ -81,6 +81,26 @@ export default function SimpleJob({
 
   const isVideoModel = !!(modelArch?.group === 'video');
   const isAudioModel = !!(modelArch?.group === 'audio');
+  const hasInvalidMixedCaptionWeights = jobConfig.config.process[0].datasets.some(dataset => {
+    if ((dataset.caption_mode ?? 'single') !== 'mixed') return false;
+    const weights = dataset.mixed_weights;
+    return (
+      (weights?.tags ?? 40) +
+        (weights?.nl ?? 30) +
+        (weights?.tags_nl ?? 20) +
+        (weights?.nl_tags ?? 10) <=
+      0
+    );
+  });
+
+  const handleValidatedSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    if (hasInvalidMixedCaptionWeights) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    handleSubmit(event);
+  };
 
   const taggedSampleArr: Record<string, any>[] | null = useMemo(() => {
     if (!modelArch) return null;
@@ -222,7 +242,7 @@ export default function SimpleJob({
   return (
     <>
       <form
-        onSubmit={handleSubmit}
+        onSubmit={handleValidatedSubmit}
         className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
       >
         {isLoading && (
@@ -869,6 +889,19 @@ export default function SimpleJob({
                   </>
                 )}
               </div>
+              <div>
+                <NumberInput
+                  label="Log Captions Every N Steps"
+                  value={jobConfig.config.process[0].logging.log_captions_every_n_steps ?? 0}
+                  onChange={value =>
+                    setJobConfig(Math.floor(value ?? 0), 'config.process[0].logging.log_captions_every_n_steps')
+                  }
+                  placeholder="0 disables caption logging"
+                  min={0}
+                  docKey="logging.log_captions_every_n_steps"
+                  required
+                />
+              </div>
             </div>
           </Card>
         </div>
@@ -992,6 +1025,72 @@ export default function SimpleJob({
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].default_caption`)}
                         placeholder="eg. A photo of a cat"
                       />
+                      <SelectInput
+                        label="Caption Mode"
+                        className="pt-2"
+                        value={dataset.caption_mode ?? 'single'}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].caption_mode`)}
+                        options={[
+                          { value: 'single', label: 'Single (.txt)' },
+                          { value: 'mixed', label: 'Mixed (.txt + _nl.txt)' },
+                        ]}
+                        docKey="datasets.caption_mode"
+                      />
+                      {(dataset.caption_mode ?? 'single') === 'mixed' && (
+                        <>
+                          <NumberInput
+                            label="Tags Weight"
+                            className="pt-2"
+                            value={dataset.mixed_weights?.tags ?? 40}
+                            onChange={value =>
+                              setJobConfig(value, `config.process[0].datasets[${i}].mixed_weights.tags`)
+                            }
+                            min={0}
+                            docKey="datasets.mixed_weights"
+                            required
+                          />
+                          <NumberInput
+                            label="Natural Language Weight"
+                            className="pt-2"
+                            value={dataset.mixed_weights?.nl ?? 30}
+                            onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].mixed_weights.nl`)}
+                            min={0}
+                            docKey="datasets.mixed_weights"
+                            required
+                          />
+                          <NumberInput
+                            label="Tags + Natural Language Weight"
+                            className="pt-2"
+                            value={dataset.mixed_weights?.tags_nl ?? 20}
+                            onChange={value =>
+                              setJobConfig(value, `config.process[0].datasets[${i}].mixed_weights.tags_nl`)
+                            }
+                            min={0}
+                            docKey="datasets.mixed_weights"
+                            required
+                          />
+                          <NumberInput
+                            label="Natural Language + Tags Weight"
+                            className="pt-2"
+                            value={dataset.mixed_weights?.nl_tags ?? 10}
+                            onChange={value =>
+                              setJobConfig(value, `config.process[0].datasets[${i}].mixed_weights.nl_tags`)
+                            }
+                            min={0}
+                            docKey="datasets.mixed_weights"
+                            required
+                          />
+                          {(dataset.mixed_weights?.tags ?? 40) +
+                            (dataset.mixed_weights?.nl ?? 30) +
+                            (dataset.mixed_weights?.tags_nl ?? 20) +
+                            (dataset.mixed_weights?.nl_tags ?? 10) <=
+                            0 && (
+                            <p className="pt-2 text-sm text-red-500">
+                              At least one mixed caption weight must be greater than 0.
+                            </p>
+                          )}
+                        </>
+                      )}
                       <NumberInput
                         label="Caption Dropout Rate"
                         className="pt-2"
@@ -1000,6 +1099,47 @@ export default function SimpleJob({
                         placeholder="eg. 0.05"
                         min={0}
                         required
+                      />
+                      <NumberInput
+                        label="Caption Tag Dropout Rate"
+                        className="pt-2"
+                        value={dataset.token_dropout_rate ?? 0}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].token_dropout_rate`)}
+                        placeholder="eg. 0.1"
+                        min={0}
+                        max={1}
+                        docKey="datasets.token_dropout_rate"
+                        required
+                      />
+                      <NumberInput
+                        label="Keep First Tags"
+                        className="pt-2"
+                        value={dataset.keep_tokens ?? 0}
+                        onChange={value =>
+                          setJobConfig(Math.floor(value ?? 0), `config.process[0].datasets[${i}].keep_tokens`)
+                        }
+                        placeholder="eg. 1"
+                        min={0}
+                        docKey="datasets.keep_tokens"
+                        required
+                      />
+                      <TextInput
+                        label="Keep Tokens Separator"
+                        className="pt-2"
+                        value={dataset.keep_tokens_separator ?? ''}
+                        onChange={value =>
+                          setJobConfig(value, `config.process[0].datasets[${i}].keep_tokens_separator`)
+                        }
+                        placeholder="eg. |||"
+                        docKey="datasets.keep_tokens_separator"
+                      />
+                      <TextInput
+                        label="Secondary Separator"
+                        className="pt-2"
+                        value={dataset.secondary_separator ?? ''}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].secondary_separator`)}
+                        placeholder="eg. ;;;"
+                        docKey="datasets.secondary_separator"
                       />
                       <CreatableSelectInput
                         label="Caption Extension"
@@ -1039,6 +1179,12 @@ export default function SimpleJob({
                           label="Is Regularization"
                           checked={dataset.is_reg || false}
                           onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].is_reg`)}
+                        />
+                        <Checkbox
+                          label="Shuffle Caption"
+                          checked={dataset.shuffle_caption ?? dataset.shuffle_tokens ?? false}
+                          onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].shuffle_caption`)}
+                          docKey="datasets.shuffle_caption"
                         />
                         {modelArch?.additionalSections?.includes('datasets.auto_frame_count') && (
                           <Checkbox

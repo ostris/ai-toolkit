@@ -3,6 +3,13 @@ import { isMac } from '@/helpers/basic';
 import { defaultSampleConfig } from '@/helpers/defaultSamples';
 import { JobConfig, SampleConfig, DatasetConfig, SliderConfig } from '@/types';
 
+const defaultMixedCaptionWeights = {
+  tags: 40,
+  nl: 30,
+  tags_nl: 20,
+  nl_tags: 10,
+};
+
 export const defaultDatasetConfig: DatasetConfig = {
   folder_path: '/path/to/images/folder',
   mask_path: null,
@@ -10,6 +17,13 @@ export const defaultDatasetConfig: DatasetConfig = {
   default_caption: '',
   caption_ext: 'txt',
   caption_dropout_rate: 0.05,
+  caption_mode: 'single',
+  mixed_weights: { ...defaultMixedCaptionWeights },
+  token_dropout_rate: 0,
+  keep_tokens: 0,
+  keep_tokens_separator: '',
+  secondary_separator: '',
+  shuffle_caption: false,
   cache_latents_to_disk: false,
   is_reg: false,
   network_weight: 1,
@@ -102,6 +116,7 @@ export const defaultJobConfig: JobConfig = {
         logging: {
           log_every: 1,
           use_ui_logger: true,
+          log_captions_every_n_steps: 0,
         },
         model: {
           name_or_path: 'ostris/Flex.1-alpha',
@@ -153,11 +168,30 @@ export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
     delete jobConfig.config.process[0].model.auto_memory;
   }
 
-  if (!('logging' in jobConfig.config.process[0])) {
-    //@ts-ignore
-    jobConfig.config.process[0].logging = {
+  const processConfig = jobConfig.config.process[0];
+  if (
+    !processConfig.logging ||
+    typeof processConfig.logging !== 'object' ||
+    Array.isArray(processConfig.logging)
+  ) {
+    processConfig.logging = {
       log_every: 1,
       use_ui_logger: true,
+      log_captions_every_n_steps: 0,
+    };
+  }
+  if (processConfig.logging.log_captions_every_n_steps == null) {
+    processConfig.logging.log_captions_every_n_steps = 0;
+  }
+
+  for (const dataset of processConfig.datasets ?? []) {
+    const existingWeights =
+      dataset.mixed_weights && typeof dataset.mixed_weights === 'object' && !Array.isArray(dataset.mixed_weights)
+        ? dataset.mixed_weights
+        : {};
+    dataset.mixed_weights = {
+      ...defaultMixedCaptionWeights,
+      ...existingWeights,
     };
   }
   if (isMac()) {

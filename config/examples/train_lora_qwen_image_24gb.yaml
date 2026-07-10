@@ -32,7 +32,7 @@ config:
           caption_ext: "txt"
           # default_caption: "a person" # if caching text embeddings, if you dont have captions, this will get cached
           caption_dropout_rate: 0.05  # will drop out the caption 5% of time
-          shuffle_tokens: false  # shuffle caption order, split by commas
+          shuffle_caption: false  # shuffle caption order, split by commas
           cache_latents_to_disk: true  # leave this true unless you have a large dataset
           # if you OOM, 1024 may be too much, but should work
           resolution: [ 512, 768, 1024 ]  # qwen image enjoys multiple resolutions

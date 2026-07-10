@@ -19,6 +19,15 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, Sigl
 from toolkit.audio.preserve_pitch import time_stretch_preserve_pitch
 from toolkit.basic import flush, value_map
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
+from toolkit.caption_utils import (
+    MixedCaptionSelection,
+    drop_caption_tags,
+    expand_secondary_separator,
+    join_caption_sections,
+    select_mixed_caption_selection,
+    shuffle_caption_tags,
+    split_caption_at_separator,
+)
 from toolkit.config_modules import ControlTypes
 from toolkit.control_generator import ControlGenerator
 from toolkit.metadata import get_meta_for_safetensors
@@ -316,6 +325,8 @@ class CaptionProcessingDTOMixin:
             self.raw_caption_short: str = None
             self.caption: str = None
             self.caption_short: str = None
+            self.mixed_caption_selection: Union[MixedCaptionSelection, None] = None
+            self.mixed_caption_sources: Union[tuple, None] = None
 
             dataset_config: DatasetConfig = kwargs.get('dataset_config', None)
             self.extra_values: List[float] = dataset_config.extra_values
@@ -324,9 +335,21 @@ class CaptionProcessingDTOMixin:
     # todo allow for loading from sd-scripts style dict
     def load_caption(self: 'FileItemDTO', caption_dict: Union[dict, None]=None):
         if self.raw_caption is not None:
-            # we already loaded it
-            pass
+            # Sidecar contents are cached on the DTO, but mixed variants must
+            # be selected again every time the item is loaded so configured
+            # weights apply throughout training instead of only once.
+            if self.mixed_caption_sources is not None:
+                tags_prompt, nl_prompt = self.mixed_caption_sources
+                self.mixed_caption_selection = select_mixed_caption_selection(
+                    tags_prompt,
+                    nl_prompt,
+                    self.dataset_config.mixed_weights,
+                    self.dataset_config.keep_tokens_separator,
+                )
+                self.raw_caption = self.mixed_caption_selection.render()
         elif caption_dict is not None and self.path in caption_dict and "caption" in caption_dict[self.path]:
+            self.mixed_caption_selection = None
+            self.mixed_caption_sources = None
             self.raw_caption = caption_dict[self.path]["caption"]
             if 'caption_short' in caption_dict[self.path]:
                 self.raw_caption_short = caption_dict[self.path]["caption_short"]
@@ -337,31 +360,151 @@ class CaptionProcessingDTOMixin:
             path_no_ext = os.path.splitext(self.path)[0]
             prompt_ext = self.dataset_config.caption_ext
             prompt_path = path_no_ext + prompt_ext
+            nl_prompt_path = path_no_ext + '_nl' + prompt_ext
             short_caption = None
 
             if os.path.exists(prompt_path):
                 with open(prompt_path, 'r', encoding='utf-8') as f:
                     prompt = f.read()
-                    short_caption = None
                     prompt = clean_caption(prompt)
-                    if short_caption is not None:
-                        short_caption = clean_caption(short_caption)
-                    
-                    if prompt.strip() == '' and self.dataset_config.default_caption is not None:
-                        prompt = self.dataset_config.default_caption
             else:
                 prompt = ''
-                if self.dataset_config.default_caption is not None:
-                    prompt = self.dataset_config.default_caption
+
+            mixed_caption_selection = None
+            if self.dataset_config.caption_mode == 'mixed':
+                if os.path.exists(nl_prompt_path):
+                    with open(nl_prompt_path, 'r', encoding='utf-8') as f:
+                        nl_prompt = clean_caption(f.read())
+                else:
+                    nl_prompt = ''
+                mixed_caption_selection = select_mixed_caption_selection(
+                    prompt,
+                    nl_prompt,
+                    self.dataset_config.mixed_weights,
+                    self.dataset_config.keep_tokens_separator,
+                )
+                self.mixed_caption_sources = (prompt, nl_prompt)
+                prompt = mixed_caption_selection.render()
+
+            if prompt.strip() == '' and self.dataset_config.default_caption is not None:
+                prompt = self.dataset_config.default_caption
+                # A default caption is not a tags/_nl pair, so process it via
+                # the unchanged single-caption path.
+                mixed_caption_selection = None
+                self.mixed_caption_sources = None
 
             if short_caption is None:
                 short_caption = self.dataset_config.default_caption
             self.raw_caption = prompt
             self.raw_caption_short = short_caption
+            self.mixed_caption_selection = mixed_caption_selection
 
         self.caption = self.get_caption()
         if self.raw_caption_short is not None:
             self.caption_short = self.get_caption(short_caption=True)
+
+    def _get_mixed_caption(
+            self: 'FileItemDTO',
+            trigger=None,
+            to_replace_list=None,
+            add_if_not_present=False,
+    ):
+        """Process only the tag section of a selected mixed caption."""
+        selection = self.mixed_caption_selection
+        protected_tags = selection.protected_tags
+        processable_tags = selection.processable_tags if selection.includes_tags else ''
+        nl_caption = selection.nl_caption if selection.includes_nl else ''
+
+        if self.dataset_config.token_dropout_rate > 0 and not self.dataset_config.cache_text_embeddings:
+            processable_tags = drop_caption_tags(
+                processable_tags,
+                self.dataset_config.token_dropout_rate,
+                self.dataset_config.keep_tokens,
+                self.dataset_config.secondary_separator,
+            )
+
+        # Replace trigger placeholders in every selected section, but decide
+        # where to auto-inject a missing trigger only after inspecting all of
+        # them together. Copy custom replacement lists because the legacy
+        # helper mutates a provided list.
+        def replace_trigger(section):
+            replacements = list(to_replace_list) if to_replace_list is not None else None
+            return inject_trigger_into_prompt(
+                section,
+                trigger,
+                replacements,
+                add_if_not_present=False,
+            )
+
+        protected_tags = replace_trigger(protected_tags)
+        processable_tags = replace_trigger(processable_tags)
+        nl_caption = replace_trigger(nl_caption)
+
+        if (
+            trigger is not None
+            and trigger.strip() != ''
+            and add_if_not_present
+            and not any(
+                trigger in section
+                for section in (protected_tags, processable_tags, nl_caption)
+            )
+        ):
+            def prepend_trigger(section):
+                return f'{trigger} {section}'.rstrip()
+
+            if selection.keep_tokens_separator is not None:
+                protected_tags = prepend_trigger(protected_tags)
+            elif selection.variant in ('nl', 'nl_tags') and nl_caption:
+                nl_caption = prepend_trigger(nl_caption)
+            elif selection.variant in ('tags', 'tags_nl'):
+                processable_tags = prepend_trigger(processable_tags)
+            elif nl_caption:
+                nl_caption = prepend_trigger(nl_caption)
+            else:
+                processable_tags = prepend_trigger(processable_tags)
+
+        extra_tags = ''
+        if self.dataset_config.random_triggers:
+            num_triggers = self.dataset_config.random_triggers_max
+            if num_triggers > 1:
+                num_triggers = random.randint(0, num_triggers)
+            if num_triggers > 0:
+                extra_tags = ', '.join(
+                    random.sample(self.dataset_config.random_triggers, num_triggers)
+                )
+
+        # NL-only variants start with an empty tag section, but can still
+        # receive an auto-injected trigger or configured random tags. Keep
+        # those values separate from the protected NL sentence.
+        processable_tags = join_caption_sections(processable_tags, extra_tags)
+
+        if self.dataset_config.shuffle_caption:
+            processable_tags = shuffle_caption_tags(
+                processable_tags,
+                self.dataset_config.secondary_separator,
+            )
+
+        processable_tags = expand_secondary_separator(
+            processable_tags,
+            self.dataset_config.secondary_separator,
+        )
+        protected_tags = expand_secondary_separator(
+            protected_tags,
+            self.dataset_config.secondary_separator,
+        )
+
+        if selection.variant == 'nl':
+            return selection.render_processed(
+                protected_tags,
+                '',
+                nl_caption,
+                extra_tags=processable_tags,
+            )
+        return selection.render_processed(
+            protected_tags,
+            processable_tags,
+            nl_caption,
+        )
 
     def get_caption(
             self: 'FileItemDTO',
@@ -391,33 +534,40 @@ class CaptionProcessingDTOMixin:
                 # drop the caption
                 return ''
 
-        # get tokens
-        token_list = raw_caption.split(',')
+        if self.mixed_caption_selection is not None and not short_caption:
+            return self._get_mixed_caption(
+                trigger,
+                to_replace_list,
+                add_if_not_present,
+            )
+
+        protected_caption, processable_caption, has_keep_separator = split_caption_at_separator(
+            raw_caption, self.dataset_config.keep_tokens_separator
+        )
 
         # handle token dropout
         if self.dataset_config.token_dropout_rate > 0 and not short_caption and not self.dataset_config.cache_text_embeddings:
-            new_token_list = []
-            keep_tokens: int = self.dataset_config.keep_tokens
-            for idx, token in enumerate(token_list):
-                if idx < keep_tokens:
-                    new_token_list.append(token)
-                elif self.dataset_config.token_dropout_rate >= 1.0:
-                    # drop the token
-                    pass
-                else:
-                    # get a random float form 0 to 1
-                    rand = random.random()
-                    if rand > self.dataset_config.token_dropout_rate:
-                        # keep the token
-                        new_token_list.append(token)
-            token_list = new_token_list
+            # Only tags after keep_tokens_separator participate in token dropout.
+            processable_caption = drop_caption_tags(
+                processable_caption,
+                self.dataset_config.token_dropout_rate,
+                self.dataset_config.keep_tokens,
+                self.dataset_config.secondary_separator,
+            )
 
-        if self.dataset_config.shuffle_tokens:
-            random.shuffle(token_list)
+        # Join the processable tags before trigger and random-trigger handling.
+        caption = processable_caption
+        if has_keep_separator:
+            # Keep the separator temporarily so trigger replacement can happen
+            # in either section while newly injected triggers stay protected.
+            caption = protected_caption + self.dataset_config.keep_tokens_separator + caption
 
-        # join back together
-        caption = ', '.join(token_list)
         caption = inject_trigger_into_prompt(caption, trigger, to_replace_list, add_if_not_present)
+
+        if has_keep_separator:
+            protected_caption, caption, _ = split_caption_at_separator(
+                caption, self.dataset_config.keep_tokens_separator
+            )
 
         if self.dataset_config.random_triggers:
             num_triggers = self.dataset_config.random_triggers_max
@@ -433,11 +583,19 @@ class CaptionProcessingDTOMixin:
                 #     trigger = self.dataset_config.random_triggers[int(random.random() * (len(self.dataset_config.random_triggers)))]
                 #     caption = caption + ', ' + trigger
 
-        if self.dataset_config.shuffle_tokens:
-            # shuffle again
-            token_list = caption.split(',')
-            random.shuffle(token_list)
-            caption = ', '.join(token_list)
+        if self.dataset_config.shuffle_caption:
+            # When a separator is present, caption contains only its processable
+            # section here, leaving protected_caption untouched.
+            caption = shuffle_caption_tags(caption, self.dataset_config.secondary_separator)
+
+        # Group separators are processing hints and must not reach the text encoder.
+        caption = expand_secondary_separator(caption, self.dataset_config.secondary_separator)
+        protected_caption = expand_secondary_separator(
+            protected_caption, self.dataset_config.secondary_separator
+        )
+
+        if has_keep_separator:
+            caption = join_caption_sections(protected_caption, caption)
         if caption == '':
             pass
         return caption
