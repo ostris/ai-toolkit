@@ -188,7 +188,9 @@ class OrbitQuantizer(OstrisQuantizer):
         packed, row_norms = _quantize_rows(weight_fp32, perm, signs, h, codebook, self.bits)
         module.register_buffer("orbit_packed", packed, persistent=False)
         module.register_buffer("orbit_row_norms", row_norms.to(module.weight.dtype), persistent=False)
-        module.register_buffer("orbit_codebook", codebook, persistent=False)
+        # stored as a uint8 byte view so module.to(dtype=...) can't cast the fp32
+        # codebook (nn.Module._apply dtype-casts every floating buffer)
+        module.register_buffer("orbit_codebook", codebook.view(torch.uint8), persistent=False)
         module.register_buffer("orbit_perm", perm, persistent=False)
         module.register_buffer("orbit_inv_perm", inv_perm, persistent=False)
         module.register_buffer("orbit_signs", signs, persistent=False)
@@ -199,7 +201,8 @@ class OrbitQuantizer(OstrisQuantizer):
         """Materialize the rotated-basis weight W' = W P^T in the given dtype."""
         numel = module.out_features * module.in_features
         codes = unpack_codes(module.orbit_packed, module.orbit_bits, numel)
-        w = torch.index_select(module.orbit_codebook.to(dtype), 0, codes.to(torch.int32))
+        codebook = module.orbit_codebook.view(torch.float32)
+        w = torch.index_select(codebook.to(dtype), 0, codes.to(torch.int32))
         w = w.view(module.out_features, module.in_features)
         return w * module.orbit_row_norms.to(dtype).unsqueeze(1)
 
@@ -211,7 +214,7 @@ class OrbitQuantizer(OstrisQuantizer):
         w = fp_weight.to(device=module.orbit_packed.device, dtype=torch.float32)
         packed, row_norms = _quantize_rows(
             w, module.orbit_perm, module.orbit_signs, module.orbit_block,
-            module.orbit_codebook, module.orbit_bits,
+            module.orbit_codebook.view(torch.float32), module.orbit_bits,
         )
         module.orbit_packed = packed
         module.orbit_row_norms = row_norms.to(module.ostris_orig_dtype)
