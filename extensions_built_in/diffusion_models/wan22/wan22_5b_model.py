@@ -265,23 +265,37 @@ class Wan225bModel(Wan21):
 
         if batch.dataset_config.do_i2v:
             with torch.no_grad():
-                frames = batch.tensor
-                if len(frames.shape) == 4:
-                    first_frames = frames
-                elif len(frames.shape) == 5:
-                    first_frames = frames[:, 0]
-                    # Add conditioning using the standalone function
+                # check to see if we had the first frame latent cached
+                if batch.first_frame_latents is not None:
                     conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
                         latent_model_input=latent_model_input.to(
                             self.device_torch, self.torch_dtype
                         ),
-                        first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                        first_frame_latents=batch.first_frame_latents.to(
+                            self.device_torch, self.torch_dtype
+                        ),
                         vae=self.vae,
                     )
                     # conditioned tokens are clean with timestep 0 and must not contribute to the loss
                     self._i2v_loss_mask = noise_mask
                 else:
-                    raise ValueError(f"Unknown frame shape {frames.shape}")
+                    frames = batch.tensor
+                    if len(frames.shape) == 4:
+                        first_frames = frames
+                    elif len(frames.shape) == 5:
+                        first_frames = frames[:, 0]
+                        # Add conditioning using the standalone function
+                        conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
+                            latent_model_input=latent_model_input.to(
+                                self.device_torch, self.torch_dtype
+                            ),
+                            first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                            vae=self.vae,
+                        )
+                        # conditioned tokens are clean with timestep 0 and must not contribute to the loss
+                        self._i2v_loss_mask = noise_mask
+                    else:
+                        raise ValueError(f"Unknown frame shape {frames.shape}")
 
                 # make the noise mask
                 if noise_mask is None:
