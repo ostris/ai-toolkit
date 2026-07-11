@@ -28,6 +28,10 @@ class OstrisQuantizer:
     other methods. One backend instance may be shared by many modules.
     """
 
+    # the qtype string this instance was resolved from (stamped by
+    # get_ostris_quantizer); pre-quantized saves need it to restore the backend
+    qtype: Optional[str] = None
+
     def can_quantize(self, module: torch.nn.Linear) -> bool:
         """Whether this backend can quantize the given linear (e.g. shape constraints)."""
         return True
@@ -105,13 +109,16 @@ def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
     from toolkit.util.orbit_vq_quant import ORBIT_VQ_QTYPES, OrbitVQQuantizer
     from toolkit.util.convrot_quant import CONVROT_QTYPES, get_convrot_quantizer
 
+    quantizer = None
     if qtype in ORBIT_QTYPES:
-        return OrbitQuantizer(ORBIT_QTYPES[qtype])
-    if qtype in ORBIT_VQ_QTYPES:
-        return OrbitVQQuantizer(**ORBIT_VQ_QTYPES[qtype])
-    if qtype in CONVROT_QTYPES:
-        return get_convrot_quantizer(qtype)
-    return None
+        quantizer = OrbitQuantizer(ORBIT_QTYPES[qtype])
+    elif qtype in ORBIT_VQ_QTYPES:
+        quantizer = OrbitVQQuantizer(**ORBIT_VQ_QTYPES[qtype])
+    elif qtype in CONVROT_QTYPES:
+        quantizer = get_convrot_quantizer(qtype)
+    if quantizer is not None:
+        quantizer.qtype = qtype
+    return quantizer
 
 
 @torch.no_grad()
