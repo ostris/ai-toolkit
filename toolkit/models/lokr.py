@@ -104,7 +104,12 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         self.use_w2 = False
         self.can_merge_in = True
 
-        self.shape = org_module.weight.shape
+        # avoid the weight property on quantized OstrisLinear: it dequantizes the
+        # whole weight just to answer .shape
+        if getattr(org_module, "is_ostris_quantized", False):
+            self.shape = torch.Size((org_module.out_features, org_module.in_features))
+        else:
+            self.shape = org_module.weight.shape
         if org_module.__class__.__name__ == 'Conv2d':
             in_dim = org_module.in_channels
             k_size = org_module.kernel_size
