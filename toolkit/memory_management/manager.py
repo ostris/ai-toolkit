@@ -6,6 +6,7 @@ LINEAR_MODULES = [
     "Linear",
     "LoRACompatibleLinear",
     "QLinear",
+    'OstrisLinear',
 ]
 CONV_MODULES = [
     "Conv2d",

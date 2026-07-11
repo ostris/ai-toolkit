@@ -13,7 +13,8 @@ from toolkit.network_mixins import ToolkitNetworkMixin, ToolkitModuleMixin, Extr
 # diffusers specific stuff
 LINEAR_MODULES = [
     'Linear',
-    'LoRACompatibleLinear'
+    'OstrisLinear',
+    'LoRACompatibleLinear',
 ]
 CONV_MODULES = [
     'Conv2d',

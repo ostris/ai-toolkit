@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 # diffusers specific stuff
 LINEAR_MODULES = [
     'Linear',
-    'LoRACompatibleLinear'
+    'LoRACompatibleLinear',
+    'OstrisLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
