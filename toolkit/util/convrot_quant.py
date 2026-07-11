@@ -650,6 +650,52 @@ def _int8_act_quant_padded(x: torch.Tensor):
     return q, scales
 
 
+# the training-path linear: forward VALUE is the real int8 tensor-core gemm (bit
+# identical to the inference path), gradient is the straight-through estimate
+# d y / d x_rot ~= dequant(W'), registered as a custom-op autograd so it works
+# under torch.compile. the backward re-dequantizes the weight from int8 instead of
+# saving a bf16 copy, and x is not saved at all — less memory than F.linear.
+@torch.library.custom_op("ostris::convrot_int8_linear_ste", mutates_args=())
+def _int8_linear_ste_op(
+    x2d: torch.Tensor,
+    qdata: torch.Tensor,
+    w_scales_u8: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    out_dtype: str,
+) -> torch.Tensor:
+    m = x2d.shape[0]
+    aq, a_s = _int8_act_quant_padded(x2d)
+    i32 = torch._int_mm(aq, qdata.t())
+    return _int8_epilogue(
+        i32[:m], a_s[:m], w_scales_u8.view(torch.float32), bias,
+        getattr(torch, out_dtype),
+    )
+
+
+@_int8_linear_ste_op.register_fake
+def _int8_linear_ste_fake(x2d, qdata, w_scales_u8, bias, out_dtype):
+    return torch.empty(
+        x2d.shape[0], qdata.shape[0], device=x2d.device, dtype=getattr(torch, out_dtype)
+    )
+
+
+def _int8_linear_ste_setup(ctx, inputs, output):
+    x2d, qdata, w_scales_u8, bias, out_dtype = inputs
+    ctx.save_for_backward(qdata, w_scales_u8)
+
+
+def _int8_linear_ste_backward(ctx, grad):
+    qdata, w_scales_u8 = ctx.saved_tensors
+    w_scales = w_scales_u8.view(torch.float32).to(grad.dtype)
+    w = qdata.to(grad.dtype) * w_scales.unsqueeze(1)
+    return grad @ w, None, None, None, None
+
+
+_int8_linear_ste_op.register_autograd(
+    _int8_linear_ste_backward, setup_context=_int8_linear_ste_setup
+)
+
+
 def _int8_epilogue(
     i32: torch.Tensor,
     a_scales: torch.Tensor,
@@ -762,9 +808,17 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         m = x2d.shape[0]
 
         if x.requires_grad:
-            # training: straight-through fake-quant so adapters see deployment
-            # W8A8 numerics; differentiable bf16 matmul. gated on requires_grad
-            # alone so both gradient-checkpoint passes take the same branch
+            # training: gated on requires_grad alone so both gradient-checkpoint
+            # passes take the same branch
+            if _int8_gemm_supported(x.device):
+                # int8 tensor-core forward (bit-identical to the inference path)
+                # with a straight-through analytic backward
+                out = _int8_linear_ste_op(
+                    x2d, module.cr8_qdata, module.cr8_scales, module.bias,
+                    str(x.dtype).split(".")[-1],
+                )
+                return out.reshape(*x.shape[:-1], out_f)
+            # no int8 hardware: straight-through fake-quant + bf16 matmul
             with torch.no_grad():
                 aq, a_s = quantize_int8_rows(x2d.detach())
                 x_dq = (aq.float() * a_s.unsqueeze(1)).to(x.dtype)

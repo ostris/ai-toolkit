@@ -383,7 +383,11 @@ def quantize_model(
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)
-            block.to("cpu", non_blocking=True)
+            # NOT non_blocking: an async D2H allocates the cpu destination in pinned
+            # memory, which the caching host allocator keeps forever (with power-of-2
+            # bucket rounding on top) — that silently retained a model-sized chunk of
+            # host ram after the weights moved back to the gpu for training
+            block.to("cpu")
 
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first
