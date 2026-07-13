@@ -1246,6 +1246,7 @@ export const quantizationOptions: SelectOption[] = [
   { value: 'convrotint4', label: '4bit convrot' },
   { value: 'convrotint3', label: '3bit convrot' },
   { value: 'convrotint2', label: '2bit convrot' },
+  { value: 'convrotbitnet', label: '1.58bit convrot (bitnet)' },
   { value: 'uint7', label: '7 bit' },
   { value: 'uint6', label: '6 bit' },
   { value: 'uint5', label: '5 bit' },

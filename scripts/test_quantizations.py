@@ -48,7 +48,7 @@ VRAM_TOKENS = 4096
 QTYPES = [
     "bf16", "qfloat8", "float8", "orbit4", "orbitvq4", "convrot8", "convrot4",
     "convrotint7", "convrotint6", "convrotint5", "convrotint4", "convrotint3",
-    "convrotint2",
+    "convrotint2", "convrotbitnet",
 ]
 
 STACK_KEY = f"{VRAM_BLOCKS}-block stack"

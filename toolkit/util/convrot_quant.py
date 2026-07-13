@@ -51,7 +51,7 @@ import torch.nn.functional as F
 from toolkit.print import print_acc
 from toolkit.util.ostris_quant import OstrisQuantizer
 
-CONVROT_QTYPES = ("convrot4", "convrot8") + tuple(
+CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet") + tuple(
     f"convrotint{b}" for b in range(2, 9)
 )
 
@@ -61,6 +61,8 @@ def get_convrot_quantizer(qtype: str):
         return ConvRotQuantizer(rot_size=256)
     if qtype == "convrot8":
         return ConvRotInt8Quantizer(rot_size=256)
+    if qtype == "convrotbitnet":
+        return ConvRotBitNetQuantizer(rot_size=256)
     if qtype.startswith("convrotint"):
         bits = int(qtype[len("convrotint"):])
         if 2 <= bits <= 8:
@@ -1189,6 +1191,38 @@ def unpack_intn_rows_grouped(
     return torch.round(codes * ratio).clamp_(-127, 127).to(torch.int8)
 
 
+# --- convrotbitnet: 1.6-bit base-3 storage of the ternary width --------------
+#
+# BitNet-b1.58 style: the codes and scales are EXACTLY convrotint2's (ternary
+# {-1,0,1}, MSE-optimal group scales), only the storage differs — 5 ternary
+# codes per byte (3^5 = 243 <= 256) = 1.6 bits/weight instead of 2.0. Rows are
+# padded to a multiple of 5 codes; the pad is never read back.
+
+
+def pack_ternary_rows(q: torch.Tensor) -> torch.Tensor:
+    """Pack int8 ternary codes (rows, K) into (rows, ceil(K/5)) uint8 base-3."""
+    rows, K = q.shape
+    bpr = -(-K // 5)
+    u = q.to(torch.int16) + 1
+    if bpr * 5 != K:
+        u = F.pad(u, (0, bpr * 5 - K))
+    w3 = torch.tensor([1, 3, 9, 27, 81], device=q.device, dtype=torch.int16)
+    return (u.view(rows, bpr, 5) * w3).sum(-1).to(torch.uint8)
+
+
+def unpack_ternary_rows_grouped(
+    packed: torch.Tensor, gratio: torch.Tensor, rows: int, cols: int
+) -> torch.Tensor:
+    """Torch fallback: base-3 bytes -> ternary codes -> row-grid int8."""
+    bpr = packed.shape[1]
+    p3 = torch.tensor([1, 3, 9, 27, 81], device=packed.device, dtype=torch.int16)
+    u = (packed.to(torch.int16).unsqueeze(-1) // p3) % 3
+    codes = (u - 1).reshape(rows, bpr * 5)[:, :cols].float()
+    group = cols // gratio.shape[1]
+    ratio = gratio.repeat_interleave(group, dim=1)
+    return torch.round(codes * ratio).clamp_(-127, 127).to(torch.int8)
+
+
 _intn_kernel = None
 
 
@@ -1266,6 +1300,46 @@ def _get_intn_grouped_kernel():
 
     _intn_grouped_kernel = intn_unpack_grouped_kernel
     return _intn_grouped_kernel
+
+
+_bitnet_kernel = None
+
+
+def _get_bitnet_kernel():
+    global _bitnet_kernel
+    if _bitnet_kernel is not None:
+        return _bitnet_kernel
+    import triton
+    import triton.language as tl
+    from triton.language.extra import libdevice
+
+    @triton.jit
+    def bitnet_unpack_kernel(
+        p_ptr, r_ptr, o_ptr, n_bytes, bpr, K, group, ngprow, BLOCK: tl.constexpr
+    ):
+        # one thread-lane per packed byte -> 5 output codes. a byte's 5 codes can
+        # straddle a k-group boundary (group % 5 != 0), so the scale ratio is
+        # gathered per output element rather than per byte.
+        pid = tl.program_id(0)
+        i = pid * BLOCK + tl.arange(0, BLOCK)
+        m = i < n_bytes
+        b = tl.load(p_ptr + i, mask=m, other=0).to(tl.int32)
+        row = i // bpr
+        bcol = i - row * bpr
+        j = tl.arange(0, 8)
+        col = bcol[:, None] * 5 + j[None, :]
+        cm = m[:, None] & (j[None, :] < 5) & (col < K)
+        p3 = tl.where(
+            j < 1, 1, tl.where(j < 2, 3, tl.where(j < 3, 9, tl.where(j < 4, 27, 81)))
+        )
+        code = ((b[:, None] // p3[None, :]) % 3 - 1).to(tl.float32)
+        ratio = tl.load(r_ptr + row[:, None] * ngprow + col // group, mask=cm, other=1.0)
+        v = libdevice.rint(code * ratio)
+        v = tl.minimum(tl.maximum(v, -127.0), 127.0)
+        tl.store(o_ptr + row[:, None] * K + col, v.to(tl.int8), mask=cm)
+
+    _bitnet_kernel = bitnet_unpack_kernel
+    return _bitnet_kernel
 
 
 def _unpack_intn_impl(packed: torch.Tensor, bits: int, rows: int, cols: int) -> torch.Tensor:
@@ -1384,6 +1458,85 @@ _intn_linear_ste_op.register_autograd(
 )
 
 
+def _unpack_bitnet_impl(
+    packed: torch.Tensor, gratio: torch.Tensor, rows: int, cols: int
+) -> torch.Tensor:
+    if _triton_available() and packed.is_cuda:
+        out = torch.empty(rows, cols, device=packed.device, dtype=torch.int8)
+        bpr = packed.shape[1]
+        n_bytes = rows * bpr
+        ngprow = gratio.shape[1]
+        BLOCK = 256
+        kernel = _get_bitnet_kernel()
+        kernel[(-(-n_bytes // BLOCK),)](
+            packed, gratio, out, n_bytes, bpr, cols, cols // ngprow, ngprow,
+            BLOCK=BLOCK, num_warps=4,
+        )
+        return out
+    return unpack_ternary_rows_grouped(packed, gratio, rows, cols)
+
+
+@torch.library.custom_op("ostris::convrot_bitnet_unpack", mutates_args=())
+def _bitnet_unpack_op(
+    packed: torch.Tensor, gratio: torch.Tensor, rows: int, cols: int
+) -> torch.Tensor:
+    return _unpack_bitnet_impl(packed, gratio, rows, cols)
+
+
+@_bitnet_unpack_op.register_fake
+def _bitnet_unpack_fake(packed, gratio, rows, cols):
+    return torch.empty(rows, cols, device=packed.device, dtype=torch.int8)
+
+
+@torch.library.custom_op("ostris::convrot_bitnet_linear_ste", mutates_args=())
+def _bitnet_linear_ste_op(
+    x2d: torch.Tensor,
+    packed: torch.Tensor,
+    gratio: torch.Tensor,
+    w_scales_u8: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    out_dtype: str,
+) -> torch.Tensor:
+    m, K = x2d.shape
+    rows = w_scales_u8.view(torch.float32).numel()
+    qdata = _unpack_bitnet_impl(packed, gratio, rows, K)
+    aq, a_s = _int8_act_quant_padded(x2d)
+    i32 = torch._int_mm(aq, qdata.t())
+    return _int8_epilogue(
+        i32[:m], a_s[:m], w_scales_u8.view(torch.float32), bias,
+        getattr(torch, out_dtype),
+    )
+
+
+@_bitnet_linear_ste_op.register_fake
+def _bitnet_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, out_dtype):
+    return torch.empty(
+        x2d.shape[0], w_scales_u8.view(torch.float32).numel(),
+        device=x2d.device, dtype=getattr(torch, out_dtype),
+    )
+
+
+def _bitnet_linear_ste_setup(ctx, inputs, output):
+    x2d, packed, gratio, w_scales_u8, bias, out_dtype = inputs
+    ctx.cols = x2d.shape[1]
+    ctx.save_for_backward(packed, gratio, w_scales_u8)
+
+
+def _bitnet_linear_ste_backward(ctx, grad):
+    packed, gratio, w_scales_u8 = ctx.saved_tensors
+    w_scales = w_scales_u8.view(torch.float32)
+    # opaque op, not the raw impl: compile traces registered backwards with
+    # fake tensors
+    qdata = _bitnet_unpack_op(packed, gratio, w_scales.numel(), ctx.cols)
+    w = qdata.to(grad.dtype) * w_scales.to(grad.dtype).unsqueeze(1)
+    return grad @ w, None, None, None, None, None
+
+
+_bitnet_linear_ste_op.register_autograd(
+    _bitnet_linear_ste_backward, setup_context=_bitnet_linear_ste_setup
+)
+
+
 class ConvRotIntNQuantizer(ConvRotInt8Quantizer):
     """ConvRot W{n}A8 backend for n in 2..8: convrot8 numerics with an n-bit
     weight grid and bitpacked storage. One instance per bit-width, shareable
@@ -1467,4 +1620,31 @@ class ConvRotIntNQuantizer(ConvRotInt8Quantizer):
         module.crn_scales = scales.view(torch.uint8)
         if gratio is not None:
             module.crn_gratio = gratio.view(torch.uint8)
+
+
+class ConvRotBitNetQuantizer(ConvRotIntNQuantizer):
+    """BitNet-b1.58 style W1.58A8: convrotint2's exact ternary codes and
+    MSE-optimal group scales, stored base-3 at 5 codes/byte (1.6 bits/weight
+    instead of 2.0). Numerically bit-identical to convrotint2."""
+
+    def __init__(self, rot_size: int = 256):
+        super().__init__(bits=2, rot_size=rot_size)
+
+    def _quantize_rotated(self, w_rot: torch.Tensor, in_features: int):
+        group = self._group_for(in_features)
+        q, gscales = _optimal_group_quantize(w_rot, self.bits, group)
+        gratio, rscales = _intn_group_ratio_and_rscales(gscales, self.bits)
+        return pack_ternary_rows(q), rscales, gratio.contiguous()
+
+    def _qdata(self, module) -> torch.Tensor:
+        return _bitnet_unpack_op(
+            module.crn_qdata, module.crn_gratio.view(torch.float32),
+            module.out_features, module.in_features,
+        )
+
+    def _linear_ste(self, module, x2d: torch.Tensor, out_dtype: str) -> torch.Tensor:
+        return _bitnet_linear_ste_op(
+            x2d, module.crn_qdata, module.crn_gratio.view(torch.float32),
+            module.crn_scales, module.bias, out_dtype,
+        )
 
