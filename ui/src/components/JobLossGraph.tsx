@@ -343,8 +343,17 @@ export default function JobLossGraph({ job }: Props) {
         distr: useLogScale ? 3 : 1,
         range: (_u, dataMin, dataMax) => {
           const c = yClipRef.current?.[scaleKey];
-          if (c) return [c.min, c.max];
-          return [dataMin, dataMax];
+          const min = c ? c.min : dataMin;
+          const max = c ? c.max : dataMax;
+          if (min == null || max == null) return [null, null];
+          // uPlot's log tick generator (logAxisSplits) assumes the scale min
+          // sits on a magnitude boundary — its default log range snaps via
+          // rangeLog before ticks are computed. Handing it raw data extents
+          // can wedge its split loop into an endless push (RangeError:
+          // Invalid array length + frozen UI) when the min lands just below
+          // a power of 10. Snap the same way uPlot's default does.
+          if (useLogScale) return uPlot.rangeLog(min, max, 10, false);
+          return [min, max];
         },
       };
 
