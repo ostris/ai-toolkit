@@ -25,6 +25,9 @@ import os
 import sys
 import time
 
+# set cuda bus ordering to be pcie
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch  # noqa: E402
@@ -42,7 +45,11 @@ VRAM_BLOCKS = 8
 VRAM_BLOCK_SHAPES = [(3072, 12288), (12288, 3072), (3072, 3072), (3072, 3072)]
 VRAM_TOKENS = 4096
 
-QTYPES = ["bf16", "qfloat8", "float8", "orbit4", "orbitvq4", "convrot8", "convrot4"]
+QTYPES = [
+    "bf16", "qfloat8", "float8", "orbit4", "orbitvq4", "convrot8", "convrot4",
+    "convrotint7", "convrotint6", "convrotint5", "convrotint4", "convrotint3",
+    "convrotint2",
+]
 
 STACK_KEY = f"{VRAM_BLOCKS}-block stack"
 
@@ -116,17 +123,26 @@ def make_stack(device) -> torch.nn.ModuleList:
     return blocks
 
 
-def stack_forward(blocks, x):
-    # pre-norm residual blocks like a real transformer, so activations stay at a
+def block_forward(b, h):
+    # pre-norm residual block like a real transformer, so activations stay at a
     # sane scale and quantization drift accumulates realistically across depth
+    r = torch.nn.functional.layer_norm(h, h.shape[-1:])
+    r = b[0](r)          # 3072 -> 12288
+    r = torch.nn.functional.gelu(r)
+    h = h + b[1](r)      # 12288 -> 3072
+    r = torch.nn.functional.layer_norm(h, h.shape[-1:])
+    return h + b[3](b[2](r))  # 3072 -> 3072 -> 3072
+
+
+def stack_forward(blocks, x, checkpoint=False):
     h = x
     for b in blocks:
-        r = torch.nn.functional.layer_norm(h, h.shape[-1:])
-        r = b[0](r)          # 3072 -> 12288
-        r = torch.nn.functional.gelu(r)
-        h = h + b[1](r)      # 12288 -> 3072
-        r = torch.nn.functional.layer_norm(h, h.shape[-1:])
-        h = h + b[3](b[2](r))  # 3072 -> 3072 -> 3072
+        if checkpoint:
+            h = torch.utils.checkpoint.checkpoint(
+                block_forward, b, h, use_reentrant=False
+            )
+        else:
+            h = block_forward(b, h)
     return h
 
 
@@ -174,17 +190,19 @@ def run_vram(qtype: str, device, results: dict):
     torch.cuda.synchronize(device)
     results[(qtype, "vram_fwd_peak")] = torch.cuda.max_memory_allocated(device) - base
 
-    # train step peak (frozen base; grads flow to the input like lora training)
-    def train_step():
+    # train step peak (frozen base; grads flow to the input like lora training),
+    # with and without per-block gradient checkpointing (real training uses it)
+    def train_step(checkpoint):
         xi = x.detach().requires_grad_(True)
-        stack_forward(blocks, xi).float().pow(2).mean().backward()
+        stack_forward(blocks, xi, checkpoint).float().pow(2).mean().backward()
 
-    train_step()
-    torch.cuda.synchronize(device)
-    torch.cuda.reset_peak_memory_stats(device)
-    train_step()
-    torch.cuda.synchronize(device)
-    results[(qtype, "vram_train_peak")] = torch.cuda.max_memory_allocated(device) - base
+    for key, ckpt in (("vram_train_peak", False), ("vram_train_ckpt_peak", True)):
+        train_step(ckpt)
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+        train_step(ckpt)
+        torch.cuda.synchronize(device)
+        results[(qtype, key)] = torch.cuda.max_memory_allocated(device) - base
 
     blocks = x = None  # release before the allocator accounting of the next run
     torch.cuda.empty_cache()
@@ -288,7 +306,8 @@ def main():
     print(f"{'':<28}" + "".join(f"{qt:>18}" for qt in qts))
     for key, label in (("vram_weights", "weights resident"),
                        ("vram_fwd_peak", "peak, no-grad fwd"),
-                       ("vram_train_peak", "peak, train step")):
+                       ("vram_train_peak", "peak, train step"),
+                       ("vram_train_ckpt_peak", "peak, train step (ckpt)")):
         row = f"{label:<28}"
         for qt in qts:
             row += f"{gb(results[(qt, key)]):>18}"
@@ -327,7 +346,9 @@ def main():
     print("\n=== summary (speed = geomean speedup vs bf16; drift lower is better) ===")
     print(f"{'':<12}{'inference':>18}{'train':>18}{'accuracy drift':>20}{'max vram':>16}")
     for qt in qts:
-        max_vram = max(results[(qt, "vram_fwd_peak")], results[(qt, "vram_train_peak")])
+        # real training checkpoints, so the ckpt peak is the meaningful train
+        # number; the no-grad fwd peak still matters for sampling
+        max_vram = max(results[(qt, "vram_fwd_peak")], results[(qt, "vram_train_ckpt_peak")])
         print(f"{qt:<12}"
               f"{geomean_speedup(qt, 'inf'):>17.2f}x"
               f"{geomean_speedup(qt, 'train'):>17.2f}x"

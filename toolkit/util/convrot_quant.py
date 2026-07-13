@@ -51,7 +51,9 @@ import torch.nn.functional as F
 from toolkit.print import print_acc
 from toolkit.util.ostris_quant import OstrisQuantizer
 
-CONVROT_QTYPES = ("convrot4", "convrot8")
+CONVROT_QTYPES = ("convrot4", "convrot8") + tuple(
+    f"convrotint{b}" for b in range(2, 9)
+)
 
 
 def get_convrot_quantizer(qtype: str):
@@ -59,6 +61,10 @@ def get_convrot_quantizer(qtype: str):
         return ConvRotQuantizer(rot_size=256)
     if qtype == "convrot8":
         return ConvRotInt8Quantizer(rot_size=256)
+    if qtype.startswith("convrotint"):
+        bits = int(qtype[len("convrotint"):])
+        if 2 <= bits <= 8:
+            return ConvRotIntNQuantizer(bits, rot_size=256)
     return None
 
 
@@ -129,16 +135,57 @@ def to_blocked(m: torch.Tensor) -> torch.Tensor:
     return blocks.reshape(-1, 4, 32, 4).transpose(1, 2).reshape(-1, 32, 16).flatten()
 
 
-def quantize_nvfp4(x: torch.Tensor, pts: Optional[torch.Tensor] = None):
+def _optimal_nvfp4_scales(
+    xb: torch.Tensor, base: torch.Tensor, pts: torch.Tensor
+) -> torch.Tensor:
+    """MSE-optimal e4m3 block scales: sweep fractions of the amax-derived scale
+    (each snapped to e4m3) and keep the per-block argmin of the e2m1
+    reconstruction error. ~11% lower weight error than plain amax scaling;
+    deterministic, and the storage/GEMM format is unchanged."""
+    edges = _cached(
+        _edges_cache, str(xb.device), lambda: torch.tensor(_E2M1_EDGES, device=xb.device)
+    )
+    vals = torch.tensor(
+        [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], device=xb.device
+    )
+    best_s = base.to(torch.float8_e4m3fn)
+    best_e = None
+    for frac in torch.linspace(0.70, 1.10, 9, dtype=torch.float64):
+        s8 = (base * float(frac)).to(torch.float8_e4m3fn)
+        denom = (s8.float() * pts).unsqueeze(-1)
+        safe = torch.where(denom > 0, denom, torch.ones_like(denom))
+        z = (xb / safe).clamp(-F4_MAX, F4_MAX)
+        recon = vals[torch.bucketize(z.abs(), edges)] * torch.sign(z) * safe
+        e = (xb - recon).square_().sum(-1)
+        if best_e is None:
+            best_s, best_e = s8, e
+        else:
+            better = e < best_e
+            best_s = torch.where(better, s8, best_s)
+            best_e = torch.where(better, e, best_e)
+    return best_s
+
+
+def quantize_nvfp4(
+    x: torch.Tensor,
+    pts: Optional[torch.Tensor] = None,
+    optimize_scales: bool = False,
+):
     """Quantize (rows, K) to nvfp4. Returns (packed uint8 (rows, K/2),
-    e4m3 scales (rows, K/16), fp32 per-tensor scale)."""
+    e4m3 scales (rows, K/16), fp32 per-tensor scale). optimize_scales runs the
+    MSE-optimal block-scale sweep — weights only; activations stay amax (the
+    sweep costs ~9 extra passes)."""
     rows, K = x.shape
     xf = x.float()
     if pts is None:
         pts = xf.abs().amax() / (F4_MAX * F8_E4M3_MAX)
         pts = torch.where(pts > 0, pts, torch.ones_like(pts))
     xb = xf.view(rows, K // BLOCK, BLOCK)
-    scales = (xb.abs().amax(dim=-1) / (F4_MAX * pts)).to(torch.float8_e4m3fn)
+    base = xb.abs().amax(dim=-1) / (F4_MAX * pts)
+    if optimize_scales:
+        scales = _optimal_nvfp4_scales(xb, base, pts)
+    else:
+        scales = base.to(torch.float8_e4m3fn)
     denom = (scales.float() * pts).unsqueeze(-1)
     z = (xb / torch.where(denom > 0, denom, torch.ones_like(denom))).clamp(
         -F4_MAX, F4_MAX
@@ -547,7 +594,7 @@ class ConvRotQuantizer(OstrisQuantizer):
     def quantize_(self, module: torch.nn.Linear, weight_fp32: torch.Tensor) -> None:
         rot = self._rot_for(module.in_features)
         w_rot = rotate(weight_fp32, rot)
-        packed, scales, pts = quantize_nvfp4(w_rot)
+        packed, scales, pts = quantize_nvfp4(w_rot, optimize_scales=True)
         # scales/pts are stored as uint8 byte views: nn.Module._apply dtype-casts
         # every floating buffer (module.to(dtype=...) would silently convert the
         # e4m3 scales to bf16 and fp32 pts to bf16, corrupting them). integer
@@ -585,7 +632,7 @@ class ConvRotQuantizer(OstrisQuantizer):
     def requantize_(self, module, fp_weight: torch.Tensor) -> None:
         w = fp_weight.to(device=module.cr_qdata.device, dtype=torch.float32)
         w_rot = rotate(w, module.cr_rot_size)
-        packed, scales, pts = quantize_nvfp4(w_rot)
+        packed, scales, pts = quantize_nvfp4(w_rot, optimize_scales=True)
         module.cr_qdata = packed
         module.cr_scales = scales.view(torch.uint8)
         module.cr_scales_blocked = to_blocked(scales).view(torch.uint8)
@@ -938,17 +985,35 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         module.register_buffer("cr8_scales", scales.view(torch.uint8), persistent=False)
         module.cr8_rot_size = rot
 
-    @staticmethod
-    def _scales(module) -> torch.Tensor:
-        return module.cr8_scales.view(torch.float32)
+    # storage accessors: ConvRotIntNQuantizer overrides these to unpack its
+    # bitpacked codes; everything below runs off them unchanged
+    def _rot(self, module) -> int:
+        return module.cr8_rot_size
+
+    def _qdata(self, module) -> torch.Tensor:
+        """The int8 (out, in) weight codes in the rotated basis."""
+        return module.cr8_qdata
+
+    def _scales_u8(self, module) -> torch.Tensor:
+        return module.cr8_scales
+
+    def _scales(self, module) -> torch.Tensor:
+        return self._scales_u8(module).view(torch.float32)
+
+    def _linear_ste(self, module, x2d: torch.Tensor, out_dtype: str) -> torch.Tensor:
+        """Hardware STE linear for the training path. For int8 the saved qdata is
+        the resident buffer itself, so autograd holds only a free reference."""
+        return _int8_linear_ste_op(
+            x2d, self._qdata(module), self._scales_u8(module), module.bias, out_dtype
+        )
 
     def _dequantize_rotated(self, module, dtype: torch.dtype) -> torch.Tensor:
-        w = module.cr8_qdata.float() * self._scales(module).unsqueeze(1)
+        w = self._qdata(module).float() * self._scales(module).unsqueeze(1)
         return w.to(dtype)
 
     def dequantize(self, module) -> torch.Tensor:
         return rotate(
-            self._dequantize_rotated(module, torch.float32), module.cr8_rot_size
+            self._dequantize_rotated(module, torch.float32), self._rot(module)
         )
 
     def requantize_(self, module, fp_weight: torch.Tensor) -> None:
@@ -958,7 +1023,7 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         module.cr8_scales = scales.view(torch.uint8)
 
     def forward(self, module, x: torch.Tensor) -> torch.Tensor:
-        rot = module.cr8_rot_size
+        rot = self._rot(module)
         in_f, out_f = module.in_features, module.out_features
         m = x.numel() // in_f
 
@@ -972,9 +1037,8 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
                 # SLOWER on every shape (small-tile dots at low tensor-core
                 # utilization, computed twice for the amax and quant passes, cost
                 # more than the activation round-trips they saved)
-                out = _int8_linear_ste_op(
-                    rotate(x, rot).reshape(-1, in_f),
-                    module.cr8_qdata, module.cr8_scales, module.bias,
+                out = self._linear_ste(
+                    module, rotate(x, rot).reshape(-1, in_f),
                     str(x.dtype).split(".")[-1],
                 )
                 return out.reshape(*x.shape[:-1], out_f)
@@ -992,11 +1056,415 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
             # row padding for _int_mm happens inside the act-quant op (compile
             # safety); slice the mm output back to m rows (a contiguous prefix)
             aq, a_s = _int8_act_quant_padded(rotate(x, rot).reshape(-1, in_f))
-            i32 = torch._int_mm(aq, module.cr8_qdata.t())
+            i32 = torch._int_mm(aq, self._qdata(module).t())
             out = _int8_epilogue(i32[:m], a_s[:m], self._scales(module), module.bias, x.dtype)
             return out.reshape(*x.shape[:-1], out_f)
 
         w = self._dequantize_rotated(module, x.dtype)
         out = F.linear(rotate(x, rot).reshape(-1, in_f), w, module.bias)
         return out.reshape(*x.shape[:-1], out_f)
+
+
+# ---------------- convrotint2..8: W{n}A8 bitpacked int backend ----------------
+#
+# The convrot8 pipeline with the weight grid reduced to n bits: symmetric per-row
+# codes in [-(2^(n-1)-1), 2^(n-1)-1], stored bitpacked. Weights are unpacked to
+# int8 on the fly and run through the exact same per-token/per-channel
+# torch._int_mm path (activations stay 8 bit), so speed matches convrot8 minus
+# the unpack while storage shrinks to n/8 of int8.
+#
+# Packing layout: 8 consecutive codes along K occupy exactly n bytes (8*n bits),
+# so every bit width 2..8 gets uniform, alignment-free addressing: group g of a
+# row lives at bytes [g*n, (g+1)*n), code j at bit offset j*n inside that word.
+
+
+def quantize_intn_rows(x: torch.Tensor, bits: int):
+    """Symmetric per-row n-bit quantization. Returns (int8 codes in
+    [-qmax, qmax] (rows, K), fp32 scales (rows,)) with qmax = 2^(bits-1) - 1."""
+    qmax = (1 << (bits - 1)) - 1
+    xf = x.float()
+    scales = xf.abs().amax(dim=1) / qmax
+    scales = torch.where(scales > 0, scales, torch.ones_like(scales))
+    q = torch.round(xf / scales.unsqueeze(1)).clamp_(-qmax, qmax).to(torch.int8)
+    return q, scales
+
+
+def pack_intn_rows(q: torch.Tensor, bits: int) -> torch.Tensor:
+    """Pack int8 codes in [-qmax, qmax] (rows, K) into a (rows, K//8*bits) uint8
+    bitstream (K must be divisible by 8). Codes are stored offset by +qmax.
+    int64 words may wrap for bits=8 but the fields are disjoint, so the
+    shift/add/mask arithmetic stays bit-exact."""
+    qmax = (1 << (bits - 1)) - 1
+    rows, K = q.shape
+    u = (q.to(torch.int64) + qmax).reshape(rows, K // 8, 8)
+    shifts = torch.arange(8, device=q.device, dtype=torch.int64) * bits
+    word = (u << shifts).sum(-1)
+    byte_shifts = torch.arange(bits, device=q.device, dtype=torch.int64) * 8
+    b = (word.unsqueeze(-1) >> byte_shifts) & 0xFF
+    return b.to(torch.uint8).reshape(rows, K // 8 * bits)
+
+
+def unpack_intn_rows(packed: torch.Tensor, bits: int, rows: int, cols: int) -> torch.Tensor:
+    """Inverse of pack_intn_rows: (rows, cols) int8 codes in [-qmax, qmax]."""
+    qmax = (1 << (bits - 1)) - 1
+    b = packed.reshape(rows, cols // 8, bits).to(torch.int64)
+    byte_shifts = torch.arange(bits, device=packed.device, dtype=torch.int64) * 8
+    word = (b << byte_shifts).sum(-1)
+    shifts = torch.arange(8, device=packed.device, dtype=torch.int64) * bits
+    mask = (1 << bits) - 1
+    u = (word.unsqueeze(-1) >> shifts) & mask
+    return (u - qmax).to(torch.int8).reshape(rows, cols)
+
+
+# --- 2/3-bit group-scale variant -------------------------------------------
+#
+# At 2-3 bits a single per-row amax scale is doubly wrong: rotated rows are
+# near-gaussian so amax (~4 sigma) leaves the optimal-MSE step (~1.2 / 0.6
+# sigma) far behind, and one scale can't adapt locally. So low widths quantize
+# with MSE-optimal per-(row, k-group) scales instead. To keep the single
+# torch._int_mm + per-row epilogue (no K-split), the unpack folds the group
+# scales in by re-expressing each value on the row's int8 grid:
+#
+#   code8 = rint(code_n * gscale / rscale),  rscale = max_g(gscale_g) * qmax / 127
+#
+# The int8 snap adds <= 0.4% of row amax - noise next to the 2-bit error. The
+# per-(row, group) RATIO gscale/rscale is precomputed in torch and stored, so
+# the triton kernel only multiplies (float division in triton is ~1ulp off
+# ieee, which would flip rint ties vs the torch fallback).
+
+# bit widths <= this use group scales. 8 bit is excluded on purpose: the group
+# codes are re-expressed on the row's int8 grid at unpack, and at 8 bits that
+# grid is no finer than the group grids, so the snap noise outweighs the
+# optimal-scale gain (measured 0.0087 -> 0.0106 weight err). 7 and below win.
+INTN_GROUP_BITS = 7
+INTN_GROUP = 128  # k-group size (halved until it divides in_features)
+
+
+def _optimal_group_quantize(w: torch.Tensor, bits: int, group: int):
+    """MSE-optimal symmetric n-bit quantization with per-(row, k-group) scales:
+    coarse scale sweep then least-squares refits. Returns (int8 codes in
+    [-qmax, qmax] (rows, K), fp32 group scales (rows, K//group))."""
+    qmax = (1 << (bits - 1)) - 1
+    rows, K = w.shape
+    wg = w.float().reshape(rows, K // group, group)
+    amax = wg.abs().amax(-1, keepdim=True)
+    amax = torch.where(amax > 0, amax, torch.ones_like(amax))
+    best_s = amax / qmax
+    best_e = None
+    for frac in torch.linspace(0.2, 1.0, 16, dtype=torch.float64):
+        s = amax * (float(frac) / qmax)
+        q = torch.round(wg / s).clamp_(-qmax, qmax)
+        e = (wg - q * s).square_().sum(-1, keepdim=True)
+        if best_e is None:
+            best_s, best_e = s, e
+        else:
+            better = e < best_e
+            best_s = torch.where(better, s, best_s)
+            best_e = torch.where(better, e, best_e)
+    s = best_s
+    for _ in range(2):
+        q = torch.round(wg / s).clamp_(-qmax, qmax)
+        num = (wg * q).sum(-1, keepdim=True)
+        den = (q * q).sum(-1, keepdim=True)
+        s = torch.where((den > 0) & (num > 0), num / den.clamp_min(1e-12), s)
+    q = torch.round(wg / s).clamp_(-qmax, qmax)
+    return q.to(torch.int8).reshape(rows, K), s.reshape(rows, K // group)
+
+
+def _intn_group_ratio_and_rscales(gscales: torch.Tensor, bits: int):
+    """Row int8-grid scales and the per-group unpack ratios for them."""
+    qmax = (1 << (bits - 1)) - 1
+    rscales = gscales.amax(dim=1) * (qmax / 127.0)
+    rscales = torch.where(rscales > 0, rscales, torch.ones_like(rscales))
+    return gscales / rscales.unsqueeze(1), rscales
+
+
+def unpack_intn_rows_grouped(
+    packed: torch.Tensor, gratio: torch.Tensor, bits: int, rows: int, cols: int
+) -> torch.Tensor:
+    """Torch fallback of the grouped unpack: n-bit codes -> row-grid int8."""
+    codes = unpack_intn_rows(packed, bits, rows, cols).float()
+    group = cols // gratio.shape[1]
+    ratio = gratio.repeat_interleave(group, dim=1)
+    return torch.round(codes * ratio).clamp_(-127, 127).to(torch.int8)
+
+
+_intn_kernel = None
+
+
+def _get_intn_kernel():
+    global _intn_kernel
+    if _intn_kernel is not None:
+        return _intn_kernel
+    import triton
+    import triton.language as tl
+
+    @triton.jit
+    def intn_unpack_kernel(
+        p_ptr, o_ptr, n_groups,
+        BITS: tl.constexpr, BPOW: tl.constexpr, QMAX: tl.constexpr, BLOCK: tl.constexpr,
+    ):
+        # one row per group of 8 codes; 2d blocks keep the byte loads and int8
+        # stores contiguous/coalesced (BPOW = BITS padded to a power of two for
+        # tl.arange, extra lanes masked off)
+        pid = tl.program_id(0)
+        g = pid * BLOCK + tl.arange(0, BLOCK)
+        gm = g < n_groups
+        bi = tl.arange(0, BPOW)
+        b = tl.load(
+            p_ptr + g[:, None] * BITS + bi[None, :],
+            mask=gm[:, None] & (bi[None, :] < BITS),
+            other=0,
+        ).to(tl.int64)
+        word = tl.sum(b << (8 * bi)[None, :].to(tl.int64), axis=1)
+        j = tl.arange(0, 8)
+        # mask after the shift kills any sign extension from int64 wrap
+        v = ((word[:, None] >> (BITS * j)[None, :].to(tl.int64)) & ((1 << BITS) - 1)) - QMAX
+        tl.store(o_ptr + g[:, None] * 8 + j[None, :], v.to(tl.int8), mask=gm[:, None])
+
+    _intn_kernel = intn_unpack_kernel
+    return _intn_kernel
+
+
+_intn_grouped_kernel = None
+
+
+def _get_intn_grouped_kernel():
+    global _intn_grouped_kernel
+    if _intn_grouped_kernel is not None:
+        return _intn_grouped_kernel
+    import triton
+    import triton.language as tl
+    from triton.language.extra import libdevice
+
+    @triton.jit
+    def intn_unpack_grouped_kernel(
+        p_ptr, r_ptr, o_ptr, n_groups, cols8, gdiv8, ngprow,
+        BITS: tl.constexpr, BPOW: tl.constexpr, QMAX: tl.constexpr, BLOCK: tl.constexpr,
+    ):
+        # like intn_unpack_kernel, plus a per-(row, k-group) ratio multiply that
+        # re-expresses the group-scaled codes on the row's int8 grid. the ratio
+        # is precomputed (multiply only, so it bit-matches the torch fallback).
+        pid = tl.program_id(0)
+        g = pid * BLOCK + tl.arange(0, BLOCK)
+        gm = g < n_groups
+        row = g // cols8
+        kg = (g - row * cols8) // gdiv8
+        ratio = tl.load(r_ptr + row * ngprow + kg, mask=gm, other=1.0)
+        bi = tl.arange(0, BPOW)
+        b = tl.load(
+            p_ptr + g[:, None] * BITS + bi[None, :],
+            mask=gm[:, None] & (bi[None, :] < BITS),
+            other=0,
+        ).to(tl.int64)
+        word = tl.sum(b << (8 * bi)[None, :].to(tl.int64), axis=1)
+        j = tl.arange(0, 8)
+        v = ((word[:, None] >> (BITS * j)[None, :].to(tl.int64)) & ((1 << BITS) - 1)) - QMAX
+        vf = libdevice.rint(v.to(tl.float32) * ratio[:, None])
+        vf = tl.minimum(tl.maximum(vf, -127.0), 127.0)
+        tl.store(o_ptr + g[:, None] * 8 + j[None, :], vf.to(tl.int8), mask=gm[:, None])
+
+    _intn_grouped_kernel = intn_unpack_grouped_kernel
+    return _intn_grouped_kernel
+
+
+def _unpack_intn_impl(packed: torch.Tensor, bits: int, rows: int, cols: int) -> torch.Tensor:
+    if _triton_available() and packed.is_cuda:
+        out = torch.empty(rows, cols, device=packed.device, dtype=torch.int8)
+        n_groups = rows * cols // 8
+        BLOCK = 256
+        kernel = _get_intn_kernel()
+        kernel[(-(-n_groups // BLOCK),)](
+            packed, out, n_groups,
+            BITS=bits, BPOW=max(2, 1 << (bits - 1).bit_length()),
+            QMAX=(1 << (bits - 1)) - 1, BLOCK=BLOCK, num_warps=4,
+        )
+        return out
+    return unpack_intn_rows(packed, bits, rows, cols)
+
+
+def _unpack_intn_grouped_impl(
+    packed: torch.Tensor, gratio: torch.Tensor, bits: int, rows: int, cols: int
+) -> torch.Tensor:
+    if _triton_available() and packed.is_cuda:
+        out = torch.empty(rows, cols, device=packed.device, dtype=torch.int8)
+        n_groups = rows * cols // 8
+        ngprow = gratio.shape[1]
+        group = cols // ngprow
+        BLOCK = 256
+        kernel = _get_intn_grouped_kernel()
+        kernel[(-(-n_groups // BLOCK),)](
+            packed, gratio, out, n_groups, cols // 8, group // 8, ngprow,
+            BITS=bits, BPOW=max(2, 1 << (bits - 1).bit_length()),
+            QMAX=(1 << (bits - 1)) - 1, BLOCK=BLOCK, num_warps=4,
+        )
+        return out
+    return unpack_intn_rows_grouped(packed, gratio, bits, rows, cols)
+
+
+# registered as custom ops so torch.compile treats the triton launches as opaque
+# nodes with known output shapes (see _nvfp4_act_quant_op)
+@torch.library.custom_op("ostris::convrot_intn_unpack", mutates_args=())
+def _intn_unpack_op(packed: torch.Tensor, bits: int, rows: int, cols: int) -> torch.Tensor:
+    return _unpack_intn_impl(packed, bits, rows, cols)
+
+
+@_intn_unpack_op.register_fake
+def _intn_unpack_fake(packed, bits, rows, cols):
+    return torch.empty(rows, cols, device=packed.device, dtype=torch.int8)
+
+
+@torch.library.custom_op("ostris::convrot_intn_unpack_grouped", mutates_args=())
+def _intn_unpack_grouped_op(
+    packed: torch.Tensor, gratio: torch.Tensor, bits: int, rows: int, cols: int
+) -> torch.Tensor:
+    return _unpack_intn_grouped_impl(packed, gratio, bits, rows, cols)
+
+
+@_intn_unpack_grouped_op.register_fake
+def _intn_unpack_grouped_fake(packed, gratio, bits, rows, cols):
+    return torch.empty(rows, cols, device=packed.device, dtype=torch.int8)
+
+
+# training-path linear for the grouped widths: same STE scheme as
+# _int8_linear_ste_op, but autograd saves the PACKED codes and unpacks again in
+# the backward — otherwise every layer holds a full int8-size unpacked weight
+# until its backward runs, and the n/8 storage advantage disappears whenever
+# gradient checkpointing isn't bounding liveness
+@torch.library.custom_op("ostris::convrot_intn_linear_ste", mutates_args=())
+def _intn_linear_ste_op(
+    x2d: torch.Tensor,
+    packed: torch.Tensor,
+    gratio: torch.Tensor,
+    w_scales_u8: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    bits: int,
+    out_dtype: str,
+) -> torch.Tensor:
+    m, K = x2d.shape
+    rows = w_scales_u8.view(torch.float32).numel()
+    qdata = _unpack_intn_grouped_impl(packed, gratio, bits, rows, K)
+    aq, a_s = _int8_act_quant_padded(x2d)
+    i32 = torch._int_mm(aq, qdata.t())
+    return _int8_epilogue(
+        i32[:m], a_s[:m], w_scales_u8.view(torch.float32), bias,
+        getattr(torch, out_dtype),
+    )
+
+
+@_intn_linear_ste_op.register_fake
+def _intn_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, bits, out_dtype):
+    return torch.empty(
+        x2d.shape[0], w_scales_u8.view(torch.float32).numel(),
+        device=x2d.device, dtype=getattr(torch, out_dtype),
+    )
+
+
+def _intn_linear_ste_setup(ctx, inputs, output):
+    x2d, packed, gratio, w_scales_u8, bias, bits, out_dtype = inputs
+    ctx.bits = bits
+    ctx.cols = x2d.shape[1]
+    ctx.save_for_backward(packed, gratio, w_scales_u8)
+
+
+def _intn_linear_ste_backward(ctx, grad):
+    packed, gratio, w_scales_u8 = ctx.saved_tensors
+    w_scales = w_scales_u8.view(torch.float32)
+    # through the opaque op, not the raw impl: registered backwards are traced
+    # by torch.compile with fake tensors, which cannot reach a triton launch
+    qdata = _intn_unpack_grouped_op(
+        packed, gratio, ctx.bits, w_scales.numel(), ctx.cols
+    )
+    w = qdata.to(grad.dtype) * w_scales.to(grad.dtype).unsqueeze(1)
+    return grad @ w, None, None, None, None, None, None
+
+
+_intn_linear_ste_op.register_autograd(
+    _intn_linear_ste_backward, setup_context=_intn_linear_ste_setup
+)
+
+
+class ConvRotIntNQuantizer(ConvRotInt8Quantizer):
+    """ConvRot W{n}A8 backend for n in 2..8: convrot8 numerics with an n-bit
+    weight grid and bitpacked storage. One instance per bit-width, shareable
+    across modules."""
+
+    def __init__(self, bits: int, rot_size: int = 256):
+        super().__init__(rot_size=rot_size)
+        self.bits = bits
+
+    @staticmethod
+    def _group_for(in_features: int) -> int:
+        group = INTN_GROUP
+        while in_features % group:
+            group //= 2
+        return group
+
+    def _quantize_rotated(self, w_rot: torch.Tensor, in_features: int):
+        """Quantize the rotated weight. Returns (packed, row scales fp32,
+        group-ratio fp32 or None)."""
+        if self.bits <= INTN_GROUP_BITS:
+            group = self._group_for(in_features)
+            q, gscales = _optimal_group_quantize(w_rot, self.bits, group)
+            gratio, rscales = _intn_group_ratio_and_rscales(gscales, self.bits)
+            return pack_intn_rows(q, self.bits), rscales, gratio.contiguous()
+        q, scales = quantize_intn_rows(w_rot, self.bits)
+        return pack_intn_rows(q, self.bits), scales, None
+
+    def quantize_(self, module: torch.nn.Linear, weight_fp32: torch.Tensor) -> None:
+        rot = self._rot_for(module.in_features)
+        packed, scales, gratio = self._quantize_rotated(
+            rotate(weight_fp32, rot), module.in_features
+        )
+        module.register_buffer("crn_qdata", packed, persistent=False)
+        # fp32 scales stored as a uint8 byte view (see convrot4: module.to(dtype=...)
+        # would otherwise cast them)
+        module.register_buffer("crn_scales", scales.view(torch.uint8), persistent=False)
+        if gratio is not None:
+            module.register_buffer(
+                "crn_gratio", gratio.view(torch.uint8), persistent=False
+            )
+        module.crn_bits = self.bits
+        module.crn_rot_size = rot
+
+    def _rot(self, module) -> int:
+        return module.crn_rot_size
+
+    def _qdata(self, module) -> torch.Tensor:
+        gratio = getattr(module, "crn_gratio", None)
+        if gratio is not None:
+            return _intn_unpack_grouped_op(
+                module.crn_qdata, gratio.view(torch.float32),
+                module.crn_bits, module.out_features, module.in_features,
+            )
+        return _intn_unpack_op(
+            module.crn_qdata, module.crn_bits, module.out_features, module.in_features
+        )
+
+    def _scales_u8(self, module) -> torch.Tensor:
+        return module.crn_scales
+
+    def _linear_ste(self, module, x2d: torch.Tensor, out_dtype: str) -> torch.Tensor:
+        gratio = getattr(module, "crn_gratio", None)
+        if gratio is None:
+            # ungrouped (8 bit, the convrot8 bit-identity anchor): base path.
+            # autograd saves the unpacked int8 transient, which at 8 bit is the
+            # same size as the packed buffer anyway
+            return super()._linear_ste(module, x2d, out_dtype)
+        # grouped: autograd saves only the packed codes (+ ratios), unpacked again
+        # in the backward
+        return _intn_linear_ste_op(
+            x2d, module.crn_qdata, gratio.view(torch.float32),
+            module.crn_scales, module.bias, module.crn_bits, out_dtype,
+        )
+
+    def requantize_(self, module, fp_weight: torch.Tensor) -> None:
+        w = fp_weight.to(device=module.crn_qdata.device, dtype=torch.float32)
+        packed, scales, gratio = self._quantize_rotated(
+            rotate(w, module.crn_rot_size), module.in_features
+        )
+        module.crn_qdata = packed
+        module.crn_scales = scales.view(torch.uint8)
+        if gratio is not None:
+            module.crn_gratio = gratio.view(torch.uint8)
 
