@@ -268,6 +268,7 @@ export default function JobLossGraph({ job }: Props) {
 
     const data: (number[] | (number | null)[])[] = [xs];
     const seriesConfigs: uPlot.Series[] = [{}]; // x
+    const sparseFlags: boolean[] = [];
 
     // Each metric gets its own y-scale (so unrelated magnitudes auto-range
     // independently) plus a matching colored axis.
@@ -295,6 +296,12 @@ export default function JobLossGraph({ job }: Props) {
         map.set(p.step, p.value as number);
       }
       const raw: (number | null)[] = xs.map(s => (map.has(s) ? (map.get(s) as number) : null));
+      // Metrics logged less often than every step are null at most x positions.
+      // With spanGaps:false and points hidden they'd render as nothing, so
+      // sparse series bridge their gaps and fall back to uPlot's default point
+      // markers (auto-shown when points are far apart, incl. isolated ones).
+      const sparse = map.size < xs.length;
+      sparseFlags.push(sparse);
       const smooth = emaWithNulls(raw, alpha);
       const fullSmooth = emaWithNulls(raw, fullAlpha);
 
@@ -310,8 +317,8 @@ export default function JobLossGraph({ job }: Props) {
         scale: scaleKey,
         stroke: color,
         width: 2,
-        spanGaps: false,
-        points: { show: false },
+        spanGaps: sparse,
+        points: sparse ? { size: 6 } : { show: false },
         value: (_u, value) => formatNum(value),
       });
       colArrays.push(smooth);
@@ -323,7 +330,7 @@ export default function JobLossGraph({ job }: Props) {
           scale: scaleKey,
           stroke: colorDull,
           width: 2.5,
-          spanGaps: false,
+          spanGaps: sparse,
           points: { show: false },
           value: (_u, value) => formatNum(value),
         });
@@ -378,7 +385,7 @@ export default function JobLossGraph({ job }: Props) {
       }
     }
 
-    return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip };
+    return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip, sparseFlags };
   }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
 
   // Layout wrapper we measure for sizing — uPlot collapses its own mount node
@@ -402,9 +409,12 @@ export default function JobLossGraph({ job }: Props) {
   // Structural recreate key — recreate uPlot only when the series shape or
   // axis distribution changes. Data updates go through setData.
   const hasData = (built.data[0]?.length ?? 0) > 1;
+  // Sparsity is part of the key because spanGaps/points live in the series
+  // configs, which setData alone won't refresh.
+  const sparseKey = built.sparseFlags.map(s => (s ? 1 : 0)).join('');
   const structuralKey = useMemo(
-    () => `${activeKeys.join('|')}|trend=${showTrend}|log=${useLogScale}|has=${hasData}`,
-    [activeKeys, showTrend, useLogScale, hasData],
+    () => `${activeKeys.join('|')}|trend=${showTrend}|log=${useLogScale}|has=${hasData}|sparse=${sparseKey}`,
+    [activeKeys, showTrend, useLogScale, hasData, sparseKey],
   );
 
   useEffect(() => {
