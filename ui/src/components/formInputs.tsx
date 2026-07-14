@@ -7,12 +7,15 @@ import { CircleHelp } from 'lucide-react';
 import { getDoc } from '@/docs';
 import { openDoc } from '@/components/DocModal';
 import { ConfigDoc, GroupedSelectOption, SelectOption } from '@/types';
+import { useLanguage } from './LanguageProvider';
 
 const Select = dynamic(() => import('react-select'), { ssr: false });
 
 const labelClasses = 'block text-xs mb-1 mt-2 text-gray-300';
 const inputClasses =
   'w-full text-sm px-3 py-1 bg-gray-950 dark:bg-gray-800 border border-gray-700 rounded-sm text-gray-100 placeholder:text-gray-500 focus:ring-2 focus:ring-gray-600 focus:border-transparent';
+
+const labelKey = (label: string) => `form.${label}`;
 
 export interface InputProps {
   label?: string;
@@ -45,6 +48,8 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
     suffix,
   } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -52,7 +57,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>((props: Te
     <div className={classNames(className)}>
       {label && (
         <label className={labelClasses}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
@@ -114,6 +119,8 @@ export interface TextAreaInputProps extends InputProps {
 export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextAreaInputProps>((props: TextAreaInputProps, ref) => {
   const { label, value, onChange, placeholder, required, disabled, rows = 4, className, docKey = null } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -121,7 +128,7 @@ export const TextAreaInput = forwardRef<HTMLTextAreaElement, TextAreaInputProps>
     <div className={classNames(className)}>
       {label && (
         <label className={labelClasses}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
@@ -157,6 +164,8 @@ export interface NumberInputProps extends InputProps {
 export const NumberInput = (props: NumberInputProps) => {
   const { label, value, onChange, placeholder, required, min, max, docKey = null } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -173,7 +182,7 @@ export const NumberInput = (props: NumberInputProps) => {
     <div className={classNames(props.className)}>
       {label && (
         <label className={labelClasses}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
@@ -246,6 +255,8 @@ export type SelectInputProps = SingleSelectInputProps | MultiSelectInputProps;
 export const SelectInput = (props: SelectInputProps) => {
   const { label, value, onChange, options, docKey = null, multiple } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -269,7 +280,7 @@ export const SelectInput = (props: SelectInputProps) => {
     >
       {label && (
         <label className={labelClasses}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
@@ -311,6 +322,8 @@ const CUSTOM_SELECT_VALUE = '__custom__';
 export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
   const { label, value, onChange, options, docKey = null } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -329,7 +342,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
   const customInputRef = React.useRef<HTMLInputElement>(null);
 
   // Build select options with "Custom" at the top
-  const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: 'Custom' };
+  const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: t('form.Custom', 'Custom') };
   const selectOptions = React.useMemo(() => {
     if (options && options.length > 0 && 'options' in options[0]) {
       return [{ label: '', options: [customOption] }, ...(options as GroupedSelectOption[])];
@@ -355,7 +368,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
     >
       {label && (
         <label className={labelClasses}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
@@ -404,7 +417,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
             value={value}
             onChange={e => onChange(e.target.value)}
             className={`${inputClasses} flex-1 min-w-0`}
-            placeholder={props.placeholder ?? 'Enter custom value'}
+            placeholder={props.placeholder ?? t('form.Enter custom value', 'Enter custom value')}
             disabled={props.disabled}
           />
         )}
@@ -427,6 +440,8 @@ export interface CheckboxProps {
 export const Checkbox = (props: CheckboxProps) => {
   const { label, checked, onChange, required, disabled } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = typeof label === 'string' ? t(labelKey(label), label) : label;
   if (!doc && props.docKey) {
     doc = getDoc(props.docKey);
   }
@@ -449,7 +464,7 @@ export const Checkbox = (props: CheckboxProps) => {
           disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-opacity-80',
         )}
       >
-        <span className="sr-only">Toggle {label}</span>
+        <span className="sr-only">Toggle {translatedLabel}</span>
         <span
           className={classNames(
             'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
@@ -466,7 +481,7 @@ export const Checkbox = (props: CheckboxProps) => {
               disabled ? 'text-gray-500' : 'text-gray-300',
             )}
           >
-            {label}
+            {translatedLabel}
           </label>
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
@@ -490,6 +505,8 @@ interface FormGroupProps {
 export const FormGroup: React.FC<FormGroupProps> = props => {
   const { label, className, children, docKey = null } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -497,7 +514,7 @@ export const FormGroup: React.FC<FormGroupProps> = props => {
     <div className={classNames(className)}>
       {label && (
         <label className={classNames(labelClasses, 'mb-2')}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />
@@ -523,6 +540,8 @@ export interface SliderInputProps extends InputProps {
 export const SliderInput: React.FC<SliderInputProps> = props => {
   const { label, value, onChange, min, max, step = 1, disabled, className, docKey = null, showValue = true } = props;
   let { doc } = props;
+  const { t } = useLanguage();
+  const translatedLabel = label ? t(labelKey(label), label) : label;
   if (!doc && docKey) {
     doc = getDoc(docKey);
   }
@@ -597,7 +616,7 @@ export const SliderInput: React.FC<SliderInputProps> = props => {
     <div className={classNames(className, disabled ? 'opacity-30 cursor-not-allowed' : '')}>
       {label && (
         <label className={labelClasses}>
-          {label}{' '}
+          {translatedLabel}{' '}
           {doc && (
             <div className="inline-block ml-1 text-xs text-gray-500 cursor-pointer" onClick={() => openDoc(doc)}>
               <CircleHelp className="inline-block w-4 h-4 cursor-pointer" />

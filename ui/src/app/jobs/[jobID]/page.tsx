@@ -15,6 +15,7 @@ import JobLossGraph from '@/components/JobLossGraph';
 import JobPlugin from '@/components/JobPlugin';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
+import { formatMessage, useLanguage } from '@/components/LanguageProvider';
 
 type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'plugin';
 
@@ -28,16 +29,14 @@ interface Page {
   jobTypes?: string[]; // if specified, only show this page for these job types
 }
 
-const pages: Page[] = [
+const pages: Omit<Page, 'name'>[] = [
   {
-    name: 'Overview',
     value: 'overview',
     icon: MdDashboard,
     component: JobOverview,
     mainCss: 'pt-24',
   },
   {
-    name: 'Samples',
     value: 'samples',
     icon: MdImage,
     component: SampleImages,
@@ -46,7 +45,6 @@ const pages: Page[] = [
     jobTypes: ['train'],
   },
   {
-    name: 'Loss Graph',
     value: 'loss_log',
     icon: MdShowChart,
     component: JobLossGraph,
@@ -54,14 +52,12 @@ const pages: Page[] = [
     jobTypes: ['train'],
   },
   {
-    name: 'Config File',
     value: 'config',
     icon: MdCode,
     component: JobConfigViewer,
     mainCss: 'pt-[80px] px-0 pb-0',
   },
   {
-    name: 'Plugin',
     value: 'plugin',
     icon: MdExtension,
     component: JobPlugin,
@@ -70,6 +66,7 @@ const pages: Page[] = [
 ];
 
 export default function JobPage({ params }: { params: { jobID: string } }) {
+  const { t } = useLanguage();
   const usableParams = use(params as any) as { jobID: string };
   const jobID = usableParams.jobID;
   const { job, status, refreshJob } = useJob(jobID, 5000);
@@ -94,9 +91,17 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
 
   const jobType = job?.job_type || 'unknown';
 
-  let title = `Job: ${job?.name || 'Loading...'}`;
+  const pageNames: Record<PageKey, string> = {
+    overview: t('jobDetail.overview'),
+    samples: t('jobDetail.samples'),
+    loss_log: t('jobDetail.lossGraph'),
+    config: t('jobDetail.configFile'),
+    plugin: t('jobDetail.plugin'),
+  };
+
+  let title = formatMessage(t('jobDetail.jobTitle'), { name: job?.name || t('common.loading') });
   if (jobType === 'caption') {
-    title = `Captioning: ${job?.job_ref || 'Loading...'}`;
+    title = formatMessage(t('jobDetail.captioningTitle'), { name: job?.job_ref || t('common.loading') });
   }
 
   return (
@@ -125,8 +130,8 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
         )}
       </TopBar>
       <MainContent className={pages.find(page => page.value === pageKey)?.mainCss}>
-        {status === 'loading' && job == null && <p>Loading...</p>}
-        {status === 'error' && job == null && <p>Error fetching job</p>}
+        {status === 'loading' && job == null && <p>{t('jobDetail.loadingJob')}</p>}
+        {status === 'error' && job == null && <p>{t('jobDetail.fetchError')}</p>}
         {job && (
           <>
             {pages.map(page => {
@@ -151,7 +156,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
               className={`flex-1 sm:flex-initial justify-center px-2 sm:px-4 py-1 h-8 flex items-center gap-1.5 sm:flex-shrink-0 ${page.value === pageKey ? 'bg-gray-300 dark:bg-gray-700 text-white' : ''}`}
             >
               <page.icon className="text-sm" />
-              <span className="hidden sm:inline">{page.name}</span>
+              <span className="hidden sm:inline">{pageNames[page.value]}</span>
             </Button>
           );
         })}

@@ -8,12 +8,14 @@ import { getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useJobLog from '@/hooks/useJobLog';
+import { formatMessage, useLanguage } from './LanguageProvider';
 
 interface JobOverviewProps {
   job: Job;
 }
 
 export default function JobOverview({ job }: JobOverviewProps) {
+  const { t } = useLanguage();
   const gpuIds = useMemo(() => {
     if (job.gpu_ids === 'mps') {
       return [0]; // For MPS, we can just return a single GPU ID since it's virtualized
@@ -88,6 +90,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
   if (isStopping) {
     status = 'stopping';
   }
+  const statusLabel = t(`status.${status}`, status);
+  const infoLabel = job.info ? t(`jobInfo.${job.info}`, job.info) : '';
 
   return (
     <div className="grid grid-cols-1 gap-4 md:gap-6 md:grid-cols-3">
@@ -95,9 +99,9 @@ export default function JobOverview({ job }: JobOverviewProps) {
       <div className="md:col-span-2 bg-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-800 flex flex-col">
         <div className="bg-gray-800 px-4 py-3 flex items-center justify-between">
           <h2 className="text-gray-100">
-            <Info className="w-5 h-5 mr-2 -mt-1 text-amber-600 dark:text-amber-400 inline-block" /> {job.info}
+            <Info className="w-5 h-5 mr-2 -mt-1 text-amber-600 dark:text-amber-400 inline-block" /> {infoLabel}
           </h2>
-          <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>{job.status}</span>
+          <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(job.status)}`}>{statusLabel}</span>
         </div>
 
         <div className="p-4 space-y-6 flex flex-col flex-grow">
@@ -105,9 +109,9 @@ export default function JobOverview({ job }: JobOverviewProps) {
           {totalSteps > 0 && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-400">Progress</span>
+                <span className="text-gray-400">{t('jobOverview.progress')}</span>
                 <span className="text-gray-200">
-                  Step {job.step} of {totalSteps}
+                  {formatMessage(t('jobOverview.stepOf'), { step: job.step, total: totalSteps })}
                 </span>
               </div>
               <div className="w-full bg-gray-800 rounded-full h-2">
@@ -121,7 +125,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
             <div className="flex items-center space-x-4">
               <HardDrive className="w-5 h-5 text-blue-600 dark:text-blue-400" />
               <div>
-                <p className="text-xs text-gray-400">Job Name</p>
+                <p className="text-xs text-gray-400">{t('jobOverview.jobName')}</p>
                 <p className="text-sm font-medium text-gray-200">{job.name}</p>
               </div>
             </div>
@@ -129,15 +133,17 @@ export default function JobOverview({ job }: JobOverviewProps) {
             <div className="flex items-center space-x-4">
               <Cpu className="w-5 h-5 text-purple-600 dark:text-purple-400" />
               <div>
-                <p className="text-xs text-gray-400">Assigned GPUs</p>
-                <p className="text-sm font-medium text-gray-200">GPUs: {job.gpu_ids}</p>
+                <p className="text-xs text-gray-400">{t('jobOverview.assignedGpus')}</p>
+                <p className="text-sm font-medium text-gray-200">
+                  {t('jobOverview.gpus')}: {job.gpu_ids}
+                </p>
               </div>
             </div>
 
             <div className="flex items-center space-x-4">
               <Gauge className="w-5 h-5 text-green-600 dark:text-green-400" />
               <div>
-                <p className="text-xs text-gray-400">Speed</p>
+                <p className="text-xs text-gray-400">{t('jobOverview.speed')}</p>
                 <p className="text-sm font-medium text-gray-200">{job.speed_string == '' ? '?' : job.speed_string}</p>
               </div>
             </div>
@@ -150,8 +156,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
               className="text-xs text-gray-300 absolute inset-0 p-4 overflow-y-auto"
               onScroll={handleScroll}
             >
-              {statusLog === 'loading' && 'Loading log...'}
-              {statusLog === 'error' && 'Error loading log'}
+              {statusLog === 'loading' && t('jobOverview.loadingLog')}
+              {statusLog === 'error' && t('jobOverview.errorLoadingLog')}
               {['success', 'refreshing'].includes(statusLog) && (
                 <div>
                   {logLines.map((line, index) => {
