@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { createRequire } from 'module';
 import os from 'os';
 
 const execAsync = promisify(exec);
@@ -47,8 +46,12 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
     let memTotal = memoryTotal;
 
     try {
-      // Use createRequire to hide from webpack static analysis so it doesn't fail on non-mac platforms
-      const nativeRequire = createRequire(import.meta.url);
+      // Load the native macstats addon at runtime. We must reach createRequire via
+      // process.getBuiltinModule('module') rather than a static `import { createRequire } from 'module'`:
+      // the Next server bundler strips that import (replacing it with `(void 0)`), and import.meta.url
+      // resolves to an internal bundle path. getBuiltinModule is a runtime call the bundler can't touch,
+      // and resolving from process.cwd() (the ui/ folder) finds node_modules/macstats reliably.
+      const nativeRequire = process.getBuiltinModule('module').createRequire(process.cwd() + '/package.json');
       const ms = nativeRequire('macstats') as any;
 
       try {
