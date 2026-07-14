@@ -14,6 +14,9 @@ Differences from the reference (all training-driven, numerically equivalent):
   - ``enable_gradient_checkpointing`` / ``disable_gradient_checkpointing`` and a
     per-block ``torch.utils.checkpoint`` wrapper are added (gated on
     ``torch.is_grad_enabled()`` so eval/sampling never pays for it).
+  - ``patch`` renamed to ``patch_size`` (diffusers-style name, matching the
+    toolkit's other archs) so the generic trainer's timestep-shift setup can
+    discover the token patch size via ``unet.config.patch_size``.
 """
 
 import math
@@ -96,7 +99,7 @@ class SingleMMDiTConfig:
     heads: int
     multiplier: int
     layers: int
-    patch: int
+    patch_size: int
     channels: int
     bias: bool = False
     theta: float = 1e3
@@ -249,10 +252,10 @@ class Attention(torch.nn.Module):
 
 
 class LastLayer(torch.nn.Module):
-    def __init__(self, features: int, patch: int, channels: int):
+    def __init__(self, features: int, patch_size: int, channels: int):
         super().__init__()
         self.norm = RMSNorm(features)
-        self.linear = torch.nn.Linear(features, patch * patch * channels, bias=True)
+        self.linear = torch.nn.Linear(features, patch_size * patch_size * channels, bias=True)
         self.modulation = SimpleModulation(features)
 
     def forward(self, x: Tensor, tvec: Tensor) -> Tensor:
@@ -413,7 +416,7 @@ class SingleStreamDiT(nn.Module):
             config.features, axes, theta=config.theta, ntk=1.0
         )
         self.first = nn.Linear(
-            config.channels * config.patch**2, config.features, bias=True
+            config.channels * config.patch_size**2, config.features, bias=True
         )
 
         self.blocks = nn.ModuleList(
@@ -447,7 +450,7 @@ class SingleStreamDiT(nn.Module):
             nn.GELU(approximate="tanh"),
             nn.Linear(config.features, config.features),
         )
-        self.last = LastLayer(config.features, config.patch, config.channels)
+        self.last = LastLayer(config.features, config.patch_size, config.channels)
 
         self.tproj = nn.Sequential(
             nn.GELU(approximate="tanh"), nn.Linear(config.features, config.features * 6)
