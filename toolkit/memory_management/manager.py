@@ -4,7 +4,9 @@ from .manager_modules import (
     ConvLayerMemoryManager,
     OstrisLinearLayerMemoryManager,
     _DEVICE_STATE,
+    _release_cpu_pin,
 )
+from . import allocator_cap, pin_manager
 import random
 
 LINEAR_MODULES = [
@@ -71,6 +73,34 @@ class MemoryManager:
             return self.module._mm_to(dtype=dtype)
         return self.module
 
+    @staticmethod
+    def offload_shape_key_from_batch(batch_list, **flags):
+        """Build a stable policy key from batch tensor shapes and flags."""
+        shapes = []
+
+        def visit(value):
+            if torch.is_tensor(value):
+                shape = tuple(int(dim) for dim in value.shape)
+                if len(shape) >= 2:
+                    shapes.append((str(value.dtype), shape))
+                return
+            if isinstance(value, dict):
+                for item in value.values():
+                    visit(item)
+                return
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    visit(item)
+                return
+            for name in ("tensor", "latents", "images", "control_tensor"):
+                if hasattr(value, name):
+                    visit(getattr(value, name))
+
+        visit(batch_list)
+        shape_key = tuple(sorted(set(shapes)))[:16]
+        policy_key = tuple(sorted(flags.items()))
+        return shape_key, policy_key
+
     @classmethod
     def attach(
         cls,
@@ -79,6 +109,7 @@ class MemoryManager:
         offload_percent: float = 1.0,
         ignore_modules: list[torch.nn.Module] = []
     ):
+        allocator_cap.apply_wddm_hard_allocator_cap(device)
         if hasattr(module, "_memory_manager"):
             # already attached
             return
@@ -212,12 +243,13 @@ class MemoryManager:
                 if param is None or not isinstance(param, torch.nn.Parameter):
                     continue
                 try:
-                    if param.data.is_pinned():
+                    released = _release_cpu_pin(param.data)
+                    if released is not param.data:
                         object.__setattr__(
                             child,
                             param_name,
                             torch.nn.Parameter(
-                                param.data.clone(),
+                                released,
                                 requires_grad=param.requires_grad,
                             ),
                         )
@@ -232,8 +264,7 @@ class MemoryManager:
                     try:
                         if buf.device.type != "cpu":
                             buf = buf.to("cpu")
-                        if buf.is_pinned():
-                            buf = buf.clone()
+                        buf = _release_cpu_pin(buf)
                         child._buffers[buf_name] = buf
                     except Exception:
                         pass
@@ -251,4 +282,5 @@ class MemoryManager:
         for key in keys_to_delete:
             del _DEVICE_STATE[key]
 
+        pin_manager.reconcile(allow_shrink=False)
         torch.cuda.empty_cache()
