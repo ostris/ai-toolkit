@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import gc
 import inspect
@@ -657,14 +658,31 @@ class BaseModel:
                     unconditional_embeds = unconditional_embeds.to(
                         self.device_torch, dtype=self.unet.dtype)
 
-                    img = self.generate_single_image(
-                        pipeline,
-                        gen_config,
-                        conditional_embeds,
-                        unconditional_embeds,
-                        generator,
-                        extra,
+                    from toolkit.memory_management.runtime import get_memory_runtime
+
+                    arena_runtime = get_memory_runtime(self.unet)
+                    sampling_context = (
+                        arena_runtime.sampling_image(
+                            shape_key=(
+                                "sample",
+                                int(gen_config.height),
+                                int(gen_config.width),
+                                bool(getattr(gen_config, "batch_cfg", False)),
+                            ),
+                            cold_working_bytes=3 * (1024 ** 3),
+                        )
+                        if arena_runtime is not None
+                        else contextlib.nullcontext()
                     )
+                    with sampling_context:
+                        img = self.generate_single_image(
+                            pipeline,
+                            gen_config,
+                            conditional_embeds,
+                            unconditional_embeds,
+                            generator,
+                            extra,
+                        )
 
                     gen_config.save_image(img, i)
                     gen_config.log_image(img, i)
@@ -688,7 +706,15 @@ class BaseModel:
             network.train()
             network.multiplier = start_multiplier
 
-        self.unet.to(self.device_torch, dtype=self.torch_dtype)
+        from toolkit.memory_management.runtime import get_memory_runtime
+
+        arena_runtime = get_memory_runtime(self.unet)
+        if arena_runtime is not None:
+            arena_runtime.place_permanent_modules(
+                self.device_torch, self.torch_dtype
+            )
+        else:
+            self.unet.to(self.device_torch, dtype=self.torch_dtype)
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])

@@ -360,18 +360,26 @@ export default function SimpleJob({
                 />
                 {jobConfig.config.process[0].model.layer_offloading && (
                   <div className="pt-2">
-                    <SliderInput
-                      label="Transformer Offload %"
-                      value={Math.round(
-                        (jobConfig.config.process[0].model.layer_offloading_transformer_percent ?? 1) * 100,
-                      )}
-                      onChange={value =>
-                        setJobConfig(value * 0.01, 'config.process[0].model.layer_offloading_transformer_percent')
-                      }
-                      min={0}
-                      max={100}
-                      step={1}
+                    <Checkbox
+                      label="Automatic Arena Offloading"
+                      checked={jobConfig.config.process[0].model.layer_offloading_smart || false}
+                      onChange={value => setJobConfig(value, 'config.process[0].model.layer_offloading_smart')}
+                      docKey="model.layer_offloading_smart"
                     />
+                    {!jobConfig.config.process[0].model.layer_offloading_smart && (
+                      <SliderInput
+                        label="Transformer Offload %"
+                        value={Math.round(
+                          (jobConfig.config.process[0].model.layer_offloading_transformer_percent ?? 1) * 100,
+                        )}
+                        onChange={value =>
+                          setJobConfig(value * 0.01, 'config.process[0].model.layer_offloading_transformer_percent')
+                        }
+                        min={0}
+                        max={100}
+                        step={1}
+                      />
+                    )}
                     <SliderInput
                       label="Text Encoder Offload %"
                       value={Math.round(

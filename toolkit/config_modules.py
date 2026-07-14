@@ -699,6 +699,45 @@ class ModelConfig:
         # 0 is off and 1.0 is 100% of the layers
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
         self.layer_offloading_text_encoder_percent = kwargs.get("layer_offloading_text_encoder_percent", 1.0)
+        # Optional block-native arena backend. The existing per-layer backend
+        # remains the default when this is false.
+        self.layer_offloading_smart = kwargs.get("layer_offloading_smart", False)
+        self.layer_offloading_smart_working_reserve_gb = kwargs.get(
+            "layer_offloading_smart_working_reserve_gb", -1.0
+        )
+        self.layer_offloading_smart_wddm_margin_gb = kwargs.get(
+            "layer_offloading_smart_wddm_margin_gb", -1.0
+        )
+        self.layer_offloading_smart_wddm_hard_gb = kwargs.get(
+            "layer_offloading_smart_wddm_hard_gb", 1.0
+        )
+        self.layer_offloading_smart_sampling_working_reserve_gb = kwargs.get(
+            "layer_offloading_smart_sampling_working_reserve_gb", -1.0
+        )
+        self.layer_offloading_smart_sampling_wddm_margin_gb = kwargs.get(
+            "layer_offloading_smart_sampling_wddm_margin_gb", -1.0
+        )
+        self.layer_offloading_smart_sampling_wddm_hard_gb = kwargs.get(
+            "layer_offloading_smart_sampling_wddm_hard_gb", 1.0
+        )
+        self.layer_offloading_fp8_forward = kwargs.get(
+            "layer_offloading_fp8_forward", False
+        )
+        self.layer_offloading_fp8_grad_input = kwargs.get(
+            "layer_offloading_fp8_grad_input", False
+        )
+        self.layer_offloading_fp8_sampling = kwargs.get(
+            "layer_offloading_fp8_sampling", False
+        )
+        self.layer_offloading_checkpoint_keep_last = kwargs.get(
+            "layer_offloading_checkpoint_keep_last", 0
+        )
+        self.layer_offloading_prefetch_depth = kwargs.get(
+            "layer_offloading_prefetch_depth", 3
+        )
+        self.layer_offloading_simulated_vram_gb = kwargs.get(
+            "layer_offloading_simulated_vram_gb", 0
+        )
 
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for

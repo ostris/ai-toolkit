@@ -168,6 +168,7 @@ export interface ModelConfig {
   low_vram: boolean;
   model_kwargs: { [key: string]: any };
   layer_offloading?: boolean;
+  layer_offloading_smart?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
   assistant_lora_path?: string;

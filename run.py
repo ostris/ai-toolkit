@@ -108,10 +108,10 @@ def main():
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
+        job = None
         try:
             job = get_job(config_file, args.name)
             job.run()
-            job.cleanup()
             jobs_completed += 1
         except Exception as e:
             print_acc(f"Error running job: {e}")
@@ -131,6 +131,9 @@ def main():
             if not args.recover:
                 print_end_message(jobs_completed, jobs_failed)
                 raise e
+        finally:
+            if job is not None:
+                job.cleanup()
 
 
 if __name__ == '__main__':

@@ -57,6 +57,10 @@ class BaseProcess(object):
         # be sure to call super().run() first incase something is added here
         pass
 
+    def cleanup(self):
+        """Release resources owned by this process. Must be idempotent."""
+        pass
+
     def add_meta(self, additional_meta: OrderedDict):
         self.meta.update(additional_meta)
 
