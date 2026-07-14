@@ -333,7 +333,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         # the hardware fp4/int8 GEMM path and pegs the CPU with repeated
         # dequantization + kron + matmul for every training step.
         if getattr(self.org_module[0], "is_ostris_quantized", False):
-            base_out = self.org_forward(x)
+            base_out = torch._dynamo.disable(self.org_forward)(x)
             lokr_weight = self.get_weight().to(dtype=orig_dtype)
             multiplier = self.network_ref().torch_multiplier
             multiplier = torch.mean(multiplier)
