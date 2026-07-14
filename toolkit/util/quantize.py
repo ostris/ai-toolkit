@@ -1,16 +1,19 @@
 from fnmatch import fnmatch
 from typing import List, Optional, Union, TYPE_CHECKING
 import torch
+from torchao.quantization import Float8Tensor
 
 from optimum.quanto.quantize import _quantize_submodule
 from optimum.quanto.tensor import Optimizer, qtype, qtypes
 from torchao.quantization.quant_api import (
     quantize_ as torchao_quantize_,
+    _is_linear as torchao_is_linear,
     Float8WeightOnlyConfig,
-    UIntXWeightOnlyConfig,
+    IntxWeightOnlyConfig,
     Int8WeightOnlyConfig
 )
 from optimum.quanto import freeze
+from optimum.quanto.tensor.qbytes import QBytesTensor
 from tqdm import tqdm
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
@@ -27,6 +30,37 @@ import os
 if TYPE_CHECKING:
     from toolkit.models.base_model import BaseModel
 
+
+def tensor_subclass_leaves(value: torch.Tensor) -> list[torch.Tensor]:
+    try:
+        names, _context = value.__tensor_flatten__()
+    except Exception:
+        return [value]
+    leaves = []
+    for name in names:
+        inner = getattr(value, name)
+        if inner is not None:
+            leaves.extend(tensor_subclass_leaves(inner))
+    return leaves
+
+
+def _tensor_subclass_to_meta(value: torch.Tensor) -> torch.Tensor:
+    try:
+        names, context = value.__tensor_flatten__()
+    except Exception:
+        return value.to(device="meta")
+    inner = {
+        name: (
+            None
+            if getattr(value, name) is None
+            else _tensor_subclass_to_meta(getattr(value, name))
+        )
+        for name in names
+    }
+    return type(value).__tensor_unflatten__(
+        inner, context, value.size(), value.stride()
+    )
+
 # the quantize function in quanto had a bug where it was using exclude instead of include
 
 Q_MODULES = [
@@ -41,14 +75,13 @@ Q_MODULES = [
 ]
 
 torchao_qtypes = {
-    # "int4": Int4WeightOnlyConfig(),
-    "uint2": UIntXWeightOnlyConfig(torch.uint2),
-    "uint3": UIntXWeightOnlyConfig(torch.uint3),
-    "uint4": UIntXWeightOnlyConfig(torch.uint4),
-    "uint5": UIntXWeightOnlyConfig(torch.uint5),
-    "uint6": UIntXWeightOnlyConfig(torch.uint6),
-    "uint7": UIntXWeightOnlyConfig(torch.uint7),
-    "uint8": UIntXWeightOnlyConfig(torch.uint8),
+    "uint2": IntxWeightOnlyConfig(torch.int2),
+    "uint3": IntxWeightOnlyConfig(torch.int3),
+    "uint4": IntxWeightOnlyConfig(torch.int4),
+    "uint5": IntxWeightOnlyConfig(torch.int5),
+    "uint6": IntxWeightOnlyConfig(torch.int6),
+    "uint7": IntxWeightOnlyConfig(torch.int7),
+    "uint8": Int8WeightOnlyConfig(),
     "int8": Int8WeightOnlyConfig(),
     "float8": Float8WeightOnlyConfig(),
 }
@@ -169,6 +202,25 @@ def quantize(
         include = [include] if isinstance(include, str) else include
     if exclude is not None:
         exclude = [exclude] if isinstance(exclude, str) else exclude
+
+    if isinstance(weights, aotype):
+        # TorchAO quantize_ already walks the entire module tree. Calling it for
+        # every item yielded by named_modules() quantizes children once through
+        # their parent and then attempts to quantize them again directly.
+        def filter_fn(module: torch.nn.Module, fqn: str) -> bool:
+            if not torchao_is_linear(module, fqn):
+                return False
+            if isinstance(module.weight, Float8Tensor):
+                return False
+            if include is not None and not any(fnmatch(fqn, pattern) for pattern in include):
+                return False
+            if exclude is not None and any(fnmatch(fqn, pattern) for pattern in exclude):
+                return False
+            return True
+
+        torchao_quantize_(model, weights.config, filter_fn=filter_fn)
+        return
+
     for name, m in model.named_modules():
         if include is not None and not any(
             fnmatch(name, pattern) for pattern in include
@@ -204,8 +256,6 @@ def quantize(
                 if isinstance(weights, ostristype):
                     if isinstance(m, torch.nn.Linear):
                         convert_linear_to_ostris(m, weights.quantizer)
-                elif isinstance(weights, aotype):
-                    torchao_quantize_(m, weights.config)
                 else:
                     _quantize_submodule(
                         model,
@@ -222,6 +272,181 @@ def quantize(
         except Exception as e:
             print(f"Failed to quantize {name}: {e}")
             # raise e
+
+
+def quantize_module_at_path(
+    model: torch.nn.Module,
+    name: str,
+    *,
+    weights,
+) -> torch.nn.Module:
+    """Quantize one already-materialized module and publish its replacement.
+
+    Recursive Quanto quantization cannot replace the root module: its relative
+    name is empty, so the generated QLinear is assigned to an unusable empty
+    attribute while the original Linear's weight is cleared. Bounded loaders
+    know the real parent path and use this helper for root quantization units.
+    """
+    module = model.get_submodule(name)
+    resolved = get_qtype(weights)
+    if isinstance(resolved, aotype):
+        quantize(module, weights=resolved)
+    elif isinstance(resolved, ostristype):
+        if isinstance(module, torch.nn.Linear):
+            # Shape-ineligible Ostris roots remain dense, matching recursive
+            # quantize() behavior for children (for example Krea's 12-wide
+            # text-fusion projector).
+            convert_linear_to_ostris(module, resolved.quantizer)
+        else:
+            quantize(module, weights=resolved)
+    else:
+        _quantize_submodule(
+            model,
+            name,
+            module,
+            weights=resolved,
+        )
+    return model.get_submodule(name)
+
+
+def assign_quantized_state_dict(
+    model: torch.nn.Module,
+    state_dict: dict,
+    weights,
+) -> None:
+    """Assign cached quantized state, using a generic active arena session."""
+    prepare_quantized_state_dict_model(model, state_dict, weights)
+    from toolkit.memory_management.arena_offload.load_session import (
+        try_prepare_canonical_from_state_dict,
+    )
+
+    if try_prepare_canonical_from_state_dict(model, state_dict) is not None:
+        try:
+            assign_quantized_state_dict_subset(model, state_dict, weights)
+            return
+        except BaseException:
+            from toolkit.memory_management.arena_offload.load_session import (
+                discard_pending_canonical_build,
+            )
+
+            discard_pending_canonical_build(model)
+            raise
+    missing, unexpected = model.load_state_dict(state_dict, strict=True, assign=True)
+    if missing or unexpected:
+        raise RuntimeError(f"missing={missing[:5]} unexpected={unexpected[:5]}")
+    model.requires_grad_(False)
+
+
+def prepare_quantized_state_dict_model(
+    model: torch.nn.Module,
+    state_dict: dict,
+    weights,
+) -> None:
+    """Reconstruct cached quantized wrappers with meta storage only."""
+    resolved = get_qtype(weights)
+    quanto_data_suffix = ".weight._data"
+    quanto_prefixes = [
+        key[: -len(quanto_data_suffix)]
+        for key in state_dict
+        if key.endswith(quanto_data_suffix)
+    ]
+    if quanto_prefixes:
+        if isinstance(resolved, (aotype, ostristype)):
+            raise ValueError("cached_quanto_state_qtype_mismatch")
+        quantize(model, weights=resolved)
+        modules = dict(model.named_modules())
+        for prefix in quanto_prefixes:
+            module = modules[prefix]
+            data = state_dict[f"{prefix}.weight._data"]
+            scale = state_dict[f"{prefix}.weight._scale"]
+            template = module.weight
+            meta_data = torch.empty_like(data, device="meta")
+            meta_scale = torch.empty_like(scale, device="meta")
+            wrapper = QBytesTensor(
+                resolved,
+                0,
+                template.size(),
+                template.stride(),
+                meta_data,
+                meta_scale,
+                requires_grad=False,
+            )
+            module.weight = torch.nn.Parameter(wrapper, requires_grad=False)
+            bias = getattr(module, "bias", None)
+            if bias is not None:
+                bias.requires_grad_(False)
+    else:
+        modules = dict(model.named_modules())
+        for key, value in state_dict.items():
+            if not key.endswith(".weight") or len(tensor_subclass_leaves(value)) == 1:
+                continue
+            prefix = key[: -len(".weight")]
+            module = modules.get(prefix)
+            if module is None or not hasattr(module, "weight"):
+                continue
+            module.weight = torch.nn.Parameter(
+                _tensor_subclass_to_meta(value), requires_grad=False
+            )
+
+
+def assign_quantized_state_dict_subset(
+    model: torch.nn.Module,
+    state_dict: dict,
+    weights,
+    *,
+    excluded_keys=(),
+) -> None:
+    """Assign cached values except leaves owned by a direct arena destination."""
+    excluded = set(excluded_keys)
+    prepare_quantized_state_dict_model(model, state_dict, weights)
+    resolved = get_qtype(weights)
+    data_suffix = ".weight._data"
+    prefixes = {
+        key[: -len(data_suffix)]
+        for key in state_dict
+        if key.endswith(data_suffix)
+    }
+    handled = set()
+    modules = dict(model.named_modules())
+    for prefix in prefixes:
+        data_key = f"{prefix}.weight._data"
+        scale_key = f"{prefix}.weight._scale"
+        if data_key in excluded and scale_key in excluded:
+            continue
+        if data_key in excluded or scale_key in excluded:
+            raise ValueError(f"partial_cached_quantized_weight:{prefix}")
+        module = modules[prefix]
+        template = module.weight
+        wrapper = QBytesTensor(
+            resolved,
+            0,
+            template.size(),
+            template.stride(),
+            state_dict[data_key],
+            state_dict[scale_key],
+            requires_grad=False,
+        )
+        module.weight = torch.nn.Parameter(wrapper, requires_grad=False)
+        handled.update((data_key, scale_key))
+
+    for key, value in state_dict.items():
+        if key in excluded or key in handled:
+            continue
+        *parents, leaf = key.split(".")
+        target = model
+        for component in parents:
+            target = getattr(target, component)
+        if leaf in target._parameters:
+            old = target._parameters[leaf]
+            requires_grad = bool(old.requires_grad) if old is not None else False
+            target._parameters[leaf] = torch.nn.Parameter(
+                value, requires_grad=requires_grad
+            )
+        elif leaf in target._buffers:
+            target._buffers[leaf] = value
+        else:
+            raise KeyError(f"unsupported_cached_state_leaf:{key}")
+    model.requires_grad_(False)
 
 
 def quantize_model(
