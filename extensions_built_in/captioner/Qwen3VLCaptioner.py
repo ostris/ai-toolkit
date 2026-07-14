@@ -14,6 +14,7 @@ from toolkit.util.quantize import quantize, get_qtype
 from .BaseCaptioner import BaseCaptioner
 import transformers
 import logging
+import traceback
 import warnings
 
 
@@ -119,4 +120,5 @@ class Qwen3VLCaptioner(BaseCaptioner):
             return output_text[0].strip()
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
+            traceback.print_exc()
             return None
