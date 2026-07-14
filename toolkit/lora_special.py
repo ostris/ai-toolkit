@@ -69,15 +69,6 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         torch.nn.Module.__init__(self)
         self.lora_name = lora_name
         self.orig_module_ref = weakref.ref(org_module)
-        # read the device off a param/buffer directly: OstrisLinear.weight is a
-        # property that dequantizes the whole weight just to answer .device
-        org_tensor = next(
-            (t for t in org_module._parameters.values() if t is not None),
-            next((t for t in org_module._buffers.values() if t is not None), None),
-        )
-        self.scalar = torch.tensor(
-            1.0, device=org_tensor.device if org_tensor is not None else None
-        )
 
         # if is ara lora module, mark it on the layer so memory manager can handle it
         if is_ara:
@@ -120,9 +111,9 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
                 self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=use_bias)
 
         if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_dim
+        self.scale = float(alpha) / self.lora_dim
         self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える
 
         # same as microsoft's

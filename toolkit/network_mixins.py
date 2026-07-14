@@ -158,7 +158,7 @@ class ExtractableModuleMixin:
 
         # set up alphas
         self.alpha = (self.alpha * 0) + down_weight.shape[0]
-        self.scale = self.alpha / self.lora_dim
+        self.scale = float(self.alpha.detach().float().item()) / self.lora_dim
 
         # assign them
 
