@@ -19,6 +19,7 @@ from toolkit.memory_management.arena_offload import (
     is_arena_offloaded,
     is_memory_managed,
     memory_runtime_owns_compile,
+    validate_arena_training_mode,
 )
 from toolkit.memory_management.arena_offload.api import RUNTIME_ATTR, unwrap
 from toolkit.memory_management.arena_offload.runtime import _fixed_working_bytes
@@ -93,9 +94,18 @@ class _FakeModelConfig:
     layer_offloading_smart_sampling_working_reserve_gb = -1.0
     layer_offloading_smart_sampling_wddm_margin_gb = -1.0
     layer_offloading_smart_sampling_wddm_hard_gb = 1.0
+    layer_offloading_strict_vram_cap = False
 
 
 class ArenaOffloadHelpersTest(unittest.TestCase):
+    def test_training_mode_requires_frozen_immutable_base_weights(self):
+        validate_arena_training_mode()
+
+        with self.assertRaisesRegex(ValueError, "full-model fine-tuning"):
+            validate_arena_training_mode(full_finetune=True)
+        with self.assertRaisesRegex(ValueError, "merge_network_on_save"):
+            validate_arena_training_mode(mutates_base_weights=True)
+
     def test_helpers_are_none_safe(self):
         self.assertIsNone(get_arena_runtime(None))
         self.assertFalse(is_arena_offloaded(None))
@@ -169,6 +179,7 @@ class ArenaOffloadConfigTest(unittest.TestCase):
         self.assertTrue(config.fp8_sampling)
         # compile_blocks is derived, not its own public knob.
         self.assertTrue(config.compile_blocks)
+        self.assertFalse(config.strict_vram_cap)
         self.assertEqual(config._policy.prefetch_depth, 3)
         self.assertEqual(config._policy.checkpoint_keep_last, 2)
 
@@ -182,6 +193,7 @@ class ArenaOffloadConfigTest(unittest.TestCase):
                 "fp8_backward",
                 "fp8_sampling",
                 "compile_blocks",
+                "strict_vram_cap",
             },
         )
 
@@ -212,7 +224,7 @@ class ArenaOffloadConfigTest(unittest.TestCase):
 
         policy = ArenaOffloadConfig.from_model_config(Aliases())._policy
         self.assertEqual(policy.working_reserve_gib, 4.0)
-        self.assertEqual(policy.wddm_margin_gib, 1.5)
+        self.assertEqual(policy.physical_vram_headroom_gib, 1.5)
         self.assertEqual(policy.wddm_hard_gib, 0.75)
 
     def test_backward_without_fp8_forward_is_ignored_once(self):

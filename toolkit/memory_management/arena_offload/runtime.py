@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import time
+import warnings
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
@@ -30,7 +31,11 @@ from .errors import ArenaCleanupError, ArenaSetupFatalError
 from .fp8 import disable as disable_fp8
 from .fp8 import enable as enable_fp8
 from .fp8 import set_fp8_grad_input_enabled
-from .planner import build_training_plan, resolve_margin_gib
+from .planner import (
+    build_training_plan,
+    impossible_training_plan_message,
+    resolve_physical_vram_headroom_gib,
+)
 from .resources import ArenaRuntimeResources
 
 RUNTIME_ATTR = "_arena_offload_runtime"
@@ -90,6 +95,7 @@ class ArenaOffloadRuntime:
         self._sampling_fp8_canonical = 0
         self._sampling_fp8_singletons = 0
         self._permanent_placement = None
+        self._device_state_parked_plan = None
 
     # ------------------------------------------------------------------
     # construction
@@ -122,8 +128,11 @@ class ArenaOffloadRuntime:
         try:
             # Bind card simulation and allocator policy before any plan reads.
             apply_simulated_card(config._simulated_vram_gib, device=device)
-            allocator_cap.apply_wddm_hard_allocator_cap(
-                device, config._policy.wddm_hard_gib, log_prefix="[ArenaOffload]"
+            allocator_cap.configure_wddm_allocator_guard(
+                device,
+                config._policy.wddm_hard_gib,
+                strict=config.strict_vram_cap,
+                log_prefix="[ArenaOffload]",
             )
             set_fp8_grad_input_enabled(config.fp8_backward)
 
@@ -154,21 +163,31 @@ class ArenaOffloadRuntime:
                     raise RuntimeError("arena_canonical_build_selection_mismatch")
                 arena = canonical_build.arena
 
-            canonical_build.commit()
-            resources.mark_canonical_committed()
             canonical_modules = tuple(
                 child for entries in entries_by_block.values() for _name, child in entries
             )
-            resources.canonical_modules = canonical_modules
-
             smart_plan = build_training_plan(
                 transformer,
-                arena,
+                canonical_build,
                 canonical_modules,
                 device,
                 config,
                 block_keys=block_keys,
             )
+            if not smart_plan["fits"]:
+                message = impossible_training_plan_message(smart_plan)
+                if config.strict_vram_cap:
+                    raise ValueError(message)
+                warnings.warn(
+                    message
+                    + "; continuing in production spill-permitted mode",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+            canonical_build.commit()
+            resources.mark_canonical_committed()
+            resources.canonical_modules = canonical_modules
             residency = ResidencyState(arena, device)
             resources.adopt_residency(residency)
             training_plan = ResidencyPlan.from_smart_plan(
@@ -329,6 +348,40 @@ class ArenaOffloadRuntime:
     # ------------------------------------------------------------------
     # lifecycle
     # ------------------------------------------------------------------
+
+    def park_residency_for_external_phase(self) -> None:
+        """Drop device sidecars while another large model component is active."""
+        self._require_open()
+        if self._device_state_parked_plan is not None:
+            return
+        current = self._residency.plan
+        if current.phase != self._executor.TRAIN:
+            raise RuntimeError(
+                f"arena_external_phase_requires_train:{current.phase}"
+            )
+        self._device_state_parked_plan = current
+        parked = ResidencyPlan.build(self._executor.TRAIN, ())
+        try:
+            if self.finalized:
+                self._executor.set_residency_plan(parked)
+            else:
+                self._residency.reconcile(parked)
+        except BaseException:
+            self._device_state_parked_plan = None
+            raise
+
+    def restore_residency_after_external_phase(self) -> None:
+        """Restore the exact training residency saved by the matching park."""
+        self._require_open()
+        plan = self._device_state_parked_plan
+        if plan is None:
+            return
+        if self.finalized:
+            self._executor.set_residency_plan(plan)
+        else:
+            self._residency.reconcile(plan)
+        self._training_plan = plan
+        self._device_state_parked_plan = None
 
     def set_compile_dynamic_hints(self, hints) -> None:
         """Install mark_dynamic hints on the block kernels (see ImmutableRuntime).
@@ -501,10 +554,13 @@ class ArenaOffloadRuntime:
                         decision.block_key, resident=False
                     )
                 if decision.target_cap_bytes is not None:
-                    allocator_cap.apply_wddm_hard_allocator_cap(
+                    allocator_cap.configure_wddm_allocator_guard(
                         self._device,
                         self._config._policy.wddm_hard_gib,
                         target_cap_bytes=decision.target_cap_bytes,
+                        strict=getattr(
+                            self._config, "strict_vram_cap", False
+                        ),
                         log_prefix="[ArenaOffload]",
                     )
                     self._last_training_cap_target_bytes = (
@@ -616,12 +672,15 @@ class ArenaOffloadRuntime:
             if policy.sampling_wddm_hard_gib is None
             else float(policy.sampling_wddm_hard_gib)
         )
-        allocator_cap.apply_wddm_hard_allocator_cap(
-            self._device, hard_gib, log_prefix="[ArenaOffload]"
-        )
-        margin_gib = resolve_margin_gib(
+        allocator_cap.configure_wddm_allocator_guard(
             self._device,
-            policy.sampling_wddm_margin_gib,
+            hard_gib,
+            strict=getattr(self._config, "strict_vram_cap", False),
+            log_prefix="[ArenaOffload]",
+        )
+        physical_headroom_gib = resolve_physical_vram_headroom_gib(
+            self._device,
+            policy.sampling_physical_vram_headroom_gib,
             hard_gib=hard_gib,
         )
         dequant_reserve = (
@@ -637,7 +696,9 @@ class ArenaOffloadRuntime:
             shape_key=shape_key,
             cold_working_bytes=int(cold_working_bytes),
             fixed_working_bytes=fixed_working_bytes,
-            cold_floor_bytes=int(margin_gib * GIB) + dequant_reserve,
+            cold_floor_bytes=(
+                int(physical_headroom_gib * GIB) + dequant_reserve
+            ),
             hot_floor_bytes=int((hard_gib + 0.25) * GIB) + dequant_reserve,
         ):
             yield self
@@ -658,6 +719,16 @@ class ArenaOffloadRuntime:
             else min(self._bootstrap_min_free_bytes, value)
         )
 
+    def _training_physical_vram_headroom_bytes(self) -> int:
+        policy = self._config._policy
+        hard_gib = float(getattr(policy, "wddm_hard_gib", None) or 1.0)
+        headroom_gib = resolve_physical_vram_headroom_gib(
+            self._device,
+            getattr(policy, "physical_vram_headroom_gib", -1.0),
+            hard_gib=hard_gib,
+        )
+        return int(headroom_gib * GIB)
+
     def _bootstrap_training_residency(self, active_cap_bytes) -> bool:
         if (
             self._bootstrap_complete
@@ -665,14 +736,10 @@ class ArenaOffloadRuntime:
             or int(self._successful_training_steps) < BOOTSTRAP_MIN_STEP
         ):
             return False
-        hard_gib = self._config._policy.wddm_hard_gib
-        hard_bytes = int(
-            (1.0 if hard_gib is None else max(1.0, float(hard_gib))) * GIB
-        )
         budget = max(
             0,
             self._bootstrap_min_free_bytes
-            - hard_bytes
+            - self._training_physical_vram_headroom_bytes()
             - BOOTSTRAP_MARGIN_BYTES,
         )
         self._bootstrap_budget_bytes = budget
@@ -753,15 +820,22 @@ class ArenaOffloadRuntime:
         allocator_slack = self._worst_shape_allocator_slack_bytes(
             current_cap_bytes
         )
-        pad = int(self._policy.slack_pad_bytes)
+        allocator_headroom = int(
+            self._policy.allocator_cache_headroom_bytes
+        )
         used = 0
         capacity = 0
         for candidate in candidates:
             used += int(candidate["block_bytes"])
             cumulative = {"block_bytes": used}
-            if self._worst_shape_candidate_margin_bytes(cumulative) < 0:
+            if (
+                self._worst_shape_candidate_physical_headroom_bytes(
+                    cumulative
+                )
+                < 0
+            ):
                 break
-            if allocator_slack <= used + pad:
+            if allocator_slack <= used + allocator_headroom:
                 break
             capacity += 1
         return capacity
@@ -788,7 +862,7 @@ class ArenaOffloadRuntime:
         block_bytes, _order, block_key = max(candidates)
         return {"block_key": block_key, "block_bytes": block_bytes}
 
-    def _worst_shape_candidate_margin_bytes(self, candidate):
+    def _worst_shape_candidate_physical_headroom_bytes(self, candidate):
         if candidate is None:
             return 0
         signal = self._signals.last_signal
@@ -814,10 +888,6 @@ class ArenaOffloadRuntime:
             - int(signal.get("device_free_bytes", 0) or 0)
             - int(signal.get("peak_reserved_bytes", 0) or 0),
         )
-        hard_gib = self._config._policy.wddm_hard_gib
-        hard_bytes = int(
-            (1.0 if hard_gib is None else max(1.0, float(hard_gib))) * GIB
-        )
         predicted_free = total - (
             worst_working
             + current_resident
@@ -825,7 +895,10 @@ class ArenaOffloadRuntime:
             + non_torch
             + int(candidate["block_bytes"])
         )
-        return int(predicted_free - hard_bytes)
+        return int(
+            predicted_free
+            - self._training_physical_vram_headroom_bytes()
+        )
 
     def _worst_shape_allocator_slack_bytes(self, current_cap_bytes):
         peaks = self._signals.shape_peaks
@@ -875,8 +948,10 @@ class ArenaOffloadRuntime:
             demote_candidate=demote_candidate,
             cliff_cap_bytes=cliff_cap,
             current_cap_bytes=current_cap,
-            worst_shape_free_bytes=self._worst_shape_candidate_margin_bytes(
-                candidate
+            worst_shape_free_bytes=(
+                self._worst_shape_candidate_physical_headroom_bytes(
+                    candidate
+                )
             ),
             worst_shape_allocator_slack_bytes=(
                 self._worst_shape_allocator_slack_bytes(current_cap)
@@ -899,20 +974,24 @@ class ArenaOffloadRuntime:
                 decision.action == "rollback"
                 and decision.target_cap_bytes is not None
             ):
-                allocator_cap.apply_wddm_hard_allocator_cap(
+                allocator_cap.configure_wddm_allocator_guard(
                     self._device,
                     self._config._policy.wddm_hard_gib,
                     target_cap_bytes=decision.target_cap_bytes,
+                    strict=getattr(
+                        self._config, "strict_vram_cap", False
+                    ),
                     log_prefix="[ArenaOffload]",
                 )
                 self._last_training_cap_target_bytes = (
                     decision.target_cap_bytes
                 )
         elif decision.action == "raise_cap":
-            allocator_cap.apply_wddm_hard_allocator_cap(
+            allocator_cap.configure_wddm_allocator_guard(
                 self._device,
                 self._config._policy.wddm_hard_gib,
                 target_cap_bytes=decision.target_cap_bytes,
+                strict=getattr(self._config, "strict_vram_cap", False),
                 log_prefix="[ArenaOffload]",
             )
             self._last_training_cap_target_bytes = decision.target_cap_bytes
@@ -938,9 +1017,10 @@ class ArenaOffloadRuntime:
         return result
 
     def _bind_training_cap(self) -> None:
-        allocator_cap.apply_wddm_hard_allocator_cap(
+        allocator_cap.configure_wddm_allocator_guard(
             self._device,
             self._config._policy.wddm_hard_gib,
+            strict=getattr(self._config, "strict_vram_cap", False),
             log_prefix="[ArenaOffload]",
         )
 
@@ -982,6 +1062,9 @@ class ArenaOffloadRuntime:
             "prefetch_depth": int(getattr(self._executor, "depth", 0)),
             "compile_blocks": bool(self._config.compile_blocks),
             "compile_dynamic": bool(self._config._compile_dynamic),
+            "strict_vram_cap": bool(
+                getattr(self._config, "strict_vram_cap", False)
+            ),
             "fp8_forward": bool(self._config.fp8_forward),
             "fp8_backward": bool(self._config.fp8_backward),
             "fp8_sampling": bool(self._config.fp8_sampling),
@@ -1008,6 +1091,9 @@ class ArenaOffloadRuntime:
             "bootstrap_complete": self._bootstrap_complete,
             "bootstrap_min_free_bytes": self._bootstrap_min_free_bytes,
             "bootstrap_margin_bytes": BOOTSTRAP_MARGIN_BYTES,
+            "training_physical_vram_headroom_bytes": (
+                self._training_physical_vram_headroom_bytes()
+            ),
             "bootstrap_min_step": BOOTSTRAP_MIN_STEP,
             "bootstrap_budget_bytes": self._bootstrap_budget_bytes,
             "bootstrap_block_keys": self._bootstrap_block_keys,

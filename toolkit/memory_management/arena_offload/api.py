@@ -34,7 +34,8 @@ _COMPATIBILITY_ALIASES = {
     "layer_offloading_smart_working_reserve_gb": (
         "layer_offloading_smart_headroom_gb",
     ),
-    "layer_offloading_smart_wddm_margin_gb": (
+    "layer_offloading_smart_physical_vram_headroom_gb": (
+        "layer_offloading_smart_wddm_margin_gb",
         "layer_offloading_smart_buffer_gb",
     ),
     "layer_offloading_smart_wddm_hard_gb": (
@@ -43,13 +44,35 @@ _COMPATIBILITY_ALIASES = {
     "layer_offloading_smart_sampling_working_reserve_gb": (
         "layer_offloading_smart_sampling_headroom_gb",
     ),
-    "layer_offloading_smart_sampling_wddm_margin_gb": (
+    "layer_offloading_smart_sampling_physical_vram_headroom_gb": (
+        "layer_offloading_smart_sampling_wddm_margin_gb",
         "layer_offloading_smart_sampling_buffer_gb",
     ),
     "layer_offloading_smart_sampling_wddm_hard_gb": (
         "layer_offloading_smart_sampling_hard_buffer_gb",
     ),
 }
+
+
+def validate_arena_training_mode(
+    *, full_finetune=False, mutates_base_weights=False
+) -> None:
+    """Reject mutable-base configurations before model loading.
+
+    Canonical arena leaves are immutable frozen base weights. Full-parameter
+    training or merge-in save workflows require a different storage
+    architecture, independent of the model or quantization integration.
+    """
+    if full_finetune:
+        raise ValueError(
+            "arena offload requires frozen base transformer weights and does "
+            "not support full-model fine-tuning"
+        )
+    if mutates_base_weights:
+        raise ValueError(
+            "arena offload requires immutable base transformer weights and "
+            "does not support merge_network_on_save"
+        )
 
 
 def unwrap(model):
@@ -67,13 +90,13 @@ class _ArenaPolicyOptions:
     """Internal policy inputs retained while fork job aliases are migrated."""
 
     working_reserve_gib: float | None = None
-    wddm_margin_gib: float | None = None
+    physical_vram_headroom_gib: float | None = None
     wddm_hard_gib: float | None = None
     checkpoint_keep_last: int = 0
     prefetch_depth: int = 3
 
     sampling_working_reserve_gib: float | None = None
-    sampling_wddm_margin_gib: float | None = None
+    sampling_physical_vram_headroom_gib: float | None = None
     sampling_wddm_hard_gib: float | None = 1.0
 
 
@@ -90,6 +113,7 @@ class ArenaOffloadConfig:
     fp8_backward: bool = False
     fp8_sampling: bool = False
     compile_blocks: bool = False
+    strict_vram_cap: bool = False
     _compile_dynamic: bool | None = True
     _compile_dynamic_hints: tuple[tuple[int, int | None, int | None], ...] = ()
     # Validation knob: pretend the card is this many GiB, so small-card
@@ -167,6 +191,9 @@ class ArenaOffloadConfig:
                 or get("compile_sample", False)
                 or get("train_compile_blocks", False)
             ),
+            strict_vram_cap=bool(
+                get("layer_offloading_strict_vram_cap", False)
+            ),
             _compile_dynamic=(
                 None
                 if get("compile_dynamic", True) is None
@@ -180,7 +207,9 @@ class ArenaOffloadConfig:
             ),
             _policy=_ArenaPolicyOptions(
                 working_reserve_gib=working_reserve_gib,
-                wddm_margin_gib=get("layer_offloading_smart_wddm_margin_gb"),
+                physical_vram_headroom_gib=get(
+                    "layer_offloading_smart_physical_vram_headroom_gb"
+                ),
                 wddm_hard_gib=get("layer_offloading_smart_wddm_hard_gb"),
                 checkpoint_keep_last=max(
                     0, int(get("layer_offloading_checkpoint_keep_last", 0) or 0)
@@ -189,8 +218,8 @@ class ArenaOffloadConfig:
                 sampling_working_reserve_gib=get(
                     "layer_offloading_smart_sampling_working_reserve_gb"
                 ),
-                sampling_wddm_margin_gib=get(
-                    "layer_offloading_smart_sampling_wddm_margin_gb"
+                sampling_physical_vram_headroom_gib=get(
+                    "layer_offloading_smart_sampling_physical_vram_headroom_gb"
                 ),
                 sampling_wddm_hard_gib=get(
                     "layer_offloading_smart_sampling_wddm_hard_gb", 1.0

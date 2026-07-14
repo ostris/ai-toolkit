@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 import torch
 
+from toolkit.compile_utils import configure_cuda_only_inductor
+from torch.utils._pytree import tree_flatten, tree_unflatten
+
 from toolkit.memory_management.immutable_runtime import (
     ImmutableProgram,
     ImmutableRuntimeError,
@@ -19,6 +22,44 @@ from toolkit.memory_management.arena_offload.transfer import (
 
 
 DISPATCHER_GENERATION = "generic-block-dispatcher-v1"
+
+
+def _first_tensor_argument(args, kwargs):
+    """Locate the tensor leaf that best carries block execution lifetime."""
+    leaves, spec = tree_flatten((args, kwargs))
+    tensors = [
+        (index, value)
+        for index, value in enumerate(leaves)
+        if isinstance(value, torch.Tensor)
+    ]
+    for index, value in tensors:
+        if value.requires_grad:
+            return value, (spec, index)
+    if tensors:
+        index, value = tensors[0]
+        return value, (spec, index)
+    raise ImmutableRuntimeError("unsupported_block_arguments:no_tensor_argument")
+
+
+def _replace_tensor_argument(args, kwargs, location, value):
+    expected_spec, index = location
+    leaves, spec = tree_flatten((args, kwargs))
+    if spec != expected_spec:
+        raise ImmutableRuntimeError("block_argument_structure_changed")
+    leaves[index] = value
+    return tree_unflatten(leaves, spec)
+
+
+def _first_output_tensor(output):
+    """Return a lifetime guard without constraining the block output shape."""
+    leaves, _spec = tree_flatten(output)
+    tensors = [value for value in leaves if isinstance(value, torch.Tensor)]
+    for value in tensors:
+        if value.requires_grad:
+            return value
+    if tensors:
+        return tensors[0]
+    raise ImmutableRuntimeError("unsupported_block_output:no_tensor_leaf")
 
 
 def _in_backward_graph_task() -> bool:
@@ -165,6 +206,7 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
             )
 
         if self.compile_blocks:
+            configure_cuda_only_inductor()
             kernel = torch.compile(
                 kernel,
                 mode="default",
@@ -242,16 +284,17 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
             raise ImmutableRuntimeError(
                 "immutable_execution_mode_mismatch:active=sample:call=train"
             )
-        if not args or not isinstance(args[0], torch.Tensor):
+        try:
+            first, first_location = _first_tensor_argument(args, kwargs)
+        except ImmutableRuntimeError as error:
             raise ImmutableRuntimeError(
                 f"unsupported_block_arguments:{self._block_abis[index].block_key}"
-            )
+            ) from error
 
         source = self._sources.source(index)
         transfer = source.transfer
         token = None
         compact_flat = None
-        first = args[0]
         training = self._active_mode == self.TRAIN
         if transfer is not None:
             if training and any(
@@ -273,7 +316,9 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
             compact_flat = torch.ops.mm.fetch_wait(token, nbytes)
             if training and torch.is_grad_enabled():
                 first = free_on_backward(first, token)
-                args = (first, *args[1:])
+                args, kwargs = _replace_tensor_argument(
+                    args, kwargs, first_location, first
+                )
 
         leaf_args = source.assemble_leaf_args(self.residency, compact_flat)
         self._mark_dispatch_dynamic(first)
@@ -288,7 +333,9 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
                 or not torch.is_grad_enabled()
                 or not _in_backward_graph_task()
             ):
-                torch.ops.mm.fetch_free_after(token, output)
+                torch.ops.mm.fetch_free_after(
+                    token, _first_output_tensor(output)
+                )
         return output
 
     def close(self):

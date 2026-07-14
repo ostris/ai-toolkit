@@ -9,7 +9,7 @@ from .. import vram_budget
 _ALLOC = ("num_alloc_retries", "num_device_alloc", "num_device_free")
 _COMPILE = ("frames", "graphs", "graph_breaks")
 
-DEFAULT_SLACK_PAD_BYTES = 256 * 1024**2
+DEFAULT_ALLOCATOR_CACHE_HEADROOM_BYTES = 256 * 1024**2
 AGGRESSIVE_PROMOTION_MIN_CAPACITY = 4
 
 
@@ -36,16 +36,24 @@ class PolicyDecision:
 class ArenaResidencyController:
     """Stateful wiring around the pure two-timescale residency FSM."""
 
-    def __init__(self, *, slack_pad_bytes=DEFAULT_SLACK_PAD_BYTES):
+    def __init__(
+        self,
+        *,
+        allocator_cache_headroom_bytes=(
+            DEFAULT_ALLOCATOR_CACHE_HEADROOM_BYTES
+        ),
+    ):
         self.state = vram_budget.ResidencyFsmState()
-        self.slack_pad_bytes = max(0, int(slack_pad_bytes))
+        self.allocator_cache_headroom_bytes = max(
+            0, int(allocator_cache_headroom_bytes)
+        )
         self.last_action = "hold"
         self.last_reason = "cold_start"
         self.last_promoted_key = None
         self.last_block_key = None
         self.last_block_bytes = 0
         self.last_target_cap_bytes = None
-        self.last_worst_shape_margin_bytes = None
+        self.last_worst_shape_physical_headroom_bytes = None
         self.last_throughput_gate = None
         self.last_promote_gate = None
         self.last_cap_covers_promo = None
@@ -87,7 +95,10 @@ class ArenaResidencyController:
             and throughput_ok
             and worst_ok
             and vram_budget.residency_promote_ok(
-                retries, allocator_slack, block_bytes, self.slack_pad_bytes
+                retries,
+                allocator_slack,
+                block_bytes,
+                self.allocator_cache_headroom_bytes,
             )
         )
         active_cap = (
@@ -97,7 +108,8 @@ class ArenaResidencyController:
         )
         cap_covers = (
             candidate is not None
-            and allocator_slack > block_bytes + self.slack_pad_bytes
+            and allocator_slack
+            > block_bytes + self.allocator_cache_headroom_bytes
         )
         binding = retries > 0 or int(worst_shape_free_bytes) < 0
         aggressive_capacity = max(0, int(aggressive_promotion_capacity or 0))
@@ -113,9 +125,12 @@ class ArenaResidencyController:
             and retries == 0
             and device_frees == 0
             and worst_ok
-            and allocator_slack > block_bytes + self.slack_pad_bytes
+            and allocator_slack
+            > block_bytes + self.allocator_cache_headroom_bytes
         )
-        self.last_worst_shape_margin_bytes = int(worst_shape_free_bytes)
+        self.last_worst_shape_physical_headroom_bytes = int(
+            worst_shape_free_bytes
+        )
         self.last_worst_shape_allocator_slack_bytes = allocator_slack
         self.last_throughput_gate = bool(throughput_ok)
         self.last_promote_gate = bool(promote_ok)
@@ -125,7 +140,7 @@ class ArenaResidencyController:
         cap_raise_bytes = (
             block_bytes
             if promote_ok and block_bytes > 0
-            else self.slack_pad_bytes
+            else self.allocator_cache_headroom_bytes
         )
         needed_cap = min(
             int(cliff_cap_bytes),
@@ -204,9 +219,10 @@ class ArenaResidencyController:
                 "throughput_gate"
                 if candidate is not None and not throughput_ok
                 else (
-                    "allocator_headband"
+                    "allocator_cache_headroom"
                     if candidate is not None
-                    and allocator_slack <= block_bytes + self.slack_pad_bytes
+                    and allocator_slack
+                    <= block_bytes + self.allocator_cache_headroom_bytes
                     else "fsm_hold"
                 )
             )
@@ -319,7 +335,9 @@ class ArenaResidencyController:
             "last_block_key": self.last_block_key,
             "last_block_bytes": self.last_block_bytes,
             "last_target_cap_bytes": self.last_target_cap_bytes,
-            "last_worst_shape_margin_bytes": self.last_worst_shape_margin_bytes,
+            "last_worst_shape_physical_headroom_bytes": (
+                self.last_worst_shape_physical_headroom_bytes
+            ),
             "last_throughput_gate": self.last_throughput_gate,
             "last_promote_gate": self.last_promote_gate,
             "last_cap_covers_promo": self.last_cap_covers_promo,
@@ -333,7 +351,9 @@ class ArenaResidencyController:
             "last_rejected_residency_bytes": (
                 self.last_rejected_residency_bytes
             ),
-            "slack_pad_bytes": self.slack_pad_bytes,
+            "allocator_cache_headroom_bytes": (
+                self.allocator_cache_headroom_bytes
+            ),
         }
 
 

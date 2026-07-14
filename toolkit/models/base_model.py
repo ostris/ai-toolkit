@@ -936,13 +936,16 @@ class BaseModel:
                             f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
 
         # predict the noise residual
-        if self.unet.device != self.device_torch:
-            try:
-                self.unet.to(self.device_torch)
-            except Exception as e:
-                pass
-        if self.unet.dtype != self.torch_dtype:
-            self.unet = self.unet.to(dtype=self.torch_dtype)
+        from toolkit.memory_management.runtime import get_memory_runtime
+
+        if get_memory_runtime(self.unet) is None:
+            if self.unet.device != self.device_torch:
+                try:
+                    self.unet.to(self.device_torch)
+                except Exception:
+                    pass
+            if self.unet.dtype != self.torch_dtype:
+                self.unet = self.unet.to(dtype=self.torch_dtype)
             
         # check if get_noise prediction has guidance_embedding_scale
         # if it does not, we dont pass it
@@ -1485,11 +1488,23 @@ class BaseModel:
             self.unet.train()
         else:
             self.unet.eval()
-        self.unet.to(state['unet']['device'])
-        if state['unet']['requires_grad']:
-            self.unet.requires_grad_(True)
+        from toolkit.memory_management.runtime import get_memory_runtime
+
+        arena_runtime = get_memory_runtime(self.unet)
+        if arena_runtime is not None:
+            # Canonical arena parameters are immutable host views. Only the
+            # noncanonical transformer state may follow device-state presets;
+            # residency remains owned by the arena runtime.
+            unet_device = torch.device(state['unet']['device'])
+            if unet_device.type == 'cpu':
+                arena_runtime.park_residency_for_external_phase()
+                arena_runtime.place_permanent_modules(unet_device)
         else:
-            self.unet.requires_grad_(False)
+            self.unet.to(state['unet']['device'])
+            if state['unet']['requires_grad']:
+                self.unet.requires_grad_(True)
+            else:
+                self.unet.requires_grad_(False)
         if isinstance(self.text_encoder, list):
             for i, encoder in enumerate(self.text_encoder):
                 if isinstance(state['text_encoder'], list):
@@ -1533,6 +1548,11 @@ class BaseModel:
                 self.refiner_unet.train()
             else:
                 self.refiner_unet.eval()
+        if arena_runtime is not None and unet_device.type != 'cpu':
+            # Restore only after inactive components (especially a large text
+            # encoder) have moved out, avoiding a transient model overlap.
+            arena_runtime.place_permanent_modules(unet_device)
+            arena_runtime.restore_residency_after_external_phase()
         flush()
 
     def set_device_state_preset(self, device_state_preset: DeviceStatePreset):
@@ -1547,6 +1567,10 @@ class BaseModel:
             active_modules = ['vae']
         if device_state_preset in ['cache_clip']:
             active_modules = ['clip']
+        if device_state_preset in ['cache_text_encoder']:
+            active_modules = ['text_encoder']
+        if device_state_preset in ['unload']:
+            active_modules = []
         if device_state_preset in ['generate']:
             active_modules = ['vae', 'unet',
                               'text_encoder', 'adapter', 'refiner_unet']

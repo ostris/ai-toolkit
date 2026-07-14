@@ -212,7 +212,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         if self.use_w2 and self.use_w1:
             # use scale = 1
             alpha = lora_dim
-        self.scale = float(alpha) / self.lora_dim
+        self._set_runtime_scale(float(alpha) / self.lora_dim)
         self.register_buffer('alpha', torch.tensor(alpha))  # treat as constant
 
         if self.use_w2:
@@ -251,7 +251,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             (self.lokr_w2 if self.use_w2
              else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp
              else self.lokr_w2_a@self.lokr_w2_b),
-            self.scale
+            self._runtime_scale
         )
         if orig_weight is not None:
             weight = weight.reshape(orig_weight.shape)

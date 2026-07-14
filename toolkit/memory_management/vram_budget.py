@@ -90,7 +90,7 @@ def reconcile_free_bytes(driver_free_bytes, physical_free_bytes) -> int:
 # same arithmetic reason it would be on the real small card.
 #
 # It does not shrink the physical card: the allocator cap is what actually makes
-# an over-plan fail, and `_apply_wddm_hard_allocator_cap` converts the simulated
+# an over-plan fail, and `configure_wddm_allocator_guard` converts the simulated
 # cap bytes back into a fraction of the REAL total before handing it to torch.
 _SIMULATED_CARD_BYTES: int | None = None
 
@@ -386,77 +386,16 @@ class DeviceSnapshot:
         )
 
 
-@dataclass(frozen=True)
-class WddmMargins:
-    """Dedicated-cliff margins for one phase (training attach / sampling start).
-
-    Resolve ONCE at the phase boundary and pass by value; do not re-read env
-    vars mid-phase (they cannot change mid-run, and re-reads hide which value
-    actually governed a decision).
-    """
-
-    hard_gib: float
-    margin_gib: float
-    source: str  # "config" | "env" | "auto"
-
-    @property
-    def hard_bytes(self) -> int:
-        return int(self.hard_gib * GIB)
-
-    @property
-    def margin_bytes(self) -> int:
-        return int(self.margin_gib * GIB)
-
-    def format(self) -> str:
-        return (
-            f"wddm_hard={self.hard_gib:.2f} GiB "
-            f"wddm_margin={self.margin_gib:.2f} GiB ({self.source})"
-        )
-
-
-def auto_margin_gib(device, pct: float = 0.10, floor_gib: float = 1.0) -> float:
-    """Auto planning margin: max(floor, pct * card size)."""
+def auto_physical_vram_headroom_gib(
+    device, pct: float = 0.10, floor_gib: float = 1.0
+) -> float:
+    """Automatic dedicated-VRAM headroom: max(floor, card fraction)."""
     try:
         total_bytes = device_total_bytes(device)
     except Exception:
         total_bytes = 0
     total_gib = max(0.0, float(total_bytes) / GIB)
     return max(float(floor_gib), float(pct) * total_gib)
-
-
-def resolve_margins(
-    device,
-    margin_value,
-    hard_value,
-    *,
-    margin_env: str,
-    hard_env: str,
-) -> WddmMargins:
-    """Resolve the phase's margins from config value > env > auto.
-
-    ``margin_value`` / ``hard_value`` are the config-supplied values (``None``
-    means "consult the env var"; a negative margin or "auto" means auto).
-    ``margin`` is clamped to at least ``hard``.
-    """
-    hard_gib = float(_env(hard_env, "1.0")) if hard_value is None else float(hard_value)
-    raw = _env(margin_env, "-1.0") if margin_value is None else margin_value
-    source = "env" if margin_value is None else "config"
-    try:
-        margin_gib = float(raw)
-        auto = margin_gib < 0
-    except (TypeError, ValueError):
-        auto = str(raw).strip().lower() == "auto"
-        margin_gib = -1.0
-    if auto:
-        margin_gib = auto_margin_gib(device)
-        source = "auto"
-    return WddmMargins(
-        hard_gib=hard_gib,
-        margin_gib=max(margin_gib, hard_gib or 0.0),
-        source=source,
-    )
-
-
 def cap_fraction(total_bytes, free_bytes, reserved_bytes, hard_gib) -> float:
     """Allocator-cap fraction so device_used stays <= total - hard (pure).
 
@@ -702,11 +641,9 @@ def estimate_training_working_reserve_bytes(
     above. At low resolution that flat reserve is generous; at high resolution
     it is not enough, so the attach-time residency plan keeps too many blocks
     resident, leaves activations too little headroom, and the run discovers the
-    shortfall only via a cold-start WDDM-cap-violation storm -- each violation
-    widens the allocator cap by a fixed ``WDDM_CAP_RELIEF_BYTES`` (0.5 GiB), so
-    a large resolution jump can cost several wasted/skipped steps before the
-    cap finally catches up (observed: Krea2 LoKr at 1024x1024 skipped 5/5 fake
-    steps under the flat default, never reaching a real step).
+    shortfall only during execution. In strict development mode that becomes
+    an allocator-cap OOM; production permits WDDM spill, but the resulting
+    paging is still far slower than choosing the right cold layout.
 
     Linear-in-tokens model calibrated on Krea2 LoKr RTX 4070 smoke runs
     (2026-07-14, ``--block-stream-only`` so zero blocks are resident and
@@ -831,7 +768,7 @@ def cap_bytes_for_live(
 def cap_can_host_promotion(
     live_bytes,
     block_bytes,
-    slack_pad_bytes,
+    allocator_cache_headroom_bytes,
     cliff_cap_bytes,
     *,
     gc_threshold=GC_THRESHOLD,
@@ -839,7 +776,8 @@ def cap_can_host_promotion(
     """Can the cheap cap lever (tier 1) absorb one more resident block? (pure).
 
     Promoting a streamed block to resident raises live by ``block_bytes``. To
-    keep ``slack_pad_bytes`` of allowance afterward, the GC target must reach
+    keep ``allocator_cache_headroom_bytes`` of allowance afterward, the GC
+    target must reach
     ``live + block + slack``, i.e. the cap must reach
     ``(live + block + slack) / gc_threshold``. The cap lever can do this only if
     that target cap is still under the WDDM cliff bound; otherwise the cap is
@@ -852,7 +790,7 @@ def cap_can_host_promotion(
     need_cap = (
         float(max(0, int(live_bytes)))
         + float(max(0, int(block_bytes)))
-        + float(max(0, int(slack_pad_bytes)))
+        + float(max(0, int(allocator_cache_headroom_bytes)))
     ) / float(gc_threshold)
     return need_cap <= float(int(cliff_cap_bytes))
 
@@ -861,7 +799,7 @@ def residency_promote_ok(
     num_alloc_retries,
     allocator_slack_bytes,
     block_bytes,
-    slack_pad_bytes,
+    allocator_cache_headroom_bytes,
 ) -> bool:
     """Sampling climb gate: convert one streamed block to resident? (pure).
 
@@ -871,14 +809,17 @@ def residency_promote_ok(
       * ``num_alloc_retries == 0`` over the window (nothing cap-binding), AND
       * worst-shape allocator slack (``0.95 * cap - predicted_live``)
         exceeds one block plus the pad, so the promotion still leaves
-        ``slack_pad`` of reusable-cache allowance.
+        ``allocator_cache_headroom`` of reusable-cache allowance.
 
     Both must hold: retries can be zero simply because residency is too low, so
     the worst-shape allocator-slack test is what proves there is room to spend.
     """
     if int(num_alloc_retries or 0) > 0:
         return False
-    return float(allocator_slack_bytes or 0) > float(block_bytes) + float(slack_pad_bytes)
+    return (
+        float(allocator_slack_bytes or 0)
+        > float(block_bytes) + float(allocator_cache_headroom_bytes)
+    )
 
 
 # --- Hysteresis FSM (one transition per phase boundary) ---------------------

@@ -678,7 +678,7 @@ def _register_ordered_effects():
 
 # NOT registered at import time: in torch 2.12 ordered-effect tokens trip an
 # internal token-erasure assertion inside the checkpoint HOP lowering
-# (see tests/test_ingraph_training_ops.py, compiled xfail). Phase 4a S1 keeps
+# (see tests/test_ingraph_training_ops.py, compiled xfail). The current path keeps
 # this as the candidate ordering mechanism for the compiled trunk; call it
 # explicitly once the HOP interaction is resolved (torch upgrade or flat-trunk
 # design without the checkpoint HOP).

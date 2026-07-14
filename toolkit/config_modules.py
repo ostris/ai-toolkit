@@ -705,8 +705,9 @@ class ModelConfig:
         self.layer_offloading_smart_working_reserve_gb = kwargs.get(
             "layer_offloading_smart_working_reserve_gb", -1.0
         )
-        self.layer_offloading_smart_wddm_margin_gb = kwargs.get(
-            "layer_offloading_smart_wddm_margin_gb", -1.0
+        self.layer_offloading_smart_physical_vram_headroom_gb = kwargs.get(
+            "layer_offloading_smart_physical_vram_headroom_gb",
+            kwargs.get("layer_offloading_smart_wddm_margin_gb", -1.0),
         )
         self.layer_offloading_smart_wddm_hard_gb = kwargs.get(
             "layer_offloading_smart_wddm_hard_gb", 1.0
@@ -714,11 +715,15 @@ class ModelConfig:
         self.layer_offloading_smart_sampling_working_reserve_gb = kwargs.get(
             "layer_offloading_smart_sampling_working_reserve_gb", -1.0
         )
-        self.layer_offloading_smart_sampling_wddm_margin_gb = kwargs.get(
-            "layer_offloading_smart_sampling_wddm_margin_gb", -1.0
+        self.layer_offloading_smart_sampling_physical_vram_headroom_gb = kwargs.get(
+            "layer_offloading_smart_sampling_physical_vram_headroom_gb",
+            kwargs.get("layer_offloading_smart_sampling_wddm_margin_gb", -1.0),
         )
         self.layer_offloading_smart_sampling_wddm_hard_gb = kwargs.get(
             "layer_offloading_smart_sampling_wddm_hard_gb", 1.0
+        )
+        self.layer_offloading_strict_vram_cap = kwargs.get(
+            "layer_offloading_strict_vram_cap", False
         )
         self.layer_offloading_fp8_forward = kwargs.get(
             "layer_offloading_fp8_forward", False

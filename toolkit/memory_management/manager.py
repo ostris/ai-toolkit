@@ -109,7 +109,7 @@ class MemoryManager:
         offload_percent: float = 1.0,
         ignore_modules: list[torch.nn.Module] = []
     ):
-        allocator_cap.apply_wddm_hard_allocator_cap(device)
+        allocator_cap.configure_wddm_allocator_guard(device, strict=False)
         if hasattr(module, "_memory_manager"):
             # already attached
             return

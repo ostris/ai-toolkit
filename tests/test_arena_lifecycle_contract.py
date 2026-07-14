@@ -25,6 +25,29 @@ from toolkit.memory_management.arena_offload.ownership import (
 )
 from toolkit.memory_management.arena_offload.resources import ArenaRuntimeResources
 from toolkit.memory_management.arena_offload.runtime import ArenaOffloadRuntime
+from toolkit.memory_management import pin_manager
+from toolkit.memory_management.manager_modules import _DEVICE_STATE
+from toolkit.memory_management.residency import ResidencyPlan
+from toolkit.models.base_model import BaseModel
+from jobs.process.BaseSDTrainProcess import BaseSDTrainProcess
+from jobs.BaseJob import BaseJob
+
+
+@pytest.fixture(autouse=True)
+def _disable_cuda_host_registration(monkeypatch):
+    """Lifecycle ownership tests do not need a live CUDA pin registration."""
+    def fake_commit(candidate, nbytes, kind, **_kwargs):
+        return SimpleNamespace(
+            tensor=candidate,
+            nbytes=int(nbytes),
+            kind=kind,
+            pinned=True,
+            mechanism="register",
+        )
+
+    monkeypatch.setattr(pin_manager, "pin_register_commit", fake_commit)
+    monkeypatch.setattr(pin_manager, "release", lambda _handle: None)
+
 
 class _Block(torch.nn.Module):
     def __init__(self):
@@ -125,14 +148,15 @@ def test_direct_loader_rollback_releases_preparation_owner():
     assert not hasattr(model, "_arena_offload_disposed")
 
 
-def test_postcommit_failure_is_fatal_disposes_and_releases_owner():
+def test_planning_failure_is_precommit_and_preserves_model():
     model = _frozen_linear()
+    original = model.weight
     original_error = RuntimeError("residency construction failed")
     with mock.patch(
         "toolkit.memory_management.arena_offload.runtime.build_training_plan",
         side_effect=original_error,
     ):
-        with pytest.raises(ArenaSetupFatalError) as caught:
+        with pytest.raises(RuntimeError, match="residency construction failed") as caught:
             prepare_arena_offload(
                 model,
                 device="cpu",
@@ -140,18 +164,10 @@ def test_postcommit_failure_is_fatal_disposes_and_releases_owner():
                 config=ArenaOffloadConfig(enabled=True),
             )
 
-    wrapper = RuntimeError("wrapper")
-    wrapper.__cause__ = caught.value
-    assert caught.value.__cause__ is original_error
-    assert is_fatal_arena_setup(wrapper)
-    assert not recover_allows_next_job(wrapper, True)
-    assert recover_allows_next_job(RuntimeError("ordinary"), True)
+    assert caught.value is original_error
     assert active_process_owner() is None
-    assert model._arena_offload_disposed
-    with pytest.raises(RuntimeError, match="transformer_disposed"):
-        model(torch.randn(1, 4))
-    with pytest.raises(RuntimeError, match="transformer_disposed"):
-        model.to("cpu")
+    assert model.weight is original
+    assert not hasattr(model, "_arena_offload_disposed")
 
 
 @pytest.mark.parametrize(
@@ -167,6 +183,7 @@ def test_postcommit_fault_boundaries_are_fatal_and_never_fall_back(target):
     plan = {
         "offload_ids": set(),
         "protected_training_leaf_keys": frozenset(),
+        "fits": True,
     }
     patches = [
         mock.patch(
@@ -187,6 +204,16 @@ def test_postcommit_fault_boundaries_are_fatal_and_never_fall_back(target):
     assert active_process_owner() is None
     assert model._arena_offload_disposed
     assert not hasattr(model, "_memory_manager")
+
+
+def test_fatal_setup_classification_blocks_recovery_through_wrappers():
+    fatal = ArenaSetupFatalError("committed setup failed")
+    wrapper = RuntimeError("wrapper")
+    wrapper.__cause__ = fatal
+
+    assert is_fatal_arena_setup(wrapper)
+    assert not recover_allows_next_job(wrapper, True)
+    assert recover_allows_next_job(RuntimeError("ordinary"), True)
 
 
 def test_resource_release_continues_after_cleanup_error_and_is_idempotent():
@@ -250,14 +277,258 @@ def test_finalize_cap_failure_is_fatal_after_runtime_publication():
     runtime._resources.release.assert_called_once_with()
 
 
-def test_phase7_import_and_private_state_boundaries():
-    root = Path(__file__).parents[1]
-    arena_sources = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (root / "toolkit" / "memory_management" / "arena_offload").glob("*.py")
+def test_base_model_device_state_routes_arena_transformer_through_runtime():
+    model = SimpleNamespace(
+        vae=mock.Mock(),
+        unet=mock.Mock(),
+        text_encoder=mock.Mock(),
+        adapter=None,
+        refiner_unet=None,
     )
-    assert "from ..manager import" not in arena_sources
-    assert "manager_modules" not in arena_sources
+    runtime = mock.Mock()
+    state = {
+        "vae": {"training": False, "device": "cpu", "requires_grad": False},
+        "unet": {"training": False, "device": "cpu", "requires_grad": False},
+        "text_encoder": {
+            "training": False,
+            "device": "cpu",
+            "requires_grad": False,
+        },
+    }
+
+    with mock.patch(
+        "toolkit.memory_management.runtime.get_memory_runtime",
+        return_value=runtime,
+    ), mock.patch("toolkit.models.base_model.flush"):
+        BaseModel.set_device_state(model, state)
+
+    runtime.place_permanent_modules.assert_called_once_with(torch.device("cpu"))
+    runtime.park_residency_for_external_phase.assert_called_once_with()
+    model.unet.to.assert_not_called()
+    model.unet.requires_grad_.assert_not_called()
+
+
+def test_arena_external_phase_parks_and_restores_exact_training_plan():
+    original = ResidencyPlan.build(
+        "train", (("blocks.0", "linear"), ("blocks.1", "linear"))
+    )
+    runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
+    runtime._closed = False
+    runtime._disposed = False
+    runtime._device_state_parked_plan = None
+    runtime._residency = SimpleNamespace(plan=original)
+    runtime._executor = SimpleNamespace(
+        TRAIN="train",
+        finalized=True,
+        set_residency_plan=mock.Mock(),
+    )
+    runtime._training_plan = original
+
+    runtime.park_residency_for_external_phase()
+    parked = runtime._executor.set_residency_plan.call_args.args[0]
+    assert parked.phase == "train"
+    assert parked.resident_leaf_keys == frozenset()
+
+    runtime.restore_residency_after_external_phase()
+    assert runtime._executor.set_residency_plan.call_args.args[0] is original
+    assert runtime._device_state_parked_plan is None
+
+
+def test_base_model_restores_arena_only_after_text_encoder_offload():
+    events = []
+    text_encoder = mock.Mock()
+    text_encoder.to.side_effect = lambda device: events.append(("text", device))
+    runtime = mock.Mock()
+    runtime.restore_residency_after_external_phase.side_effect = (
+        lambda: events.append(("arena", "restore"))
+    )
+    model = SimpleNamespace(
+        vae=mock.Mock(),
+        unet=mock.Mock(),
+        text_encoder=text_encoder,
+        adapter=None,
+        refiner_unet=None,
+    )
+    state = {
+        "vae": {"training": False, "device": "cpu", "requires_grad": False},
+        "unet": {
+            "training": True,
+            "device": torch.device("cuda"),
+            "requires_grad": False,
+        },
+        "text_encoder": {
+            "training": False,
+            "device": "cpu",
+            "requires_grad": False,
+        },
+    }
+
+    with mock.patch(
+        "toolkit.memory_management.runtime.get_memory_runtime",
+        return_value=runtime,
+    ), mock.patch("toolkit.models.base_model.flush"):
+        BaseModel.set_device_state(model, state)
+
+    assert events == [("text", "cpu"), ("arena", "restore")]
+
+
+def test_base_model_text_cache_preset_activates_only_text_encoder():
+    model = SimpleNamespace(
+        save_device_state=mock.Mock(),
+        set_device_state=mock.Mock(),
+        vae=mock.Mock(),
+        unet=mock.Mock(),
+        text_encoder=mock.Mock(),
+        adapter=None,
+        refiner_unet=None,
+        vae_device_torch=torch.device("cuda"),
+        device_torch=torch.device("cuda"),
+        te_device_torch=torch.device("cuda"),
+    )
+
+    BaseModel.set_device_state_preset(model, "cache_text_encoder")
+
+    state = model.set_device_state.call_args.args[0]
+    assert state["vae"]["device"] == "cpu"
+    assert state["unet"]["device"] == "cpu"
+    assert state["text_encoder"]["device"] == torch.device("cuda")
+
+
+def test_accelerator_preparation_skips_arena_managed_transformer():
+    unet = mock.Mock()
+    accelerator = mock.Mock()
+    accelerator.prepare.side_effect = lambda value, **_kwargs: value
+    process = SimpleNamespace(
+        accelerator=accelerator,
+        sd=SimpleNamespace(
+            vae=mock.Mock(),
+            unet=unet,
+            text_encoder=None,
+            refiner_unet=None,
+            network=None,
+        ),
+        train_config=SimpleNamespace(
+            train_text_encoder=False,
+            train_refiner=False,
+        ),
+        modules_being_trained=[],
+        adapter=None,
+        optimizer=mock.Mock(),
+        lr_scheduler=None,
+    )
+
+    with mock.patch(
+        "jobs.process.BaseSDTrainProcess.get_memory_runtime",
+        return_value=mock.Mock(),
+    ):
+        BaseSDTrainProcess.prepare_accelerator(process)
+
+    assert not any(
+        call.args and call.args[0] is unet
+        for call in accelerator.prepare.mock_calls
+    )
+    assert process.modules_being_trained == [unet]
+
+
+def test_process_cleanup_retains_runtime_after_failure_and_retries():
+    runtime = mock.Mock()
+    runtime.close.side_effect = (RuntimeError("close failed"), None)
+    process = SimpleNamespace(
+        _cleanup_in_progress=False,
+        _cleanup_completed=False,
+        _arena_runtime=runtime,
+        sd=SimpleNamespace(unet=mock.Mock(), text_encoder=None),
+    )
+
+    with mock.patch(
+        "jobs.process.BaseSDTrainProcess.close_memory_runtime_preparation"
+    ), mock.patch("jobs.process.BaseSDTrainProcess.MemoryManager.detach"):
+        with pytest.raises(RuntimeError, match="close failed"):
+            BaseSDTrainProcess.cleanup(process)
+        assert process._arena_runtime is runtime
+        assert not process._cleanup_completed
+
+        BaseSDTrainProcess.cleanup(process)
+
+    assert process._arena_runtime is None
+    assert process._cleanup_completed
+    assert runtime.close.call_count == 2
+
+
+def test_sequential_success_cleanup_returns_global_owners_to_baseline():
+    model = _frozen_linear()
+    resources = ArenaRuntimeResources(model, "cpu")
+    resources.acquire_process_owner()
+    runtime = SimpleNamespace(close=resources.release)
+    text_encoder = torch.nn.Linear(4, 4)
+    text_encoder._memory_manager = SimpleNamespace(unmanaged_modules=[])
+    process = SimpleNamespace(
+        _cleanup_in_progress=False,
+        _cleanup_completed=False,
+        _arena_runtime=runtime,
+        sd=SimpleNamespace(unet=model, text_encoder=text_encoder),
+    )
+    pin_baseline = pin_manager.total_pinned_bytes()
+    fake_cuda_device = torch.device("cuda")
+    _DEVICE_STATE[fake_cuda_device] = object()
+
+    with mock.patch("torch.cuda.empty_cache"):
+        BaseSDTrainProcess.cleanup(process)
+
+    assert active_process_owner() is None
+    assert process._arena_runtime is None
+    assert process._cleanup_completed
+    assert not hasattr(text_encoder, "_memory_manager")
+    assert fake_cuda_device not in _DEVICE_STATE
+    assert pin_manager.total_pinned_bytes() == pin_baseline
+
+
+def test_base_job_retains_processes_until_retryable_cleanup_succeeds():
+    process = SimpleNamespace(job=object(), cleanup=mock.Mock())
+    process.cleanup.side_effect = (RuntimeError("retry me"), None)
+    job = BaseJob.__new__(BaseJob)
+    job.process = [process]
+
+    with pytest.raises(RuntimeError, match="retry me"):
+        job.cleanup()
+    assert job.process == [process]
+    assert process.job is not None
+
+    job.cleanup()
+    assert job.process == []
+    assert process.job is None
+
+
+def _imported_modules(path):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            imported.add(base)
+            imported.update(
+                f"{base}.{alias.name}" if base else alias.name
+                for alias in node.names
+            )
+    return imported
+
+
+def test_backend_import_and_shared_private_state_boundaries():
+    root = Path(__file__).parents[1]
+    arena_imports = set()
+    for path in (root / "toolkit" / "memory_management" / "arena_offload").glob(
+        "*.py"
+    ):
+        arena_imports.update(_imported_modules(path))
+    assert not any(
+        name == "manager"
+        or name.endswith(".manager")
+        or name == "manager_modules"
+        or name.endswith(".manager_modules")
+        for name in arena_imports
+    )
 
     for relative in (
         "jobs/process/BaseSDTrainProcess.py",
@@ -270,17 +541,16 @@ def test_phase7_import_and_private_state_boundaries():
             for node in ast.walk(tree)
         )
 
-def test_phase8_legacy_manager_has_no_arena_execution_bridge():
-    root = Path(__file__).parents[1]
-    manager = (
-        root / "toolkit" / "memory_management" / "manager.py"
+    trainer_source = (
+        root / "jobs" / "process" / "BaseSDTrainProcess.py"
     ).read_text(encoding="utf-8")
-    for obsolete in (
-        "attach_smart_training_immutable",
-        "smart_immutable",
-        "_mm_immutable_",
-        "_immutable_runtime",
-        "_mm_canonical_leaf",
-        "canonical_relief",
-    ):
-        assert obsolete not in manager
+    assert "if runtime_owns_block_compile:" in trainer_source
+    assert "if runtime_owns_block_compile and block_compile:" not in trainer_source
+
+
+def test_legacy_manager_does_not_import_arena_backend():
+    root = Path(__file__).parents[1]
+    imports = _imported_modules(
+        root / "toolkit" / "memory_management" / "manager.py"
+    )
+    assert not any("arena_offload" in name for name in imports)

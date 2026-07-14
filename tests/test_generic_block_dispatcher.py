@@ -13,6 +13,11 @@ from toolkit.memory_management.arena_offload import (
     prepare_arena_offload,
 )
 from toolkit.memory_management.arena_offload.discovery import BlockDiscoveryError
+from toolkit.memory_management.arena_offload.dispatcher import (
+    _first_output_tensor,
+    _first_tensor_argument,
+    _replace_tensor_argument,
+)
 from toolkit.memory_management.arena_offload.ownership import active_process_owner
 from toolkit.memory_management.residency import ResidencyPlan
 from toolkit.memory_management.runtime import get_memory_runtime
@@ -104,7 +109,7 @@ def _fp8_runtime(model, device, *, forward, backward, compile_blocks):
         _policy=replace(
             config._policy,
             working_reserve_gib=0.0,
-            wddm_margin_gib=0.0,
+            physical_vram_headroom_gib=0.0,
             wddm_hard_gib=1.0,
             checkpoint_keep_last=1,
         ),
@@ -189,6 +194,25 @@ def test_declared_container_discovery_accounts_all_block_state():
     assert selection.accounting.managed_bytes > 0
 
 
+def test_dispatcher_abi_accepts_keyword_inputs_and_structured_outputs():
+    hidden = torch.randn(2, 4, requires_grad=True)
+    mask = torch.ones(2, 4, dtype=torch.bool)
+    args = ("metadata", mask)
+    kwargs = {"inputs": {"hidden_states": hidden}, "mask": None}
+
+    selected, location = _first_tensor_argument(args, kwargs)
+    assert selected is hidden
+    replacement = hidden + 1
+    updated_args, updated_kwargs = _replace_tensor_argument(
+        args, kwargs, location, replacement
+    )
+    assert updated_args == args
+    assert updated_kwargs["inputs"]["hidden_states"] is replacement
+
+    output = ({"hidden_states": replacement}, (None, hidden))
+    assert _first_output_tensor(output) is replacement
+
+
 def test_shared_managed_state_is_rejected_before_construction():
     model = _frozen_transformer()
     shared = model.blocks[0].proj.weight
@@ -222,7 +246,8 @@ def test_saved_installed_forward_checkpoint_backward_and_teardown():
         "toolkit.memory_management.arena_offload.planner.vram_budget.device_mem_info",
         return_value=(8 * 1024**3, 12 * 1024**3),
     ), mock.patch(
-        "toolkit.memory_management.arena_offload.planner.vram_budget.auto_margin_gib",
+        "toolkit.memory_management.arena_offload.planner.vram_budget."
+        "auto_physical_vram_headroom_gib",
         return_value=1.0,
     ):
         config = ArenaOffloadConfig(enabled=True, compile_blocks=False)
@@ -306,14 +331,16 @@ def test_cuda_streamed_compiled_train_sample_train():
         _policy=replace(
             config._policy,
             working_reserve_gib=0.0,
-            wddm_margin_gib=0.0,
+            physical_vram_headroom_gib=0.0,
             wddm_hard_gib=1.0,
             checkpoint_keep_last=1,
+            prefetch_depth=1,
         ),
     )
     with mock.patch(
         "toolkit.memory_management.arena_offload.planner.vram_budget.device_mem_info",
-        return_value=(1 * 1024**3, 12 * 1024**3),
+        # Force a mixed plan: two blocks fit, all three do not.
+        return_value=(700, 12 * 1024**3),
     ):
         runtime = prepare_arena_offload(
             model,

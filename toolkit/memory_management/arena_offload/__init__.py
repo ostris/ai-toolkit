@@ -27,6 +27,7 @@ from .api import (
     prepare_canonical_storage,
     prepare_canonical_storage_from_state_dict,
     prepare_arena_offload,
+    validate_arena_training_mode,
 )
 from .runtime import ArenaOffloadRuntime
 from .dispatcher import DISPATCHER_GENERATION
@@ -54,4 +55,5 @@ __all__ = [
     "prepare_canonical_storage",
     "prepare_canonical_storage_from_state_dict",
     "prepare_arena_offload",
+    "validate_arena_training_mode",
 ]

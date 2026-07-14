@@ -30,6 +30,7 @@ from toolkit.memory_management.runtime import (
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
+from toolkit.compile_utils import configure_cuda_only_inductor
 from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
@@ -203,7 +204,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # to hold network if there is one
         self.network: Union[Network, None] = None
         self._arena_runtime = None
-        self._cleanup_started = False
+        self._cleanup_in_progress = False
+        self._cleanup_completed = False
         self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, CustomAdapter, ControlNetModel, None] = None
         self.embedding: Union[Embedding, None] = None
         self.decorator: Union[Decorator, None] = None
@@ -499,9 +501,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
         pass
 
     def cleanup(self):
-        if self._cleanup_started:
+        if self._cleanup_completed:
             return
-        self._cleanup_started = True
+        if self._cleanup_in_progress:
+            raise RuntimeError("training process cleanup is already in progress")
+        self._cleanup_in_progress = True
         errors = []
 
         def attempt(label, operation):
@@ -510,32 +514,42 @@ class BaseSDTrainProcess(BaseTrainProcess):
             except Exception as error:
                 errors.append(f"{label}: {type(error).__name__}: {error}")
 
-        runtime = self._arena_runtime
-        sd = getattr(self, "sd", None)
-        if runtime is None and sd is not None:
-            runtime = get_memory_runtime(getattr(sd, "unet", None))
-        if runtime is not None:
-            attempt("arena runtime", runtime.close)
-            self._arena_runtime = None
-        if sd is not None:
-            attempt(
-                "memory runtime preparation",
-                lambda: close_memory_runtime_preparation(sd),
-            )
-            models = [getattr(sd, "unet", None)]
-            text_encoders = getattr(sd, "text_encoder", None)
-            if isinstance(text_encoders, (list, tuple)):
-                models.extend(text_encoders)
-            else:
-                models.append(text_encoders)
-            for model in models:
-                if model is not None:
-                    attempt(
-                        "legacy memory manager",
-                        lambda model=model: MemoryManager.detach(model),
+        try:
+            runtime = self._arena_runtime
+            sd = getattr(self, "sd", None)
+            if runtime is None and sd is not None:
+                runtime = get_memory_runtime(getattr(sd, "unet", None))
+            if runtime is not None:
+                try:
+                    runtime.close()
+                except Exception as error:
+                    errors.append(
+                        f"arena runtime: {type(error).__name__}: {error}"
                     )
-        if errors:
-            raise RuntimeError("; ".join(errors))
+                else:
+                    self._arena_runtime = None
+            if sd is not None:
+                attempt(
+                    "memory runtime preparation",
+                    lambda: close_memory_runtime_preparation(sd),
+                )
+                models = [getattr(sd, "unet", None)]
+                text_encoders = getattr(sd, "text_encoder", None)
+                if isinstance(text_encoders, (list, tuple)):
+                    models.extend(text_encoders)
+                else:
+                    models.append(text_encoders)
+                for model in models:
+                    if model is not None:
+                        attempt(
+                            "legacy memory manager",
+                            lambda model=model: MemoryManager.detach(model),
+                        )
+            if errors:
+                raise RuntimeError("; ".join(errors))
+            self._cleanup_completed = True
+        finally:
+            self._cleanup_in_progress = False
     
     def done_hook(self):
         pass
@@ -789,7 +803,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
         self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
-            self.sd.unet = self.accelerator.prepare(self.sd.unet)
+            arena_runtime = get_memory_runtime(self.sd.unet)
+            # The arena runtime is the sole transformer placement and
+            # residency authority. Accelerate's model preparation starts
+            # with whole-model placement and may install its own wrappers,
+            # so do not give it a second ownership path.
+            if arena_runtime is None:
+                self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
         if self.sd.text_encoder is not None and self.train_config.train_text_encoder:
@@ -1662,6 +1682,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.load_training_state_from_metadata(latest_save_path)
 
         ModelClass = get_model_class(self.model_config)
+        if arena_requested:
+            from toolkit.memory_management.arena_offload import (
+                validate_arena_training_mode,
+            )
+
+            validate_arena_training_mode(
+                full_finetune=self.is_fine_tuning,
+                mutates_base_weights=self.train_config.merge_network_on_save,
+            )
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
             sampler = ModelClass.get_train_scheduler()
@@ -2204,7 +2233,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             compiled_refs = []  # (block_list, index, original_block) for rollback on failure
             try:
                 inner_unet_check = unwrap_model(self.sd.unet)
-                is_unet_offloaded = hasattr(inner_unet_check, '_memory_manager')
+                is_unet_offloaded = (
+                    hasattr(inner_unet_check, '_memory_manager')
+                    or get_memory_runtime(inner_unet_check) is not None
+                )
 
                 text_encoder = getattr(self.sd, "text_encoder", None)
                 text_encoder_check = unwrap_model(text_encoder) if text_encoder is not None else None
@@ -2220,7 +2252,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 user_set_cache_limit = cache_size_limit is not None
                 if user_set_cache_limit:
                     torch._dynamo.config.cache_size_limit = cache_size_limit
-                torch._dynamo.config.suppress_errors = False
+                configure_cuda_only_inductor()
                 # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
                 # crashes on some dynamic-shape index expressions (sympy PowByNatural
                 # "assert p >= 0", seen with Qwen Image). The analysis doesn't apply
@@ -2248,10 +2280,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # ====================================================
                 # BLOCK COMPILE
                 # ====================================================
-                if runtime_owns_block_compile and block_compile:
+                if runtime_owns_block_compile:
                     print_acc(
                         "Arena offload owns block compilation; "
-                        "skipping trainer block compile."
+                        "skipping trainer compile."
                     )
                 elif block_compile:
                     BLOCK_LIST_ATTRS = self.sd.get_transformer_block_names()
@@ -2592,6 +2624,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     raise  # not an OOM; surface real errors
             if did_oom:
                 self.num_consecutive_oom += 1
+                if arena_runtime is not None:
+                    failure = arena_runtime.diagnostics().get(
+                        'last_failure_event'
+                    )
+                    if failure is not None:
+                        print_acc(
+                            f"[ArenaOffload] training failure: {failure}"
+                        )
                 if self.num_consecutive_oom > 3:
                     raise RuntimeError("OOM during training step 3 times in a row, aborting training")
                 optimizer.zero_grad(set_to_none=True)
@@ -2790,6 +2830,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     repo_id=self.save_config.hf_repo_id,
                     private=self.save_config.hf_private
                 )
+        # Deterministic teardown needs the model graph in order to close the
+        # arena and detach legacy managers (notably an offloaded text encoder).
+        # BaseJob.cleanup() becomes an idempotent no-op after this succeeds.
+        self.cleanup()
         del (
             self.sd,
             unet,

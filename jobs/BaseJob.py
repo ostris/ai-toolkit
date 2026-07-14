@@ -73,8 +73,8 @@ class BaseJob:
                 process.cleanup()
             except Exception as error:
                 errors.append(f"{type(process).__name__}: {error}")
-            finally:
-                process.job = None
-        self.process = []
         if errors:
             raise RuntimeError("job cleanup failed: " + "; ".join(errors))
+        for process in processes:
+            process.job = None
+        self.process = []

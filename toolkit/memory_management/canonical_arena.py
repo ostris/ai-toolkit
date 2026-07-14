@@ -1,13 +1,14 @@
-"""Canonical host arena (Slice 1, tasks/open/IMMUTABLE_TRANSFER_ARENA_PLAN.md).
+"""Canonical host arena for immutable frozen base weights.
 
 One page-exclusive pinned host flat per block, immutable leaf metadata, and
 a ONE-TIME repoint of frozen base Parameters into views over those flats
-(Invariant 4). This is deliberately NOT the legacy ``pinned_arena.py``:
+(the canonical storage invariant). This is deliberately NOT the legacy
+``pinned_arena.py``:
 no generation counter, no ``is_current``/staleness oracle over live module
 storage, no invalidate/restore/rebuild path, no borrowed-vs-owned pack
-taxonomy. Per the plan's Decision section, promotion/demotion/sampling
+taxonomy. Promotion, demotion, and sampling
 transitions must never repoint a Parameter again once ``canonicalize()``
-has run -- that is the job of the residency sidecars (Slice 3), not this
+has run -- that is the job of the residency sidecars, not this
 module.
 
 Construction is destination-first and transactional: preparation allocates
@@ -29,8 +30,7 @@ ARENA_KIND = "weights"
 
 
 class CanonicalArenaError(ValueError):
-    """A build/canonicalize/guard operation violated a canonical-arena
-    invariant (tasks/open/IMMUTABLE_TRANSFER_ARENA_PLAN.md)."""
+    """A build, canonicalize, or guard operation violated an arena invariant."""
 
 
 def _entry_module_and_leaves(entry):
@@ -46,11 +46,12 @@ def _entry_module_and_leaves(entry):
 
 
 def _assert_entries_frozen(entries) -> None:
-    """Invariant 4/Decision: the canonical arena is for FROZEN base weights
-    only; LoRA/adapters stay ordinary trainable Parameters outside it. Run
-    this over every block BEFORE any block is built, so a trainable leaf
-    anywhere in the batch fails closed without repointing a single
-    Parameter (no partial canonicalization from this particular cause)."""
+    """Require frozen base weights before any Parameter is repointed.
+
+    LoRA and adapter parameters remain ordinary trainable state outside the
+    arena. Checking the full batch first prevents partial canonicalization when
+    any managed leaf is trainable.
+    """
     for entry in entries:
         name, _module, weight, bias = _entry_module_and_leaves(entry)
         if getattr(weight, "requires_grad", False):
@@ -64,7 +65,7 @@ class BlockRecord:
     """One block's immutable canonical host representation.
 
     No residency state, no generation counter, no live-module currentness
-    test -- packs ARE views over arena records (plan Target Components #1).
+    test -- packs are views over arena records.
     """
 
     block_key: str
@@ -117,7 +118,7 @@ class CanonicalArena:
     def canonicalized(self) -> bool:
         return self._canonicalized
 
-    # -- canonicalize (Invariant 3 + 4) ------------------------------------
+    # -- canonicalize -------------------------------------------------------
 
     def canonicalize(
         self, entries_by_block: dict, *, kind: str = ARENA_KIND
@@ -128,7 +129,7 @@ class CanonicalArena:
 
         Caller sequencing responsibility (this method cannot see it): run
         AFTER load/quantize/freeze and BEFORE LoRA attach, optimizer
-        construction, or compile (Invariant 4) -- once Parameters are
+        construction, or compile -- once Parameters are
         repointed here, nothing may replace them again for the life of the
         arena.
 
@@ -136,12 +137,12 @@ class CanonicalArena:
         any block cannot be admitted (trainable leaf, unsupported quant
         wrapper, or pin budget exceeded) -- there is no silent pageable
         fallback in this arena (that is an admission-policy decision for
-        the caller, Invariant 10, not a mechanism this class provides).
+        the caller, not a mechanism this class provides).
         """
         if self._canonicalized:
             raise CanonicalArenaError(
                 "canonical_arena_double_canonicalize: canonicalize() may "
-                "only run once per arena instance (Invariant 4) -- runtime "
+                "only run once per arena instance -- runtime "
                 "promotion/demotion/sampling transitions must never "
                 "repoint a Parameter again"
             )
@@ -169,7 +170,7 @@ class CanonicalArena:
             _assert_entries_frozen(entries)
         return PreparedCanonicalBuild(self, normalized, model=model, kind=kind)
 
-    # -- whole-model .to() interception (Invariant 5) ----------------------
+    # -- whole-model .to() interception ------------------------------------
 
     @staticmethod
     def guard_whole_model_to(model: torch.nn.Module) -> None:
@@ -265,10 +266,11 @@ class CanonicalArena:
     # -- explicit unload ------------------------------------------------
 
     def release(self) -> None:
-        """Release every block's pin registration and every committed
-        byte (Invariant 1: pin_manager is the sole authority, every
-        registered byte is released explicitly). Safe to call on a
-        partially-built or already-released arena."""
+        """Release every block pin and every committed byte explicitly.
+
+        ``pin_manager`` is the sole pin authority. Safe to call on a partially
+        built or already released arena.
+        """
         for record in self._blocks.values():
             pin_manager.unregister_arena_storage(record.pack.host_flat)
             release_pack(record.pack)

@@ -188,13 +188,13 @@ def test_worst_shape_allocator_slack_reconstructs_current_layout():
 
 def test_aggressive_capacity_counts_exact_smallest_blocks_under_both_budgets():
     runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
-    runtime._policy = SimpleNamespace(slack_pad_bytes=5)
+    runtime._policy = SimpleNamespace(allocator_cache_headroom_bytes=5)
     runtime._promotion_candidates = lambda: tuple(
         {"block_key": f"blocks.{index}", "block_bytes": size}
         for index, size in enumerate((10, 20, 30, 40, 50))
     )
     runtime._worst_shape_allocator_slack_bytes = lambda _cap: 106
-    runtime._worst_shape_candidate_margin_bytes = (
+    runtime._worst_shape_candidate_physical_headroom_bytes = (
         lambda candidate: 120 - candidate["block_bytes"]
     )
 
@@ -203,22 +203,27 @@ def test_aggressive_capacity_counts_exact_smallest_blocks_under_both_budgets():
     assert runtime._aggressive_promotion_capacity(1000) == 4
 
 
-def test_training_cap_binding_uses_configured_phase_margin(monkeypatch):
+def test_training_cap_binding_uses_configured_guard_mode(monkeypatch):
     calls = []
     monkeypatch.setattr(
         "toolkit.memory_management.arena_offload.runtime."
-        "allocator_cap.apply_wddm_hard_allocator_cap",
+        "allocator_cap.configure_wddm_allocator_guard",
         lambda device, hard, **kwargs: calls.append((device, hard, kwargs)),
     )
     runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
     runtime._device = "cuda:1"
     runtime._config = SimpleNamespace(
-        _policy=SimpleNamespace(wddm_hard_gib=1.25)
+        strict_vram_cap=False,
+        _policy=SimpleNamespace(wddm_hard_gib=1.25),
     )
 
     runtime._bind_training_cap()
     assert calls == [
-        ("cuda:1", 1.25, {"log_prefix": "[ArenaOffload]"})
+        (
+            "cuda:1",
+            1.25,
+            {"strict": False, "log_prefix": "[ArenaOffload]"},
+        )
     ]
 def test_shape_working_peak_excludes_residency():
     window = TrainingSignalWindow()
@@ -250,7 +255,9 @@ def test_transfer_benefit_gate_requires_valid_nonzero_streaming():
 
 
 def test_controller_promotes_exact_candidate_then_rolls_it_back():
-    controller = ArenaResidencyController(slack_pad_bytes=10)
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
     candidate = {"block_key": "blocks.3", "block_bytes": 20}
     clean = {
         "allocator": {"alloc_retries_delta": 0},
@@ -318,7 +325,7 @@ def test_controller_promotes_exact_candidate_then_rolls_it_back():
             worst_shape_allocator_slack_bytes=20,
         )
         assert held.action != "promote"
-    assert held.reason == "allocator_headband"
+    assert held.reason == "allocator_cache_headroom"
 
     promoted_again = None
     for _ in range(4):
@@ -350,7 +357,9 @@ def test_controller_cold_starts_one_whole_block_below():
 
 
 def test_controller_promotes_each_step_with_four_block_headroom():
-    controller = ArenaResidencyController(slack_pad_bytes=10)
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
     controller.bootstrapped = True
     clean = {
         "allocator": {
@@ -391,7 +400,9 @@ def test_controller_promotes_each_step_with_four_block_headroom():
 
 
 def test_controller_four_block_fast_lane_keeps_safety_vetoes():
-    controller = ArenaResidencyController(slack_pad_bytes=10)
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
     controller.bootstrapped = True
     dirty = {
         "allocator": {
@@ -417,7 +428,9 @@ def test_controller_four_block_fast_lane_keeps_safety_vetoes():
 
 
 def test_controller_does_not_bypass_bootstrap_verification():
-    controller = ArenaResidencyController(slack_pad_bytes=10)
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
     controller.bootstrapped = True
     controller.begin_bootstrap_promotion(
         ("blocks.0", "blocks.1", "blocks.2", "blocks.3"),
@@ -455,7 +468,9 @@ def test_controller_does_not_bypass_bootstrap_verification():
 
 
 def test_controller_raises_cap_by_fixed_fsm_increment():
-    controller = ArenaResidencyController(slack_pad_bytes=10)
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
     controller.bootstrapped = True
     controller.state = type(controller.state)("stable", 2)
     signal = {
@@ -554,7 +569,7 @@ def test_bf16_sampling_reserves_largest_singleton_dequant(monkeypatch):
         _policy=SimpleNamespace(
             sampling_working_reserve_gib="auto",
             sampling_wddm_hard_gib=1.0,
-            sampling_wddm_margin_gib=1.0,
+            sampling_physical_vram_headroom_gib=1.0,
         ),
     )
 
@@ -566,11 +581,12 @@ def test_bf16_sampling_reserves_largest_singleton_dequant(monkeypatch):
     runtime._executor = SimpleNamespace(sampling=sampling)
     monkeypatch.setattr(
         "toolkit.memory_management.arena_offload.runtime."
-        "allocator_cap.apply_wddm_hard_allocator_cap",
+        "allocator_cap.configure_wddm_allocator_guard",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "toolkit.memory_management.arena_offload.runtime.resolve_margin_gib",
+        "toolkit.memory_management.arena_offload.runtime."
+        "resolve_physical_vram_headroom_gib",
         lambda *_args, **_kwargs: 1.0,
     )
 
@@ -601,8 +617,12 @@ def test_bootstrap_uses_min_physical_free_and_one_gib_margin():
     runtime._bootstrap_block_keys = ()
     runtime._last_step_num = 50_000
     runtime._successful_training_steps = 1
+    runtime._device = "cpu"
     runtime._config = SimpleNamespace(
-        _policy=SimpleNamespace(wddm_hard_gib=1.0)
+        _policy=SimpleNamespace(
+            wddm_hard_gib=1.0,
+            physical_vram_headroom_gib=1.0,
+        )
     )
     runtime._model = SimpleNamespace()
     runtime._arena = SimpleNamespace(
@@ -671,8 +691,12 @@ def test_bootstrap_keeps_priority_over_four_block_fast_lane():
     runtime._bootstrap_budget_bytes = 0
     runtime._bootstrap_block_keys = ()
     runtime._successful_training_steps = 2
+    runtime._device = "cpu"
     runtime._config = SimpleNamespace(
-        _policy=SimpleNamespace(wddm_hard_gib=1.0)
+        _policy=SimpleNamespace(
+            wddm_hard_gib=1.0,
+            physical_vram_headroom_gib=1.0,
+        )
     )
     runtime._arena = SimpleNamespace(
         block_keys=lambda: tuple(records),
@@ -725,7 +749,7 @@ def test_arena_allocation_failure_drains_and_rolls_back(monkeypatch):
     cap_calls = []
     monkeypatch.setattr(
         "toolkit.memory_management.arena_offload.runtime."
-        "allocator_cap.apply_wddm_hard_allocator_cap",
+        "allocator_cap.configure_wddm_allocator_guard",
         lambda *args, **kwargs: cap_calls.append((args, kwargs)),
     )
 
