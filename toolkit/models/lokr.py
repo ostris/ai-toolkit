@@ -327,6 +327,25 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
 
         orig_dtype = x.dtype
 
+        # for OstrisLinear (convrot-quantized), use the quantizer's own forward
+        # for the base computation and add the LoKr delta separately. this avoids
+        # materializing the full dequantized weight every forward, which bypasses
+        # the hardware fp4/int8 GEMM path and pegs the CPU with repeated
+        # dequantization + kron + matmul for every training step.
+        if getattr(self.org_module[0], "is_ostris_quantized", False):
+            base_out = self.org_forward(x)
+            lokr_weight = self.get_weight().to(dtype=orig_dtype)
+            multiplier = self.network_ref().torch_multiplier
+            multiplier = torch.mean(multiplier)
+            # bias is handled by org_forward (quantizer includes it)
+            delta_out = self.op(
+                x.to(dtype=lokr_weight.dtype),
+                lokr_weight.view(self.shape),
+                None,
+                **self.extra_args
+            )
+            return (base_out + delta_out * multiplier).to(orig_dtype)
+
         orig_weight = self.get_orig_weight(x.device)
         lokr_weight = self.get_weight(orig_weight).to(dtype=orig_weight.dtype)
         multiplier = self.network_ref().torch_multiplier
