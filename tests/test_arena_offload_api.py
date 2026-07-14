@@ -105,6 +105,10 @@ class ArenaOffloadHelpersTest(unittest.TestCase):
             validate_arena_training_mode(full_finetune=True)
         with self.assertRaisesRegex(ValueError, "merge_network_on_save"):
             validate_arena_training_mode(mutates_base_weights=True)
+        with self.assertRaisesRegex(ValueError, "text encoder during training"):
+            validate_arena_training_mode(train_text_encoder=True)
+        with self.assertRaisesRegex(ValueError, "text encoder during training"):
+            validate_arena_training_mode(unload_text_encoder=False)
 
     def test_helpers_are_none_safe(self):
         self.assertIsNone(get_arena_runtime(None))

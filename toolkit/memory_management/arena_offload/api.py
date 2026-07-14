@@ -55,7 +55,11 @@ _COMPATIBILITY_ALIASES = {
 
 
 def validate_arena_training_mode(
-    *, full_finetune=False, mutates_base_weights=False
+    *,
+    full_finetune=False,
+    mutates_base_weights=False,
+    train_text_encoder=False,
+    unload_text_encoder=True,
 ) -> None:
     """Reject mutable-base configurations before model loading.
 
@@ -72,6 +76,11 @@ def validate_arena_training_mode(
         raise ValueError(
             "arena offload requires immutable base transformer weights and "
             "does not support merge_network_on_save"
+        )
+    if train_text_encoder or not unload_text_encoder:
+        raise ValueError(
+            "arena offload does not support a text encoder during training; "
+            "cache text embeddings and unload the text encoder"
         )
 
 

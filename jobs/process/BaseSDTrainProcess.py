@@ -1690,6 +1690,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             validate_arena_training_mode(
                 full_finetune=self.is_fine_tuning,
                 mutates_base_weights=self.train_config.merge_network_on_save,
+                train_text_encoder=self.train_config.train_text_encoder,
+                unload_text_encoder=(
+                    self.train_config.unload_text_encoder
+                    or self.is_caching_text_embeddings
+                ),
             )
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
