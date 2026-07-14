@@ -144,7 +144,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
           </div>
 
           {/* Log - Now using flex-grow to fill remaining space */}
-          <div className="bg-gray-950 rounded-lg p-4 relative flex-grow min-h-60">
+          <div className="bg-gray-950 rounded-lg p-4 relative flex-grow min-h-60 resize-y overflow-y-auto">
             <div
               ref={logRef}
               className="text-xs text-gray-300 absolute inset-0 p-4 overflow-y-auto"
