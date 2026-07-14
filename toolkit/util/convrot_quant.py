@@ -51,7 +51,7 @@ import torch.nn.functional as F
 from toolkit.print import print_acc
 from toolkit.util.ostris_quant import OstrisQuantizer
 
-CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet") + tuple(
+CONVROT_QTYPES = ("convrot4", "convrot8", "convrotbitnet", "convrotcomfyw4a4") + tuple(
     f"convrotint{b}" for b in range(2, 9)
 )
 
@@ -63,6 +63,8 @@ def get_convrot_quantizer(qtype: str):
         return ConvRotInt8Quantizer(rot_size=256)
     if qtype == "convrotbitnet":
         return ConvRotBitNetQuantizer(rot_size=256)
+    if qtype == "convrotcomfyw4a4":
+        return ConvRotComfyW4A4Quantizer()
     if qtype.startswith("convrotint"):
         bits = int(qtype[len("convrotint"):])
         if 2 <= bits <= 8:
@@ -334,7 +336,8 @@ def _get_kernel():
 def _launch_nvfp4_kernel(x, packed, scales, pts, blocked_scales: bool):
     rows, K = x.shape
     n_col_tiles = -(-(K // BLOCK) // 4)
-    BLOCK_K = 2048 if K >= 2048 else K
+    # triton block shapes must be powers of 2; loads/stores are masked on offs < K
+    BLOCK_K = min(2048, 1 << (K - 1).bit_length())
     grid = (rows, -(-K // BLOCK_K))
     _get_kernel()[grid](
         x, packed, scales, pts,
@@ -617,6 +620,28 @@ class ConvRotQuantizer(OstrisQuantizer):
     def _pts(module) -> torch.Tensor:
         return module.cr_pts.view(torch.float32).reshape(())
 
+    def _rot(self, module) -> int:
+        return module.cr_rot_size
+
+    def fake_quant_rotated_weight(self, module, w_rot: torch.Tensor) -> torch.Tensor:
+        """dequant(quant(w_rot)) on the deployed e2m1 grid with the module's STORED
+        e4m3 block scales (no scale re-optimization) — the value half of the QAT
+        straight-through estimator. Returns float32."""
+        rows, K = w_rot.shape
+        s = module.cr_scales.view(torch.float8_e4m3fn).float() * self._pts(module)
+        denom = s.unsqueeze(-1)
+        safe = torch.where(denom > 0, denom, torch.ones_like(denom))
+        z = (w_rot.float().view(rows, K // BLOCK, BLOCK) / safe).clamp(-F4_MAX, F4_MAX)
+        edges = _cached(
+            _edges_cache, str(w_rot.device),
+            lambda: torch.tensor(_E2M1_EDGES, device=w_rot.device),
+        )
+        vals = torch.tensor(
+            [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], device=w_rot.device
+        )
+        recon = vals[torch.bucketize(z.abs(), edges)] * torch.sign(z) * safe
+        return recon.view(rows, K)
+
     def _dequantize_rotated(self, module, dtype: torch.dtype) -> torch.Tensor:
         return dequantize_nvfp4(
             module.cr_qdata,
@@ -630,6 +655,27 @@ class ConvRotQuantizer(OstrisQuantizer):
     def dequantize(self, module) -> torch.Tensor:
         w = self._dequantize_rotated(module, torch.float32)
         return rotate(w, module.cr_rot_size)  # self-inverse
+
+    @torch.no_grad()
+    def requantize_codes_(self, module, fp_weight: torch.Tensor) -> None:
+        """Re-quantize only the codes on the module's STORED scales — the grid a
+        QAT run trains against. Re-optimizing the scales here would re-grid every
+        weight and destroy the code adjustments training made."""
+        w = fp_weight.to(device=module.cr_qdata.device, dtype=torch.float32)
+        w_rot = rotate(w, module.cr_rot_size)
+        rows, K = w_rot.shape
+        s = module.cr_scales.view(torch.float8_e4m3fn).float() * self._pts(module)
+        denom = s.unsqueeze(-1)
+        safe = torch.where(denom > 0, denom, torch.ones_like(denom))
+        z = (w_rot.view(rows, K // BLOCK, BLOCK) / safe).clamp(-F4_MAX, F4_MAX)
+        edges = _cached(
+            _edges_cache, str(w_rot.device),
+            lambda: torch.tensor(_E2M1_EDGES, device=w_rot.device),
+        )
+        z = z.reshape(rows, K)
+        mag = torch.bucketize(z.abs(), edges).to(torch.uint8)
+        codes = mag | ((z < 0).to(torch.uint8) << 3)
+        module.cr_qdata = ((codes[:, 1::2] << 4) | codes[:, ::2]).contiguous()
 
     def requantize_(self, module, fp_weight: torch.Tensor) -> None:
         w = fp_weight.to(device=module.cr_qdata.device, dtype=torch.float32)
@@ -704,12 +750,13 @@ class ConvRotQuantizer(OstrisQuantizer):
 # ---------------- convrot8: W8A8 int8 backend ----------------
 
 
-def quantize_int8_rows(x: torch.Tensor):
-    """Symmetric per-row int8 quantization. Returns (int8 (rows, K), fp32 scales (rows,))."""
+def quantize_int8_rows(x: torch.Tensor, qmax: int = 127):
+    """Symmetric per-row integer quantization to [-qmax, qmax] (int8 storage).
+    Returns (int8 (rows, K), fp32 scales (rows,))."""
     xf = x.float()
-    scales = xf.abs().amax(dim=1) / 127.0
+    scales = xf.abs().amax(dim=1) / qmax
     scales = torch.where(scales > 0, scales, torch.ones_like(scales))
-    q = torch.round(xf / scales.unsqueeze(1)).clamp_(-127, 127).to(torch.int8)
+    q = torch.round(xf / scales.unsqueeze(1)).clamp_(-qmax, qmax).to(torch.int8)
     return q, scales
 
 
@@ -725,7 +772,9 @@ def _get_int8_kernels():
     from triton.language.extra import libdevice
 
     @triton.jit
-    def int8_act_quant_kernel(x_ptr, q_ptr, s_ptr, K, BLOCK_K: tl.constexpr):
+    def int8_act_quant_kernel(
+        x_ptr, q_ptr, s_ptr, K, QMAX: tl.constexpr, BLOCK_K: tl.constexpr
+    ):
         row = tl.program_id(0)
         base = row * K
         acc = tl.zeros((BLOCK_K,), tl.float32)
@@ -734,14 +783,14 @@ def _get_int8_kernels():
             v = tl.load(x_ptr + base + offs, mask=offs < K, other=0.0).to(tl.float32)
             acc = tl.maximum(acc, tl.abs(v))
         amax = tl.max(acc, axis=0)
-        scale = tl.where(amax > 0, amax / 127.0, 1.0)
+        scale = tl.where(amax > 0, amax / QMAX, 1.0)
         for k0 in range(0, K, BLOCK_K):
             offs = k0 + tl.arange(0, BLOCK_K)
             mask = offs < K
             v = tl.load(x_ptr + base + offs, mask=mask, other=0.0).to(tl.float32)
             # rint = round-half-to-even, matching torch.round in the reference path
             q = libdevice.rint(v / scale)
-            q = tl.minimum(tl.maximum(q, -127.0), 127.0)
+            q = tl.minimum(tl.maximum(q, -1.0 * QMAX), 1.0 * QMAX)
             tl.store(q_ptr + base + offs, q.to(tl.int8), mask=mask)
         tl.store(s_ptr + row, scale)
 
@@ -776,7 +825,7 @@ def _get_int8_kernels():
 # nodes with known output shapes (see _nvfp4_act_quant_op). rows are padded to a
 # multiple of 32 inside the op for torch._int_mm; callers slice the mm output.
 @torch.library.custom_op("ostris::convrot_int8_act_quant", mutates_args=())
-def _int8_act_quant_op(x: torch.Tensor) -> list[torch.Tensor]:
+def _int8_act_quant_op(x: torch.Tensor, qmax: int) -> list[torch.Tensor]:
     rows, K = x.shape
     rows_pad = -(-rows // 32) * 32
     x = x.contiguous()
@@ -786,12 +835,16 @@ def _int8_act_quant_op(x: torch.Tensor) -> list[torch.Tensor]:
         q[rows:].zero_()
         scales[rows:].fill_(1.0)
     kernel, _ = _get_int8_kernels()
-    kernel[(rows,)](x, q, scales, K, BLOCK_K=2048 if K >= 2048 else K, num_warps=8)
+    # triton block shapes must be powers of 2; loads/stores are masked on offs < K
+    block_k = min(2048, 1 << (K - 1).bit_length())
+    kernel[(rows,)](
+        x, q, scales, K, QMAX=qmax, BLOCK_K=block_k, num_warps=8
+    )
     return [q, scales]
 
 
 @_int8_act_quant_op.register_fake
-def _int8_act_quant_fake(x):
+def _int8_act_quant_fake(x, qmax):
     rows, K = x.shape
     rows_pad = -(-rows // 32) * 32
     return [
@@ -832,22 +885,22 @@ def _int8_epilogue_fake(i32, a_scales, w_scales, bias, out_dtype):
     return torch.empty(m, n, device=i32.device, dtype=getattr(torch, out_dtype))
 
 
-def quantize_int8_rows_fused(x: torch.Tensor):
+def quantize_int8_rows_fused(x: torch.Tensor, qmax: int = 127):
     """Triton path of quantize_int8_rows: one extra read of x instead of the
     multi-kernel torch chain. Falls back to the torch ops."""
     if not (_triton_available() and x.is_cuda):
-        return quantize_int8_rows(x)
-    q, scales = _int8_act_quant_op(x)
+        return quantize_int8_rows(x, qmax)
+    q, scales = _int8_act_quant_op(x, qmax)
     rows = x.shape[0]
     return q[:rows], scales[:rows]
 
 
-def _int8_act_quant_padded(x: torch.Tensor):
+def _int8_act_quant_padded(x: torch.Tensor, qmax: int = 127):
     """Act quant with rows padded to a multiple of 32 for torch._int_mm."""
     if _triton_available() and x.is_cuda:
-        q, scales = _int8_act_quant_op(x)
+        q, scales = _int8_act_quant_op(x, qmax)
         return q, scales
-    q, scales = quantize_int8_rows(x)
+    q, scales = quantize_int8_rows(x, qmax)
     rows = q.shape[0]
     rows_pad = -(-rows // 32) * 32
     if rows_pad != rows:
@@ -867,10 +920,11 @@ def _int8_linear_ste_op(
     qdata: torch.Tensor,
     w_scales_u8: torch.Tensor,
     bias: Optional[torch.Tensor],
+    act_qmax: int,
     out_dtype: str,
 ) -> torch.Tensor:
     m = x2d.shape[0]
-    aq, a_s = _int8_act_quant_padded(x2d)
+    aq, a_s = _int8_act_quant_padded(x2d, act_qmax)
     i32 = torch._int_mm(aq, qdata.t())
     return _int8_epilogue(
         i32[:m], a_s[:m], w_scales_u8.view(torch.float32), bias,
@@ -879,14 +933,14 @@ def _int8_linear_ste_op(
 
 
 @_int8_linear_ste_op.register_fake
-def _int8_linear_ste_fake(x2d, qdata, w_scales_u8, bias, out_dtype):
+def _int8_linear_ste_fake(x2d, qdata, w_scales_u8, bias, act_qmax, out_dtype):
     return torch.empty(
         x2d.shape[0], qdata.shape[0], device=x2d.device, dtype=getattr(torch, out_dtype)
     )
 
 
 def _int8_linear_ste_setup(ctx, inputs, output):
-    x2d, qdata, w_scales_u8, bias, out_dtype = inputs
+    x2d, qdata, w_scales_u8, bias, act_qmax, out_dtype = inputs
     ctx.save_for_backward(qdata, w_scales_u8)
 
 
@@ -894,7 +948,7 @@ def _int8_linear_ste_backward(ctx, grad):
     qdata, w_scales_u8 = ctx.saved_tensors
     w_scales = w_scales_u8.view(torch.float32).to(grad.dtype)
     w = qdata.to(grad.dtype) * w_scales.unsqueeze(1)
-    return grad @ w, None, None, None, None
+    return grad @ w, None, None, None, None, None
 
 
 _int8_linear_ste_op.register_autograd(
@@ -960,6 +1014,10 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
     per-output-channel symmetric int8 with torch._int_mm. One instance per qtype,
     shareable across modules."""
 
+    # activation quantization range (per-token symmetric [-act_qmax, act_qmax]);
+    # the comfy w4a4 subclass narrows this to 7
+    act_qmax = 127
+
     def __init__(self, rot_size: int = 256):
         self.rot_size = rot_size
 
@@ -1006,8 +1064,16 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         """Hardware STE linear for the training path. For int8 the saved qdata is
         the resident buffer itself, so autograd holds only a free reference."""
         return _int8_linear_ste_op(
-            x2d, self._qdata(module), self._scales_u8(module), module.bias, out_dtype
+            x2d, self._qdata(module), self._scales_u8(module), module.bias,
+            self.act_qmax, out_dtype,
         )
+
+    def fake_quant_rotated_weight(self, module, w_rot: torch.Tensor) -> torch.Tensor:
+        """dequant(quant(w_rot)) on the deployed int8 grid with the module's STORED
+        per-row scales — the value half of the QAT straight-through estimator.
+        Returns float32."""
+        s = self._scales(module).unsqueeze(1)
+        return torch.round(w_rot.float() / s).clamp_(-127, 127) * s
 
     def _dequantize_rotated(self, module, dtype: torch.dtype) -> torch.Tensor:
         w = self._qdata(module).float() * self._scales(module).unsqueeze(1)
@@ -1023,6 +1089,15 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         q, scales = quantize_int8_rows(rotate(w, module.cr8_rot_size))
         module.cr8_qdata = q
         module.cr8_scales = scales.view(torch.uint8)
+
+    @torch.no_grad()
+    def requantize_codes_(self, module, fp_weight: torch.Tensor) -> None:
+        """Re-quantize only the codes on the module's STORED scales — the grid a
+        QAT run trains against (see ConvRotQuantizer.requantize_codes_)."""
+        w = fp_weight.to(device=module.cr8_qdata.device, dtype=torch.float32)
+        w_rot = rotate(w, self._rot(module))
+        s = self._scales(module).unsqueeze(1)
+        module.cr8_qdata = torch.round(w_rot / s).clamp_(-127, 127).to(torch.int8)
 
     def forward(self, module, x: torch.Tensor) -> torch.Tensor:
         rot = self._rot(module)
@@ -1047,7 +1122,7 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
             # no int8 hardware: straight-through fake-quant + bf16 matmul
             x2d = rotate(x, rot).reshape(-1, in_f)
             with torch.no_grad():
-                aq, a_s = quantize_int8_rows(x2d.detach())
+                aq, a_s = quantize_int8_rows(x2d.detach(), self.act_qmax)
                 x_dq = (aq.float() * a_s.unsqueeze(1)).to(x.dtype)
                 w = self._dequantize_rotated(module, x.dtype)
             x_ste = x2d + (x_dq - x2d).detach()
@@ -1057,7 +1132,9 @@ class ConvRotInt8Quantizer(OstrisQuantizer):
         if _int8_gemm_supported(x.device):
             # row padding for _int_mm happens inside the act-quant op (compile
             # safety); slice the mm output back to m rows (a contiguous prefix)
-            aq, a_s = _int8_act_quant_padded(rotate(x, rot).reshape(-1, in_f))
+            aq, a_s = _int8_act_quant_padded(
+                rotate(x, rot).reshape(-1, in_f), self.act_qmax
+            )
             i32 = torch._int_mm(aq, self._qdata(module).t())
             out = _int8_epilogue(i32[:m], a_s[:m], self._scales(module), module.bias, x.dtype)
             return out.reshape(*x.shape[:-1], out_f)
@@ -1413,12 +1490,13 @@ def _intn_linear_ste_op(
     w_scales_u8: torch.Tensor,
     bias: Optional[torch.Tensor],
     bits: int,
+    act_qmax: int,
     out_dtype: str,
 ) -> torch.Tensor:
     m, K = x2d.shape
     rows = w_scales_u8.view(torch.float32).numel()
     qdata = _unpack_intn_grouped_impl(packed, gratio, bits, rows, K)
-    aq, a_s = _int8_act_quant_padded(x2d)
+    aq, a_s = _int8_act_quant_padded(x2d, act_qmax)
     i32 = torch._int_mm(aq, qdata.t())
     return _int8_epilogue(
         i32[:m], a_s[:m], w_scales_u8.view(torch.float32), bias,
@@ -1427,7 +1505,7 @@ def _intn_linear_ste_op(
 
 
 @_intn_linear_ste_op.register_fake
-def _intn_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, bits, out_dtype):
+def _intn_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, bits, act_qmax, out_dtype):
     return torch.empty(
         x2d.shape[0], w_scales_u8.view(torch.float32).numel(),
         device=x2d.device, dtype=getattr(torch, out_dtype),
@@ -1435,7 +1513,7 @@ def _intn_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, bits, out_dtyp
 
 
 def _intn_linear_ste_setup(ctx, inputs, output):
-    x2d, packed, gratio, w_scales_u8, bias, bits, out_dtype = inputs
+    x2d, packed, gratio, w_scales_u8, bias, bits, act_qmax, out_dtype = inputs
     ctx.bits = bits
     ctx.cols = x2d.shape[1]
     ctx.save_for_backward(packed, gratio, w_scales_u8)
@@ -1450,7 +1528,7 @@ def _intn_linear_ste_backward(ctx, grad):
         packed, gratio, ctx.bits, w_scales.numel(), ctx.cols
     )
     w = qdata.to(grad.dtype) * w_scales.to(grad.dtype).unsqueeze(1)
-    return grad @ w, None, None, None, None, None, None
+    return grad @ w, None, None, None, None, None, None, None
 
 
 _intn_linear_ste_op.register_autograd(
@@ -1495,12 +1573,13 @@ def _bitnet_linear_ste_op(
     gratio: torch.Tensor,
     w_scales_u8: torch.Tensor,
     bias: Optional[torch.Tensor],
+    act_qmax: int,
     out_dtype: str,
 ) -> torch.Tensor:
     m, K = x2d.shape
     rows = w_scales_u8.view(torch.float32).numel()
     qdata = _unpack_bitnet_impl(packed, gratio, rows, K)
-    aq, a_s = _int8_act_quant_padded(x2d)
+    aq, a_s = _int8_act_quant_padded(x2d, act_qmax)
     i32 = torch._int_mm(aq, qdata.t())
     return _int8_epilogue(
         i32[:m], a_s[:m], w_scales_u8.view(torch.float32), bias,
@@ -1509,7 +1588,7 @@ def _bitnet_linear_ste_op(
 
 
 @_bitnet_linear_ste_op.register_fake
-def _bitnet_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, out_dtype):
+def _bitnet_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, act_qmax, out_dtype):
     return torch.empty(
         x2d.shape[0], w_scales_u8.view(torch.float32).numel(),
         device=x2d.device, dtype=getattr(torch, out_dtype),
@@ -1517,7 +1596,7 @@ def _bitnet_linear_ste_fake(x2d, packed, gratio, w_scales_u8, bias, out_dtype):
 
 
 def _bitnet_linear_ste_setup(ctx, inputs, output):
-    x2d, packed, gratio, w_scales_u8, bias, out_dtype = inputs
+    x2d, packed, gratio, w_scales_u8, bias, act_qmax, out_dtype = inputs
     ctx.cols = x2d.shape[1]
     ctx.save_for_backward(packed, gratio, w_scales_u8)
 
@@ -1529,7 +1608,7 @@ def _bitnet_linear_ste_backward(ctx, grad):
     # fake tensors
     qdata = _bitnet_unpack_op(packed, gratio, w_scales.numel(), ctx.cols)
     w = qdata.to(grad.dtype) * w_scales.to(grad.dtype).unsqueeze(1)
-    return grad @ w, None, None, None, None, None
+    return grad @ w, None, None, None, None, None, None
 
 
 _bitnet_linear_ste_op.register_autograd(
@@ -1608,7 +1687,7 @@ class ConvRotIntNQuantizer(ConvRotInt8Quantizer):
         # in the backward
         return _intn_linear_ste_op(
             x2d, module.crn_qdata, gratio.view(torch.float32),
-            module.crn_scales, module.bias, module.crn_bits, out_dtype,
+            module.crn_scales, module.bias, module.crn_bits, self.act_qmax, out_dtype,
         )
 
     def requantize_(self, module, fp_weight: torch.Tensor) -> None:
@@ -1620,6 +1699,46 @@ class ConvRotIntNQuantizer(ConvRotInt8Quantizer):
         module.crn_scales = scales.view(torch.uint8)
         if gratio is not None:
             module.crn_gratio = gratio.view(torch.uint8)
+
+    def _codes_on_stored_scales(self, module, w_rot: torch.Tensor) -> torch.Tensor:
+        """n-bit codes of a rotated weight on the module's stored scales (fp32)."""
+        qmax = (1 << (module.crn_bits - 1)) - 1
+        rs = self._scales(module).unsqueeze(1)
+        wf = w_rot.float()
+        gratio = getattr(module, "crn_gratio", None)
+        if gratio is None:
+            return torch.round(wf / rs).clamp_(-qmax, qmax)
+        gratio = gratio.view(torch.float32)
+        group = module.in_features // gratio.shape[1]
+        gs = gratio.repeat_interleave(group, dim=1) * rs
+        safe = torch.where(gs > 0, gs, torch.ones_like(gs))
+        return torch.round(wf / safe).clamp_(-qmax, qmax)
+
+    def fake_quant_rotated_weight(self, module, w_rot: torch.Tensor) -> torch.Tensor:
+        """Like the int8 version but on the n-bit grid: quantize with the stored
+        group scales, then re-express on the row int8 grid exactly like the
+        deployed unpack does. Returns float32."""
+        rs = self._scales(module).unsqueeze(1)
+        codes = self._codes_on_stored_scales(module, w_rot)
+        gratio = getattr(module, "crn_gratio", None)
+        if gratio is None:
+            return codes * rs
+        gratio = gratio.view(torch.float32)
+        group = module.in_features // gratio.shape[1]
+        ratio = gratio.repeat_interleave(group, dim=1)
+        code8 = torch.round(codes * ratio).clamp_(-127, 127)
+        return code8 * rs
+
+    def _pack(self, q: torch.Tensor) -> torch.Tensor:
+        return pack_intn_rows(q, self.bits)
+
+    @torch.no_grad()
+    def requantize_codes_(self, module, fp_weight: torch.Tensor) -> None:
+        """Re-quantize only the codes on the module's STORED scales — the grid a
+        QAT run trains against (see ConvRotQuantizer.requantize_codes_)."""
+        w = fp_weight.to(device=module.crn_qdata.device, dtype=torch.float32)
+        codes = self._codes_on_stored_scales(module, rotate(w, self._rot(module)))
+        module.crn_qdata = self._pack(codes.to(torch.int8))
 
 
 class ConvRotBitNetQuantizer(ConvRotIntNQuantizer):
@@ -1636,6 +1755,9 @@ class ConvRotBitNetQuantizer(ConvRotIntNQuantizer):
         gratio, rscales = _intn_group_ratio_and_rscales(gscales, self.bits)
         return pack_ternary_rows(q), rscales, gratio.contiguous()
 
+    def _pack(self, q: torch.Tensor) -> torch.Tensor:
+        return pack_ternary_rows(q)
+
     def _qdata(self, module) -> torch.Tensor:
         return _bitnet_unpack_op(
             module.crn_qdata, module.crn_gratio.view(torch.float32),
@@ -1645,6 +1767,126 @@ class ConvRotBitNetQuantizer(ConvRotIntNQuantizer):
     def _linear_ste(self, module, x2d: torch.Tensor, out_dtype: str) -> torch.Tensor:
         return _bitnet_linear_ste_op(
             x2d, module.crn_qdata, module.crn_gratio.view(torch.float32),
-            module.crn_scales, module.bias, out_dtype,
+            module.crn_scales, module.bias, self.act_qmax, out_dtype,
         )
+
+
+# ---------------- convrotcomfyw4a4: ComfyUI convrot_w4a4 compatible --------------
+#
+# Matches comfy_kitchen's TensorCoreConvRotW4A4Layout numerics exactly so a
+# trained model exports to a checkpoint ComfyUI loads and runs natively:
+#   - regular-Hadamard rotation, group size fixed at 256 (same R4 kronecker
+#     matrix as the other backends; comfy rejects other sizes)
+#   - weights: symmetric per-row int4, scale = row absmax / 7, RTN clamp [-7, 7]
+#   - activations: per-token int4 the same way (act_qmax = 7)
+# Storage here stays our bitpacked layout (bits=4); export_comfy_convrot_w4a4
+# repacks to comfy's nibble pairs and writes weight/weight_scale/comfy_quant
+# keys. Integer GEMM results are identical (int4 values through _int_mm
+# accumulate exactly like their int4 MMA).
+
+
+class ConvRotComfyW4A4Quantizer(ConvRotIntNQuantizer):
+    """ComfyUI-compatible ConvRot W4A4 (see block comment above)."""
+
+    act_qmax = 7
+    COMFY_GROUPSIZE = 256
+
+    def __init__(self, rot_size: int = 256):
+        super().__init__(bits=4, rot_size=self.COMFY_GROUPSIZE)
+
+    def _rot_for(self, d: int) -> int:
+        return self.COMFY_GROUPSIZE
+
+    def can_quantize(self, module: torch.nn.Linear) -> bool:
+        d = module.in_features
+        if d % self.COMFY_GROUPSIZE != 0 or module.out_features % 8 != 0:
+            if d not in _skip_warned:
+                _skip_warned.add(d)
+                print_acc(
+                    f"ConvRot(comfy): skipping linears with in_features={d} "
+                    f"(comfy convrot_w4a4 needs in divisible by {self.COMFY_GROUPSIZE}, "
+                    f"out by 8)"
+                )
+            return False
+        return True
+
+    def _quantize_rotated(self, w_rot: torch.Tensor, in_features: int):
+        # their format only fixes the DECODE (w = code * row_scale), not how the
+        # codes/scales are chosen — so use MSE-optimal per-row scales (sweep +
+        # LS refit with one group spanning the whole row) instead of their
+        # amax/7. group scales can't be expressed: folding 4-bit group grids
+        # onto the 4-bit row grid has no headroom (same inversion as the 8-bit
+        # fold), so per-row optimal is the ceiling of the format
+        q, gscales = _optimal_group_quantize(w_rot, self.bits, w_rot.shape[1])
+        return pack_intn_rows(q, self.bits), gscales.reshape(-1), None
+
+
+def export_comfy_convrot_w4a4(module, prefix: str) -> dict:
+    """State-dict entries for one convrotcomfyw4a4-quantized OstrisLinear in
+    ComfyUI's checkpoint format: packed int4 weight (low nibble = even column),
+    fp32 per-row weight_scale, and the comfy_quant JSON marker."""
+    import json
+
+    q = module.ostris_quantizer
+    if not isinstance(q, ConvRotComfyW4A4Quantizer):
+        raise ValueError(
+            f"export_comfy_convrot_w4a4 needs a convrotcomfyw4a4 module, got "
+            f"qtype '{getattr(q, 'qtype', None)}'"
+        )
+    codes = _unpack_intn_impl(
+        module.crn_qdata, module.crn_bits, module.out_features, module.in_features
+    )
+    lo = codes[:, 0::2].to(torch.int32) & 0x0F
+    hi = codes[:, 1::2].to(torch.int32) & 0x0F
+    packed = (lo | (hi << 4)).to(torch.int8)
+    conf = {
+        "format": "convrot_w4a4",
+        "convrot_groupsize": module.crn_rot_size,
+    }
+    entries = {
+        f"{prefix}weight": packed.contiguous(),
+        f"{prefix}weight_scale": q._scales(module).contiguous(),
+        f"{prefix}comfy_quant": torch.tensor(
+            list(json.dumps(conf).encode("utf-8")), dtype=torch.uint8
+        ),
+    }
+    if module.bias is not None:
+        entries[f"{prefix}bias"] = module.bias.detach()
+    return entries
+
+
+# ---------------- QAT: train the quantized weights themselves ----------------
+
+
+def convrot_qat_forward(module, x: torch.Tensor) -> torch.Tensor:
+    """Quantization-aware training forward for an OstrisLinear with a convrot
+    backend and a trainable full-precision `qat_master` parameter attached.
+
+    The weight enters the matmul through a straight-through fake-quant on the
+    DEPLOYED grid using the module's stored scales (refresh them by calling
+    module.requantize_(master) periodically), so the forward numerics track what
+    the saved quantized model will compute while gradients flow to the master.
+    Activations are fake-quanted like the no-hardware training path, also with a
+    straight-through estimate, so gradients pass through to the input when it
+    carries grad (end-to-end training; layer-local distillation feeds detached
+    inputs and the act STE is then value-identical)."""
+    q = module.ostris_quantizer
+    rot = q._rot(module)
+    in_f, out_f = module.in_features, module.out_features
+    w_rot = rotate(module.qat_master.to(x.dtype), rot)
+    with torch.no_grad():
+        w_fq = q.fake_quant_rotated_weight(module, w_rot.detach()).to(x.dtype)
+    w_ste = w_rot + (w_fq - w_rot).detach()
+    x2d = rotate(x, rot).reshape(-1, in_f)
+    with torch.no_grad():
+        if isinstance(q, ConvRotQuantizer):
+            pts1 = torch.ones((), device=x.device, dtype=torch.float32)
+            aq, a_scales, _ = quantize_nvfp4(x2d.detach(), pts=pts1)
+            x_dq = dequantize_nvfp4(aq, a_scales, pts1, x2d.shape[0], in_f, x.dtype)
+        else:
+            aq, a_scales = quantize_int8_rows(x2d.detach(), q.act_qmax)
+            x_dq = (aq.float() * a_scales.unsqueeze(1)).to(x.dtype)
+    x_ste = x2d + (x_dq - x2d).detach()
+    out = F.linear(x_ste, w_ste, module.bias)
+    return out.reshape(*x.shape[:-1], out_f)
 

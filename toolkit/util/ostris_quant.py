@@ -29,7 +29,7 @@ class OstrisQuantizer:
     """
 
     # the qtype string this instance was resolved from (stamped by
-    # get_ostris_quantizer); pre-quantized saves need it to restore the backend
+    # get_ostris_quantizer); quantized saves need it to restore the backend
     qtype: Optional[str] = None
 
     def can_quantize(self, module: torch.nn.Linear) -> bool:
@@ -60,6 +60,9 @@ class OstrisQuantizer:
         return F.linear(x, w, module.bias)
 
 
+_wrong_device_warned = False
+
+
 class OstrisLinear(torch.nn.Linear):
     """A linear layer whose weight is quantized by an OstrisQuantizer backend.
 
@@ -87,6 +90,24 @@ class OstrisLinear(torch.nn.Linear):
         return w
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.is_cuda and not hasattr(self, "_layer_memory_manager"):
+            # a module left behind on the wrong device (usually cpu after a
+            # low_vram load) would run its dequant/matmul on cpu threads and
+            # silently hammer the cpu. move it to the input's device once.
+            # memory-managed modules are excluded: they keep cpu buffers by
+            # design and stage them to the gpu per forward.
+            buf = next((b for b in self._buffers.values() if b is not None), None)
+            if buf is not None and buf.device != x.device:
+                global _wrong_device_warned
+                if not _wrong_device_warned:
+                    _wrong_device_warned = True
+                    from toolkit.print import print_acc
+                    print_acc(
+                        f"OstrisLinear: quantized weights found on {buf.device} while the "
+                        f"input is on {x.device}; moving them to {x.device}. This usually "
+                        f"means something left the model behind after a low_vram load."
+                    )
+                self.to(x.device)
         return self.ostris_quantizer.forward(self, x)
 
     @torch.no_grad()
@@ -117,8 +138,130 @@ def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
     elif qtype in CONVROT_QTYPES:
         quantizer = get_convrot_quantizer(qtype)
     if quantizer is not None:
+        # quantized saves read this back to restore the backend on load
         quantizer.qtype = qtype
     return quantizer
+
+
+# metadata key shared with toolkit/models/classes/_mixin.py save_quantized
+QUANT_LAYERS_METADATA_KEY = "aitk_quantization"
+
+
+@torch.no_grad()
+def save_quantized_layers(
+    modules: Dict[str, "OstrisLinear"],
+    file_path: str,
+    metadata: Optional[Dict[str, str]] = None,
+    extra_tensors: Optional[Dict[str, torch.Tensor]] = None,
+) -> None:
+    """Save a set of quantized linears (keyed by their submodule path in the
+    target model) as a single safetensors file: backend buffers + bias per
+    module, with the qtype/attrs needed to restore them recorded in the file
+    metadata. Same layout as OstrisModelMixin.save_quantized, but partial —
+    apply with load_quantized_layers."""
+    import json
+    from safetensors.torch import save_file
+
+    quant_map = {}
+    state_dict = {}
+    for name, module in modules.items():
+        if module.ostris_quantizer.qtype is None:
+            raise ValueError(
+                f"Cannot save quantized module '{name}': its quantizer has no "
+                "qtype recorded (was it created through get_ostris_quantizer?)."
+            )
+        entry = {
+            "qtype": module.ostris_quantizer.qtype,
+            "dtype": str(module.ostris_orig_dtype).replace("torch.", ""),
+            "buffers": [],
+            "attrs": {},
+        }
+        if module.bias is not None:
+            state_dict[f"{name}.bias"] = module.bias
+        for buf_name, buf in module._buffers.items():
+            if buf is None:
+                continue
+            state_dict[f"{name}.{buf_name}"] = buf
+            entry["buffers"].append(buf_name)
+        for attr, value in vars(module).items():
+            if attr.startswith("_") or attr in (
+                "training", "in_features", "out_features",
+                "ostris_quantizer", "ostris_orig_dtype",
+            ):
+                continue
+            if isinstance(value, (bool, int, float, str)):
+                entry["attrs"][attr] = value
+        quant_map[name] = entry
+
+    if extra_tensors:
+        # training-state extras (e.g. QAT master weights); load_quantized_layers
+        # ignores them, so deployment loads are unaffected
+        state_dict.update(extra_tensors)
+    state_dict = {
+        k: v.detach().to("cpu", copy=True).contiguous() for k, v in state_dict.items()
+    }
+    meta = dict(metadata or {})
+    meta[QUANT_LAYERS_METADATA_KEY] = json.dumps(
+        {"modules": quant_map, "layers_only": True}
+    )
+    save_file(state_dict, file_path, metadata=meta)
+
+
+@torch.no_grad()
+def load_quantized_layers(root: torch.nn.Module, file_path: str) -> int:
+    """Apply a file written by save_quantized_layers onto a model: restores the
+    backend buffers (and bias) of each recorded module. Target modules may
+    already be OstrisLinear (model quantized on load — buffers are replaced) or
+    still plain nn.Linear (converted in place, no quantization math needed).
+    Returns the number of modules restored."""
+    import json
+    from safetensors import safe_open
+    from safetensors.torch import load_file
+
+    with safe_open(file_path, framework="pt", device="cpu") as f:
+        meta = f.metadata() or {}
+    if QUANT_LAYERS_METADATA_KEY not in meta:
+        raise ValueError(f"{file_path} has no quantized-layer metadata")
+    quant_map = json.loads(meta[QUANT_LAYERS_METADATA_KEY])["modules"]
+    state_dict = load_file(file_path)
+
+    for name, entry in quant_map.items():
+        module = root.get_submodule(name)
+        quantizer = get_ostris_quantizer(entry["qtype"])
+        if quantizer is None:
+            raise ValueError(f"Unknown qtype '{entry['qtype']}' in {file_path}")
+        # figure out the device the module currently lives on
+        ref = next(
+            (t for t in module._parameters.values() if t is not None),
+            next((t for t in module._buffers.values() if t is not None), None),
+        )
+        device = ref.device if ref is not None else torch.device("cpu")
+        if isinstance(module, OstrisLinear):
+            # replacing an existing quantized state (possibly another backend):
+            # its buffers are exclusively backend state, drop them all
+            module._buffers.clear()
+        else:
+            if "weight" in module._parameters:
+                del module._parameters["weight"]
+            module.ostris_orig_dtype = getattr(torch, entry["dtype"])
+            module.__class__ = OstrisLinear
+        for buf_name in entry["buffers"]:
+            module.register_buffer(
+                buf_name,
+                state_dict.pop(f"{name}.{buf_name}").to(device),
+                persistent=False,
+            )
+        for attr, value in entry.get("attrs", {}).items():
+            setattr(module, attr, value)
+        module.ostris_quantizer = quantizer
+        bias_key = f"{name}.bias"
+        if bias_key in state_dict and module.bias is not None:
+            module.bias.data.copy_(
+                state_dict.pop(bias_key).to(device, module.bias.dtype)
+            )
+        if module.bias is not None:
+            module.bias.requires_grad_(False)
+    return len(quant_map)
 
 
 @torch.no_grad()
