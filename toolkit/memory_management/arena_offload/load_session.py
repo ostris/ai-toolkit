@@ -135,7 +135,11 @@ def try_prepare_canonical_from_state_dict(model, state_dict):
     if session is None:
         return None
     from .api import prepare_canonical_storage_from_state_dict
-    from .construction import CanonicalBuildError, CanonicalStateInferenceError
+    from .construction import (
+        CanonicalBuildError,
+        CanonicalStateConsumedError,
+        CanonicalStateInferenceError,
+    )
     from .discovery import BlockDiscoveryError
     from ..canonical_arena import CanonicalArenaError
 
@@ -146,6 +150,8 @@ def try_prepare_canonical_from_state_dict(model, state_dict):
             block_names=session.block_names,
             device=session.device,
         )
+    except CanonicalStateConsumedError:
+        raise
     except (
         BlockDiscoveryError,
         CanonicalArenaError,

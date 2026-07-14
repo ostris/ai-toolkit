@@ -174,51 +174,52 @@ class CanonicalArena:
 
     @staticmethod
     def guard_whole_model_to(model: torch.nn.Module) -> None:
-        """Forbid whole-model ``.to()``/``.cuda()``/``.cpu()`` on a model
-        with canonicalized leaves: a model-wide move silently detaches
-        every Parameter from its arena flat (copy semantics on the full
-        move), the exact drift the legacy arena's ``restore_view`` existed
-        to repair after the fact. Idempotent. Callers that need to move
-        SOME parameters (LoRA, non-canonicalized submodules) must route
-        through a canonical-arena-aware helper instead of raw ``.to()``."""
+        """Route whole-model movement through the published arena runtime."""
         if getattr(model, "_mm_canonical_to_guarded", False):
             return
-        original_to = model.to
+
+        originals = {
+            name: getattr(model, name) for name in ("to", "cuda", "cpu")
+        }
+
+        def runtime_authority():
+            runtime = getattr(model, "_arena_offload_runtime", None)
+            if runtime is None:
+                raise CanonicalArenaError(
+                    "canonical_arena_whole_model_move_before_runtime"
+                )
+            return runtime
 
         def _guarded_to(*args, **kwargs):
-            runtime = getattr(model, "_arena_offload_runtime", None)
-            placement = getattr(runtime, "_permanent_placement", None)
-            if placement is not None:
-                device, dtype, _non_blocking, _memory_format = (
-                    torch._C._nn._parse_to(*args, **kwargs)
-                )
-                placed_device, placed_dtype = placement
-                same_device = (
-                    device is not None
-                    and torch.device(device) == torch.device(placed_device)
-                )
-                same_dtype = dtype is None or dtype == placed_dtype
-                if same_device and same_dtype:
-                    return model
-            raise CanonicalArenaError(
-                "canonical_arena_whole_model_to: whole-model .to()/.cuda()/"
-                ".cpu() is forbidden once canonicalized leaves exist -- it "
-                "would silently detach every Parameter from its arena flat. "
-                "Route non-canonicalized regions through their own .to() "
-                "calls, or move canonicalized weights via the residency "
-                "sidecar path instead."
+            device, dtype, _non_blocking, memory_format = (
+                torch._C._nn._parse_to(*args, **kwargs)
+            )
+            return runtime_authority().handle_whole_model_move(
+                device, dtype=dtype, memory_format=memory_format
             )
 
+        def _guarded_cuda(device=None):
+            runtime = runtime_authority()
+            return runtime.handle_whole_model_move(
+                runtime.device if device is None else device
+            )
+
+        def _guarded_cpu():
+            return runtime_authority().handle_whole_model_move("cpu")
+
         model.to = _guarded_to
+        model.cuda = _guarded_cuda
+        model.cpu = _guarded_cpu
         model._mm_canonical_to_guarded = True
-        model._mm_canonical_to_original = original_to
+        model._mm_canonical_movement_originals = originals
 
     @staticmethod
     def unguard_whole_model_to(model: torch.nn.Module) -> None:
-        original = getattr(model, "_mm_canonical_to_original", None)
-        if original is not None:
-            model.to = original
-            del model._mm_canonical_to_original
+        originals = getattr(model, "_mm_canonical_movement_originals", None)
+        if originals is not None:
+            for name, original in originals.items():
+                setattr(model, name, original)
+            del model._mm_canonical_movement_originals
         if hasattr(model, "_mm_canonical_to_guarded"):
             del model._mm_canonical_to_guarded
 
@@ -271,8 +272,16 @@ class CanonicalArena:
         ``pin_manager`` is the sole pin authority. Safe to call on a partially
         built or already released arena.
         """
-        for record in self._blocks.values():
+        first_error = None
+        for block_key, record in tuple(self._blocks.items()):
+            try:
+                release_pack(record.pack)
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+                continue
             pin_manager.unregister_arena_storage(record.pack.host_flat)
-            release_pack(record.pack)
-        self._blocks.clear()
-        self._canonicalized = False
+            self._blocks.pop(block_key, None)
+        self._canonicalized = bool(self._blocks)
+        if first_error is not None:
+            raise first_error

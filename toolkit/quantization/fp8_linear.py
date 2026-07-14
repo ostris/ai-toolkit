@@ -151,6 +151,11 @@ def set_fp8_grad_input_enabled(enabled: bool) -> None:
     _FP8_GRAD_INPUT = bool(enabled)
 
 
+def fp8_grad_input_enabled() -> bool:
+    """Return the Toolkit-owned process policy for FP8 input gradients."""
+    return bool(_FP8_GRAD_INPUT)
+
+
 def reference_dequantize_to(tensor: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
     try:
         return tensor.dequantize(output_dtype=dtype)

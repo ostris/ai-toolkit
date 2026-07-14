@@ -221,6 +221,31 @@ def test_shared_managed_state_is_rejected_before_construction():
         discover_blocks(model, container_paths=("blocks",))
 
 
+@pytest.mark.parametrize("view_kind", ("exact", "partial", "disjoint"))
+def test_same_block_shared_managed_storage_is_rejected(view_kind):
+    model = _frozen_transformer()
+    model.blocks[0].other = torch.nn.Linear(4, 4, bias=False)
+    storage = torch.randn(32)
+    if view_kind == "exact":
+        left = storage[:16]
+        right = storage[:16]
+    elif view_kind == "partial":
+        left = storage[:16]
+        right = storage[4:20]
+    else:
+        left = storage[:16]
+        right = storage[16:32]
+    model.blocks[0].proj.weight = torch.nn.Parameter(
+        left.view(4, 4), requires_grad=False
+    )
+    model.blocks[0].other.weight = torch.nn.Parameter(
+        right.view(4, 4), requires_grad=False
+    )
+
+    with pytest.raises(BlockDiscoveryError, match="shared_managed_storage"):
+        discover_blocks(model, container_paths=("blocks",))
+
+
 def test_checkpointing_rejection_precedes_canonical_commit():
     model = _frozen_transformer()
     original = model.blocks[0].proj.weight

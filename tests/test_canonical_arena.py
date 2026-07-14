@@ -1,6 +1,7 @@
 import io
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 import torch
 import torch.nn as nn
@@ -126,8 +127,13 @@ class WholeModelToGuardTests(unittest.TestCase):
         try:
             arena.canonicalize({"blocks.0": [("lin", model[0])]})
             CanonicalArena.guard_whole_model_to(model)
-            with self.assertRaises(CanonicalArenaError):
-                model.to(torch.device("cpu"))
+            for move in (
+                lambda: model.to(torch.device("cpu")),
+                model.cpu,
+                model.cuda,
+            ):
+                with self.assertRaises(CanonicalArenaError):
+                    move()
         finally:
             CanonicalArena.unguard_whole_model_to(model)
             arena.release()
@@ -140,27 +146,41 @@ class WholeModelToGuardTests(unittest.TestCase):
         self.assertIs(model.to, original)
         CanonicalArena.unguard_whole_model_to(model)
 
-    def test_guarded_to_allows_only_idempotent_runtime_placement(self):
+    def test_guarded_movement_routes_all_entry_points_to_runtime(self):
         model = nn.Sequential(_linear())
-        model._arena_offload_runtime = SimpleNamespace(
-            _permanent_placement=(torch.device("cpu"), torch.float32)
+        runtime = SimpleNamespace(
+            device=torch.device("cuda:0"),
+            handle_whole_model_move=mock.Mock(return_value=model),
         )
+        model._arena_offload_runtime = runtime
         CanonicalArena.guard_whole_model_to(model)
         try:
             self.assertIs(model.to(torch.device("cpu")), model)
-            self.assertIs(
-                model.to(device=torch.device("cpu"), dtype=torch.float32), model
+            self.assertIs(model.cpu(), model)
+            self.assertIs(model.cuda(), model)
+            self.assertEqual(runtime.handle_whole_model_move.call_count, 3)
+            self.assertEqual(
+                runtime.handle_whole_model_move.call_args_list[0].args,
+                (torch.device("cpu"),),
             )
-            with self.assertRaises(CanonicalArenaError):
-                model.to(device=torch.device("cpu"), dtype=torch.float64)
+            self.assertEqual(
+                runtime.handle_whole_model_move.call_args_list[1].args,
+                ("cpu",),
+            )
+            self.assertEqual(
+                runtime.handle_whole_model_move.call_args_list[2].args,
+                (torch.device("cuda:0"),),
+            )
         finally:
             CanonicalArena.unguard_whole_model_to(model)
             del model._arena_offload_runtime
 
     def test_unguard_restores_normal_to(self):
         model = nn.Sequential(_linear())
+        originals = (model.to, model.cuda, model.cpu)
         CanonicalArena.guard_whole_model_to(model)
         CanonicalArena.unguard_whole_model_to(model)
+        self.assertEqual((model.to, model.cuda, model.cpu), originals)
         # Ordinary .to() must work again (no canonicalized leaves here).
         model.to(torch.device("cpu"))
 

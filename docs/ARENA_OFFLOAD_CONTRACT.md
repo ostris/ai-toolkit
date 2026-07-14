@@ -20,8 +20,9 @@ known boundary with the unmet contract in the error.
 - Canonical managed leaves are frozen base weights. Trainable adapters remain
   ordinary state outside canonical storage.
 - Every selected-block parameter and buffer is enumerable before commit.
-  Shared, parametrized, missing, or conflicting managed state fails before the
-  destructive boundary.
+  Managed leaves must not share one physical storage allocation, including
+  exact, overlapping, or disjoint views. Shared, parametrized, missing, or
+  conflicting managed state fails before the destructive boundary.
 
 ## Quantization contract
 
@@ -34,6 +35,27 @@ known boundary with the unmet contract in the error.
   target exists. Unknown tensor-subclass storage fails before canonical commit.
 - Transfer and residency code treats declared leaves as opaque tensors. It does
   not branch on qtype or quantization backend identity.
+
+## Loading and lifecycle contract
+
+- Direct checkpoint loading may fall back to ordinary `load_state_dict()` only
+  while the source mapping remains intact. Once a managed source entry has been
+  consumed, a later build failure aborts that model load instead of reusing the
+  partial mapping.
+- Whole-model `.cpu()` and current-arena `.cuda()` or `.to(device)` requests are
+  interpreted by the runtime: permanent state follows the requested device and
+  training residency is parked or restored. Whole-model dtype conversion,
+  memory-format conversion, other CUDA devices, and arbitrary device
+  redistribution are unsupported.
+- Cleanup is explicit and retryable. Arena-owned simulated-card policy, FP8
+  grad-input policy, and Toolkit-tracked allocator fraction are restored before
+  process ownership is released to a sequential job.
+
+## Compilation contract
+
+Arena compilation follows Toolkit's supported model `compile` setting and owns
+the one shared block dispatcher used by both training and sampling. Separate
+train/sample arena compile policies and caches are not part of this contract.
 
 ## Maintainer validation matrix
 

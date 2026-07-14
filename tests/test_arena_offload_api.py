@@ -9,6 +9,7 @@ is covered by the arena contract tests and the Krea2 train smoke.
 import ast
 from dataclasses import fields
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 
 import torch
@@ -81,7 +82,7 @@ class _FakeModelConfig:
     layer_offloading_fp8_forward = True
     layer_offloading_fp8_grad_input = True
     layer_offloading_fp8_sampling = True
-    compile = False
+    compile = True
     compile_sample = True
     train_compile_blocks = False
     layer_offloading_smart_working_reserve_gb = -1.0
@@ -172,6 +173,67 @@ class ArenaOffloadHelpersTest(unittest.TestCase):
         self.assertEqual(model.root_token.dtype, torch.float64)
         self.assertEqual(model.root_buffer.dtype, torch.float64)
 
+    def test_whole_model_move_parks_cpu_and_restores_arena_device(self):
+        model = object()
+        runtime = object.__new__(ArenaOffloadRuntime)
+        runtime._model = model
+        runtime._closed = False
+        runtime._disposed = False
+        runtime._device = torch.device("cuda:0")
+        runtime._executor = SimpleNamespace(active_executions=0)
+        runtime._device_state_parked_plan = None
+        runtime._permanent_placement = (torch.device("cuda:0"), torch.float32)
+        events = []
+
+        def place(device, dtype=None):
+            normalized = torch.device(device)
+            runtime._permanent_placement = (normalized, dtype)
+            events.append(("place", normalized, dtype))
+
+        runtime.place_permanent_modules = place
+        runtime.park_residency_for_external_phase = lambda: events.append(
+            ("park",)
+        )
+        runtime.restore_residency_after_external_phase = lambda: events.append(
+            ("restore",)
+        )
+
+        self.assertIs(runtime.handle_whole_model_move("cpu"), model)
+        self.assertIs(runtime.handle_whole_model_move("cuda:0"), model)
+        self.assertEqual(
+            events,
+            [
+                ("park",),
+                ("place", torch.device("cpu"), torch.float32),
+                ("place", torch.device("cuda:0"), torch.float32),
+                ("restore",),
+            ],
+        )
+
+    def test_whole_model_move_rejects_unsupported_intent_before_mutation(self):
+        runtime = object.__new__(ArenaOffloadRuntime)
+        runtime._model = object()
+        runtime._closed = False
+        runtime._disposed = False
+        runtime._device = torch.device("cuda:0")
+        runtime._executor = SimpleNamespace(active_executions=0)
+        runtime._device_state_parked_plan = None
+        runtime._permanent_placement = (torch.device("cuda:0"), torch.float32)
+        runtime.place_permanent_modules = unittest.mock.Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "dtype_change"):
+            runtime.handle_whole_model_move("cuda:0", dtype=torch.float64)
+        with self.assertRaisesRegex(RuntimeError, "cuda_device"):
+            runtime.handle_whole_model_move("cuda:1")
+        with self.assertRaisesRegex(RuntimeError, "memory_format"):
+            runtime.handle_whole_model_move(
+                "cuda:0", memory_format=torch.channels_last
+            )
+        runtime._executor.active_executions = 1
+        with self.assertRaisesRegex(RuntimeError, "during_execution"):
+            runtime.handle_whole_model_move("cpu")
+        runtime.place_permanent_modules.assert_not_called()
+
 
 class ArenaOffloadConfigTest(unittest.TestCase):
     def test_from_model_config_maps_the_public_surface(self):
@@ -219,6 +281,15 @@ class ArenaOffloadConfigTest(unittest.TestCase):
         self.assertFalse(config.enabled)
         self.assertFalse(config.compile_blocks)
         self.assertEqual(config._policy.prefetch_depth, 3)
+
+    def test_dead_compile_aliases_do_not_enable_arena_compile(self):
+        class DeadAliases:
+            compile = False
+            compile_sample = True
+            train_compile_blocks = True
+
+        config = ArenaOffloadConfig.from_model_config(DeadAliases())
+        self.assertFalse(config.compile_blocks)
 
     def test_compatibility_aliases_map_to_internal_policy(self):
         class Aliases:

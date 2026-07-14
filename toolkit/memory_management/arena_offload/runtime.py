@@ -36,6 +36,7 @@ from .planner import (
     impossible_training_plan_message,
     resolve_physical_vram_headroom_gib,
 )
+from .ownership import normalize_device
 from .resources import ArenaRuntimeResources
 
 RUNTIME_ATTR = "_arena_offload_runtime"
@@ -328,6 +329,52 @@ class ArenaOffloadRuntime:
             self._permanent_placement = target
         except BaseException as error:
             self._fatal_setup_failure(error)
+
+    def handle_whole_model_move(
+        self, device, *, dtype=None, memory_format=None
+    ):
+        """Interpret safe whole-model device intent without moving arena leaves."""
+        self._require_open()
+        if getattr(self._executor, "active_executions", 0):
+            raise RuntimeError("arena_whole_model_move_during_execution")
+        if memory_format is not None:
+            raise RuntimeError("arena_whole_model_memory_format_unsupported")
+
+        placement = self._permanent_placement
+        if placement is None:
+            raise RuntimeError("arena_whole_model_move_before_placement")
+        placed_device, placed_dtype = placement
+        placed_device = normalize_device(placed_device)
+        if dtype is not None and dtype != placed_dtype:
+            raise RuntimeError("arena_whole_model_dtype_change_unsupported")
+
+        target_device = placed_device if device is None else normalize_device(device)
+        arena_device = normalize_device(self._device)
+        if target_device.type not in ("cpu", "cuda"):
+            raise RuntimeError(
+                f"arena_whole_model_device_unsupported:{target_device.type}"
+            )
+        if target_device.type == "cuda" and target_device != arena_device:
+            raise RuntimeError(
+                f"arena_whole_model_cuda_device_unsupported:{target_device}"
+            )
+
+        if target_device == placed_device:
+            if (
+                target_device == arena_device
+                and self._device_state_parked_plan is not None
+            ):
+                self.restore_residency_after_external_phase()
+            return self._model
+
+        if target_device.type == "cpu":
+            self.park_residency_for_external_phase()
+            self.place_permanent_modules(target_device, placed_dtype)
+            return self._model
+
+        self.place_permanent_modules(arena_device, placed_dtype)
+        self.restore_residency_after_external_phase()
+        return self._model
 
     @property
     def device(self):

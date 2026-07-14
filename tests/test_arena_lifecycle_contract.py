@@ -26,6 +26,11 @@ from toolkit.memory_management.arena_offload.ownership import (
 from toolkit.memory_management.arena_offload.resources import ArenaRuntimeResources
 from toolkit.memory_management.arena_offload.runtime import ArenaOffloadRuntime
 from toolkit.memory_management import pin_manager
+from toolkit.memory_management import vram_budget
+from toolkit.memory_management.arena_offload.fp8 import (
+    fp8_grad_input_enabled,
+    set_fp8_grad_input_enabled,
+)
 from toolkit.memory_management.manager_modules import _DEVICE_STATE
 from toolkit.memory_management.residency import ResidencyPlan
 from toolkit.models.base_model import BaseModel
@@ -170,6 +175,88 @@ def test_planning_failure_is_precommit_and_preserves_model():
     assert not hasattr(model, "_arena_offload_disposed")
 
 
+def test_precommit_setup_failure_restores_process_policy():
+    original_simulated = vram_budget.simulated_card_bytes()
+    original_fp8 = fp8_grad_input_enabled()
+    try:
+        vram_budget.set_simulated_card_bytes(1234)
+        set_fp8_grad_input_enabled(True)
+        config = ArenaOffloadConfig(
+            enabled=True,
+            fp8_backward=False,
+            _simulated_vram_gib=0.5,
+        )
+        with mock.patch(
+            "toolkit.memory_management.arena_offload.runtime.apply_simulated_card",
+            side_effect=lambda _value, device=None: (
+                vram_budget.set_simulated_card_bytes(5678)
+            ),
+        ), mock.patch(
+            "toolkit.memory_management.arena_offload.runtime.build_training_plan",
+            side_effect=RuntimeError("planning failed"),
+        ):
+            with pytest.raises(RuntimeError, match="planning failed"):
+                prepare_arena_offload(
+                    _frozen_linear(),
+                    device="cpu",
+                    block_names=("blocks",),
+                    config=config,
+                )
+
+        assert vram_budget.simulated_card_bytes() == 1234
+        assert fp8_grad_input_enabled()
+        assert active_process_owner() is None
+    finally:
+        vram_budget.set_simulated_card_bytes(original_simulated)
+        set_fp8_grad_input_enabled(original_fp8)
+
+
+def test_postcommit_setup_failure_restores_process_policy():
+    original_simulated = vram_budget.simulated_card_bytes()
+    original_fp8 = fp8_grad_input_enabled()
+    model = _frozen_linear()
+    plan = {
+        "offload_ids": set(),
+        "protected_training_leaf_keys": frozenset(),
+        "fits": True,
+    }
+    try:
+        vram_budget.set_simulated_card_bytes(1234)
+        set_fp8_grad_input_enabled(True)
+        config = ArenaOffloadConfig(
+            enabled=True,
+            fp8_backward=False,
+            _simulated_vram_gib=0.5,
+        )
+        with mock.patch(
+            "toolkit.memory_management.arena_offload.runtime.apply_simulated_card",
+            side_effect=lambda _value, device=None: (
+                vram_budget.set_simulated_card_bytes(5678)
+            ),
+        ), mock.patch(
+            "toolkit.memory_management.arena_offload.runtime.build_training_plan",
+            return_value=plan,
+        ), mock.patch(
+            "toolkit.memory_management.arena_offload.runtime.ResidencyState",
+            side_effect=RuntimeError("postcommit failed"),
+        ):
+            with pytest.raises(ArenaSetupFatalError):
+                prepare_arena_offload(
+                    model,
+                    device="cpu",
+                    block_names=("blocks",),
+                    config=config,
+                )
+
+        assert vram_budget.simulated_card_bytes() == 1234
+        assert fp8_grad_input_enabled()
+        assert active_process_owner() is None
+        assert model._arena_offload_disposed
+    finally:
+        vram_budget.set_simulated_card_bytes(original_simulated)
+        set_fp8_grad_input_enabled(original_fp8)
+
+
 @pytest.mark.parametrize(
     "target",
     (
@@ -227,19 +314,92 @@ def test_resource_release_continues_after_cleanup_error_and_is_idempotent():
         release=lambda: calls.append("arena"),
     )
     resources.residency = SimpleNamespace(clear=lambda: calls.append("residency"))
+    executor_close = mock.Mock(side_effect=(RuntimeError("executor boom"), None))
     resources.executor = SimpleNamespace(
-        active_executions=0,
-        close=lambda: (_ for _ in ()).throw(RuntimeError("executor boom")),
+        active_executions=0, close=executor_close
     )
 
     with pytest.raises(ArenaCleanupError, match="executor boom"):
         resources.release()
     resources.release()
 
+    assert executor_close.call_count == 2
     assert calls == ["residency", "unguard", "arena"]
     assert resources.released
     assert resources.disposed
     assert active_process_owner() is None
+
+
+def test_arena_release_failure_retains_resource_for_retry():
+    model = _frozen_linear()
+    resources = ArenaRuntimeResources(model, "cpu")
+    resources.acquire_process_owner()
+    token = resources.owner_token
+    arena = SimpleNamespace(
+        unguard_whole_model_to=mock.Mock(),
+        release=mock.Mock(
+            side_effect=(pin_manager.PinReleaseError("unregister failed"), None)
+        ),
+    )
+    resources.canonical_committed = True
+    resources.arena = arena
+
+    with pytest.raises(ArenaCleanupError, match="unregister failed"):
+        resources.release()
+
+    assert resources.arena is arena
+    assert resources.owner_token is token
+    assert active_process_owner() is token
+    resources.release()
+    assert resources.arena is None
+    assert resources.released
+    assert active_process_owner() is None
+
+
+def test_release_restores_arena_owned_process_globals():
+    original_simulated = vram_budget.simulated_card_bytes()
+    original_fp8 = fp8_grad_input_enabled()
+    try:
+        vram_budget.set_simulated_card_bytes(1234)
+        set_fp8_grad_input_enabled(True)
+        resources = ArenaRuntimeResources(_frozen_linear(), "cpu")
+        resources.acquire_process_owner()
+        vram_budget.set_simulated_card_bytes(5678)
+        set_fp8_grad_input_enabled(False)
+
+        resources.release()
+
+        assert vram_budget.simulated_card_bytes() == 1234
+        assert fp8_grad_input_enabled()
+        assert active_process_owner() is None
+    finally:
+        vram_budget.set_simulated_card_bytes(original_simulated)
+        set_fp8_grad_input_enabled(original_fp8)
+
+
+def test_process_global_restore_failure_is_retryable():
+    original_simulated = vram_budget.simulated_card_bytes()
+    try:
+        vram_budget.set_simulated_card_bytes(1234)
+        resources = ArenaRuntimeResources(_frozen_linear(), "cpu")
+        resources.acquire_process_owner()
+        token = resources.owner_token
+        vram_budget.set_simulated_card_bytes(5678)
+
+        with mock.patch(
+            "toolkit.memory_management.vram_budget.set_simulated_card_bytes",
+            side_effect=RuntimeError("restore failed"),
+        ):
+            with pytest.raises(ArenaCleanupError, match="restore failed"):
+                resources.release()
+
+        assert resources.owner_token is token
+        assert active_process_owner() is token
+        resources.release()
+        assert vram_budget.simulated_card_bytes() == 1234
+        assert active_process_owner() is None
+    finally:
+        vram_budget.set_simulated_card_bytes(original_simulated)
 
 
 def test_transfer_cleanup_failure_retains_process_owner_until_retry():

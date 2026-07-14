@@ -28,6 +28,10 @@ class PinBudgetExceeded(RuntimeError):
     """Raised when a must-pin allocation cannot fit the current host-pin budget."""
 
 
+class PinReleaseError(RuntimeError):
+    """Raised when a registered host allocation could not be unpinned."""
+
+
 @dataclass
 class PinHandle:
     tensor: torch.Tensor
@@ -466,7 +470,12 @@ def release(handle: PinHandle) -> None:
     if getattr(handle, "mechanism", "alloc") == "register":
         # unpin_tensor_in_place does the ledger release itself (and the
         # cudaHostUnregister returns DXGI budget immediately).
-        unpin_tensor_in_place(handle.tensor, getattr(handle, "kind", None))
+        if not unpin_tensor_in_place(
+            handle.tensor, getattr(handle, "kind", None)
+        ):
+            raise PinReleaseError(
+                f"cudaHostUnregister failed for {getattr(handle, 'kind', 'unknown')}"
+            )
     else:
         release_pinned_bytes(int(handle.nbytes), getattr(handle, "kind", "unknown"))
     handle.pinned = False

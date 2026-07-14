@@ -26,6 +26,15 @@ class ArenaRuntimeResources:
         self.disposed = False
         self.released = False
         self._releasing = False
+        self._movement_restored = False
+        self._transfer_runtime_released = False
+        self._process_state_captured = False
+        self._restore_fp8_policy = False
+        self._restore_simulated_card = False
+        self._restore_allocator_fraction = False
+        self._previous_fp8_grad_input = None
+        self._previous_simulated_card = None
+        self._previous_allocator_fraction = None
         self._original_movement = {
             name: getattr(model, name, None) for name in ("to", "cuda", "cpu")
         }
@@ -34,6 +43,23 @@ class ArenaRuntimeResources:
     def acquire_process_owner(self) -> None:
         if self.owner_token is None:
             self.owner_token = acquire_process_owner(self.device)
+            try:
+                from .. import allocator_cap, vram_budget
+                from .fp8 import fp8_grad_input_enabled
+
+                self._previous_fp8_grad_input = fp8_grad_input_enabled()
+                self._previous_simulated_card = vram_budget.simulated_card_bytes()
+                self._previous_allocator_fraction = (
+                    allocator_cap.tracked_allocator_fraction(self.device)
+                )
+            except BaseException:
+                release_process_owner(self.owner_token)
+                self.owner_token = None
+                raise
+            self._process_state_captured = True
+            self._restore_fp8_policy = True
+            self._restore_simulated_card = True
+            self._restore_allocator_fraction = True
 
     def adopt_canonical_build(self, build) -> None:
         self.canonical_build = build
@@ -93,63 +119,122 @@ class ArenaRuntimeResources:
                 (("active execution", RuntimeError("cannot_close_during_execution")),)
             )
 
-        def attempt(label, operation):
+        def attempt(label, operation, completed=None):
             try:
                 operation()
             except BaseException as error:
                 failures.append((label, error))
+                return False
+            if completed is not None:
+                completed()
+            return True
 
         from . import transfer
 
         try:
-            transfer_cleanup_failed = False
-            if self.owner_token is not None:
+            if self.owner_token is not None and not self._transfer_runtime_released:
                 try:
                     transfer.drain_fetch_runtime(owner_token=self.owner_token)
                 except BaseException as error:
-                    transfer_cleanup_failed = True
                     failures.append(("transfer tickets", error))
             if self.executor is not None:
-                attempt("immutable executor", self.executor.close)
+                attempt(
+                    "immutable executor",
+                    self.executor.close,
+                    lambda: setattr(self, "executor", None),
+                )
+            retained_fp8_restores = []
             for label, restore in reversed(self.fp8_restores):
-                attempt(label, restore)
-            self.fp8_restores.clear()
+                if not attempt(label, restore):
+                    retained_fp8_restores.append((label, restore))
+            self.fp8_restores = list(reversed(retained_fp8_restores))
             if self.residency is not None:
-                attempt("resident sidecars", self.residency.clear)
+                attempt(
+                    "resident sidecars",
+                    self.residency.clear,
+                    lambda: setattr(self, "residency", None),
+                )
 
+            retained_attributes = []
             for owner, name, value in reversed(self.published_attributes):
                 if getattr(owner, name, None) is value:
-                    attempt(
+                    if not attempt(
                         f"published attribute {name}",
                         lambda owner=owner, name=name: delattr(owner, name),
-                    )
-            self.published_attributes.clear()
+                    ):
+                        retained_attributes.append((owner, name, value))
+            self.published_attributes = list(reversed(retained_attributes))
 
             if self.canonical_committed:
                 if self.arena is not None:
+                    if not self._movement_restored:
+                        attempt(
+                            "movement interception",
+                            lambda: self.arena.unguard_whole_model_to(self.model),
+                            lambda: setattr(self, "_movement_restored", True),
+                        )
+                    arena = self.arena
                     attempt(
-                        "movement interception",
-                        lambda: self.arena.unguard_whole_model_to(self.model),
+                        "canonical arena",
+                        arena.release,
+                        lambda: setattr(self, "arena", None),
                     )
-                    attempt("canonical arena", self.arena.release)
                 self.disposed = True
                 self._install_disposed_movement_guard()
             elif self.canonical_build is not None:
-                attempt("canonical build", self.canonical_build.rollback)
+                build = self.canonical_build
+                attempt(
+                    "canonical build",
+                    build.rollback,
+                    lambda: setattr(self, "canonical_build", None),
+                )
 
-            if self.owner_token is not None:
+            if self.owner_token is not None and not self._transfer_runtime_released:
                 try:
                     transfer.release_fetch_runtime(self.owner_token)
                 except BaseException as error:
-                    transfer_cleanup_failed = True
                     failures.append(("transfer runtime", error))
-                if not transfer_cleanup_failed:
-                    try:
-                        release_process_owner(self.owner_token)
-                    except BaseException as error:
-                        failures.append(("process ownership", error))
-                    else:
-                        self.owner_token = None
+                else:
+                    self._transfer_runtime_released = True
+
+            if self._restore_fp8_policy:
+                from .fp8 import set_fp8_grad_input_enabled
+
+                attempt(
+                    "FP8 grad-input policy",
+                    lambda: set_fp8_grad_input_enabled(
+                        self._previous_fp8_grad_input
+                    ),
+                    lambda: setattr(self, "_restore_fp8_policy", False),
+                )
+            if self._restore_simulated_card:
+                from ..vram_budget import set_simulated_card_bytes
+
+                attempt(
+                    "simulated card policy",
+                    lambda: set_simulated_card_bytes(
+                        self._previous_simulated_card
+                    ),
+                    lambda: setattr(self, "_restore_simulated_card", False),
+                )
+            if self._restore_allocator_fraction:
+                from ..allocator_cap import restore_tracked_allocator_fraction
+
+                attempt(
+                    "allocator fraction policy",
+                    lambda: restore_tracked_allocator_fraction(
+                        self.device, self._previous_allocator_fraction
+                    ),
+                    lambda: setattr(self, "_restore_allocator_fraction", False),
+                )
+
+            if self.owner_token is not None and not failures:
+                try:
+                    release_process_owner(self.owner_token)
+                except BaseException as error:
+                    failures.append(("process ownership", error))
+                else:
+                    self.owner_token = None
         finally:
             self.closing = False
             self.released = self.owner_token is None
@@ -157,9 +242,7 @@ class ArenaRuntimeResources:
             if self.runtime is not None:
                 self.runtime._closed = True
                 self.runtime._disposed = bool(self.canonical_committed)
-            self.canonical_modules = ()
-            self.canonical_build = None
-            self.residency = None
-            self.executor = None
+            if self.released:
+                self.canonical_modules = ()
         if failures:
             raise ArenaCleanupError(failures)

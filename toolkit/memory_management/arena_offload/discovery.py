@@ -123,9 +123,7 @@ def _tensor_identity(tensor):
     try:
         return (
             tensor.device.type,
-            tensor.untyped_storage().data_ptr(),
-            tensor.storage_offset(),
-            tensor.numel(),
+            tensor.untyped_storage()._cdata,
         )
     except Exception:
         return ("object", id(tensor))
@@ -185,7 +183,7 @@ def _audit_state(blocks, block_keys, entries_by_block) -> BlockStateAccounting:
             for tensor in binding.tensors:
                 identity = _tensor_identity(tensor.tensor)
                 previous = managed_storage.get(identity)
-                if previous is not None and previous[0] != block_key:
+                if previous is not None:
                     raise BlockDiscoveryError(
                         f"shared_managed_storage:{previous[1]}:{block_key}.{module_path}"
                     )

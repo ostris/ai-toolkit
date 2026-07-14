@@ -195,11 +195,10 @@ class ArenaOffloadConfig:
             and requested_backward,
             fp8_sampling=fp8_weights
             and requested_sampling,
-            compile_blocks=bool(
-                get("compile", False)
-                or get("compile_sample", False)
-                or get("train_compile_blocks", False)
-            ),
+            # Arena execution has one shared block dispatcher for training
+            # and sampling, so Toolkit's supported model compile setting owns
+            # both phases.
+            compile_blocks=bool(get("compile", False)),
             strict_vram_cap=bool(
                 get("layer_offloading_strict_vram_cap", False)
             ),

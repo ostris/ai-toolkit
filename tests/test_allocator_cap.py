@@ -1,4 +1,5 @@
 import pytest
+from unittest import mock
 
 from toolkit.memory_management import allocator_cap
 
@@ -64,3 +65,40 @@ def test_strict_development_guard_binds_allocator_cap(monkeypatch):
     assert result == 11 / 12
     assert calls == [(11 / 12, 0)]
     assert allocator_cap.APPLIED_FRACTIONS[0] == 11 / 12
+
+
+def test_restore_reinstalls_previous_toolkit_fraction(monkeypatch):
+    calls = []
+    monkeypatch.setattr(allocator_cap.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(allocator_cap.torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(
+        allocator_cap.torch.cuda,
+        "set_per_process_memory_fraction",
+        lambda fraction, index: calls.append((fraction, index)),
+    )
+    allocator_cap.APPLIED_FRACTIONS[0] = 0.75
+
+    allocator_cap.restore_tracked_allocator_fraction("cuda", 0.5)
+
+    assert calls == [(0.5, 0)]
+    assert allocator_cap.APPLIED_FRACTIONS[0] == 0.5
+
+
+def test_restore_removes_arena_fraction_only_after_cuda_succeeds(monkeypatch):
+    monkeypatch.setattr(allocator_cap.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(allocator_cap.torch.cuda, "current_device", lambda: 0)
+    setter = mock.Mock(side_effect=(RuntimeError("restore failed"), None))
+    monkeypatch.setattr(
+        allocator_cap.torch.cuda,
+        "set_per_process_memory_fraction",
+        setter,
+    )
+    allocator_cap.APPLIED_FRACTIONS[0] = 0.5
+
+    with pytest.raises(RuntimeError, match="restore failed"):
+        allocator_cap.restore_tracked_allocator_fraction("cuda", None)
+    assert allocator_cap.APPLIED_FRACTIONS[0] == 0.5
+
+    allocator_cap.restore_tracked_allocator_fraction("cuda", None)
+    assert setter.call_args_list == [mock.call(1.0, 0), mock.call(1.0, 0)]
+    assert 0 not in allocator_cap.APPLIED_FRACTIONS

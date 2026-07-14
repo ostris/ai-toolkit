@@ -25,6 +25,10 @@ class CanonicalBuildError(RuntimeError):
     pass
 
 
+class CanonicalStateConsumedError(CanonicalBuildError):
+    """A direct-load source mapping was mutated before construction failed."""
+
+
 class CanonicalStateInferenceError(CanonicalBuildError):
     pass
 
@@ -353,8 +357,24 @@ class PreparedCanonicalBuild:
 
             self._finish_population()
             return tuple(consumed)
-        except Exception:
-            self.rollback()
+        except Exception as error:
+            cleanup_error = None
+            try:
+                self.rollback()
+            except BaseException as rollback_error:
+                cleanup_error = rollback_error
+            if consumed:
+                consumed_error = CanonicalStateConsumedError(
+                    "canonical_state_consumed_before_build_failure"
+                )
+                if cleanup_error is not None:
+                    consumed_error.add_note(
+                        "canonical rollback also failed: "
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+                raise consumed_error from error
+            if cleanup_error is not None:
+                raise cleanup_error from error
             raise
 
     def copy_state_entry(self, source_key: str, value) -> bool:
@@ -577,14 +597,26 @@ class PreparedCanonicalBuild:
                 module._buffers[target] = value
         if self.model is not None:
             self.arena.unguard_whole_model_to(self.model)
+        first_error = None
         for block in self.blocks:
+            try:
+                pin_manager.release(block.handle)
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+                continue
             if block.pack is not None:
                 pin_manager.unregister_arena_storage(block.flat)
-            pin_manager.release(block.handle)
+                self.arena._blocks.pop(block.key, None)
             block.handle = None
-        self.arena._blocks.clear()
-        self.arena._canonicalized = False
+        self.arena._canonicalized = bool(self.arena._blocks)
         self._populated = False
         resources = getattr(self, "_arena_resources", None)
-        if resources is not None and not resources.canonical_committed:
+        if (
+            first_error is None
+            and resources is not None
+            and not resources.canonical_committed
+        ):
             resources.release()
+        if first_error is not None:
+            raise first_error

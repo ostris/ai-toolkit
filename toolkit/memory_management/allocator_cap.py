@@ -13,6 +13,38 @@ GIB = 1024 ** 3
 APPLIED_FRACTIONS: dict[int, float] = {}
 
 
+def _cuda_index(device) -> int | None:
+    if not torch.cuda.is_available():
+        return None
+    dev = torch.device(device if device is not None else "cuda")
+    if dev.type != "cuda":
+        return None
+    return dev.index if dev.index is not None else torch.cuda.current_device()
+
+
+def tracked_allocator_fraction(device) -> float | None:
+    """Return only allocator policy previously installed by Toolkit."""
+    index = _cuda_index(device)
+    return None if index is None else APPLIED_FRACTIONS.get(index)
+
+
+def restore_tracked_allocator_fraction(device, previous: float | None) -> None:
+    """Restore a Toolkit-owned allocator setting captured before arena setup."""
+    index = _cuda_index(device)
+    if index is None:
+        return
+    current = APPLIED_FRACTIONS.get(index)
+    if previous is None:
+        if current is not None and current < 1.0:
+            torch.cuda.set_per_process_memory_fraction(1.0, index)
+        APPLIED_FRACTIONS.pop(index, None)
+        return
+    previous = float(previous)
+    if current is None or abs(current - previous) > 1e-12:
+        torch.cuda.set_per_process_memory_fraction(previous, index)
+    APPLIED_FRACTIONS[index] = previous
+
+
 
 
 def wddm_cliff_cap_bytes(device, wddm_hard_gib=None) -> int:

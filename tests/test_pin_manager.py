@@ -90,6 +90,41 @@ class PinManagerTests(unittest.TestCase):
         pin_manager.release(handle)  # second release must be a no-op
         self.assertEqual(pin_manager.total_pinned_bytes(), 0)
 
+    def test_failed_registered_release_retains_handle_and_ledger_for_retry(self):
+        tensor = mock.Mock()
+        handle = pin_manager.PinHandle(
+            tensor=tensor,
+            nbytes=64,
+            kind="weights",
+            pinned=True,
+            mechanism="register",
+        )
+        pin_manager.register_pinned_bytes(64, "weights")
+
+        with mock.patch.object(
+            pin_manager, "unpin_tensor_in_place", return_value=False
+        ):
+            with self.assertRaises(pin_manager.PinReleaseError):
+                pin_manager.release(handle)
+
+        self.assertTrue(handle.pinned)
+        self.assertEqual(handle.nbytes, 64)
+        self.assertIs(handle.tensor, tensor)
+        self.assertEqual(pin_manager.total_pinned_bytes(), 64)
+
+        def succeed(_tensor, kind):
+            pin_manager.release_pinned_bytes(64, kind)
+            return True
+
+        with mock.patch.object(
+            pin_manager, "unpin_tensor_in_place", side_effect=succeed
+        ):
+            pin_manager.release(handle)
+
+        self.assertFalse(handle.pinned)
+        self.assertEqual(handle.nbytes, 0)
+        self.assertEqual(pin_manager.total_pinned_bytes(), 0)
+
 
 class PinConformanceTests(unittest.TestCase):
     """No direct pinning outside the pin manager (PIN_MANAGER_PLAN S2).
