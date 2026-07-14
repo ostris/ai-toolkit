@@ -238,7 +238,7 @@ def new_wan_forward(
         
         if adapter.adapter_ref().is_sampling:
             if not hasattr(self, '_do_unconditional'):
-                # set it to true so we alternate to false immediatly
+                # set it to true so we alternate to false immediately
                 self._do_unconditional = True
             
             # alternate it
@@ -553,7 +553,7 @@ class I2VAdapter(torch.nn.Module):
     
     def edit_batch_processed(self, batch: DataLoaderBatchDTO):
         with torch.no_grad():
-            # we will alway get a clip image frame, if one is not passed, use image
+            # we will always get a clip image frame, if one is not passed, use image
             # or if video, pull from the first frame
             # edit the batch to pull the first frame out of a video if we have it
             # videos come in (bs, num_frames, channels, height, width)

@@ -936,7 +936,7 @@ class SDTrainer(BaseSDTrainProcess):
             self.adapter.additional_loss = None
 
         if self.train_config.target_norm_std:
-            # seperate out the batch and channels
+            # separate out the batch and channels
             pred_std = noise_pred.std([2, 3], keepdim=True)
             norm_std_loss = torch.abs(self.train_config.target_norm_std_value - pred_std).mean()
             loss = loss + norm_std_loss
@@ -2096,7 +2096,7 @@ class SDTrainer(BaseSDTrainProcess):
                     loss = torch.zeros_like(loss).requires_grad_(True)
 
                 with self.timer('backward'):
-                    # todo we have multiplier seperated. works for now as res are not in same batch, but need to change
+                    # todo we have multiplier separated. works for now as res are not in same batch, but need to change
                     loss = loss * loss_multiplier.mean()
                     # IMPORTANT if gradient checkpointing do not leave with network when doing backward
                     # it will destroy the gradients. This is because the network is a context manager

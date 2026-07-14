@@ -54,7 +54,7 @@ class BaseProcess(object):
 
     def run(self):
         # implement in child class
-        # be sure to call super().run() first incase something is added here
+        # be sure to call super().run() first in case something is added here
         pass
 
     def add_meta(self, additional_meta: OrderedDict):

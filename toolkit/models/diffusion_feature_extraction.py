@@ -1372,7 +1372,7 @@ def load_dfe(model_path, vae=None, sd: 'BaseModel' = None) -> DiffusionFeatureEx
         return dfe
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
-    # if it ende with safetensors
+    # if it ends with safetensors
     if model_path.endswith('.safetensors'):
         state_dict = load_file(model_path)
     else:

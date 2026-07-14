@@ -155,7 +155,7 @@ class Adafactor(torch.optim.Optimizer):
         for group in self.param_groups:
             for param in group['params']:
                 self._total_paramiter_size += torch.numel(param)
-        # pretty print total paramiters with comma seperation
+        # pretty print total paramiters with comma separation
         print(f"Total training paramiters: {self._total_paramiter_size:,}")
         
         # needs to be enabled to count paramiters

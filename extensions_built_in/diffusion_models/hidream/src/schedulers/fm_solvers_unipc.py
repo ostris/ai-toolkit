@@ -304,7 +304,7 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 sample = args[1]
             else:
                 raise ValueError(
-                    "missing `sample` as a required keyward argument")
+                    "missing `sample` as a required keyword argument")
         if timestep is not None:
             deprecate(
                 "timesteps",
@@ -379,13 +379,13 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 sample = args[1]
             else:
                 raise ValueError(
-                    " missing `sample` as a required keyward argument")
+                    " missing `sample` as a required keyword argument")
         if order is None:
             if len(args) > 2:
                 order = args[2]
             else:
                 raise ValueError(
-                    " missing `order` as a required keyward argument")
+                    " missing `order` as a required keyword argument")
         if prev_timestep is not None:
             deprecate(
                 "prev_timestep",
@@ -518,19 +518,19 @@ class FlowUniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 last_sample = args[1]
             else:
                 raise ValueError(
-                    " missing`last_sample` as a required keyward argument")
+                    " missing`last_sample` as a required keyword argument")
         if this_sample is None:
             if len(args) > 2:
                 this_sample = args[2]
             else:
                 raise ValueError(
-                    " missing`this_sample` as a required keyward argument")
+                    " missing`this_sample` as a required keyword argument")
         if order is None:
             if len(args) > 3:
                 order = args[3]
             else:
                 raise ValueError(
-                    " missing`order` as a required keyward argument")
+                    " missing`order` as a required keyword argument")
         if this_timestep is not None:
             deprecate(
                 "this_timestep",

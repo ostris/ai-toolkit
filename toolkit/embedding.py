@@ -145,7 +145,7 @@ class Embedding:
     # however, on training we don't use that pipeline, so we have to do it ourselves
     def inject_embedding_to_prompt(self, prompt, expand_token=False, to_replace_list=None, add_if_not_present=True):
         output_prompt = prompt
-        embedding_tokens = self.embedding_tokens[0]  # shoudl be the same
+        embedding_tokens = self.embedding_tokens[0]  # should be the same
         default_replacements = ["[name]", "[trigger]"]
 
         replace_with = embedding_tokens if expand_token else self.trigger

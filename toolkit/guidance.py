@@ -34,7 +34,7 @@ def get_differential_mask(
     differential_mask = differential_mask * differential_scaler
 
     if gradient:
-        # wew need to scale it to 0-1
+        # we need to scale it to 0-1
         # differential_mask = differential_mask - differential_mask.min()
         # differential_mask = differential_mask / differential_mask.max()
         # add 0.2 threshold to both sides and clip

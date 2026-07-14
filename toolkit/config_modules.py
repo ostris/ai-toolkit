@@ -97,7 +97,7 @@ class SampleConfig:
         self.num_frames = kwargs.get('num_frames', 1)
         self.fps: int = kwargs.get('fps', 16)
         if self.num_frames > 1 and self.ext not in ['webp']:
-            print("Changing sample extention to animated webp")
+            print("Changing sample extension to animated webp")
             self.ext = 'webp'
         
         prompts: list[str] = kwargs.get('prompts', [])
@@ -418,17 +418,17 @@ class TrainConfig:
         self.latent_multiplier = kwargs.get('latent_multiplier', 1.0)
         self.negative_prompt = kwargs.get('negative_prompt', None)
         self.max_negative_prompts = kwargs.get('max_negative_prompts', 1)
-        # multiplier applied to loos on regularization images
+        # multiplier applied to loss on regularization images
         self.reg_weight = kwargs.get('reg_weight', 1.0)
         self.num_train_timesteps = kwargs.get('num_train_timesteps', 1000)
-        # automatically adapte the vae scaling based on the image norm
+        # automatically adapt the vae scaling based on the image norm
         self.adaptive_scaling_factor = kwargs.get('adaptive_scaling_factor', False)
 
         # dropout that happens before encoding. It functions independently per text encoder
         self.prompt_dropout_prob = kwargs.get('prompt_dropout_prob', 0.0)
 
         # match the norm of the noise before computing loss. This will help the model maintain its
-        # current understandin of the brightness of images.
+        # current understanding of the brightness of images.
 
         self.match_noise_norm = kwargs.get('match_noise_norm', False)
 
@@ -945,12 +945,12 @@ class DatasetConfig:
                 control_paths.append(control_path_3)
             self.control_path = control_paths
         
-        # color for transparent reigon of control images with transparency
+        # color for transparent region of control images with transparency
         self.control_transparent_color: List[int] = kwargs.get('control_transparent_color', [0, 0, 0])
         # inpaint images should be webp/png images with alpha channel. The alpha 0 (invisible) section will
         # be the part conditioned to be inpainted. The alpha 1 (visible) section will be the part that is ignored
         self.inpaint_path: Union[str,List[str]] = kwargs.get('inpaint_path', None)
-        # instead of cropping ot match image, it will serve the full size control image (clip images ie for ip adapters)
+        # instead of cropping to match image, it will serve the full size control image (clip images ie for ip adapters)
         self.full_size_control_images: bool = kwargs.get('full_size_control_images', True)
         self.alpha_mask: bool = kwargs.get('alpha_mask', False)  # if true, will use alpha channel as mask
         self.mask_path: str = kwargs.get('mask_path',
@@ -986,7 +986,7 @@ class DatasetConfig:
             self.cache_latents = False
             self.cache_latents_to_disk = False
 
-        # legacy compatability
+        # legacy compatibility
         legacy_caption_type = kwargs.get('caption_type', None)
         if legacy_caption_type:
             self.caption_ext = legacy_caption_type
