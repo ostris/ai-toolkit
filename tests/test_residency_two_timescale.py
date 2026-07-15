@@ -78,6 +78,18 @@ def test_cold_settles_to_stable_after_k_clean():
     assert s.name == vb.FSM_STABLE
 
 
+def test_cold_pressure_raises_cap_when_it_can_relieve():
+    s = vb.ResidencyFsmState()
+    s, a = drive(s, {"binding": True, "cap_can_relieve": True})
+    assert s.name == vb.FSM_CAP_VERIFY and a == vb.ACT_RAISE_CAP
+
+
+def test_cold_pressure_demotes_when_cap_is_pinned():
+    s = vb.ResidencyFsmState()
+    s, a = drive(s, {"binding": True, "cap_can_relieve": False})
+    assert s.name == vb.FSM_COLD and a == vb.ACT_DEMOTE
+
+
 def _stable():
     s = vb.ResidencyFsmState()
     for _ in range(2):

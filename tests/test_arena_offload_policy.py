@@ -160,18 +160,13 @@ def test_runtime_preserves_shape_peaks_after_layout_change():
     assert signals.shape_peaks
 
 
-def test_pressure_relief_reclaims_cache_then_demotes_enough_blocks(monkeypatch):
+def test_pressure_relief_demotes_enough_live_blocks_without_emptying_cache(monkeypatch):
     snapshots = iter(
         [
             {
                 "device_free_bytes": 100,
                 "predicted_peak_free_bytes": 200,
                 "deficit_bytes": 300,
-            },
-            {
-                "device_free_bytes": 180,
-                "predicted_peak_free_bytes": 240,
-                "deficit_bytes": 260,
             },
             {
                 "device_free_bytes": 500,
@@ -202,7 +197,7 @@ def test_pressure_relief_reclaims_cache_then_demotes_enough_blocks(monkeypatch):
 
     assert runtime._relieve_training_physical_pressure() is True
     assert transitions == [(('blocks.1', 'blocks.2'), False)]
-    assert len(empty_cache_calls) == 2
+    assert empty_cache_calls == []
     assert runtime._policy.last_reason == "physical_pressure_relief"
     assert runtime._last_training_pressure_relief["demoted_bytes"] == 300
 

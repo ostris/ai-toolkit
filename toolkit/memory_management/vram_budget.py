@@ -894,8 +894,10 @@ def residency_fsm_step(
         return enter(FSM_COLD)
 
     if name == FSM_COLD:
-        if invalid or binding:
-            return ResidencyFsmState(FSM_COLD, 0 if invalid else w), ACT_HOLD
+        if invalid:
+            return ResidencyFsmState(FSM_COLD, 0), ACT_HOLD
+        if binding:
+            return enter(FSM_CAP_VERIFY, ACT_RAISE_CAP) if cap_relieve else demote()
         return enter(FSM_STABLE) if w >= k_clean else stay()
 
     if name == FSM_STABLE:

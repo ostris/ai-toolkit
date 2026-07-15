@@ -972,7 +972,6 @@ class ArenaOffloadRuntime:
         non_torch = max(0, total - free - reserved)
         predicted_free = total - peak_allocated - non_torch
         headroom = self._training_physical_vram_headroom_bytes()
-        governing_free = min(free, predicted_free)
         return {
             "total_bytes": total,
             "device_free_bytes": free,
@@ -981,30 +980,28 @@ class ArenaOffloadRuntime:
             "non_torch_bytes": non_torch,
             "predicted_peak_free_bytes": predicted_free,
             "headroom_bytes": headroom,
-            "deficit_bytes": max(0, headroom - governing_free),
+            # The allocator cap owns idle-cache reclamation.  This guard asks
+            # the different question: would live memory alone breach the
+            # physical floor even after allocator GC did everything it could?
+            "deficit_bytes": max(0, headroom - predicted_free),
         }
 
     def _relieve_training_physical_pressure(self) -> bool:
-        """Reclaim cache, then demote enough residents to preserve the floor."""
-        import torch
-
+        """Demote live residency when allocator GC cannot preserve the floor."""
         if self._signals.last_signal is None:
             return False
         before = self._training_pressure_snapshot()
         if before["deficit_bytes"] <= 0:
             return False
 
-        torch.cuda.empty_cache()
-        after_cache = self._training_pressure_snapshot()
         selected = []
         selected_bytes = 0
-        remaining = int(after_cache["deficit_bytes"])
-        if remaining > 0:
-            for candidate in self._demotion_candidates():
-                selected.append(candidate["block_key"])
-                selected_bytes += int(candidate["block_bytes"])
-                if selected_bytes >= remaining:
-                    break
+        remaining = int(before["deficit_bytes"])
+        for candidate in self._demotion_candidates():
+            selected.append(candidate["block_key"])
+            selected_bytes += int(candidate["block_bytes"])
+            if selected_bytes >= remaining:
+                break
         if selected:
             result = self.transition_training_blocks(
                 selected, resident=False
@@ -1012,7 +1009,6 @@ class ArenaOffloadRuntime:
             if not result.get("changed"):
                 selected = []
                 selected_bytes = 0
-            torch.cuda.empty_cache()
 
         after = self._training_pressure_snapshot()
         self._policy.record_physical_pressure_relief(
@@ -1020,15 +1016,12 @@ class ArenaOffloadRuntime:
         )
         self._last_training_pressure_relief = {
             "before": before,
-            "after_cache": after_cache,
             "after": after,
             "demoted_block_keys": tuple(selected),
             "demoted_bytes": selected_bytes,
         }
         print(
             "[ArenaOffload] WDDM pressure relief: "
-            f"cache_reclaimed="
-            f"{max(0, after_cache['device_free_bytes'] - before['device_free_bytes']) / GIB:.2f} GiB, "
             f"demoted_blocks={len(selected)}, "
             f"demoted={selected_bytes / GIB:.2f} GiB, "
             f"predicted_free="

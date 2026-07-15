@@ -301,7 +301,7 @@ class ArenaResidencyController:
         return self.reject_pending_promotion("promotion_allocation_failure")
 
     def record_physical_pressure_relief(self, block_keys, block_bytes):
-        """Put the controller in cooldown after emergency cache/layout relief."""
+        """Put the controller in cooldown after emergency layout relief."""
         keys = tuple(str(key) for key in block_keys)
         self.pending_promotion = None
         self.last_promoted_key = None
