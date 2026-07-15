@@ -341,6 +341,18 @@ class AnimaModel(BaseModel):
             vae=unwrap_model(self.vae),
         )
         pipeline = pipeline.to(self.device_torch)
+
+        # ModularPipeline.set_progress_bar_config only walks one level of sub_blocks,
+        # but the tqdm bar lives in the loop block nested two levels deep. Must use
+        # _blocks; the public .blocks property returns a fresh copy on every access.
+        def disable_progress_bars(blocks):
+            for sub_block in blocks.sub_blocks.values():
+                if hasattr(sub_block, "set_progress_bar_config"):
+                    sub_block.set_progress_bar_config(disable=True)
+                if hasattr(sub_block, "sub_blocks"):
+                    disable_progress_bars(sub_block)
+
+        disable_progress_bars(pipeline._blocks)
         return pipeline
 
     def _offload_text_encoder(self):
