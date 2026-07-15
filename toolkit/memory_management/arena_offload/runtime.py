@@ -90,6 +90,7 @@ class ArenaOffloadRuntime:
         self._last_failure_event: dict | None = None
         self._policy = ArenaResidencyController()
         self._last_training_cap_target_bytes: int | None = None
+        self._last_training_pressure_relief: dict | None = None
         self._bootstrap_complete = False
         self._bootstrap_min_free_bytes: int | None = None
         self._bootstrap_budget_bytes = 0
@@ -597,6 +598,7 @@ class ArenaOffloadRuntime:
             or "out of memory" in text.lower()
         )
         rollback = None
+        recoverable = False
         if allocation_failure:
             decision = self._policy.allocation_failure()
             if decision.action == "rollback" and decision.block_key is not None:
@@ -627,6 +629,35 @@ class ArenaOffloadRuntime:
                     if decision.block_keys
                     else decision.block_key
                 )
+                torch.cuda.empty_cache()
+                recoverable = not bool(
+                    getattr(self._config, "strict_vram_cap", False)
+                )
+            elif not bool(
+                getattr(self._config, "strict_vram_cap", False)
+            ):
+                candidates = self._demotion_candidates()
+                if candidates:
+                    candidate = candidates[0]
+                    self.transition_training_block(
+                        candidate["block_key"], resident=False
+                    )
+                    rollback = candidate["block_key"]
+                    self._policy.record_physical_pressure_relief(
+                        (candidate["block_key"],),
+                        candidate["block_bytes"],
+                    )
+                    torch.cuda.empty_cache()
+                    recoverable = True
+                else:
+                    recoverable = (
+                        allocator_cap.relieve_wddm_allocator_guard_after_oom(
+                            self._device,
+                            strict=False,
+                            context="training step",
+                            log_prefix="[ArenaOffload]",
+                        )
+                    )
         try:
             stats = torch.cuda.memory_stats(self._device)
             peak_allocated = int(torch.cuda.max_memory_allocated(self._device))
@@ -671,6 +702,7 @@ class ArenaOffloadRuntime:
                 ),
             ),
             "rollback_block": rollback,
+            "recoverable": bool(recoverable),
             "rejected_residency_bytes": (
                 self._policy.last_rejected_residency_bytes
             ),
@@ -897,6 +929,10 @@ class ArenaOffloadRuntime:
         return capacity
 
     def _demotion_candidate(self):
+        candidates = self._demotion_candidates()
+        return candidates[0] if candidates else None
+
+    def _demotion_candidates(self):
         plan = getattr(self._residency, "plan", None) or self._training_plan
         ordered = ordered_demotion_block_keys(
             self._arena,
@@ -906,15 +942,103 @@ class ArenaOffloadRuntime:
                 "protected_training_leaf_keys", ()
             ),
         )
-        if not ordered:
-            return None
-        block_key = ordered[0]
-        record = self._arena.block_record(block_key)
-        keys = tuple((block_key, name) for name in record.leaf_names)
-        block_bytes = sum(
-            self._residency.resident_leaf_bytes(key) for key in keys
-        ) or int(record.committed_bytes)
-        return {"block_key": block_key, "block_bytes": block_bytes}
+        candidates = []
+        for block_key in ordered:
+            record = self._arena.block_record(block_key)
+            keys = tuple((block_key, name) for name in record.leaf_names)
+            block_bytes = sum(
+                self._residency.resident_leaf_bytes(key) for key in keys
+            ) or int(record.committed_bytes)
+            candidates.append(
+                {"block_key": block_key, "block_bytes": block_bytes}
+            )
+        return tuple(candidates)
+
+    def _training_pressure_snapshot(self):
+        import torch
+
+        from .. import vram_budget
+
+        total = int(vram_budget.device_total_bytes(self._device))
+        free = int(vram_budget.device_free_bytes(self._device))
+        reserved = int(torch.cuda.memory_reserved(self._device))
+        signal = self._signals.last_signal or {}
+        peak_allocated = int(signal.get("peak_allocated_bytes", 0) or 0)
+        for peak in self._signals.shape_peaks.values():
+            if peak.steps > 0:
+                peak_allocated = max(
+                    peak_allocated, int(peak.peak_allocated_bytes)
+                )
+        non_torch = max(0, total - free - reserved)
+        predicted_free = total - peak_allocated - non_torch
+        headroom = self._training_physical_vram_headroom_bytes()
+        governing_free = min(free, predicted_free)
+        return {
+            "total_bytes": total,
+            "device_free_bytes": free,
+            "torch_reserved_bytes": reserved,
+            "peak_allocated_bytes": peak_allocated,
+            "non_torch_bytes": non_torch,
+            "predicted_peak_free_bytes": predicted_free,
+            "headroom_bytes": headroom,
+            "deficit_bytes": max(0, headroom - governing_free),
+        }
+
+    def _relieve_training_physical_pressure(self) -> bool:
+        """Reclaim cache, then demote enough residents to preserve the floor."""
+        import torch
+
+        if self._signals.last_signal is None:
+            return False
+        before = self._training_pressure_snapshot()
+        if before["deficit_bytes"] <= 0:
+            return False
+
+        torch.cuda.empty_cache()
+        after_cache = self._training_pressure_snapshot()
+        selected = []
+        selected_bytes = 0
+        remaining = int(after_cache["deficit_bytes"])
+        if remaining > 0:
+            for candidate in self._demotion_candidates():
+                selected.append(candidate["block_key"])
+                selected_bytes += int(candidate["block_bytes"])
+                if selected_bytes >= remaining:
+                    break
+        if selected:
+            result = self.transition_training_blocks(
+                selected, resident=False
+            )
+            if not result.get("changed"):
+                selected = []
+                selected_bytes = 0
+            torch.cuda.empty_cache()
+
+        after = self._training_pressure_snapshot()
+        self._policy.record_physical_pressure_relief(
+            selected, selected_bytes
+        )
+        self._last_training_pressure_relief = {
+            "before": before,
+            "after_cache": after_cache,
+            "after": after,
+            "demoted_block_keys": tuple(selected),
+            "demoted_bytes": selected_bytes,
+        }
+        print(
+            "[ArenaOffload] WDDM pressure relief: "
+            f"cache_reclaimed="
+            f"{max(0, after_cache['device_free_bytes'] - before['device_free_bytes']) / GIB:.2f} GiB, "
+            f"demoted_blocks={len(selected)}, "
+            f"demoted={selected_bytes / GIB:.2f} GiB, "
+            f"predicted_free="
+            f"{before['predicted_peak_free_bytes'] / GIB:.2f}->"
+            f"{after['predicted_peak_free_bytes'] / GIB:.2f} GiB, "
+            f"device_free="
+            f"{before['device_free_bytes'] / GIB:.2f}->"
+            f"{after['device_free_bytes'] / GIB:.2f} GiB"
+        )
+        return True
 
     def _worst_shape_candidate_physical_headroom_bytes(self, candidate):
         if candidate is None:
@@ -982,6 +1106,8 @@ class ArenaOffloadRuntime:
         import torch
 
         if torch.device(self._device).type != "cuda" or not torch.cuda.is_available():
+            return
+        if self._relieve_training_physical_pressure():
             return
         candidate = self._promotion_candidate()
         demote_candidate = self._demotion_candidate()
@@ -1151,6 +1277,9 @@ class ArenaOffloadRuntime:
             ),
             "training_cap_target_bytes": getattr(
                 self, "_last_training_cap_target_bytes", None
+            ),
+            "last_training_pressure_relief": getattr(
+                self, "_last_training_pressure_relief", None
             ),
             "bootstrap_complete": self._bootstrap_complete,
             "bootstrap_min_free_bytes": self._bootstrap_min_free_bytes,

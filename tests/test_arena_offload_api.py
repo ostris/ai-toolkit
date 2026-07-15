@@ -16,6 +16,7 @@ import torch
 
 from toolkit.memory_management.arena_offload import (
     ArenaOffloadConfig,
+    estimate_training_working_reserve_hint_bytes,
     get_arena_runtime,
     is_arena_offloaded,
     is_memory_managed,
@@ -236,6 +237,34 @@ class ArenaOffloadHelpersTest(unittest.TestCase):
 
 
 class ArenaOffloadConfigTest(unittest.TestCase):
+    def test_auto_training_reserve_uses_largest_configured_resolution(self):
+        datasets = [
+            SimpleNamespace(resolution=256),
+            SimpleNamespace(resolution=512),
+            SimpleNamespace(resolution=1024),
+        ]
+
+        hint = estimate_training_working_reserve_hint_bytes(datasets)
+        config = ArenaOffloadConfig.from_model_config(
+            _FakeModelConfig(),
+            training_working_reserve_hint_bytes=hint,
+        )
+
+        self.assertIsNotNone(hint)
+        self.assertAlmostEqual(config._policy.working_reserve_gib, hint / GIB)
+        self.assertGreater(config._policy.working_reserve_gib, 5.0)
+
+    def test_explicit_training_reserve_overrides_configured_shape_hint(self):
+        class Manual(_FakeModelConfig):
+            layer_offloading_smart_working_reserve_gb = 6.0
+
+        config = ArenaOffloadConfig.from_model_config(
+            Manual(),
+            training_working_reserve_hint_bytes=10 * GIB,
+        )
+
+        self.assertEqual(config._policy.working_reserve_gib, 6.0)
+
     def test_from_model_config_maps_the_public_surface(self):
         config = ArenaOffloadConfig.from_model_config(_FakeModelConfig())
 

@@ -54,6 +54,45 @@ _COMPATIBILITY_ALIASES = {
 }
 
 
+def estimate_training_working_reserve_hint_bytes(
+    dataset_configs, *, batch_size: int = 1
+) -> int | None:
+    """Estimate the worst configured image-training working set.
+
+    Dataset ``resolution`` is an area target: a 1024 bucket is approximately
+    1024**2 pixels regardless of aspect ratio. Diffusion transformers normally
+    see one token per 16x16 image pixels after VAE and patch compression.
+    Planning from the largest configured bucket prevents earlier low-resolution
+    steps from licensing residency that the later bucket cannot support.
+    """
+    max_image_tokens = 0
+    for dataset in dataset_configs or ():
+        resolution = getattr(dataset, "resolution", 0)
+        if isinstance(resolution, Sequence) and not isinstance(
+            resolution, (str, bytes)
+        ):
+            candidates = resolution
+        else:
+            candidates = (resolution,)
+        for candidate in candidates:
+            try:
+                side = max(0, int(candidate))
+            except (TypeError, ValueError):
+                continue
+            image_tokens = (side * side + 255) // 256
+            max_image_tokens = max(max_image_tokens, image_tokens)
+    if max_image_tokens <= 0:
+        return None
+
+    from ..vram_budget import estimate_training_working_reserve_bytes
+
+    batch = max(1, int(batch_size or 1))
+    return estimate_training_working_reserve_bytes(
+        max_image_tokens * batch,
+        text_tokens=512 * batch,
+    )
+
+
 def validate_arena_training_mode(
     *,
     full_finetune=False,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-import warnings
 
 import torch
 
@@ -11,6 +10,8 @@ from . import vram_budget
 
 GIB = 1024 ** 3
 APPLIED_FRACTIONS: dict[int, float] = {}
+RELIEF_BYTES: dict[int, int] = {}
+CAP_RELIEF_BYTES = int(0.5 * GIB)
 
 
 def _cuda_index(device) -> int | None:
@@ -38,6 +39,7 @@ def restore_tracked_allocator_fraction(device, previous: float | None) -> None:
         if current is not None and current < 1.0:
             torch.cuda.set_per_process_memory_fraction(1.0, index)
         APPLIED_FRACTIONS.pop(index, None)
+        RELIEF_BYTES.pop(index, None)
         return
     previous = float(previous)
     if current is None or abs(current - previous) > 1e-12:
@@ -92,12 +94,12 @@ def configure_wddm_allocator_guard(
     strict=False,
     log_prefix="[MemoryManager]",
 ):
-    """Configure the WDDM cliff guard for production or development.
+    """Bind the allocator below the WDDM cliff in every guard mode.
 
-    Production treats the cliff as a planning target and permits WDDM spill;
-    strict development mode binds torch's allocator below it so a breach raises
-    OOM. Call only at a phase boundary. A simulated governing capacity is
-    always converted against the physical card total.
+    ``strict`` controls how the caller handles a cap rejection; it must not
+    disable the cap or the FSM's allocator steering. Call only at a phase
+    boundary. A simulated governing capacity is always converted against the
+    physical card total.
     """
     if sys.platform != "win32" or not torch.cuda.is_available():
         return None
@@ -105,19 +107,6 @@ def configure_wddm_allocator_guard(
     if dev.type != "cuda":
         return None
     index = dev.index if dev.index is not None else torch.cuda.current_device()
-    if not strict:
-        previous = APPLIED_FRACTIONS.pop(index, None)
-        if previous is not None and previous < 1.0:
-            try:
-                torch.cuda.set_per_process_memory_fraction(1.0, index)
-            except Exception as error:
-                warnings.warn(
-                    "could not remove the strict CUDA allocator cap; "
-                    f"WDDM spill fallback may remain unavailable: {error}",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-        return None
     try:
         hard_gib = float(wddm_hard_gib) if wddm_hard_gib is not None else 1.0
     except (TypeError, ValueError):
@@ -138,6 +127,10 @@ def configure_wddm_allocator_guard(
         fraction = max(0.1, min(cliff_fraction, target_fraction))
         reclaimed = fraction < cliff_fraction - 1e-9
 
+    relief_bytes = RELIEF_BYTES.get(index, 0)
+    if relief_bytes:
+        fraction = min(1.0, fraction + relief_bytes / float(total))
+
     applied = fraction * total / float(real_total)
     previous = APPLIED_FRACTIONS.get(index)
     tolerance = (64 * 1024**2) / real_total
@@ -154,11 +147,42 @@ def configure_wddm_allocator_guard(
     )
     if total != real_total:
         source += f"; SIMULATED {total / GIB:.2f} GiB card"
+    if relief_bytes:
+        source += f"; +{relief_bytes / GIB:.2f} GiB recovery relief"
     print(
-        f"{log_prefix} strict WDDM allocator cap: "
+        f"{log_prefix} WDDM allocator cap: "
         f"{fraction * total / GIB:.2f}/{total / GIB:.2f} GiB "
         f"({source}; margin {hard_gib:.2f} GiB, "
         f"non_torch {non_torch / GIB:.2f} GiB; allocation beyond this "
         "recycles cache or raises OOM instead of silently paging)"
     )
     return applied
+
+
+def relieve_wddm_allocator_guard_after_oom(
+    device, *, strict=False, context="training step", log_prefix="[MemoryManager]"
+) -> bool:
+    """Widen a capped allocator only when non-strict recovery has no layout relief."""
+    if strict or sys.platform != "win32" or not torch.cuda.is_available():
+        return False
+    dev = torch.device(device if device is not None else "cuda")
+    if dev.type != "cuda":
+        return False
+    index = dev.index if dev.index is not None else torch.cuda.current_device()
+    applied = APPLIED_FRACTIONS.get(index)
+    if applied is None or applied >= 1.0:
+        return False
+
+    real_total = vram_budget.real_device_total_bytes(index)
+    relief = RELIEF_BYTES.get(index, 0) + CAP_RELIEF_BYTES
+    widened = min(1.0, applied + CAP_RELIEF_BYTES / float(real_total))
+    torch.cuda.set_per_process_memory_fraction(widened, index)
+    APPLIED_FRACTIONS[index] = widened
+    RELIEF_BYTES[index] = relief
+    print(
+        f"{log_prefix} allocator cap rejected {context}: no resident layout "
+        f"relief remained, widening {applied * real_total / GIB:.2f}->"
+        f"{widened * real_total / GIB:.2f} GiB so the non-strict job can "
+        "continue"
+    )
+    return True

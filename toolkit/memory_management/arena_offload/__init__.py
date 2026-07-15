@@ -20,6 +20,7 @@ the legacy manager remains a separate backend.
 from .api import (
     ArenaOffloadConfig,
     close_arena_offload,
+    estimate_training_working_reserve_hint_bytes,
     get_arena_runtime,
     is_arena_offloaded,
     is_memory_managed,
@@ -48,6 +49,7 @@ __all__ = [
     "get_arena_runtime",
     "get_memory_runtime",
     "discover_blocks",
+    "estimate_training_working_reserve_hint_bytes",
     "is_arena_offloaded",
     "is_memory_managed",
     "memory_runtime_owns_compile",

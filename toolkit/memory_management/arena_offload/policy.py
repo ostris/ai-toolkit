@@ -300,6 +300,20 @@ class ArenaResidencyController:
     def allocation_failure(self):
         return self.reject_pending_promotion("promotion_allocation_failure")
 
+    def record_physical_pressure_relief(self, block_keys, block_bytes):
+        """Put the controller in cooldown after emergency cache/layout relief."""
+        keys = tuple(str(key) for key in block_keys)
+        self.pending_promotion = None
+        self.last_promoted_key = None
+        self.state = vram_budget.ResidencyFsmState(
+            vram_budget.FSM_COOLDOWN, 0
+        )
+        self.last_action = "demote" if keys else "hold"
+        self.last_reason = "physical_pressure_relief"
+        self.last_block_key = keys[-1] if keys else None
+        self.last_block_bytes = int(block_bytes)
+        self.last_target_cap_bytes = None
+
     def _decision(self, action, candidate, *, reason):
         self.last_action = action
         self.last_reason = reason

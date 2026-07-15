@@ -160,6 +160,53 @@ def test_runtime_preserves_shape_peaks_after_layout_change():
     assert signals.shape_peaks
 
 
+def test_pressure_relief_reclaims_cache_then_demotes_enough_blocks(monkeypatch):
+    snapshots = iter(
+        [
+            {
+                "device_free_bytes": 100,
+                "predicted_peak_free_bytes": 200,
+                "deficit_bytes": 300,
+            },
+            {
+                "device_free_bytes": 180,
+                "predicted_peak_free_bytes": 240,
+                "deficit_bytes": 260,
+            },
+            {
+                "device_free_bytes": 500,
+                "predicted_peak_free_bytes": 540,
+                "deficit_bytes": 0,
+            },
+        ]
+    )
+    runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
+    runtime._signals = SimpleNamespace(last_signal={"step_num": 8})
+    runtime._policy = ArenaResidencyController()
+    runtime._last_training_pressure_relief = None
+    runtime._training_pressure_snapshot = lambda: next(snapshots)
+    runtime._demotion_candidates = lambda: (
+        {"block_key": "blocks.1", "block_bytes": 150},
+        {"block_key": "blocks.2", "block_bytes": 150},
+        {"block_key": "blocks.3", "block_bytes": 150},
+    )
+    transitions = []
+    runtime.transition_training_blocks = lambda keys, resident: (
+        transitions.append((tuple(keys), resident))
+        or {"changed": True}
+    )
+    empty_cache_calls = []
+    monkeypatch.setattr(
+        "torch.cuda.empty_cache", lambda: empty_cache_calls.append(True)
+    )
+
+    assert runtime._relieve_training_physical_pressure() is True
+    assert transitions == [(('blocks.1', 'blocks.2'), False)]
+    assert len(empty_cache_calls) == 2
+    assert runtime._policy.last_reason == "physical_pressure_relief"
+    assert runtime._last_training_pressure_relief["demoted_bytes"] == 300
+
+
 def test_worst_shape_allocator_slack_reconstructs_current_layout():
     signals = TrainingSignalWindow()
     observe(
@@ -763,6 +810,7 @@ def test_arena_allocation_failure_drains_and_rolls_back(monkeypatch):
     assert runtime._policy.last_safe_residency_bytes == 200
     assert runtime._policy.last_rejected_residency_bytes == 220
     assert runtime._last_failure_event["rollback_block"] == ["blocks.7"]
+    assert runtime._last_failure_event["recoverable"] is True
     assert runtime._last_failure_event["abandoned_fetch_tickets"] == 2
     assert cap_calls[0][1]["target_cap_bytes"] == 1000
 

@@ -1856,14 +1856,31 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if arena_requested:
             from toolkit.memory_management.arena_offload import (
                 ArenaOffloadConfig,
+                estimate_training_working_reserve_hint_bytes,
                 prepare_arena_offload,
             )
 
+            training_reserve_hint = (
+                estimate_training_working_reserve_hint_bytes(
+                    self.dataset_configs,
+                    batch_size=self.train_config.batch_size,
+                )
+            )
+            if training_reserve_hint is not None:
+                print_acc(
+                    "[ArenaOffload] configured-shape training reserve: "
+                    f"{training_reserve_hint / 1024**3:.2f} GiB"
+                )
             arena_runtime = prepare_arena_offload(
                 unet,
                 device=self.device_torch,
                 block_names=self.sd.get_transformer_block_names(),
-                config=ArenaOffloadConfig.from_model_config(self.model_config),
+                config=ArenaOffloadConfig.from_model_config(
+                    self.model_config,
+                    training_working_reserve_hint_bytes=(
+                        training_reserve_hint
+                    ),
+                ),
             )
             arena_runtime.place_permanent_modules(self.device_torch, dtype)
         else:
@@ -2628,24 +2645,37 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     raise  # not an OOM; surface real errors
             if did_oom:
-                self.num_consecutive_oom += 1
+                recoverable_oom = False
                 if arena_runtime is not None:
                     failure = arena_runtime.diagnostics().get(
                         'last_failure_event'
                     )
                     if failure is not None:
+                        recoverable_oom = bool(
+                            failure.get('recoverable', False)
+                        )
                         print_acc(
                             f"[ArenaOffload] training failure: {failure}"
                         )
-                if self.num_consecutive_oom > 3:
-                    raise RuntimeError("OOM during training step 3 times in a row, aborting training")
+                if recoverable_oom:
+                    self.num_consecutive_oom = 0
+                else:
+                    self.num_consecutive_oom += 1
+                    if self.num_consecutive_oom > 3:
+                        raise RuntimeError("OOM during training step 3 times in a row, aborting training")
                 optimizer.zero_grad(set_to_none=True)
                 flush()
                 torch.cuda.ipc_collect()
                 # skip this step and keep going
                 print_acc("")
                 print_acc("################################################")
-                print_acc(f"# OOM during training step, skipping batch {self.num_consecutive_oom}/3 #")
+                if recoverable_oom:
+                    print_acc(
+                        "# Allocator guard recovered; skipping this batch "
+                        "and continuing #"
+                    )
+                else:
+                    print_acc(f"# OOM during training step, skipping batch {self.num_consecutive_oom}/3 #")
                 print_acc("################################################")
                 print_acc("")
             else:
