@@ -2109,6 +2109,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if user_set_cache_limit:
                     torch._dynamo.config.cache_size_limit = cache_size_limit
                 torch._dynamo.config.suppress_errors = False
+                # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
+                # crashes on some dynamic-shape index expressions (sympy PowByNatural
+                # "assert p >= 0", seen with Qwen Image). The analysis doesn't apply
+                # to dynamic shapes anyway, so turn it off.
+                if hasattr(torch._inductor.config.triton, 'coalesce_tiling_analysis'):
+                    torch._inductor.config.triton.coalesce_tiling_analysis = False
 
                 compile_mode = getattr(self.model_config, 'compile_mode', 'default')
                 compile_dynamic = getattr(self.model_config, 'compile_dynamic', True)
@@ -2365,7 +2371,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
                 is_reg_step = False
                 is_save_step = self.save_config.save_every and self.step_num % self.save_config.save_every == 0
-                is_sample_step = self.sample_config.sample_every and self.step_num % self.sample_config.sample_every == 0
+                is_sample_step = (
+                    self.sample_config.sample_every
+                    and self.step_num >= self.sample_config.sample_start_step
+                    and self.step_num % self.sample_config.sample_every == 0
+                )
                 if self.train_config.disable_sampling:
                     is_sample_step = False
 

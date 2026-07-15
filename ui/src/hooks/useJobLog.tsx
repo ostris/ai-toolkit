@@ -20,9 +20,17 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
   // Byte offset into the log file that we've already consumed. Sent to the
   // server so it only returns newly appended content.
   const offsetRef = useRef<number | null>(null);
+  // Guards against overlapping requests: if a poll fires while a request is
+  // still in flight, both would read the same offset and append the same
+  // bytes twice.
+  const inFlightRef = useRef(false);
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'refreshing'>('idle');
 
   const refresh = () => {
+    if (inFlightRef.current) {
+      return;
+    }
+    inFlightRef.current = true;
     let loadStatus: 'loading' | 'refreshing' = 'loading';
     if (didInitialLoadRef.current) {
       loadStatus = 'refreshing';
@@ -48,6 +56,9 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
       .catch(error => {
         console.error('Error fetching log:', error);
         setStatus('error');
+      })
+      .finally(() => {
+        inFlightRef.current = false;
       });
   };
 
@@ -55,6 +66,7 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
     // New job — start fresh.
     offsetRef.current = null;
     didInitialLoadRef.current = false;
+    inFlightRef.current = false;
     setLog('');
     refresh();
 

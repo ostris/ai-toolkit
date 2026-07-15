@@ -29,7 +29,8 @@ Module = Union['LoConSpecialModule', 'LoRAModule', 'DoRAModule']
 LINEAR_MODULES = [
     'Linear',
     'LoRACompatibleLinear',
-    'QLinear'
+    'QLinear',
+    'OstrisLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
@@ -157,7 +158,7 @@ class ExtractableModuleMixin:
 
         # set up alphas
         self.alpha = (self.alpha * 0) + down_weight.shape[0]
-        self.scale = self.alpha / self.lora_dim
+        self.scale = float(self.alpha.detach().float().item()) / self.lora_dim
 
         # assign them
 
@@ -386,7 +387,7 @@ class ToolkitModuleMixin:
         weight_device = weight.device
         if weight.device != down_weight.device:
             weight = weight.to(down_weight.device)
-        if scale.device != down_weight.device:
+        if isinstance(scale, torch.Tensor) and scale.device != down_weight.device:
             scale = scale.to(down_weight.device)
         # merge weight
         if self.full_rank:
