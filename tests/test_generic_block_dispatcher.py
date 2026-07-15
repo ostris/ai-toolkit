@@ -400,16 +400,19 @@ def test_cuda_streamed_compiled_train_sample_train():
     assert any(streamed)
     assert not streamed[-1]
 
-    def train_once(step):
+    def train_once(step, *, input_requires_grad=True):
         transfer_before = transfer.lifetime_fetch_stats()["bytes"]
         planned = runtime.diagnostics()["accounting"][
             "planned_training_h2d_bytes"
         ]
-        value = torch.randn(2, 4, device=device, requires_grad=True)
+        value = torch.randn(
+            2, 4, device=device, requires_grad=input_requires_grad
+        )
         with runtime.training_step(shape_key=(2, 4), step_num=step):
             output = model(value)
             output.square().mean().backward()
-        assert value.grad is not None
+        if input_requires_grad:
+            assert value.grad is not None
         assert all(parameter.grad is not None for parameter in adapters)
         for parameter in adapters:
             parameter.grad = None
@@ -429,8 +432,16 @@ def test_cuda_streamed_compiled_train_sample_train():
     assert torch.isfinite(sampled).all()
     runtime._executor.activate(runtime._executor.TRAIN, runtime._training_plan)
     second = train_once(2)
+    # ZImage enters some checkpointed block families through frozen setup
+    # layers, so their first streamed block has no gradient-bearing input.
+    # Two consecutive steps prove recompute returns those ring slots instead
+    # of relying on a backward hook that autograd cannot schedule.
+    third = train_once(3, input_requires_grad=False)
+    fourth = train_once(4, input_requires_grad=False)
     assert torch.isfinite(first).all()
     assert torch.isfinite(second).all()
+    assert torch.isfinite(third).all()
+    assert torch.isfinite(fourth).all()
     close_arena_offload(model)
     assert active_process_owner() is None
 

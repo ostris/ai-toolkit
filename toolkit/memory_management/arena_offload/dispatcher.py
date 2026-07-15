@@ -296,6 +296,7 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
         token = None
         compact_flat = None
         training = self._active_mode == self.TRAIN
+        release_on_backward = False
         if transfer is not None:
             if training and any(
                 (source.block_key, leaf) in self.protected_training_leaf_keys
@@ -314,7 +315,10 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
                 guard,
             )
             compact_flat = torch.ops.mm.fetch_wait(token, nbytes)
-            if training and torch.is_grad_enabled():
+            release_on_backward = (
+                training and torch.is_grad_enabled() and first.requires_grad
+            )
+            if release_on_backward:
                 first = free_on_backward(first, token)
                 args, kwargs = _replace_tensor_argument(
                     args, kwargs, first_location, first
@@ -322,17 +326,27 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
 
         leaf_args = source.assemble_leaf_args(self.residency, compact_flat)
         self._mark_dispatch_dynamic(first)
-        output = self._get_dispatch_kernel(index)(leaf_args, args, kwargs)
+        try:
+            output = self._get_dispatch_kernel(index)(leaf_args, args, kwargs)
+        except BaseException:
+            # Non-reentrant checkpoint replay raises its private early-stop
+            # control-flow exception as soon as it has regenerated every
+            # tensor backward requested. That can unwind the block before the
+            # normal post-forward release below. With no gradient-bearing
+            # input, frozen streamed state is not a backward dependency and
+            # there is no free_on_backward node, so release on that unwind.
+            if token is not None and not release_on_backward:
+                torch.ops.mm.fetch_free(token)
+            raise
         if token is not None:
             # The first checkpoint pass discards its fetched views, so return
-            # that slot after forward. Replay runs inside an autograd graph
-            # task; its token is instead released by free_on_backward after
-            # the compiled block backward has consumed the substituted state.
-            if (
-                not training
-                or not torch.is_grad_enabled()
-                or not _in_backward_graph_task()
-            ):
+            # that slot after forward. A replay with a gradient-bearing input
+            # instead releases through free_on_backward after the compiled
+            # block backward consumes the substituted state. When no input
+            # requires gradients there is no backward node to run that hook,
+            # and the frozen streamed state is not a backward dependency, so
+            # the replay must also release at forward completion.
+            if not release_on_backward or not _in_backward_graph_task():
                 torch.ops.mm.fetch_free_after(
                     token, _first_output_tensor(output)
                 )
