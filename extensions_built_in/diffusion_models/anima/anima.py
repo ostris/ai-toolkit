@@ -22,7 +22,7 @@ try:
     from diffusers.modular_pipelines.anima.modular_blocks_anima import AnimaCoreDenoiseStep, AnimaDecodeStep
 except ImportError as e:
     raise ImportError(
-        "Anima requires a Diffusers build with Anima support. Run `uv pip install -r requirements.txt`."
+        "Diffusers is out of date. Update diffusers to the latest version by doing pip uninstall diffusers and then pip install -r requirements.txt"
     ) from e
 
 
