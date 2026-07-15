@@ -20,7 +20,11 @@ from typing import Any
 
 from .. import allocator_cap
 from ..canonical_arena import CanonicalArena
-from ..residency import ResidencyPlan, ResidencyState
+from ..residency import (
+    ResidencyPlan,
+    ResidencyState,
+    ordered_demotion_block_keys,
+)
 from ..vram_budget import apply_simulated_card
 from .policy import (
     AGGRESSIVE_PROMOTION_MIN_CAPACITY,
@@ -145,7 +149,11 @@ class ArenaOffloadRuntime:
             }
             if canonical_build is None:
                 arena = CanonicalArena()
-                canonical_build = arena.prepare(entries_by_block, model=transformer)
+                canonical_build = arena.prepare(
+                    entries_by_block,
+                    model=transformer,
+                    pin_on_finish=False,
+                )
                 resources.adopt_canonical_build(canonical_build)
                 canonical_build.populate_from_model()
             else:
@@ -215,6 +223,7 @@ class ArenaOffloadRuntime:
                 selection=selection,
                 **executor_kwargs,
             )
+            executor.reconcile_pin_policy(training_plan)
             resources.adopt_executor(executor)
 
             runtime = cls(
@@ -889,24 +898,22 @@ class ArenaOffloadRuntime:
 
     def _demotion_candidate(self):
         plan = getattr(self._residency, "plan", None) or self._training_plan
-        protected = self._protected_training_blocks()
-        candidates = []
-        for order, block_key in enumerate(self._arena.block_keys()):
-            record = self._arena.block_record(block_key)
-            keys = tuple((block_key, name) for name in record.leaf_names)
-            if block_key in protected or not all(
-                key in plan.resident_leaf_keys for key in keys
-            ):
-                continue
-            actual = sum(
-                self._residency.resident_leaf_bytes(key) for key in keys
-            )
-            candidates.append(
-                (actual or int(record.committed_bytes), -order, str(block_key))
-            )
-        if not candidates:
+        ordered = ordered_demotion_block_keys(
+            self._arena,
+            self._residency,
+            plan,
+            protected_leaf_keys=(self._smart_plan or {}).get(
+                "protected_training_leaf_keys", ()
+            ),
+        )
+        if not ordered:
             return None
-        block_bytes, _order, block_key = max(candidates)
+        block_key = ordered[0]
+        record = self._arena.block_record(block_key)
+        keys = tuple((block_key, name) for name in record.leaf_names)
+        block_bytes = sum(
+            self._residency.resident_leaf_bytes(key) for key in keys
+        ) or int(record.committed_bytes)
         return {"block_key": block_key, "block_bytes": block_bytes}
 
     def _worst_shape_candidate_physical_headroom_bytes(self, candidate):
@@ -1082,6 +1089,7 @@ class ArenaOffloadRuntime:
             (self._smart_plan or {}).get("singleton_resident_bytes", 0)
         )
         accounting = self._execution_accounting(active_plan)
+        pinned_block_keys = self._arena.pinned_block_keys()
         selection = getattr(self._executor, "selection", None)
         state_audit = getattr(selection, "accounting", None)
         return {
@@ -1091,6 +1099,15 @@ class ArenaOffloadRuntime:
             "resident_bytes": singleton_resident + canonical_resident,
             "singleton_resident_bytes": singleton_resident,
             "canonical_resident_bytes": canonical_resident,
+            "canonical_pinned_bytes": self._arena.committed_pinned_bytes(),
+            "canonical_pinned_blocks": len(pinned_block_keys),
+            "canonical_pinned_block_keys": tuple(sorted(pinned_block_keys)),
+            "demotion_pin_reserve_blocks": int(
+                getattr(self._executor, "pin_reserve_blocks", 0)
+            ),
+            "pin_trim_failures": tuple(
+                getattr(self._executor, "last_pin_trim_failures", ())
+            ),
             "total_weight_resident_bytes": singleton_resident + canonical_resident,
             "plan_fingerprint": getattr(active_plan, "fingerprint", None),
             "checkpoint_owner": "model",

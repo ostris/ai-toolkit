@@ -121,7 +121,7 @@ def test_invalid_ranges_fail_closed(arena_block, ranges, compact_nbytes, match):
 def test_pageable_non_arena_source_and_unknown_ticket_fail_closed():
     host = torch.empty(64, dtype=torch.uint8)
     ranges = torch.tensor([[0, 0, 64]], dtype=torch.int64)
-    with pytest.raises(RuntimeError, match="registered canonical arena"):
+    with pytest.raises(RuntimeError, match="canonical arena"):
         torch.ops.mm.fetch_start_multi(host, ranges, 64)
     with pytest.raises(RuntimeError, match="unknown ticket"):
         torch.ops.mm.fetch_wait(torch.tensor([987654], dtype=torch.int64), 64)

@@ -142,6 +142,7 @@ def release_pack(pack: "BlockPack | None") -> None:
         return
     pin_manager.release(pack.pin_handle)
     pack.pin_handle = None
+    pack.pinned = False
 
 
 def pack_block_host(

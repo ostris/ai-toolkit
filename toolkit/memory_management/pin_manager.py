@@ -400,16 +400,12 @@ def unpin_tensor_in_place(t: torch.Tensor, kind: Optional[str] = None) -> bool:
     return True
 
 
-# Storage-base data_ptrs of pinned arena flats. A streamed leaf is a VIEW into
-# one of these flats at an offset, so its OWN data_ptr misses the exact-ptr
-# _REGISTERED_HOST_PINS table (which keys on the registered flat ptr, not the
-# view). But every such view shares the flat's untyped storage, whose base ptr
-# is recorded here. The eager/pre-compile streaming pinned-bypass
-# (manager_modules._profile_is_pinned / bounce_pool._is_pinned) consults this so
-# register-pinned arena views are recognized as pinned and skip bounce staging.
-# O(1) storage-base lookup, NOT the rejected per-forward range scan. Refcounted
-# so a rebuild that recycles the same storage base ptr (release old flat, alloc
-# new) never leaves a transient gap.
+# Storage-base data_ptrs owned by canonical arena flats. Registration is now a
+# residency policy: streamed blocks and the next known demotion candidates are
+# pinned, while other fully resident blocks remain pageable. This registry says
+# only "canonical source storage," not "currently pinned"; callers that require
+# direct async H2D must also consult is_host_pinned. Refcounting keeps ownership
+# correct when an allocator later recycles the same storage base pointer.
 _ARENA_BACKED_STORAGE_LOCK = threading.Lock()
 _ARENA_BACKED_STORAGE_PTRS: dict[int, int] = {}
 
@@ -427,7 +423,7 @@ def _storage_base_ptr(t: torch.Tensor) -> Optional[int]:
 
 
 def register_arena_storage(t: torch.Tensor) -> None:
-    """Mark a pinned arena flat's storage so views into it read as pinned."""
+    """Mark a canonical arena flat's storage independently of pinnedness."""
     ptr = _storage_base_ptr(t)
     if ptr is None:
         return
@@ -450,7 +446,7 @@ def unregister_arena_storage(t: torch.Tensor) -> None:
 
 
 def is_arena_backed(t: torch.Tensor) -> bool:
-    """True if this CPU tensor is a view into a pinned arena flat."""
+    """True if this CPU tensor is a view into canonical arena storage."""
     ptr = _storage_base_ptr(t)
     if ptr is None:
         return False

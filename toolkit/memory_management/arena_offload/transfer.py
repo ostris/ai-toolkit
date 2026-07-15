@@ -404,7 +404,11 @@ def _validated_transfer_ranges(
         raise RuntimeError("mm.fetch_start_multi expected a contiguous host_flat")
     if not pin_manager.is_arena_backed(host_flat):
         raise RuntimeError(
-            "mm.fetch_start_multi expected a registered canonical arena source"
+            "mm.fetch_start_multi expected a canonical arena source"
+        )
+    if torch.cuda.is_available() and not pin_manager.is_host_pinned(host_flat):
+        raise RuntimeError(
+            "mm.fetch_start_multi expected the streamed canonical block to be pinned"
         )
     if ranges.device.type != "cpu" or ranges.dtype != torch.int64:
         raise RuntimeError("mm.fetch_start_multi expected CPU int64 ranges")

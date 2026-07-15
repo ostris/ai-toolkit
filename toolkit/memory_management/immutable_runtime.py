@@ -15,9 +15,11 @@ import torch
 
 from toolkit.memory_management import vram_budget
 from toolkit.memory_management.residency import (
+    DEFAULT_DEMOTION_PIN_RESERVE_BLOCKS,
     ResidencyDelta,
     ResidencyPlan,
     ResidencyState,
+    pin_requirements_for_plan,
 )
 from toolkit.memory_management.transfer_plan import (
     BlockTransferPlan,
@@ -311,6 +313,8 @@ class ImmutableTransformerRuntime:
         self.owner_token = owner_token
         self._hint_range_warned: set[tuple] = set()
         self._arena_signature = self.residency.arena.immutable_signature()
+        self.pin_reserve_blocks = DEFAULT_DEMOTION_PIN_RESERVE_BLOCKS
+        self.last_pin_trim_failures: tuple[str, ...] = ()
 
         self._block_abis = tuple(
             build_block_abi(
@@ -403,8 +407,76 @@ class ImmutableTransformerRuntime:
         if current != self._arena_signature:
             raise ImmutableRuntimeError(
                 f"arena_mutated_at_boundary:{where}: canonical host flats "
-                "or registrations changed across a phase boundary"
+                "changed across a phase boundary"
             )
+
+    def _prepare_plan_pins(self, plan: ResidencyPlan):
+        """Pin target stream sources before any device sidecar is removed."""
+        arena = self.residency.arena
+        previous = arena.pinned_block_keys()
+        if self.residency.device.type != "cuda":
+            return previous, set(), set()
+        required, reserve = pin_requirements_for_plan(
+            arena,
+            self.residency,
+            plan,
+            protected_leaf_keys=self.protected_training_leaf_keys,
+            reserve_blocks=self.pin_reserve_blocks,
+        )
+        newly_pinned = set()
+        keep = set(required)
+        try:
+            for block_key in arena.block_keys():
+                if block_key not in required or block_key in previous:
+                    continue
+                arena.pin_block(
+                    block_key,
+                    required=True,
+                    device=self.residency.device,
+                )
+                newly_pinned.add(block_key)
+            for block_key in reserve:
+                if block_key in arena.pinned_block_keys():
+                    keep.add(block_key)
+                    continue
+                if arena.pin_block(
+                    block_key,
+                    required=False,
+                    device=self.residency.device,
+                ):
+                    newly_pinned.add(block_key)
+                    keep.add(block_key)
+        except BaseException:
+            for block_key in tuple(newly_pinned):
+                try:
+                    arena.unpin_block(block_key)
+                except BaseException:
+                    pass
+            raise
+        return previous, newly_pinned, keep
+
+    def _trim_plan_pins(self, keep) -> None:
+        """Best-effort release of resident pins after promotion copies settle."""
+        arena = self.residency.arena
+        if self.residency.device.type != "cuda":
+            return
+        self.residency.synchronize_copies()
+        failures = []
+        for block_key in arena.block_keys():
+            if block_key in keep or block_key not in arena.pinned_block_keys():
+                continue
+            try:
+                arena.unpin_block(block_key)
+            except BaseException as error:
+                failures.append(
+                    f"{block_key}:{type(error).__name__}:{error}"
+                )
+        self.last_pin_trim_failures = tuple(failures)
+
+    def reconcile_pin_policy(self, plan: ResidencyPlan) -> None:
+        """Converge registration to streamed blocks plus two known demotions."""
+        _previous, _newly_pinned, keep = self._prepare_plan_pins(plan)
+        self._trim_plan_pins(keep)
 
     def set_compile_dynamic_hints(self, hints) -> None:
         """Install mark_dynamic hints derived after the runtime was prepared.
@@ -439,7 +511,19 @@ class ImmutableTransformerRuntime:
 
     def set_residency_plan(self, plan: ResidencyPlan) -> ResidencyDelta:
         self._assert_arena_stable("pre_residency_publish")
-        delta = self._sources.publish(plan)
+        previous, newly_pinned, keep = self._prepare_plan_pins(plan)
+        try:
+            delta = self._sources.publish(plan)
+        except BaseException:
+            for block_key in tuple(newly_pinned):
+                if block_key in previous:
+                    continue
+                try:
+                    self.residency.arena.unpin_block(block_key)
+                except BaseException:
+                    pass
+            raise
+        self._trim_plan_pins(keep)
         self._assert_arena_stable("post_residency_publish")
         self.stats["residency_transitions"] += 1
         self.stats["source_generation"] = self._sources.generation

@@ -214,10 +214,19 @@ class _PreparedBlock:
 class PreparedCanonicalBuild:
     """A prepared arena build whose model publication is atomic."""
 
-    def __init__(self, arena, entries_by_block, *, model=None, kind="weights"):
+    def __init__(
+        self,
+        arena,
+        entries_by_block,
+        *,
+        model=None,
+        kind="weights",
+        pin_on_finish: bool = True,
+    ):
         self.arena = arena
         self.model = model
         self.kind = kind
+        self.pin_on_finish = bool(pin_on_finish)
         self.blocks = []
         self.destinations = {}
         self.entries_by_block = {}
@@ -497,6 +506,8 @@ class PreparedCanonicalBuild:
 
     def _finish_population(self) -> None:
         for block in self.blocks:
+            if not self.pin_on_finish:
+                continue
             handle = pin_manager.pin_register_commit(
                 block.flat, block.layout.nbytes, self.kind, required=False
             )
@@ -569,7 +580,7 @@ class PreparedCanonicalBuild:
                     block.flat,
                     tuple(specs),
                     block.layout.nbytes,
-                    True,
+                    bool(block.handle and block.handle.pinned),
                     pin_handle=block.handle,
                 )
                 pack.view_maker = make_block_view_maker(pack)
@@ -582,7 +593,14 @@ class PreparedCanonicalBuild:
             if self.model is not None:
                 self.arena.guard_whole_model_to(self.model)
             self._committed = True
-            return CanonicalArenaStats(len(self.blocks), sum(b.layout.nbytes for b in self.blocks))
+            return CanonicalArenaStats(
+                len(self.blocks),
+                sum(
+                    b.layout.nbytes
+                    for b in self.blocks
+                    if b.handle is not None and b.handle.pinned
+                ),
+            )
         except Exception:
             self.rollback()
             raise

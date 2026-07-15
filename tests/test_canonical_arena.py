@@ -110,6 +110,34 @@ class CanonicalizeTests(unittest.TestCase):
         self.assertEqual(arena.committed_pinned_bytes(), 0)
         self.assertEqual(arena.block_keys(), ())
 
+    def test_pageable_build_can_register_and_unregister_same_storage(self):
+        layer = _linear(in_f=64, out_f=64, bias=True)
+        expected = layer.weight.detach().clone()
+        arena = CanonicalArena()
+        build = arena.prepare(
+            {"blocks.0": [("lin", layer)]},
+            pin_on_finish=False,
+        )
+        try:
+            build.populate_from_model()
+            stats = build.commit()
+            record = arena.block_record("blocks.0")
+            pointer = record.host_flat.data_ptr()
+            self.assertEqual(stats.pinned_bytes, 0)
+            self.assertFalse(record.pack.pinned)
+            self.assertEqual(arena.committed_pinned_bytes(), 0)
+
+            if torch.cuda.is_available():
+                self.assertTrue(arena.pin_block("blocks.0", required=True))
+                self.assertTrue(record.pack.pinned)
+                self.assertEqual(record.host_flat.data_ptr(), pointer)
+                self.assertTrue(arena.unpin_block("blocks.0"))
+                self.assertFalse(record.pack.pinned)
+                self.assertEqual(record.host_flat.data_ptr(), pointer)
+            torch.testing.assert_close(layer.weight, expected)
+        finally:
+            arena.release()
+
     def test_unknown_block_lookup_returns_none(self):
         arena = CanonicalArena()
         try:

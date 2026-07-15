@@ -161,14 +161,27 @@ class CanonicalArena:
         build.populate_from_model()
         return build.commit()
 
-    def prepare(self, entries_by_block: dict, *, model=None, kind: str = ARENA_KIND):
+    def prepare(
+        self,
+        entries_by_block: dict,
+        *,
+        model=None,
+        kind: str = ARENA_KIND,
+        pin_on_finish: bool = True,
+    ):
         """Prepare final destinations without mutating model Parameters."""
         from toolkit.memory_management.arena_offload.construction import PreparedCanonicalBuild
 
         normalized = {key: list(entries) for key, entries in entries_by_block.items()}
         for entries in normalized.values():
             _assert_entries_frozen(entries)
-        return PreparedCanonicalBuild(self, normalized, model=model, kind=kind)
+        return PreparedCanonicalBuild(
+            self,
+            normalized,
+            model=model,
+            kind=kind,
+            pin_on_finish=pin_on_finish,
+        )
 
     # -- whole-model .to() interception ------------------------------------
 
@@ -236,7 +249,50 @@ class CanonicalArena:
         return tuple(self._blocks.keys())
 
     def committed_pinned_bytes(self) -> int:
-        return sum(record.committed_bytes for record in self._blocks.values())
+        return sum(
+            record.committed_bytes
+            for record in self._blocks.values()
+            if record.pack.pinned
+        )
+
+    def pinned_block_keys(self) -> frozenset[str]:
+        return frozenset(
+            block_key
+            for block_key, record in self._blocks.items()
+            if record.pack.pinned
+        )
+
+    def pin_block(self, block_key: str, *, required: bool = True, device=None) -> bool:
+        """Register one populated canonical flat without replacing its storage."""
+        record = self._blocks.get(str(block_key))
+        if record is None:
+            raise CanonicalArenaError(f"unknown_canonical_block:{block_key}")
+        if record.pack.pinned:
+            return False
+        handle = pin_manager.pin_register_commit(
+            record.host_flat,
+            record.committed_bytes,
+            ARENA_KIND,
+            device=device,
+            required=required,
+        )
+        if not handle.pinned:
+            return False
+        record.pack.pin_handle = handle
+        record.pack.pinned = True
+        return True
+
+    def unpin_block(self, block_key: str) -> bool:
+        """Unregister one canonical flat while retaining its populated bytes."""
+        record = self._blocks.get(str(block_key))
+        if record is None:
+            raise CanonicalArenaError(f"unknown_canonical_block:{block_key}")
+        if not record.pack.pinned:
+            return False
+        pin_manager.release(record.pack.pin_handle)
+        record.pack.pin_handle = None
+        record.pack.pinned = False
+        return True
 
     def stats(self) -> CanonicalArenaStats:
         return CanonicalArenaStats(
@@ -247,8 +303,8 @@ class CanonicalArena:
         """Return this arena's immutable host-storage commitment.
 
         Process-wide pin-ledger state is deliberately excluded: unrelated
-        consumers such as the bounce pool may grow or shrink while residency
-        sidecars change without mutating canonical host storage.
+        consumers and canonical registration policy may grow or shrink while
+        residency sidecars change without mutating canonical host storage.
         """
         return (
             self._canonicalized,
@@ -257,7 +313,6 @@ class CanonicalArena:
                     block_key,
                     record.host_flat.data_ptr(),
                     record.committed_bytes,
-                    pin_manager.is_host_pinned(record.host_flat),
                     pin_manager.is_arena_backed(record.host_flat),
                 )
                 for block_key, record in self._blocks.items()

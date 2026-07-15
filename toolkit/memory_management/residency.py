@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import torch
 
+from toolkit.memory_management import pin_manager
 from toolkit.memory_management.canonical_arena import CanonicalArena
 from toolkit.memory_management.arena_offload.layout import (
 
@@ -22,6 +23,7 @@ from toolkit.memory_management.arena_offload.layout import (
 )
 
 LeafKey = tuple[str, str]
+DEFAULT_DEMOTION_PIN_RESERVE_BLOCKS = 2
 
 def _interleave_priority(index: int, count: int) -> float:
     if count <= 1:
@@ -221,6 +223,10 @@ class ResidencyState:
 
     def _build_sidecar(self, key: LeafKey) -> ResidentLeaf:
         block, spec, _module = self._canonical_leaf(key)
+        non_blocking = (
+            self.device.type == "cuda"
+            and pin_manager.is_host_pinned(block.host_flat)
+        )
         stream_context = (
             torch.cuda.stream(self._copy_stream)
             if self._copy_stream is not None
@@ -229,7 +235,7 @@ class ResidencyState:
         with torch.no_grad(), stream_context:
             tensors = tuple(
                 leaf_view(block.host_flat, item).to(
-                    self.device, non_blocking=self.device.type == "cuda"
+                    self.device, non_blocking=non_blocking
                 )
                 for item in spec.tensors
             )
@@ -334,5 +340,67 @@ class ResidencyState:
     def resident_bytes(self) -> int:
         return sum(sidecar.nbytes for sidecar in self._sidecars.values())
 
+    def synchronize_copies(self) -> None:
+        """Settle queued promotions before their host sources are unpinned."""
+        if self._copy_stream is not None:
+            self._copy_stream.synchronize()
+
     def clear(self, *, phase: str = "clear") -> ResidencyDelta:
         return self.reconcile(ResidencyPlan.build(phase, ()))
+
+
+def ordered_demotion_block_keys(
+    arena: CanonicalArena,
+    residency: ResidencyState,
+    plan: ResidencyPlan,
+    *,
+    protected_leaf_keys=(),
+) -> tuple[str, ...]:
+    """Fully resident blocks in the controller's deterministic demotion order."""
+    protected = frozenset(
+        (str(block), str(leaf)) for block, leaf in protected_leaf_keys
+    )
+    candidates = []
+    for order, block_key in enumerate(arena.block_keys()):
+        record = arena.block_record(block_key)
+        leaf_keys = tuple((block_key, name) for name in record.leaf_names)
+        if any(key in protected for key in leaf_keys) or not all(
+            key in plan.resident_leaf_keys for key in leaf_keys
+        ):
+            continue
+        payload_bytes = sum(
+            item.nbytes
+            for leaf_name in record.leaf_names
+            for item in record.leaf_spec(leaf_name).tensors
+        )
+        candidates.append(
+            (-payload_bytes, order, str(block_key))
+        )
+    return tuple(block_key for _bytes, _order, block_key in sorted(candidates))
+
+
+def pin_requirements_for_plan(
+    arena: CanonicalArena,
+    residency: ResidencyState,
+    plan: ResidencyPlan,
+    *,
+    protected_leaf_keys=(),
+    reserve_blocks: int = DEFAULT_DEMOTION_PIN_RESERVE_BLOCKS,
+) -> tuple[frozenset[str], tuple[str, ...]]:
+    """Return required streamed pins and optional known demotion reserves."""
+    streamed = set()
+    for block_key in arena.block_keys():
+        record = arena.block_record(block_key)
+        if any(
+            (block_key, leaf_name) not in plan.resident_leaf_keys
+            for leaf_name in record.leaf_names
+        ):
+            streamed.add(str(block_key))
+    ordered = ordered_demotion_block_keys(
+        arena,
+        residency,
+        plan,
+        protected_leaf_keys=protected_leaf_keys,
+    )
+    reserve = ordered[:max(0, int(reserve_blocks))]
+    return frozenset(streamed), reserve

@@ -10,6 +10,8 @@ from toolkit.memory_management.residency import (
     ResidencyError,
     ResidencyPlan,
     ResidencyState,
+    ordered_demotion_block_keys,
+    pin_requirements_for_plan,
 )
 
 
@@ -41,6 +43,95 @@ def test_phase_plan_and_existing_planner_seam(arena_layers):
     assert plan.resident_leaf_keys == frozenset()
     assert plan == ResidencyPlan.from_smart_plan(arena, smart, phase="train")
     assert plan.fingerprint != ResidencyPlan.build("sample", plan.resident_leaf_keys).fingerprint
+
+
+def test_pin_plan_keeps_streamed_blocks_and_two_exact_demotion_candidates():
+    layers_by_block = {
+        "blocks.0": {"a": _linear(1)},
+        "blocks.1": {"a": torch.nn.Linear(16, 16, bias=False)},
+        "blocks.2": {"a": torch.nn.Linear(12, 12, bias=False)},
+        "blocks.3": {"a": _linear(4)},
+    }
+    for layers in layers_by_block.values():
+        for layer in layers.values():
+            layer.requires_grad_(False)
+    arena = CanonicalArena()
+    arena.canonicalize(
+        {key: list(layers.items()) for key, layers in layers_by_block.items()}
+    )
+    try:
+        state = ResidencyState(arena, "cpu")
+        resident = {
+            (block_key, leaf_name)
+            for block_key, layers in layers_by_block.items()
+            if block_key != "blocks.3"
+            for leaf_name in layers
+        }
+        plan = ResidencyPlan.build("train", resident)
+        state.reconcile(plan)
+
+        ordered = ordered_demotion_block_keys(arena, state, plan)
+        required, reserve = pin_requirements_for_plan(
+            arena, state, plan, reserve_blocks=2
+        )
+
+        assert ordered[:3] == ("blocks.1", "blocks.2", "blocks.0")
+        assert required == frozenset({"blocks.3"})
+        assert reserve == ("blocks.1", "blocks.2")
+    finally:
+        arena.release()
+
+
+def test_protected_resident_block_is_not_a_demotion_pin_candidate(arena_layers):
+    arena, layers = arena_layers
+    state = ResidencyState(arena, "cpu")
+    plan = ResidencyPlan.build(
+        "train", (("blocks.0", name) for name in layers)
+    )
+    state.reconcile(plan)
+    required, reserve = pin_requirements_for_plan(
+        arena,
+        state,
+        plan,
+        protected_leaf_keys=(("blocks.0", "a"),),
+    )
+    assert required == frozenset()
+    assert reserve == ()
+
+
+def test_required_repin_failure_precedes_residency_demotion(
+    arena_layers, monkeypatch
+):
+    arena, layers = arena_layers
+    state = ResidencyState(arena, "cpu")
+    current = ResidencyPlan.build(
+        "train", (("blocks.0", name) for name in layers)
+    )
+    state.reconcile(current)
+    block = SimpleNamespace(entries=tuple(layers.items()))
+    runtime = ImmutableTransformerRuntime(
+        SimpleNamespace(blocks=(block,)),
+        state,
+        blocks=(block,),
+        block_keys=("blocks.0",),
+        entries_by_block={"blocks.0": tuple(layers.items())},
+        compile_blocks=False,
+    )
+    state.device = torch.device("cuda")
+    generation = runtime.source_generation
+    monkeypatch.setattr(arena, "pinned_block_keys", lambda: frozenset())
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("synthetic pin refusal")
+
+    monkeypatch.setattr(arena, "pin_block", refuse)
+    target = ResidencyPlan.build("train", ())
+    with pytest.raises(RuntimeError, match="synthetic pin refusal"):
+        runtime.set_residency_plan(target)
+
+    assert state.plan is current
+    assert runtime.source_generation == generation
+    assert state.resident_bytes() > 0
 
 
 def test_runtime_training_transitions_are_whole_block(arena_layers):

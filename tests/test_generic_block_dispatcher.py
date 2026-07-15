@@ -384,7 +384,8 @@ def test_cuda_streamed_compiled_train_sample_train():
         block.forward = MethodType(installed_forward, block)
         adapters.append(block.adapter_gain)
     runtime.finalize()
-    accounting = runtime.diagnostics()["accounting"]
+    diagnostics = runtime.diagnostics()
+    accounting = diagnostics["accounting"]
     assert accounting["payload_reconciled"]
     assert accounting["mixed_residency"]
     assert accounting["resident_blocks"] >= 1
@@ -399,6 +400,13 @@ def test_cuda_streamed_compiled_train_sample_train():
     ]
     assert any(streamed)
     assert not streamed[-1]
+    streamed_keys = {
+        f"blocks.{index}" for index, is_streamed in enumerate(streamed)
+        if is_streamed
+    }
+    pinned_keys = set(diagnostics["canonical_pinned_block_keys"])
+    assert streamed_keys <= pinned_keys
+    assert len(pinned_keys - streamed_keys) <= 2
 
     def train_once(step, *, input_requires_grad=True):
         transfer_before = transfer.lifetime_fetch_stats()["bytes"]
@@ -422,6 +430,9 @@ def test_cuda_streamed_compiled_train_sample_train():
     first = train_once(1)
     sample_plan = ResidencyPlan.build("sample", ())
     runtime._executor.activate(runtime._executor.SAMPLE, sample_plan)
+    assert runtime._arena.pinned_block_keys() == frozenset(
+        f"blocks.{index}" for index in range(runtime.block_count)
+    )
     sample_accounting = runtime.diagnostics()["accounting"]
     sample_transfer_before = transfer.lifetime_fetch_stats()["bytes"]
     with torch.no_grad(), runtime._executor.execution(runtime._executor.SAMPLE):
@@ -431,6 +442,9 @@ def test_cuda_streamed_compiled_train_sample_train():
     )
     assert torch.isfinite(sampled).all()
     runtime._executor.activate(runtime._executor.TRAIN, runtime._training_plan)
+    restored_pins = runtime._arena.pinned_block_keys()
+    assert streamed_keys <= restored_pins
+    assert len(restored_pins - streamed_keys) <= 2
     second = train_once(2)
     # ZImage enters some checkpointed block families through frozen setup
     # layers, so their first streamed block has no gradient-bearing input.

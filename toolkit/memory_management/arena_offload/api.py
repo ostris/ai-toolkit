@@ -266,7 +266,11 @@ def prepare_canonical_storage(
             }
         )
         arena = CanonicalArena()
-        build = arena.prepare(entries, model=transformer)
+        build = arena.prepare(
+            entries,
+            model=transformer,
+            pin_on_finish=False,
+        )
         if resources is not None:
             resources.adopt_canonical_build(build)
         return build
