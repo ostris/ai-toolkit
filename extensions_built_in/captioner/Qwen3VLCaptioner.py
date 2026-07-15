@@ -28,10 +28,10 @@ def patch_qwen_vl_patch_embed(model):
     patched = 0
     for module in model.modules():
         proj = getattr(module, "proj", None)
-        if (
-            isinstance(proj, torch.nn.Conv3d)
-            and tuple(proj.kernel_size) == tuple(proj.stride)
+        if isinstance(proj, torch.nn.Conv3d) and tuple(proj.kernel_size) == tuple(
+            proj.stride
         ):
+
             def fast_forward(hidden_states, _proj=proj):
                 w = _proj.weight.reshape(_proj.weight.shape[0], -1)
                 x = hidden_states.view(-1, w.shape[1]).to(w.dtype)
@@ -40,6 +40,7 @@ def patch_qwen_vl_patch_embed(model):
             module.forward = fast_forward
             patched += 1
     return patched
+
 
 # transformers.logging.set_verbosity_error()
 warnings.filterwarnings("ignore")
@@ -84,7 +85,20 @@ class Qwen3VLCaptioner(BaseCaptioner):
             self.model.to(self.device_torch)
         if self.caption_config.quantize:
             self.print_and_status_update("Quantizing Qwen3VL model")
-            quantize(self.model, weights=get_qtype(self.caption_config.qtype))
+            # in low vram mode the model stays on cpu; quantize each layer on the
+            # gpu and move it back so the math is fast without holding the whole
+            # model in vram
+            # lm_head is huge (vocab x hidden) and quality-critical; quantizing it
+            # needs a ~4x transient allocation that can OOM, so keep it in full
+            # precision
+            quantize(
+                self.model,
+                weights=get_qtype(self.caption_config.qtype),
+                exclude=["lm_head", "*.lm_head"],
+                quantize_device=self.device_torch
+                if self.caption_config.low_vram
+                else None,
+            )
             freeze(self.model)
             flush()
         self.processor = AutoProcessor.from_pretrained(
