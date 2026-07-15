@@ -263,15 +263,37 @@ def test_training_cap_binding_uses_configured_guard_mode(monkeypatch):
         strict_vram_cap=False,
         _policy=SimpleNamespace(wddm_hard_gib=1.25),
     )
+    runtime._last_training_cap_target_bytes = 900
 
     runtime._bind_training_cap()
     assert calls == [
         (
             "cuda:1",
             1.25,
-            {"strict": False, "log_prefix": "[ArenaOffload]"},
+            {
+                "target_cap_bytes": 900,
+                "strict": False,
+                "log_prefix": "[ArenaOffload]",
+            },
         )
     ]
+
+
+def test_training_policy_rebinds_cap_before_pressure_relief(monkeypatch):
+    runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
+    runtime._device = "cuda"
+    events = []
+    runtime._bind_training_cap = lambda: events.append("bind")
+    runtime._relieve_training_physical_pressure = lambda: (
+        events.append("relieve") or True
+    )
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+
+    runtime._apply_training_policy()
+
+    assert events == ["bind", "relieve"]
+
+
 def test_shape_working_peak_excludes_residency():
     window = TrainingSignalWindow()
     observe(window, peak_allocated_bytes=900, resident_bytes=200)

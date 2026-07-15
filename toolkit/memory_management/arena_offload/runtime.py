@@ -1107,6 +1107,7 @@ class ArenaOffloadRuntime:
 
         if torch.device(self._device).type != "cuda" or not torch.cuda.is_available():
             return
+        self._bind_training_cap()
         if self._relieve_training_physical_pressure():
             return
         candidate = self._promotion_candidate()
@@ -1200,6 +1201,7 @@ class ArenaOffloadRuntime:
         allocator_cap.configure_wddm_allocator_guard(
             self._device,
             self._config._policy.wddm_hard_gib,
+            target_cap_bytes=self._last_training_cap_target_bytes,
             strict=getattr(self._config, "strict_vram_cap", False),
             log_prefix="[ArenaOffload]",
         )
