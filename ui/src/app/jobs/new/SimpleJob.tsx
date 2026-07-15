@@ -1182,6 +1182,15 @@ export default function SimpleJob({
                   min={1}
                   required
                 />
+                <NumberInput
+                  label="Sample Start Step"
+                  value={jobConfig.config.process[0].sample.sample_start_step ?? 0}
+                  onChange={value => setJobConfig(value, 'config.process[0].sample.sample_start_step')}
+                  placeholder="eg. 0"
+                  className="pt-2"
+                  min={0}
+                  required
+                />
                 <SelectInput
                   label="Sampler"
                   className="pt-2"

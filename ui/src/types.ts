@@ -201,6 +201,7 @@ export interface SampleItem {
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
+  sample_start_step: number;
   width: number;
   height: number;
   prompts?: string[];
