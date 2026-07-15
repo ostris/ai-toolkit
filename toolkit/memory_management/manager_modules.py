@@ -637,6 +637,124 @@ class LinearLayerMemoryManager(BaseLayerMemoryManager):
         self.module._memory_management_device = self.manager.process_device
 
 
+class OstrisLinearLayerMemoryManager(BaseLayerMemoryManager):
+    """Offload manager for OstrisLinear (custom-quantized) layers.
+
+    The generic linear bounce is wrong for these: module.weight is a property that
+    fully dequantizes on access, so bouncing it ships a full-precision weight over
+    PCIe every forward and bypasses the quantizer's hardware kernels. Instead this
+    keeps the (much smaller) quantized buffers pinned on CPU, stages them H2D into
+    the same forward ring the float path uses, swaps them onto the module, and runs
+    the quantizer's own forward on device — so fp4/int8 GEMM paths and the STE
+    training path work unchanged under offloading. Buffers are read live off the
+    module each forward (not cached) so requantize_ during merge/reset stays valid.
+    """
+
+    def __init__(
+        self,
+        module: nn.Module,
+        manager: "MemoryManager",
+    ):
+        super().__init__(module, manager)
+
+        # 1) Move quantized buffers + bias to CPU and pin for fast async H2D
+        with torch.no_grad():
+            for name, buf in list(module._buffers.items()):
+                if buf is None:
+                    continue
+                if buf.device.type != "cpu":
+                    buf = buf.to("cpu")
+                if torch.cuda.is_available() and not buf.is_pinned():
+                    try:
+                        buf = buf.pin_memory()
+                    except RuntimeError:
+                        pass
+                module._buffers[name] = buf
+            bias = module._parameters.get("bias", None)
+            if bias is not None:
+                bias.data = _ensure_cpu_pinned(bias.data).detach()
+
+        # 2) Hijack forward
+        if hasattr(self.module, "ara_lora_ref"):
+            # ARA, we need to replace the lora forward
+            self._original_forward = getattr(self.module.ara_lora_ref(), "org_forward")
+        else:
+            self._original_forward = getattr(self.module, "forward")
+
+        def _mm_forward(x, *args, **kwargs):
+            # ensure we only use expected signature (Linear: x)
+            if args or kwargs:
+                return self._original_forward(x, *args, **kwargs)
+
+            module = self.module
+            device = self.manager.process_device
+            if device.type != "cuda":
+                return self._original_forward(x)
+
+            cpu_bufs = {
+                n: b
+                for n, b in module._buffers.items()
+                if b is not None and b.device.type == "cpu"
+            }
+            bias = module._parameters.get("bias", None)
+            bias_cpu = (
+                bias.data
+                if bias is not None and bias.data.device.type == "cpu"
+                else None
+            )
+            if not cpu_bufs and bias_cpu is None:
+                # already resident on device
+                return self._original_forward(x)
+
+            state = _get_device_state(device)
+            d = state["depth"]
+            idx = state["forward_clk"]
+            state["forward_clk"] = (idx + 1) % d
+            ts = state["transfer_stream"]
+            # the guard makes current_stream() resolve to the process device and
+            # keeps that device's context active for the quantizer's triton
+            # kernels (nothing sets the global current device, so it is 0 even
+            # when training on another gpu)
+            with torch.cuda.device(device):
+                with torch.cuda.stream(ts):
+                    ts.wait_event(state["fwd_slot_free"][idx])
+                    gpu_bufs = {
+                        n: b.to(device, non_blocking=True) for n, b in cpu_bufs.items()
+                    }
+                    gpu_bias = (
+                        bias_cpu.to(device, non_blocking=True)
+                        if bias_cpu is not None
+                        else None
+                    )
+                    state["w_buffers"][idx] = gpu_bufs
+                    state["b_buffers"][idx] = gpu_bias
+                    state["fwd_slot_ready"][idx].record()
+                torch.cuda.current_stream().wait_event(state["fwd_slot_ready"][idx])
+
+                # swap the quantized state onto the device, run the quantizer's own
+                # forward, then swap the pinned CPU state back
+                for n, t in gpu_bufs.items():
+                    module._buffers[n] = t
+                if gpu_bias is not None:
+                    bias.data = gpu_bias
+                try:
+                    out = self._original_forward(x)
+                finally:
+                    for n, t in cpu_bufs.items():
+                        module._buffers[n] = t
+                    if bias_cpu is not None:
+                        bias.data = bias_cpu
+                _release_forward_slot(state, idx)
+            return out
+
+        if hasattr(self.module, "ara_lora_ref"):
+            self.module.ara_lora_ref().org_forward = _mm_forward
+        else:
+            self.module.forward = _mm_forward
+
+        self.module._memory_management_device = self.manager.process_device
+
+
 class ConvLayerMemoryManager(BaseLayerMemoryManager):
     def __init__(
         self,

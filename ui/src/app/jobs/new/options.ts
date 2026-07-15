@@ -33,6 +33,7 @@ type AdditionalSections =
   | 'model.qie.match_target_res'
   | 'model.assistant_lora_path'
   | 'model.unconditional_lora_path'
+  | 'model.model_kwargs.kv_cache'
   | 'ideogram_4_prompt';
 
 type ModelGroup = 'image' | 'instruction' | 'video' | 'experimental' | 'audio';
@@ -1104,7 +1105,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.model_kwargs': [
         {
           edit: true,
-          match_target_res: false,
+          match_target_res: true,
+          kv_cache: true,
         },
         {},
       ],
@@ -1118,6 +1120,7 @@ export const modelArchs: ModelArch[] = [
       'model.low_vram',
       'model.layer_offloading',
       'model.qie.match_target_res',
+      'model.model_kwargs.kv_cache',
     ],
   },
   {
@@ -1142,7 +1145,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.model_kwargs': [
         {
           edit: true,
-          match_target_res: false,
+          match_target_res: true,
+          kv_cache: true,
         },
         {},
       ],
@@ -1157,6 +1161,7 @@ export const modelArchs: ModelArch[] = [
       'model.layer_offloading',
       'model.assistant_lora_path',
       'model.qie.match_target_res',
+      'model.model_kwargs.kv_cache',
     ],
   },
   {
@@ -1231,7 +1236,17 @@ export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc
 
 export const quantizationOptions: SelectOption[] = [
   { value: '', label: '- NONE -' },
-  { value: 'qfloat8', label: 'float8 (default)' },
+  { value: 'qfloat8', label: 'qfloat8 (default)' },
+  { value: 'float8', label: 'float8' },
+  { value: 'convrot8', label: '8bit convrot' },
+  { value: 'convrot4', label: '4bit convrot (nvfp4)' },
+  { value: 'convrotint7', label: '7bit convrot' },
+  { value: 'convrotint6', label: '6bit convrot' },
+  { value: 'convrotint5', label: '5bit convrot' },
+  { value: 'convrotint4', label: '4bit convrot' },
+  { value: 'convrotint3', label: '3bit convrot' },
+  { value: 'convrotint2', label: '2bit convrot' },
+  { value: 'convrotbitnet', label: '1.58bit convrot (bitnet)' },
   { value: 'uint7', label: '7 bit' },
   { value: 'uint6', label: '6 bit' },
   { value: 'uint5', label: '5 bit' },

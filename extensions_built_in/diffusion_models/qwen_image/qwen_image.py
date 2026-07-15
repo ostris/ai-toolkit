@@ -284,6 +284,11 @@ class QwenImageModel(BaseModel):
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
+
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         img = pipeline(
             prompt_embeds=conditional_embeds.text_embeds,
             prompt_embeds_mask=conditional_embeds.attention_mask.to(
@@ -302,6 +307,11 @@ class QwenImageModel(BaseModel):
             callback_on_step_end=callback_on_step_end,
             **extra,
         ).images[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
+
         return img
 
     def get_noise_prediction(

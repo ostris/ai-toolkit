@@ -118,6 +118,11 @@ class Wan225bModel(Wan21):
         # 16x compression  and 2x2 patch size
         return 32
 
+    def get_quantization_exclude_modules(self):
+        # the timestep/text conditioning embedders and the final projection feed
+        # every downstream modulation; keep them in full precision when quantizing
+        return ["condition_embedder*", "proj_out*"]
+
     def get_generation_pipeline(self):
         # todo unipc got broken in a diffusers update. Use euler for now.
         # scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
@@ -205,6 +210,10 @@ class Wan225bModel(Wan21):
                 latent_model_input=latents, first_frame=first_frame_n1p1, vae=self.vae
             )
 
+        if self.use_vae_tiling:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
                 self.device_torch, dtype=self.torch_dtype
@@ -224,6 +233,10 @@ class Wan225bModel(Wan21):
             noise_mask=noise_mask,
             **extra,
         )[0]
+
+        if self.use_vae_tiling:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
@@ -252,23 +265,37 @@ class Wan225bModel(Wan21):
 
         if batch.dataset_config.do_i2v:
             with torch.no_grad():
-                frames = batch.tensor
-                if len(frames.shape) == 4:
-                    first_frames = frames
-                elif len(frames.shape) == 5:
-                    first_frames = frames[:, 0]
-                    # Add conditioning using the standalone function
+                # check to see if we had the first frame latent cached
+                if batch.first_frame_latents is not None:
                     conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
                         latent_model_input=latent_model_input.to(
                             self.device_torch, self.torch_dtype
                         ),
-                        first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                        first_frame_latents=batch.first_frame_latents.to(
+                            self.device_torch, self.torch_dtype
+                        ),
                         vae=self.vae,
                     )
                     # conditioned tokens are clean with timestep 0 and must not contribute to the loss
                     self._i2v_loss_mask = noise_mask
                 else:
-                    raise ValueError(f"Unknown frame shape {frames.shape}")
+                    frames = batch.tensor
+                    if len(frames.shape) == 4:
+                        first_frames = frames
+                    elif len(frames.shape) == 5:
+                        first_frames = frames[:, 0]
+                        # Add conditioning using the standalone function
+                        conditioned_latent, noise_mask = add_first_frame_conditioning_v22(
+                            latent_model_input=latent_model_input.to(
+                                self.device_torch, self.torch_dtype
+                            ),
+                            first_frame=first_frames.to(self.device_torch, self.torch_dtype),
+                            vae=self.vae,
+                        )
+                        # conditioned tokens are clean with timestep 0 and must not contribute to the loss
+                        self._i2v_loss_mask = noise_mask
+                    else:
+                        raise ValueError(f"Unknown frame shape {frames.shape}")
 
                 # make the noise mask
                 if noise_mask is None:

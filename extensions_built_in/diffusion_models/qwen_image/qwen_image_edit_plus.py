@@ -133,6 +133,10 @@ class QwenImageEditPlusModel(QwenImageModel):
 
             return {"latents": latents}
 
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         img = pipeline(
             image=control_img_list,
             prompt_embeds=conditional_embeds.text_embeds,
@@ -153,6 +157,11 @@ class QwenImageEditPlusModel(QwenImageModel):
             do_cfg_norm=gen_config.do_cfg_norm,
             **extra,
         ).images[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
+
         return img
 
     def condition_noisy_latents(

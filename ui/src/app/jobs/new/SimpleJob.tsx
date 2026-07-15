@@ -330,6 +330,14 @@ export default function SimpleJob({
                 />
               </FormGroup>
             )}
+            {modelArch?.additionalSections?.includes('model.model_kwargs.kv_cache') && (
+              <Checkbox
+                label="KV Cache"
+                docKey="model.model_kwargs.kv_cache"
+                checked={jobConfig.config.process[0].model.model_kwargs.kv_cache || false}
+                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.kv_cache')}
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
               <Checkbox
                 label="Match Target Res"
@@ -621,6 +629,7 @@ export default function SimpleJob({
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'automagic', label: 'Automagic' },
                     { value: 'automagic2', label: 'Automagic v2' },
+                    { value: 'automagic3', label: 'Automagic v3' },
                     { value: 'prodigyopt', label: 'Prodigy' },
                     { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}

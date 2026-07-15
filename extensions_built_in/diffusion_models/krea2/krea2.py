@@ -208,6 +208,16 @@ class Krea2Model(BaseModel):
         self.has_multiple_control_images = self.is_edit
         # Reference images keep their own aspect/size (not resized to the target).
         self.use_raw_control_images = self.is_edit
+        # model_kwargs.kv_cache = true: train with an asymmetric attention mask
+        # where the clean reference tokens attend only to each other (never to
+        # text / noisy tokens). Their hidden states then depend only on the
+        # refs + t=0 modulation, so at inference their per-layer K/V can be
+        # computed once and reused across all denoising steps
+        # (OminiControl2-style conditioning feature reuse). Off by default:
+        # the base model was trained fully bidirectional, so a LoRA must be
+        # trained with kv_cache enabled for kv-cached inference (the ComfyUI
+        # node / hub pipeline kv_cache toggles) to work properly.
+        self.kv_cache = bool(self.model_config.model_kwargs.get("kv_cache", False))
 
     @staticmethod
     def get_train_scheduler():
@@ -369,6 +379,24 @@ class Krea2Model(BaseModel):
 
         # tell the model to invert assistant on inference since we want remove lora effects
         self.invert_assistant_lora = True
+    
+    def get_quantization_exclude_modules(self):
+        # sensitive modules kept in full precision (fnmatch patterns on module
+        # names within SingleStreamDiT):
+        #   first             - patchified latent input projection
+        #   tmlp* / tproj*    - timestep embedder + modulation projection; feed
+        #                       every block's DoubleSharedModulation and LastLayer
+        #   txtmlp*           - text feature -> model width projection
+        #   txtfusion.projector - tiny (num_txt_layers -> 1) encoder-layer mixer
+        #   last*             - final norm/modulated output projection
+        return [
+            "first",
+            "tmlp*",
+            "tproj*",
+            "txtmlp*",
+            "txtfusion.projector",
+            "last*",
+        ]
 
     def load_model(self):
         dtype = self.torch_dtype
@@ -642,6 +670,7 @@ class Krea2Model(BaseModel):
             context,
             text_mask,
             ref_latents=ref_latents,
+            isolate_refs=self.kv_cache,
         )
         return pred
 
