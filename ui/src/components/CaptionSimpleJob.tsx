@@ -183,6 +183,13 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               checked={jobConfig.config.process[0].caption.compile || false}
               onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
             />
+            {additionalSections.includes('caption.thinking') && (
+              <Checkbox
+                label="Thinking"
+                checked={jobConfig.config.process[0].caption.thinking || false}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.thinking')}
+              />
+            )}
           </FormGroup>
         </div>
       </div>

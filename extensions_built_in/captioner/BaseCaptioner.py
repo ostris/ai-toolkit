@@ -40,6 +40,7 @@ class CaptionConfig:
         self.recaption = kwargs.get("recaption", False)
         self.max_res = kwargs.get("max_res", 512)
         self.max_new_tokens = kwargs.get("max_new_tokens", 128)
+        self.thinking = kwargs.get("thinking", False)
         self.caption_prompt = kwargs.get(
             "caption_prompt", "Describe this image in detail."
         )
@@ -207,13 +208,52 @@ class BaseCaptioner(BaseExtensionProcess):
             torch._dynamo.config.suppress_errors = True
             for model in [self.model, self.model2]:
                 if model is not None and isinstance(model, torch.nn.Module):
-                    # dynamic=True avoids recompiling for every new image/token shape
-                    model.compile(dynamic=True)
+                    # compile per transformer block instead of the whole model:
+                    # small graphs compile far faster and identical blocks hit
+                    # the inductor cache, vs many minutes tracing one huge graph
+                    compiled_blocks = self._compile_blocks(model)
+                    if compiled_blocks == 0:
+                        # no repeated block lists found; compile the whole model
+                        # dynamic=True avoids recompiling for every new image/token shape
+                        model.compile(dynamic=True)
             print(
                 "[AITK] Model compilation enabled. The first few items will be slow while the model compiles."
             )
         except Exception as e:
             print(f"[AITK] Failed to compile model, continuing without compile: {e}")
+
+    def _compile_blocks(self, model: torch.nn.Module) -> int:
+        """Compile the repeated transformer blocks individually, leaving one-off
+        modules (embeddings, mergers, lm_head) eager. Returns the number of
+        blocks compiled."""
+        # candidate lists: ModuleLists of >= 2 blocks that all share one class
+        # and have submodules of their own (i.e. real transformer blocks, not
+        # lists of leaf layers)
+        candidates = []
+        for name, module in model.named_modules():
+            if not isinstance(module, torch.nn.ModuleList) or len(module) < 2:
+                continue
+            classes = {type(b) for b in module}
+            if len(classes) != 1:
+                continue
+            if next(module[0].children(), None) is None:
+                continue
+            candidates.append(name)
+        # skip lists nested inside another candidate list
+        candidates = [
+            name
+            for name in candidates
+            if not any(
+                name != other and name.startswith(other + ".") for other in candidates
+            )
+        ]
+        count = 0
+        for name in candidates:
+            block_list = model.get_submodule(name)
+            for i, block in enumerate(block_list):
+                block_list[i] = torch.compile(block, dynamic=True)
+                count += 1
+        return count
 
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
