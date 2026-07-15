@@ -133,6 +133,7 @@ def quantize(
     optimizer: Optional[Optimizer] = None,
     include: Optional[Union[str, List[str]]] = None,
     exclude: Optional[Union[str, List[str]]] = None,
+    quantize_device: Optional[torch.device] = None,
 ):
     """Quantize the specified model submodules
 
@@ -159,6 +160,10 @@ def quantize(
         exclude (`Optional[Union[str, List[str]]]`):
             Patterns constituting the denylist. If provided, module names must not match
             any patterns from the denylist.
+        quantize_device (`Optional[torch.device]`):
+            If provided, each module is moved to this device to quantize, then moved
+            back to the device its weights were on initially. Lets a CPU-resident
+            model (low vram) quantize layer-by-layer on the GPU.
     """
     if include is not None:
         include = [include] if isinstance(include, str) else include
@@ -175,7 +180,27 @@ def quantize(
             # check if m is QLinear or QConv2d
             if m.__class__.__name__ in Q_MODULES:
                 continue
-            else:
+            if (
+                isinstance(weights, aotype)
+                and not isinstance(m, torch.nn.Linear)
+                and (
+                    quantize_device is not None
+                    or include is not None
+                    or exclude is not None
+                )
+            ):
+                # torchao only quantizes nn.Linear; when a device round-trip or
+                # include/exclude filtering is in play, skip containers so each
+                # linear is handled individually (a container-level torchao call
+                # would quantize excluded children too)
+                continue
+            orig_device = None
+            if quantize_device is not None and next(m.children(), None) is None:
+                param = next(m.parameters(recurse=False), None)
+                if param is not None:
+                    orig_device = param.device
+                    m.to(quantize_device)
+            try:
                 if isinstance(weights, ostristype):
                     if isinstance(m, torch.nn.Linear):
                         convert_linear_to_ostris(m, weights.quantizer)
@@ -190,6 +215,10 @@ def quantize(
                         activations=activations,
                         optimizer=optimizer,
                     )
+            finally:
+                if orig_device is not None:
+                    # quanto replaces the module in its parent, so re-fetch by name
+                    model.get_submodule(name).to(orig_device)
         except Exception as e:
             print(f"Failed to quantize {name}: {e}")
             # raise e

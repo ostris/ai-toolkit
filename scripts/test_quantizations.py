@@ -6,10 +6,13 @@ Compares bf16 against the custom OstrisLinear backends (convrot8, convrot4 for
 now; add more qtypes to QTYPES as they land).
 
 Measures, per qtype:
-  - layer inference latency across DiT-representative shapes (vs bf16)
-  - layer training latency (forward + backward through the frozen layer)
+  - layer inference latency across DiT-representative shapes (vs bf16),
+    eager and torch.compile'd
+  - layer training latency (forward + backward through the frozen layer),
+    eager and torch.compile'd
   - VRAM on a transformer-ish block stack: resident weights, peak during a
-    no-grad forward, peak during a train step
+    no-grad forward, peak during a train step; forward/train-ckpt peaks also
+    under torch.compile
   - accuracy drift vs bf16: output relative error per layer shape and
     accumulated through the block stack
   - weight reconstruction error and one-time quantize (conversion) time
@@ -46,7 +49,7 @@ VRAM_BLOCK_SHAPES = [(3072, 12288), (12288, 3072), (3072, 3072), (3072, 3072)]
 VRAM_TOKENS = 4096
 
 QTYPES = [
-    "bf16", "qfloat8", "float8", "orbit4", "orbitvq4", "convrot8", "convrot4",
+    "bf16", "qfloat8", "float8", "convrot8", "convrot4",
     "convrotint7", "convrotint6", "convrotint5", "convrotint4", "convrotint3",
     "convrotint2", "convrotbitnet", "convrotcomfyw4a4",
 ]
@@ -106,6 +109,10 @@ def make_layer(k: int, n: int, device) -> torch.nn.Linear:
     lin = torch.nn.Linear(k, n, bias=True, dtype=torch.bfloat16, device=device)
     with torch.no_grad():
         lin.weight.mul_(0.02)
+    # the train benches model lora-style training: base frozen, grads flow to
+    # the input only. without this, bf16/quanto accumulate weight grads that
+    # inflate every later vram measurement
+    lin.requires_grad_(False)
     return lin
 
 
@@ -120,6 +127,8 @@ def make_stack(device) -> torch.nn.ModuleList:
             torch.nn.Linear(k, n, bias=True, dtype=torch.bfloat16, device=device)
             for k, n in VRAM_BLOCK_SHAPES
         ]))
+    # frozen base (see make_layer)
+    blocks.requires_grad_(False)
     return blocks
 
 
@@ -163,7 +172,57 @@ def run_speed(qtype: str, device, iters: int, results: dict):
         t_train = bench(train_step, max(10, iters // 3), device)
         results[(qtype, "inf", (m, k, n))] = t_inf
         results[(qtype, "train", (m, k, n))] = t_train
+
+        # compiled variants (compilation happens during bench warmup, so it
+        # isn't charged to the timing; a backend that won't compile records
+        # nothing and shows as '-')
+        lin_c = torch.compile(lin, dynamic=False)
+        try:
+            with torch.no_grad():
+                results[(qtype, "inf_comp", (m, k, n))] = bench(
+                    lambda: lin_c(x), iters, device
+                )
+        except Exception as e:
+            print(f"  [{qtype}] compiled inference failed for {m}x{k}->{n}: {e}")
+
+        def train_step_c():
+            xi = x.detach().requires_grad_(True)
+            lin_c(xi).sum().backward()
+
+        try:
+            results[(qtype, "train_comp", (m, k, n))] = bench(
+                train_step_c, max(10, iters // 3), device
+            )
+        except Exception as e:
+            print(f"  [{qtype}] compiled train failed for {m}x{k}->{n}: {e}")
         torch.cuda.empty_cache()
+
+
+def _stack_fwd_peak(blocks, x, device, base) -> int:
+    # warm up first so lazy-init allocations (and compilation) are not counted
+    # as steady-state peak
+    with torch.no_grad():
+        stack_forward(blocks, x)
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    with torch.no_grad():
+        stack_forward(blocks, x)
+    torch.cuda.synchronize(device)
+    return torch.cuda.max_memory_allocated(device) - base
+
+
+def _stack_train_peak(blocks, x, device, base, checkpoint) -> int:
+    # frozen base; grads flow to the input like lora training
+    def train_step():
+        xi = x.detach().requires_grad_(True)
+        stack_forward(blocks, xi, checkpoint).float().pow(2).mean().backward()
+
+    train_step()
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    train_step()
+    torch.cuda.synchronize(device)
+    return torch.cuda.max_memory_allocated(device) - base
 
 
 def run_vram(qtype: str, device, results: dict):
@@ -179,30 +238,22 @@ def run_vram(qtype: str, device, results: dict):
 
     x = torch.randn(VRAM_TOKENS, 3072, device=device, dtype=torch.bfloat16)
 
-    # no-grad forward peak (sampling); warm up first so lazy-init allocations are
-    # not counted as steady-state peak
-    with torch.no_grad():
-        stack_forward(blocks, x)
-    torch.cuda.synchronize(device)
-    torch.cuda.reset_peak_memory_stats(device)
-    with torch.no_grad():
-        stack_forward(blocks, x)
-    torch.cuda.synchronize(device)
-    results[(qtype, "vram_fwd_peak")] = torch.cuda.max_memory_allocated(device) - base
+    results[(qtype, "vram_fwd_peak")] = _stack_fwd_peak(blocks, x, device, base)
+    # real training checkpoints, but the plain train peak still gets reported
+    results[(qtype, "vram_train_peak")] = _stack_train_peak(blocks, x, device, base, False)
+    results[(qtype, "vram_train_ckpt_peak")] = _stack_train_peak(blocks, x, device, base, True)
 
-    # train step peak (frozen base; grads flow to the input like lora training),
-    # with and without per-block gradient checkpointing (real training uses it)
-    def train_step(checkpoint):
-        xi = x.detach().requires_grad_(True)
-        stack_forward(blocks, xi, checkpoint).float().pow(2).mean().backward()
-
-    for key, ckpt in (("vram_train_peak", False), ("vram_train_ckpt_peak", True)):
-        train_step(ckpt)
-        torch.cuda.synchronize(device)
-        torch.cuda.reset_peak_memory_stats(device)
-        train_step(ckpt)
-        torch.cuda.synchronize(device)
-        results[(qtype, key)] = torch.cuda.max_memory_allocated(device) - base
+    # same peaks with every linear compiled (mirrors the trainer's block compile)
+    for b in blocks:
+        for i in range(len(b)):
+            b[i] = torch.compile(b[i], dynamic=False)
+    try:
+        results[(qtype, "vram_fwd_peak_comp")] = _stack_fwd_peak(blocks, x, device, base)
+        results[(qtype, "vram_train_ckpt_peak_comp")] = _stack_train_peak(
+            blocks, x, device, base, True
+        )
+    except Exception as e:
+        print(f"  [{qtype}] compiled vram measurement failed: {e}")
 
     blocks = x = None  # release before the allocator accounting of the next run
     torch.cuda.empty_cache()
@@ -252,18 +303,22 @@ def run_quality_and_quantize_time(qtype: str, device, results: dict):
 
 
 def print_speed_table(title: str, kind: str, qts, results):
-    print(f"\n=== {title} (ms; speedup vs bf16) ===")
+    # speedups always reference EAGER bf16, compiled kinds included, so the
+    # comp columns answer "what do I gain over plain bf16"
+    ref_kind = kind.removesuffix("_comp")
+    print(f"\n=== {title} (ms; speedup vs eager bf16) ===")
     print(f"{'M x K -> N':<22}" + "".join(f"{qt:>18}" for qt in qts))
     for shape in SPEED_SHAPES:
         m, k, n = shape
         row = f"{f'{m} x {k} -> {n}':<22}"
-        ref = results.get(("bf16", kind, shape))
+        ref = results.get(("bf16", ref_kind, shape))
         for qt in qts:
             t = results.get((qt, kind, shape))
             if t is None:
                 row += f"{'-':>18}"
                 continue
-            sp = f" ({ref / t:4.2f}x)" if ref and qt != "bf16" else " " * 8
+            is_self_ref = qt == "bf16" and kind == ref_kind
+            sp = f" ({ref / t:4.2f}x)" if ref and not is_self_ref else " " * 8
             row += f"{t:8.3f}ms{sp}"
         print(row)
 
@@ -290,9 +345,15 @@ def main():
             if qt != "bf16":
                 get_ostris_quantizer(qt)
 
+    # many distinct module instances share one forward code object; the default
+    # per-code cache limit (8) would silently fall back to eager and corrupt the
+    # compiled columns
+    torch._dynamo.config.cache_size_limit = 4096
+
     results = {}
     for qt in args.qtypes:
         print(f"benchmarking {qt} ...")
+        torch._dynamo.reset()  # drop the previous qtype's compiled artifacts
         run_quality_and_quantize_time(qt, device, results)
         run_drift(qt, device, results)
         run_speed(qt, device, args.iters, results)
@@ -300,17 +361,22 @@ def main():
 
     qts = args.qtypes
     print_speed_table("layer latency, inference", "inf", qts, results)
+    print_speed_table("layer latency, inference (compiled)", "inf_comp", qts, results)
     print_speed_table("layer latency, train fwd+bwd", "train", qts, results)
+    print_speed_table("layer latency, train fwd+bwd (compiled)", "train_comp", qts, results)
 
     print(f"\n=== vram on the block stack ({VRAM_BLOCKS} blocks, {VRAM_TOKENS} tokens) ===")
     print(f"{'':<28}" + "".join(f"{qt:>18}" for qt in qts))
     for key, label in (("vram_weights", "weights resident"),
                        ("vram_fwd_peak", "peak, no-grad fwd"),
                        ("vram_train_peak", "peak, train step"),
-                       ("vram_train_ckpt_peak", "peak, train step (ckpt)")):
+                       ("vram_train_ckpt_peak", "peak, train step (ckpt)"),
+                       ("vram_fwd_peak_comp", "peak, no-grad fwd (comp)"),
+                       ("vram_train_ckpt_peak_comp", "peak, train ckpt (comp)")):
         row = f"{label:<28}"
         for qt in qts:
-            row += f"{gb(results[(qt, key)]):>18}"
+            v = results.get((qt, key))
+            row += f"{gb(v):>18}" if v is not None else f"{'-':>18}"
         print(row)
 
     print("\n=== accuracy drift vs bf16 (output rel err, no-grad) ===")
@@ -335,25 +401,38 @@ def main():
 
     # ---- clean per-qtype breakdown: speed (geomean over shapes) + accuracy ----
     def geomean_speedup(qt, kind):
+        # every speedup references EAGER bf16 (compiled kinds included), so the
+        # comp columns answer "what do I gain over plain bf16"
+        ref_kind = kind.removesuffix("_comp")
         logs = []
         for shape in SPEED_SHAPES:
-            ref = results.get(("bf16", kind, shape))
+            ref = results.get(("bf16", ref_kind, shape))
             t = results.get((qt, kind, shape))
             if ref and t:
                 logs.append(math.log(ref / t))
-        return math.exp(sum(logs) / len(logs)) if logs else float("nan")
+        return math.exp(sum(logs) / len(logs)) if logs else None
+
+    def fmt_speed(v):
+        return f"{v:.2f}x" if v is not None else "-"
 
     print("\n=== summary (speed = geomean speedup vs bf16; drift lower is better) ===")
-    print(f"{'':<12}{'inference':>18}{'train':>18}{'accuracy drift':>20}{'max vram':>16}")
+    print(f"{'':<18}{'inference':>12}{'inference comp':>16}{'train':>12}{'train comp':>12}"
+          f"{'accuracy drift':>16}{'max vram':>12}{'max vram comp':>15}")
     for qt in qts:
         # real training checkpoints, so the ckpt peak is the meaningful train
         # number; the no-grad fwd peak still matters for sampling
         max_vram = max(results[(qt, "vram_fwd_peak")], results[(qt, "vram_train_ckpt_peak")])
-        print(f"{qt:<12}"
-              f"{geomean_speedup(qt, 'inf'):>17.2f}x"
-              f"{geomean_speedup(qt, 'train'):>17.2f}x"
-              f"{results[(qt, 'drift', STACK_KEY)]:>20.5f}"
-              f"{gb(max_vram):>16}")
+        fwd_c = results.get((qt, "vram_fwd_peak_comp"))
+        ckpt_c = results.get((qt, "vram_train_ckpt_peak_comp"))
+        max_vram_comp = max(fwd_c, ckpt_c) if fwd_c is not None and ckpt_c is not None else None
+        print(f"{qt:<18}"
+              f"{fmt_speed(geomean_speedup(qt, 'inf')):>12}"
+              f"{fmt_speed(geomean_speedup(qt, 'inf_comp')):>16}"
+              f"{fmt_speed(geomean_speedup(qt, 'train')):>12}"
+              f"{fmt_speed(geomean_speedup(qt, 'train_comp')):>12}"
+              f"{results[(qt, 'drift', STACK_KEY)]:>16.5f}"
+              f"{gb(max_vram).strip():>12}"
+              f"{(gb(max_vram_comp).strip() if max_vram_comp is not None else '-'):>15}")
 
 
 if __name__ == "__main__":
