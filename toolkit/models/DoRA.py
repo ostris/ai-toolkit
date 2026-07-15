@@ -54,7 +54,6 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         ToolkitModuleMixin.__init__(self, network=network)
         torch.nn.Module.__init__(self)
         self.lora_name = lora_name
-        self.scalar = torch.tensor(1.0)
 
         self.lora_dim = lora_dim
 
@@ -62,9 +61,9 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
             raise NotImplementedError("Convolutional layers are not supported yet")
 
         if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_dim
+        self.scale = float(alpha) / self.lora_dim
         # self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える eng: treat as constant
 
         self.multiplier: Union[float, List[float]] = multiplier

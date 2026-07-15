@@ -207,12 +207,12 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         self.module_dropout = module_dropout
 
         if isinstance(alpha, torch.Tensor):
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = lora_dim if alpha is None or alpha == 0 else alpha
         if self.use_w2 and self.use_w1:
             # use scale = 1
             alpha = lora_dim
-        self.scale = alpha / self.lora_dim
+        self.scale = float(alpha) / self.lora_dim
         self.register_buffer('alpha', torch.tensor(alpha))  # treat as constant
 
         if self.use_w2:
@@ -236,7 +236,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             (self.lokr_w2 if self.use_w2
              else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp
              else self.lokr_w2_a@self.lokr_w2_b),
-            torch.tensor(self.multiplier * self.scale)
+            self.multiplier * self.scale
         )
         assert torch.sum(torch.isnan(weight)) == 0, "weight is nan"
 
@@ -251,7 +251,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             (self.lokr_w2 if self.use_w2
              else make_weight_cp(self.lokr_t2, self.lokr_w2_a, self.lokr_w2_b) if self.cp
              else self.lokr_w2_a@self.lokr_w2_b),
-            torch.tensor(self.scale)
+            self.scale
         )
         if orig_weight is not None:
             weight = weight.reshape(orig_weight.shape)
