@@ -103,6 +103,9 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
         self.use_w1 = False
         self.use_w2 = False
         self.can_merge_in = True
+        # only the plain Linear path (no cp/Conv2d) gets the factorized forward;
+        # Conv2d and the cp branch keep using get_weight()/make_kron() below.
+        self._fast_linear = False
 
         # avoid the weight property on quantized OstrisLinear: it dequantizes the
         # whole weight just to answer .shape
@@ -166,6 +169,10 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             out_l, out_k = factorization(out_dim, factor)
             # ((a, b), (c, d)), out_dim = a*c, in_dim = b*d
             shape = ((out_l, out_k), (in_m, in_n))
+            # stash factor pair for the factorized (no full-kron) forward path
+            self._in_m, self._in_n = in_m, in_n
+            self._out_l, self._out_k = out_l, out_k
+            self._fast_linear = True
 
             # smaller part. weight scale
             if decompose_both and lora_dim < max(shape[0][0], shape[1][0])/2:
@@ -321,30 +328,84 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
                 return self.org_module[0].bias.data.detach()
         return None
 
+    def _get_delta_factors(self):
+        """(A, w2_or_w2a, w2_b_or_None) without ever combining the two kron
+        factors into a full-size matrix."""
+        A = self.lokr_w1 if self.use_w1 else self.lokr_w1_a @ self.lokr_w1_b  # (out_l, in_m), always small
+        if self.use_w2:
+            return A, self.lokr_w2, None
+        else:
+            return A, self.lokr_w2_a, self.lokr_w2_b
+
+    def _call_forward_fast_linear(self, x):
+        """Factorized LoKr delta for the plain Linear case (quantized or not).
+        Never materializes a (out_dim, in_dim) tensor: uses the kron
+        mixed-product identity plus the existing low-rank factoring of w2, so
+        both compute and the backward-pass gradient are O(rank) instead of
+        O(out_dim * in_dim)."""
+        if isinstance(x, QTensor) or isinstance(x, QBytesTensor):
+            x = x.dequantize()
+        orig_dtype = x.dtype
+
+        if getattr(self.org_module[0], "is_ostris_quantized", False):
+            # org_forward here does raw CUDA stream/event orchestration and
+            # in-place buffer swapping (manager_modules.py _mm_forward) to
+            # move the quantized weight onto the device -- that can't be
+            # traced by inductor, so break the graph at exactly this call.
+            base_out = torch._dynamo.disable(self.org_forward)(x)
+        else:
+            base_out = self.org_forward(x)
+
+        A, w2a, w2b = self._get_delta_factors()
+        # match the base path's compute dtype (usually bf16) rather than
+        # upcasting the (much larger) activation tensor to the fp32 master
+        # params -- keeps every intermediate here at the same footprint the
+        # old full-kron GEMM had, instead of doubling it.
+        compute_dtype = base_out.dtype
+        x_ = x.to(compute_dtype) if x.dtype != compute_dtype else x
+        A = A.to(compute_dtype)
+        w2a = w2a.to(compute_dtype)
+        if w2b is not None:
+            w2b = w2b.to(compute_dtype)
+
+        X = x_.unflatten(-1, (self._in_m, self._in_n))
+
+        if w2b is None:
+            # use_w2: w2a is the full (out_k, in_n) factor -- still far smaller
+            # than the full kron product, so a single einsum here is fine.
+            tmp = torch.einsum('...qs,os->...qo', X, w2a)          # (..., in_m, out_k)
+        else:
+            # low-rank w2 = w2a @ w2b, rank << out_k, in_n: fold the rank
+            # factor through first so we never touch an (out_k, in_n) tensor.
+            tmp = torch.einsum('...qs,rs->...qr', X, w2b)          # (..., in_m, rank)
+            tmp = torch.einsum('...qr,or->...qo', tmp, w2a)        # (..., in_m, out_k)
+
+        # scale folded into A (not applied to the reduction output) to avoid
+        # an inductor lowering bug under torch.compile
+        delta = torch.einsum('...qo,pq->...po', tmp, A * self.scale)  # (..., out_l, out_k)
+        delta = delta.flatten(-2, -1)
+
+        if self.training and self.rank_dropout:
+            # equivalent to the old row-mask on the full weight: zeroing a
+            # weight ROW is the same as zeroing that output channel post-matmul.
+            drop = torch.rand(delta.size(-1), device=delta.device) < self.rank_dropout
+            delta = delta * drop.to(delta.dtype)
+
+        multiplier = torch.mean(self.network_ref().torch_multiplier).to(compute_dtype)
+        delta = delta * multiplier
+
+        return (base_out + delta).to(orig_dtype)
+
     def _call_forward(self, x):
+        if self._fast_linear:
+            return self._call_forward_fast_linear(x)
+
+        # legacy path: Conv2d / cp branch. Still materializes the full kron
+        # product -- TODO: extend the factorized path to cover these.
         if isinstance(x, QTensor) or isinstance(x, QBytesTensor):
             x = x.dequantize()
 
         orig_dtype = x.dtype
-
-        # for OstrisLinear (convrot-quantized), use the quantizer's own forward
-        # for the base computation and add the LoKr delta separately. this avoids
-        # materializing the full dequantized weight every forward, which bypasses
-        # the hardware fp4/int8 GEMM path and pegs the CPU with repeated
-        # dequantization + kron + matmul for every training step.
-        if getattr(self.org_module[0], "is_ostris_quantized", False):
-            base_out = torch._dynamo.disable(self.org_forward)(x)
-            lokr_weight = self.get_weight().to(dtype=orig_dtype)
-            multiplier = self.network_ref().torch_multiplier
-            multiplier = torch.mean(multiplier)
-            # bias is handled by org_forward (quantizer includes it)
-            delta_out = self.op(
-                x.to(dtype=lokr_weight.dtype),
-                lokr_weight.view(self.shape),
-                None,
-                **self.extra_args
-            )
-            return (base_out + delta_out * multiplier).to(orig_dtype)
 
         orig_weight = self.get_orig_weight(x.device)
         lokr_weight = self.get_weight(orig_weight).to(dtype=orig_weight.dtype)
