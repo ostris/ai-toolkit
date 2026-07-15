@@ -40,6 +40,7 @@ class CaptionConfig:
         self.recaption = kwargs.get("recaption", False)
         self.max_res = kwargs.get("max_res", 512)
         self.max_new_tokens = kwargs.get("max_new_tokens", 128)
+        self.thinking = kwargs.get("thinking", False)
         self.caption_prompt = kwargs.get(
             "caption_prompt", "Describe this image in detail."
         )
