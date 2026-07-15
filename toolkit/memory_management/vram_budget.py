@@ -47,6 +47,7 @@ Everything here is pure (CPU-testable) except ``DeviceSnapshot.capture`` and
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -763,6 +764,23 @@ def cap_bytes_for_live(
     want = min(want, float(int(cliff_cap_bytes)))
     want = max(want, float(max(0, int(floor_cap_bytes))))
     return int(want)
+
+
+def cap_bytes_preserving_allowance_after_promotion(
+    cap_bytes,
+    promotion_bytes,
+    cliff_cap_bytes,
+    *,
+    gc_threshold=GC_THRESHOLD,
+) -> int:
+    """Raise a cap enough that resident growth does not consume GC allowance."""
+    current = max(0, int(cap_bytes))
+    promoted = max(0, int(promotion_bytes))
+    cliff = max(0, int(cliff_cap_bytes))
+    if promoted <= 0 or current >= cliff:
+        return min(current, cliff)
+    growth = math.ceil(float(promoted) / float(gc_threshold))
+    return min(cliff, current + int(growth))
 
 
 def cap_can_host_promotion(

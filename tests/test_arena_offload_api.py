@@ -89,6 +89,7 @@ class _FakeModelConfig:
     layer_offloading_smart_working_reserve_gb = -1.0
     layer_offloading_smart_wddm_margin_gb = None
     layer_offloading_smart_wddm_hard_gb = 1.0
+    layer_offloading_smart_cap_calibration = True
     layer_offloading_wddm_spill_reserve_pct = 0.10
     layer_offloading_block_stream_only = False
     layer_offloading_checkpoint_keep_last = 2
@@ -277,6 +278,7 @@ class ArenaOffloadConfigTest(unittest.TestCase):
         self.assertFalse(config.strict_vram_cap)
         self.assertEqual(config._policy.prefetch_depth, 3)
         self.assertEqual(config._policy.checkpoint_keep_last, 2)
+        self.assertTrue(config._policy.cap_calibration)
 
     def test_public_surface_is_narrow(self):
         public = {field.name for field in fields(ArenaOffloadConfig) if not field.name.startswith("_")}
@@ -305,11 +307,44 @@ class ArenaOffloadConfigTest(unittest.TestCase):
         self.assertFalse(config.fp8_sampling)
         self.assertTrue(config.enabled)
 
+    def test_old_torchao_disables_only_torchao_arena_fp8(self):
+        class TorchAOFloat8(_FakeModelConfig):
+            qtype = "float8"
+
+        with unittest.mock.patch(
+            "toolkit.memory_management.arena_offload.api."
+            "torchao_arena_fp8_supported",
+            return_value=False,
+        ), unittest.mock.patch(
+            "toolkit.memory_management.arena_offload.api.TORCHAO_VERSION",
+            "0.10.0",
+        ):
+            with self.assertWarnsRegex(RuntimeWarning, "requires_0.17.0"):
+                config = ArenaOffloadConfig.from_model_config(TorchAOFloat8())
+
+        self.assertTrue(config.enabled)
+        self.assertFalse(config.fp8_forward)
+        self.assertFalse(config.fp8_backward)
+        self.assertFalse(config.fp8_sampling)
+
+    def test_quanto_fp8_does_not_require_new_torchao_tensor_format(self):
+        with unittest.mock.patch(
+            "toolkit.memory_management.arena_offload.api."
+            "torchao_arena_fp8_supported",
+            return_value=False,
+        ):
+            config = ArenaOffloadConfig.from_model_config(_FakeModelConfig())
+
+        self.assertTrue(config.fp8_forward)
+        self.assertTrue(config.fp8_backward)
+        self.assertTrue(config.fp8_sampling)
+
     def test_missing_attributes_fall_back_to_defaults(self):
         config = ArenaOffloadConfig.from_model_config(object())
         self.assertFalse(config.enabled)
         self.assertFalse(config.compile_blocks)
         self.assertEqual(config._policy.prefetch_depth, 3)
+        self.assertFalse(config._policy.cap_calibration)
 
     def test_dead_compile_aliases_do_not_enable_arena_compile(self):
         class DeadAliases:

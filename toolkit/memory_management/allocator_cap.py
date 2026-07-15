@@ -93,6 +93,7 @@ def configure_wddm_allocator_guard(
     target_cap_bytes=None,
     strict=False,
     log_prefix="[MemoryManager]",
+    force=False,
 ):
     """Bind the allocator below the WDDM cliff in every guard mode.
 
@@ -134,7 +135,7 @@ def configure_wddm_allocator_guard(
     applied = fraction * total / float(real_total)
     previous = APPLIED_FRACTIONS.get(index)
     tolerance = (64 * 1024**2) / real_total
-    if previous is not None and abs(previous - applied) < tolerance:
+    if not force and previous is not None and abs(previous - applied) < tolerance:
         return previous
 
     torch.cuda.set_per_process_memory_fraction(applied, index)

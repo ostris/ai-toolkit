@@ -663,13 +663,8 @@ class BaseModel:
                     arena_runtime = get_memory_runtime(self.unet)
                     sampling_context = (
                         arena_runtime.sampling_image(
-                            shape_key=(
-                                "sample",
-                                int(gen_config.height),
-                                int(gen_config.width),
-                                bool(getattr(gen_config, "batch_cfg", False)),
-                            ),
-                            cold_working_bytes=3 * (1024 ** 3),
+                            gen_config=gen_config,
+                            generation_owner=self,
                         )
                         if arena_runtime is not None
                         else contextlib.nullcontext()

@@ -18,6 +18,12 @@ from dataclasses import dataclass, field
 from typing import Any
 import warnings
 
+from toolkit.quantization.torchao_compat import (
+    TORCHAO_ARENA_FP8_MIN_VERSION,
+    TORCHAO_VERSION,
+    torchao_arena_fp8_supported,
+)
+
 from ..runtime import (
     RUNTIME_ATTR,
     close_memory_runtime,
@@ -140,6 +146,7 @@ class _ArenaPolicyOptions:
     working_reserve_gib: float | None = None
     physical_vram_headroom_gib: float | None = None
     wddm_hard_gib: float | None = None
+    cap_calibration: bool = False
     checkpoint_keep_last: int = 0
     prefetch_depth: int = 3
 
@@ -203,6 +210,11 @@ class ArenaOffloadConfig:
         requested_backward = bool(get("layer_offloading_fp8_grad_input", False))
         requested_sampling = bool(get("layer_offloading_fp8_sampling", False))
         ignored = []
+        torchao_fp8_unavailable = bool(
+            fp8_weights
+            and get("qtype") == "float8"
+            and not torchao_arena_fp8_supported()
+        )
         if not fp8_weights:
             ignored.extend(
                 name
@@ -215,6 +227,13 @@ class ArenaOffloadConfig:
             )
         elif requested_backward and not requested_forward:
             ignored.append("fp8_backward_without_fp8_forward")
+        if torchao_fp8_unavailable and any(
+            (requested_forward, requested_backward, requested_sampling)
+        ):
+            ignored.append(
+                "torchao_fp8_requires_"
+                f"{TORCHAO_ARENA_FP8_MIN_VERSION}_installed_{TORCHAO_VERSION}"
+            )
         if ignored:
             warnings.warn(
                 "arena offload ignored irrelevant FP8 options: "
@@ -228,11 +247,15 @@ class ArenaOffloadConfig:
                 get("layer_offloading", False)
                 and get("layer_offloading_smart", False)
             ),
-            fp8_forward=fp8_weights and requested_forward,
+            fp8_forward=(
+                fp8_weights and not torchao_fp8_unavailable and requested_forward
+            ),
             fp8_backward=fp8_weights
+            and not torchao_fp8_unavailable
             and requested_forward
             and requested_backward,
             fp8_sampling=fp8_weights
+            and not torchao_fp8_unavailable
             and requested_sampling,
             # Arena execution has one shared block dispatcher for training
             # and sampling, so Toolkit's supported model compile setting owns
@@ -258,6 +281,9 @@ class ArenaOffloadConfig:
                     "layer_offloading_smart_physical_vram_headroom_gb"
                 ),
                 wddm_hard_gib=get("layer_offloading_smart_wddm_hard_gb"),
+                cap_calibration=bool(
+                    get("layer_offloading_smart_cap_calibration", False)
+                ),
                 checkpoint_keep_last=max(
                     0, int(get("layer_offloading_checkpoint_keep_last", 0) or 0)
                 ),

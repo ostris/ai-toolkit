@@ -60,6 +60,8 @@ class ArenaResidencyController:
         self.last_worst_shape_allocator_slack_bytes = None
         self.last_aggressive_capacity = 0
         self.last_aggressive_gate = False
+        self.last_needed_promotion_cap_bytes = None
+        self.last_cache_pad_bytes = self.allocator_cache_headroom_bytes
         self.pending_promotion = None
         self.last_safe_residency_bytes = None
         self.last_rejected_residency_bytes = None
@@ -67,7 +69,8 @@ class ArenaResidencyController:
 
     def step(self, signal, *, candidate, demote_candidate, cliff_cap_bytes,
              worst_shape_free_bytes, worst_shape_allocator_slack_bytes=None,
-             current_cap_bytes=None, aggressive_promotion_capacity=0):
+             current_cap_bytes=None, aggressive_promotion_capacity=0,
+             worst_shape_live_bytes=None, learned_cache_pad_bytes=None):
         if not self.bootstrapped:
             self.bootstrapped = True
             if demote_candidate is not None:
@@ -88,30 +91,90 @@ class ArenaResidencyController:
             if worst_shape_allocator_slack_bytes is None
             else worst_shape_allocator_slack_bytes
         )
+        exact_funding = (
+            learned_cache_pad_bytes is not None
+            and worst_shape_live_bytes is not None
+        )
+        cache_pad = (
+            self.allocator_cache_headroom_bytes
+            if learned_cache_pad_bytes is None
+            else max(0, int(learned_cache_pad_bytes))
+        )
         throughput_ok = transfer_benefits_from_residency(signal.get("transfer"))
         worst_ok = candidate is not None and int(worst_shape_free_bytes) >= 0
-        promote_ok = (
-            candidate is not None
-            and throughput_ok
-            and worst_ok
-            and vram_budget.residency_promote_ok(
-                retries,
-                allocator_slack,
-                block_bytes,
-                self.allocator_cache_headroom_bytes,
+        if exact_funding:
+            promotion_cap_possible = (
+                candidate is not None
+                and vram_budget.cap_can_host_promotion(
+                    int(worst_shape_live_bytes),
+                    block_bytes,
+                    cache_pad,
+                    int(cliff_cap_bytes),
+                )
             )
-        )
+            promote_ok = (
+                candidate is not None
+                and promotion_cap_possible
+                and throughput_ok
+                and worst_ok
+                and retries == 0
+                and device_frees == 0
+            )
+        else:
+            promotion_cap_possible = True
+            promote_ok = (
+                candidate is not None
+                and throughput_ok
+                and worst_ok
+                and vram_budget.residency_promote_ok(
+                    retries,
+                    allocator_slack,
+                    block_bytes,
+                    cache_pad,
+                )
+            )
         active_cap = (
             int(cliff_cap_bytes)
             if current_cap_bytes is None
             else int(current_cap_bytes)
         )
-        cap_covers = (
-            candidate is not None
-            and allocator_slack
-            > block_bytes + self.allocator_cache_headroom_bytes
-        )
-        binding = retries > 0 or int(worst_shape_free_bytes) < 0
+        if exact_funding:
+            needed_promotion_cap = vram_budget.cap_bytes_for_live(
+                int(worst_shape_live_bytes) + block_bytes,
+                cache_pad,
+                int(cliff_cap_bytes),
+            )
+            cap_covers = (
+                candidate is not None
+                and active_cap >= needed_promotion_cap
+            )
+            binding = retries > 0
+            pressure_needed_cap = vram_budget.cap_bytes_for_live(
+                int(worst_shape_live_bytes),
+                cache_pad,
+                int(cliff_cap_bytes),
+            )
+            needed_cap = (
+                needed_promotion_cap
+                if promote_ok and not cap_covers
+                else pressure_needed_cap
+            )
+        else:
+            needed_promotion_cap = None
+            cap_covers = (
+                candidate is not None
+                and allocator_slack > block_bytes + cache_pad
+            )
+            binding = retries > 0 or int(worst_shape_free_bytes) < 0
+            cap_raise_bytes = (
+                block_bytes
+                if promote_ok and block_bytes > 0
+                else cache_pad
+            )
+            needed_cap = min(
+                int(cliff_cap_bytes),
+                active_cap + max(0, int(cap_raise_bytes)),
+            )
         aggressive_capacity = max(0, int(aggressive_promotion_capacity or 0))
         bootstrap_pending = bool(
             self.pending_promotion is not None
@@ -125,8 +188,7 @@ class ArenaResidencyController:
             and retries == 0
             and device_frees == 0
             and worst_ok
-            and allocator_slack
-            > block_bytes + self.allocator_cache_headroom_bytes
+            and allocator_slack > block_bytes + cache_pad
         )
         self.last_worst_shape_physical_headroom_bytes = int(
             worst_shape_free_bytes
@@ -137,15 +199,8 @@ class ArenaResidencyController:
         self.last_cap_covers_promo = bool(cap_covers)
         self.last_aggressive_capacity = aggressive_capacity
         self.last_aggressive_gate = bool(aggressive_ok)
-        cap_raise_bytes = (
-            block_bytes
-            if promote_ok and block_bytes > 0
-            else self.allocator_cache_headroom_bytes
-        )
-        needed_cap = min(
-            int(cliff_cap_bytes),
-            active_cap + max(0, int(cap_raise_bytes)),
-        )
+        self.last_needed_promotion_cap_bytes = needed_promotion_cap
+        self.last_cache_pad_bytes = cache_pad
         if (
             self.pending_promotion is not None
             and (retries > 0 or device_frees > 0)
@@ -216,14 +271,20 @@ class ArenaResidencyController:
             "worst_shape_veto"
             if candidate is not None and not worst_ok
             else (
+                "promotion_exceeds_cliff"
+                if candidate is not None
+                and exact_funding
+                and not promotion_cap_possible
+                else (
                 "throughput_gate"
                 if candidate is not None and not throughput_ok
                 else (
                     "allocator_cache_headroom"
                     if candidate is not None
-                    and allocator_slack
-                    <= block_bytes + self.allocator_cache_headroom_bytes
+                    and not exact_funding
+                    and allocator_slack <= block_bytes + cache_pad
                     else "fsm_hold"
+                )
                 )
             )
         )
@@ -360,6 +421,10 @@ class ArenaResidencyController:
             ),
             "last_aggressive_capacity": self.last_aggressive_capacity,
             "last_aggressive_gate": self.last_aggressive_gate,
+            "last_needed_promotion_cap_bytes": (
+                self.last_needed_promotion_cap_bytes
+            ),
+            "last_cache_pad_bytes": self.last_cache_pad_bytes,
             "pending_promotion": self.pending_promotion,
             "last_safe_residency_bytes": self.last_safe_residency_bytes,
             "last_rejected_residency_bytes": (
@@ -415,6 +480,19 @@ class TrainingSignalWindow:
     @property
     def transfer_snapshot_due(self):
         return self._transfer_steps + 1 >= self.transfer_window_steps
+
+    def prime_counters(self, *, allocator_counters=None, compile_counters=None):
+        """Start a new observation phase without attributing old activity."""
+        if allocator_counters is not None:
+            self._allocator_previous = {
+                key: int((allocator_counters or {}).get(key, 0) or 0)
+                for key in _ALLOC
+            }
+        if compile_counters is not None:
+            self._compile_previous = {
+                key: int((compile_counters or {}).get(key, 0) or 0)
+                for key in _COMPILE
+            }
 
     def invalidate_shape_peaks(self):
         self._shape_peaks.clear()

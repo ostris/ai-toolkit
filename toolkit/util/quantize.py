@@ -1,16 +1,16 @@
 from fnmatch import fnmatch
 from typing import List, Optional, Union, TYPE_CHECKING
 import torch
-from torchao.quantization import Float8Tensor
 
 from optimum.quanto.quantize import _quantize_submodule
 from optimum.quanto.tensor import Optimizer, qtype, qtypes
-from torchao.quantization.quant_api import (
-    quantize_ as torchao_quantize_,
-    _is_linear as torchao_is_linear,
+from toolkit.quantization.torchao_compat import (
     Float8WeightOnlyConfig,
-    IntxWeightOnlyConfig,
-    Int8WeightOnlyConfig
+    Int8WeightOnlyConfig,
+    intx_weight_only_config,
+    torchao_is_float8_tensor,
+    torchao_is_linear,
+    torchao_quantize_,
 )
 from optimum.quanto import freeze
 from optimum.quanto.tensor.qbytes import QBytesTensor
@@ -75,12 +75,12 @@ Q_MODULES = [
 ]
 
 torchao_qtypes = {
-    "uint2": IntxWeightOnlyConfig(torch.int2),
-    "uint3": IntxWeightOnlyConfig(torch.int3),
-    "uint4": IntxWeightOnlyConfig(torch.int4),
-    "uint5": IntxWeightOnlyConfig(torch.int5),
-    "uint6": IntxWeightOnlyConfig(torch.int6),
-    "uint7": IntxWeightOnlyConfig(torch.int7),
+    "uint2": intx_weight_only_config(2),
+    "uint3": intx_weight_only_config(3),
+    "uint4": intx_weight_only_config(4),
+    "uint5": intx_weight_only_config(5),
+    "uint6": intx_weight_only_config(6),
+    "uint7": intx_weight_only_config(7),
     "uint8": Int8WeightOnlyConfig(),
     "int8": Int8WeightOnlyConfig(),
     "float8": Float8WeightOnlyConfig(),
@@ -210,7 +210,7 @@ def quantize(
         def filter_fn(module: torch.nn.Module, fqn: str) -> bool:
             if not torchao_is_linear(module, fqn):
                 return False
-            if isinstance(module.weight, Float8Tensor):
+            if torchao_is_float8_tensor(module.weight):
                 return False
             if include is not None and not any(fnmatch(fqn, pattern) for pattern in include):
                 return False

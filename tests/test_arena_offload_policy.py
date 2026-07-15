@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from toolkit.memory_management.arena_offload.cap_calibrator import (
+    CAP_SET,
+    CapCalibrationDecision,
+)
 from toolkit.memory_management.arena_offload.policy import (
     ArenaResidencyController,
     TrainingSignalWindow,
@@ -289,6 +293,71 @@ def test_training_policy_rebinds_cap_before_pressure_relief(monkeypatch):
     assert events == ["bind", "relieve"]
 
 
+def test_training_policy_applies_calibration_before_residency(monkeypatch):
+    runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
+    runtime._device = "cuda"
+    runtime._config = SimpleNamespace(
+        strict_vram_cap=False,
+        _policy=SimpleNamespace(wddm_hard_gib=1.0),
+    )
+    runtime._last_training_cap_target_bytes = None
+    runtime._signals = SimpleNamespace(last_signal=None, shape_peaks={})
+    runtime._residency = SimpleNamespace(resident_bytes=lambda: 100)
+    runtime._smart_plan = {"singleton_resident_bytes": 0}
+    runtime._bind_training_cap = lambda: None
+    runtime._relieve_training_physical_pressure = lambda: False
+    runtime._promotion_candidate = lambda: None
+    runtime._demotion_candidate = lambda: None
+    runtime._demotion_candidates = lambda: ()
+    runtime._training_ring_bytes = lambda: 50
+    seen = {}
+
+    class Calibrator:
+        enabled = True
+        learned_cache_pad_bytes = None
+
+        def step(self, signal, **kwargs):
+            seen.update(kwargs)
+            return CapCalibrationDecision(
+                action=CAP_SET,
+                target_cap_bytes=700,
+                reason="initial_probe",
+                hold_residency=True,
+            )
+
+        def diagnostics(self):
+            return {
+                "state": "probe_settle",
+                "predicted_initial_cap_bytes": 700,
+                "last_clean_cap_bytes": 1000,
+                "last_dirty_cap_bytes": None,
+                "learned_cache_pad_bytes": None,
+                "buckets": [],
+            }
+
+    runtime._cap_calibrator = Calibrator()
+    cap_calls = []
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+    monkeypatch.setattr(
+        "toolkit.memory_management.arena_offload.runtime.allocator_cap."
+        "wddm_cliff_cap_bytes",
+        lambda *_args, **_kwargs: 1000,
+    )
+    monkeypatch.setattr(
+        "toolkit.memory_management.arena_offload.runtime.allocator_cap."
+        "configure_wddm_allocator_guard",
+        lambda *args, **kwargs: cap_calls.append((args, kwargs)),
+    )
+
+    runtime._apply_training_policy(shape_key=(768, 768))
+
+    assert seen["upcoming_shape_key"] == (768, 768)
+    assert seen["resident_bytes"] == 100
+    assert seen["ring_bytes"] == 50
+    assert cap_calls[0][1]["target_cap_bytes"] == 700
+    assert runtime._last_training_cap_target_bytes == 700
+
+
 def test_shape_working_peak_excludes_residency():
     window = TrainingSignalWindow()
     observe(window, peak_allocated_bytes=900, resident_bytes=200)
@@ -554,6 +623,63 @@ def test_controller_raises_cap_by_fixed_fsm_increment():
     )
     assert decision.action == "raise_cap"
     assert decision.target_cap_bytes == 710
+
+
+def test_controller_exactly_prefunds_promotion_after_cap_calibration():
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
+    controller.bootstrapped = True
+    controller.state = type(controller.state)("stable", 2)
+    signal = {
+        "allocator": {
+            "alloc_retries_delta": 0,
+            "free_count_delta": 0,
+        },
+        "compile_invalid": False,
+        "transfer": {"bytes": 100, "h2d_ms": 10.0},
+    }
+    decision = controller.step(
+        signal,
+        candidate={"block_key": "blocks.1", "block_bytes": 100},
+        demote_candidate=None,
+        cliff_cap_bytes=1000,
+        current_cap_bytes=600,
+        worst_shape_free_bytes=100,
+        worst_shape_allocator_slack_bytes=70,
+        worst_shape_live_bytes=500,
+        learned_cache_pad_bytes=50,
+    )
+    assert decision.action == "raise_cap"
+    assert decision.target_cap_bytes == int(650 / 0.95)
+
+
+def test_controller_holds_when_exact_promotion_cap_exceeds_cliff():
+    controller = ArenaResidencyController(
+        allocator_cache_headroom_bytes=10
+    )
+    controller.bootstrapped = True
+    controller.state = type(controller.state)("stable", 2)
+    decision = controller.step(
+        {
+            "allocator": {
+                "alloc_retries_delta": 0,
+                "free_count_delta": 0,
+            },
+            "compile_invalid": False,
+            "transfer": {"bytes": 100, "h2d_ms": 10.0},
+        },
+        candidate={"block_key": "blocks.1", "block_bytes": 100},
+        demote_candidate=None,
+        cliff_cap_bytes=650,
+        current_cap_bytes=600,
+        worst_shape_free_bytes=100,
+        worst_shape_allocator_slack_bytes=70,
+        worst_shape_live_bytes=500,
+        learned_cache_pad_bytes=50,
+    )
+    assert decision.action == "hold"
+    assert decision.reason == "promotion_exceeds_cliff"
 
 
 def test_arena_sampling_binds_fp8_to_canonical_and_singletons(monkeypatch):
@@ -839,7 +965,7 @@ def test_failed_training_step_preserves_original_error_if_cleanup_fails():
     runtime._last_step_num = None
     runtime._device = "cpu"
     runtime._last_policy_error = None
-    runtime._apply_training_policy = lambda: None
+    runtime._apply_training_policy = lambda **_kwargs: None
     runtime._handle_training_failure = (
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("cleanup failed")
@@ -862,7 +988,7 @@ def test_failed_training_step_does_not_publish_partial_peak(monkeypatch):
     runtime._last_shape_key = None
     runtime._last_step_num = None
     runtime._device = "cpu"
-    runtime._apply_training_policy = lambda: None
+    runtime._apply_training_policy = lambda **_kwargs: None
     runtime._handle_training_failure = lambda *_args, **_kwargs: None
     runtime._executor = SimpleNamespace(
         TRAIN="train",

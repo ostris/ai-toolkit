@@ -261,6 +261,129 @@ def test_checkpointing_rejection_precedes_canonical_commit():
     assert not hasattr(model, "_arena_offload_runtime")
 
 
+def test_sampling_callbacks_bracket_one_complete_transformer_forward():
+    model = _frozen_transformer()
+    model.enable_gradient_checkpointing(keep_last=1)
+    with mock.patch(
+        "toolkit.memory_management.arena_offload.planner.vram_budget.device_mem_info",
+        return_value=(8 * 1024**3, 12 * 1024**3),
+    ), mock.patch(
+        "toolkit.memory_management.arena_offload.planner.vram_budget."
+        "auto_physical_vram_headroom_gib",
+        return_value=1.0,
+    ):
+        config = ArenaOffloadConfig(enabled=True, compile_blocks=False)
+        config = replace(
+            config,
+            _policy=replace(config._policy, checkpoint_keep_last=1),
+        )
+        runtime = prepare_arena_offload(
+            model,
+            device="cpu",
+            block_names=("blocks",),
+            config=config,
+        )
+    try:
+        runtime.finalize()
+        events = []
+        runtime._executor.set_sampling_forward_callbacks(
+            lambda: events.append("begin"),
+            lambda: events.append("end"),
+        )
+        runtime._executor.activate(
+            runtime._executor.SAMPLE,
+            ResidencyPlan.build(runtime._executor.SAMPLE, ()),
+        )
+        promotions = []
+        runtime._executor.set_residency_promotion_callback(
+            lambda nbytes, plan: promotions.append((nbytes, plan.phase))
+        )
+        resident = [
+            (block_key, leaf_name)
+            for block_key in runtime._arena.block_keys()
+            for leaf_name in runtime._arena.block_record(block_key).leaf_names
+        ]
+        runtime._executor.activate(
+            runtime._executor.SAMPLE,
+            ResidencyPlan.build(runtime._executor.SAMPLE, resident),
+        )
+        with torch.no_grad(), runtime._executor.execution(
+            runtime._executor.SAMPLE
+        ):
+            model(torch.randn(2, 4))
+        assert events == ["begin", "end"]
+        assert promotions
+        assert promotions[-1][0] > 0
+        assert promotions[-1][1] == runtime._executor.SAMPLE
+    finally:
+        close_arena_offload(model)
+
+
+def test_sampling_dispatch_retries_one_failed_compiled_block_in_eager_wrapper():
+    model = _frozen_transformer()
+    model.enable_gradient_checkpointing(keep_last=1)
+    with mock.patch(
+        "toolkit.memory_management.arena_offload.planner.vram_budget.device_mem_info",
+        return_value=(8 * 1024**3, 12 * 1024**3),
+    ), mock.patch(
+        "toolkit.memory_management.arena_offload.planner.vram_budget."
+        "auto_physical_vram_headroom_gib",
+        return_value=1.0,
+    ):
+        config = ArenaOffloadConfig(enabled=True, compile_blocks=False)
+        config = replace(
+            config,
+            _policy=replace(config._policy, checkpoint_keep_last=1),
+        )
+        runtime = prepare_arena_offload(
+            model,
+            device="cpu",
+            block_names=("blocks",),
+            config=config,
+        )
+    try:
+        runtime.finalize()
+        executor = runtime._executor
+        original_get_kernel = executor._get_dispatch_kernel
+        attempts = []
+
+        def flaky_get_kernel(index):
+            kernel = original_get_kernel(index)
+
+            def flaky(*args, **kwargs):
+                attempts.append(index)
+                if len(attempts) == 1:
+                    raise torch.OutOfMemoryError("synthetic capped OOM")
+                return kernel(*args, **kwargs)
+
+            return flaky
+
+        executor._get_dispatch_kernel = flaky_get_kernel
+        recoveries = []
+        executor.set_sampling_forward_callbacks(
+            allocation_failure=lambda error: recoveries.append(error) or True
+        )
+        resident = [
+            (block_key, leaf_name)
+            for block_key in runtime._arena.block_keys()
+            for leaf_name in runtime._arena.block_record(block_key).leaf_names
+        ]
+        executor.activate(
+            executor.SAMPLE,
+            ResidencyPlan.build(executor.SAMPLE, resident),
+        )
+
+        with torch.no_grad(), executor.execution(executor.SAMPLE):
+            output = model(torch.randn(2, 4))
+
+        assert output.shape == (2, 4)
+        assert len(recoveries) == 1
+        assert isinstance(recoveries[0], torch.OutOfMemoryError)
+        assert attempts[:2] == [0, 0]
+    finally:
+        close_arena_offload(model)
+
+
 def test_saved_installed_forward_checkpoint_backward_and_teardown():
     torch.manual_seed(17)
     model = _frozen_transformer()

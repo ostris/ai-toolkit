@@ -108,11 +108,14 @@ def _adapt_quanto_fp8(value) -> Fp8LinearDeclaration | None:
 
 
 def _adapt_torchao_fp8(value) -> Fp8LinearDeclaration | None:
-    try:
-        from torchao.quantization import Float8Tensor
-    except ImportError:
+    from .torchao_compat import (
+        torchao_arena_fp8_supported,
+        torchao_is_float8_tensor,
+    )
+
+    if not torchao_arena_fp8_supported():
         return None
-    if not isinstance(value, Float8Tensor):
+    if not torchao_is_float8_tensor(value):
         return None
     qdata, scale = value.qdata, value.scale
     block_size = tuple(value.block_size or ())

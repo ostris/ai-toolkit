@@ -340,6 +340,15 @@ class ResidencyState:
     def resident_bytes(self) -> int:
         return sum(sidecar.nbytes for sidecar in self._sidecars.values())
 
+    def planned_addition_bytes(self, plan: ResidencyPlan) -> int:
+        """Exact sidecar payload allocated before an atomic plan is published."""
+        additions = plan.resident_leaf_keys - set(self._sidecars)
+        total = 0
+        for key in additions:
+            _block, spec, _module = self._canonical_leaf(key)
+            total += sum(int(item.nbytes) for item in spec.tensors)
+        return total
+
     def synchronize_copies(self) -> None:
         """Settle queued promotions before their host sources are unpinned."""
         if self._copy_stream is not None:

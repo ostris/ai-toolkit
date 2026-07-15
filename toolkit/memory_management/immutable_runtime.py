@@ -333,6 +333,7 @@ class ImmutableTransformerRuntime:
         self._finalization_signature = None
         self._active_token = None
         self._active_mode = None
+        self._residency_promotion_callback = None
         self.stats = {
             "residency_transitions": 0,
             "source_generation": self._sources.generation,
@@ -357,6 +358,10 @@ class ImmutableTransformerRuntime:
     def source(self, block_index: int) -> ImmutableBlockSourceSnapshot:
         """Current published source snapshot for one block."""
         return self._sources.source(block_index)
+
+    def set_residency_promotion_callback(self, callback=None) -> None:
+        """Install a pre-allocation hook for exact sidecar promotion bytes."""
+        self._residency_promotion_callback = callback
 
     def _require_finalized(self) -> None:
         if not self._finalized:
@@ -511,6 +516,9 @@ class ImmutableTransformerRuntime:
 
     def set_residency_plan(self, plan: ResidencyPlan) -> ResidencyDelta:
         self._assert_arena_stable("pre_residency_publish")
+        promotion_bytes = self.residency.planned_addition_bytes(plan)
+        if promotion_bytes and self._residency_promotion_callback is not None:
+            self._residency_promotion_callback(promotion_bytes, plan)
         previous, newly_pinned, keep = self._prepare_plan_pins(plan)
         try:
             delta = self._sources.publish(plan)
@@ -846,6 +854,8 @@ class ImmutableTransformerRuntime:
         fixed_working_bytes: int | None,
         cold_floor_bytes: int,
         hot_floor_bytes: int,
+        allocator_cap_bytes: int | None = None,
+        allocator_hard_bytes: int = 0,
         measured_pad_bytes: int = 256 * 1024**2,
         measured_floor_bytes: int = 512 * 1024**2,
     ) -> ImmutableProgram:
@@ -879,6 +889,16 @@ class ImmutableTransformerRuntime:
         allocated_bytes = torch.cuda.memory_allocated(device)
         reserved_bytes = torch.cuda.memory_reserved(device)
         reclaimable_cache = max(0, reserved_bytes - allocated_bytes)
+        if allocator_cap_bytes is not None:
+            total_bytes = vram_budget.device_total_bytes(device)
+            allocator_free = vram_budget.sampling_allocator_budget_free_bytes(
+                total_bytes,
+                allocated_bytes,
+                float(allocator_cap_bytes) / float(max(1, total_bytes)),
+                int(allocator_hard_bytes),
+            )
+            if allocator_free is not None:
+                free_bytes = max(int(free_bytes), int(allocator_free))
         current_sidecars = self.residency.resident_bytes()
         resident_budget = max(
             0,
@@ -910,6 +930,8 @@ class ImmutableTransformerRuntime:
             "shape_key": shape_key,
             "allocated": baseline_allocated,
             "reserved": baseline_reserved,
+            "external_peak_allocated": baseline_allocated,
+            "external_peak_reserved": baseline_reserved,
             "working_bytes": working_bytes,
             "floor_bytes": floor_bytes,
             "source": reserve_source,
@@ -926,6 +948,20 @@ class ImmutableTransformerRuntime:
         )
         return self.program(self.SAMPLE)
 
+    def record_sampling_peak(self, *, allocated_bytes: int, reserved_bytes: int):
+        """Preserve pass peaks when a sampling controller resets CUDA stats."""
+        baseline = self._sampling_baseline
+        if baseline is None:
+            return
+        baseline["external_peak_allocated"] = max(
+            int(baseline.get("external_peak_allocated", 0)),
+            int(allocated_bytes),
+        )
+        baseline["external_peak_reserved"] = max(
+            int(baseline.get("external_peak_reserved", 0)),
+            int(reserved_bytes),
+        )
+
     def finish_sampling_image(self, *, shape_key: tuple) -> int:
         baseline = self._sampling_baseline
         if baseline is None or baseline["shape_key"] != shape_key:
@@ -933,8 +969,14 @@ class ImmutableTransformerRuntime:
 
         device = self.residency.device
         torch.cuda.synchronize(device)
-        allocated_peak = torch.cuda.max_memory_allocated(device)
-        reserved_peak = torch.cuda.max_memory_reserved(device)
+        allocated_peak = max(
+            torch.cuda.max_memory_allocated(device),
+            int(baseline.get("external_peak_allocated", 0)),
+        )
+        reserved_peak = max(
+            torch.cuda.max_memory_reserved(device),
+            int(baseline.get("external_peak_reserved", 0)),
+        )
         allocated_growth = max(
             0,
             allocated_peak - int(baseline["allocated"]),

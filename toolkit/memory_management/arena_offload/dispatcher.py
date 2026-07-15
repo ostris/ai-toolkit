@@ -134,6 +134,17 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
         self._dispatchers = ()
         self._saved_forwards = ()
         self._replacements = ()
+        self._sampling_forward_begin = None
+        self._sampling_forward_end = None
+        self._sampling_allocation_failure = None
+
+    def set_sampling_forward_callbacks(
+        self, begin=None, end=None, allocation_failure=None
+    ):
+        """Install eager callbacks around one complete sampled transformer pass."""
+        self._sampling_forward_begin = begin
+        self._sampling_forward_end = end
+        self._sampling_allocation_failure = allocation_failure
 
     def _replacement_plan(self, index, invoker):
         abi = self._block_abis[index]
@@ -284,6 +295,9 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
             raise ImmutableRuntimeError(
                 "immutable_execution_mode_mismatch:active=sample:call=train"
             )
+        sampling = self._active_mode == self.SAMPLE
+        if sampling and index == 0 and self._sampling_forward_begin is not None:
+            self._sampling_forward_begin()
         try:
             first, first_location = _first_tensor_argument(args, kwargs)
         except ImmutableRuntimeError as error:
@@ -326,18 +340,27 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
 
         leaf_args = source.assemble_leaf_args(self.residency, compact_flat)
         self._mark_dispatch_dynamic(first)
-        try:
-            output = self._get_dispatch_kernel(index)(leaf_args, args, kwargs)
-        except BaseException:
-            # Non-reentrant checkpoint replay raises its private early-stop
-            # control-flow exception as soon as it has regenerated every
-            # tensor backward requested. That can unwind the block before the
-            # normal post-forward release below. With no gradient-bearing
-            # input, frozen streamed state is not a backward dependency and
-            # there is no free_on_backward node, so release on that unwind.
-            if token is not None and not release_on_backward:
-                torch.ops.mm.fetch_free(token)
-            raise
+        while True:
+            try:
+                output = self._get_dispatch_kernel(index)(leaf_args, args, kwargs)
+                break
+            except BaseException as error:
+                recover = (
+                    sampling
+                    and self._sampling_allocation_failure is not None
+                    and self._sampling_allocation_failure(error)
+                )
+                if recover:
+                    continue
+                # Non-reentrant checkpoint replay raises its private early-stop
+                # control-flow exception as soon as it has regenerated every
+                # tensor backward requested. That can unwind the block before the
+                # normal post-forward release below. With no gradient-bearing
+                # input, frozen streamed state is not a backward dependency and
+                # there is no free_on_backward node, so release on that unwind.
+                if token is not None and not release_on_backward:
+                    torch.ops.mm.fetch_free(token)
+                raise
         if token is not None:
             # The first checkpoint pass discards its fetched views, so return
             # that slot after forward. A replay with a gradient-bearing input
@@ -350,6 +373,12 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
                 torch.ops.mm.fetch_free_after(
                     token, _first_output_tensor(output)
                 )
+        if (
+            sampling
+            and index == len(self._blocks) - 1
+            and self._sampling_forward_end is not None
+        ):
+            self._sampling_forward_end()
         return output
 
     def close(self):
@@ -366,6 +395,9 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
         self._saved_forwards = ()
         self._invokers = ()
         self._replacements = ()
+        self._sampling_forward_begin = None
+        self._sampling_forward_end = None
+        self._sampling_allocation_failure = None
         super().close()
 
 

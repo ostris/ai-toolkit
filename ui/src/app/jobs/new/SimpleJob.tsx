@@ -366,6 +366,21 @@ export default function SimpleJob({
                       onChange={value => setJobConfig(value, 'config.process[0].model.layer_offloading_smart')}
                       docKey="model.layer_offloading_smart"
                     />
+                    {jobConfig.config.process[0].model.layer_offloading_smart && (
+                      <Checkbox
+                        label="Calibrate PyTorch VRAM"
+                        checked={
+                          jobConfig.config.process[0].model.layer_offloading_smart_cap_calibration || false
+                        }
+                        onChange={value =>
+                          setJobConfig(
+                            value,
+                            'config.process[0].model.layer_offloading_smart_cap_calibration',
+                          )
+                        }
+                        docKey="model.layer_offloading_smart_cap_calibration"
+                      />
+                    )}
                     {!jobConfig.config.process[0].model.layer_offloading_smart && (
                       <SliderInput
                         label="Transformer Offload %"

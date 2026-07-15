@@ -169,6 +169,7 @@ export interface ModelConfig {
   model_kwargs: { [key: string]: any };
   layer_offloading?: boolean;
   layer_offloading_smart?: boolean;
+  layer_offloading_smart_cap_calibration?: boolean;
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
   assistant_lora_path?: string;
@@ -178,6 +179,7 @@ export interface ModelConfig {
   compile_mode?: 'default' | 'max-autotune' | 'fastest';
   compile_fullgraph?: boolean;
   compile_dynamic?: boolean;
+  compile_coordinate_descent?: boolean;
   cache_size_limit?: number;
 }
 

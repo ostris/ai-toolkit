@@ -30,7 +30,10 @@ from toolkit.memory_management.runtime import (
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
-from toolkit.compile_utils import configure_cuda_only_inductor
+from toolkit.compile_utils import (
+    configure_cuda_only_inductor,
+    configure_quantized_compile_tuning,
+)
 from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
@@ -373,7 +376,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         arena_runtime = get_memory_runtime(getattr(self.sd, "unet", None))
         sampling_session = (
-            arena_runtime.sampling_session()
+            arena_runtime.sampling_session(
+                gen_configs=gen_img_config_list,
+            )
             if arena_runtime is not None
             else contextlib.nullcontext()
         )
@@ -1740,6 +1745,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         with model_load_arena_session(self.sd, enabled=arena_requested):
             self.sd.load_model()
+
+        coordinate_descent = configure_quantized_compile_tuning(self.model_config)
+        if coordinate_descent is not None:
+            state = "enabled" if coordinate_descent else "disabled"
+            print_acc(
+                "Quantized compile coordinate-descent tuning explicitly "
+                f"{state} by job config."
+            )
 
         text_encoders = getattr(self.sd, "text_encoder", None)
         if text_encoders is not None and not isinstance(

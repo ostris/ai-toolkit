@@ -712,6 +712,9 @@ class ModelConfig:
         self.layer_offloading_smart_wddm_hard_gb = kwargs.get(
             "layer_offloading_smart_wddm_hard_gb", 1.0
         )
+        self.layer_offloading_smart_cap_calibration = kwargs.get(
+            "layer_offloading_smart_cap_calibration", False
+        )
         self.layer_offloading_smart_sampling_working_reserve_gb = kwargs.get(
             "layer_offloading_smart_sampling_working_reserve_gb", -1.0
         )
@@ -765,6 +768,9 @@ class ModelConfig:
         self.compile_mode = kwargs.get("compile_mode", "default")
         self.compile_fullgraph = kwargs.get("compile_fullgraph", False)
         self.compile_dynamic = kwargs.get("compile_dynamic", True)
+        self.compile_coordinate_descent = kwargs.get(
+            "compile_coordinate_descent", None
+        )
         self.cache_size_limit = kwargs.get("cache_size_limit", None)
         
         # kwargs to pass to the model
