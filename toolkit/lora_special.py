@@ -30,6 +30,7 @@ LINEAR_MODULES = [
     'Linear',
     'LoRACompatibleLinear',
     'QLinear',
+    'OstrisLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
@@ -68,8 +69,7 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         torch.nn.Module.__init__(self)
         self.lora_name = lora_name
         self.orig_module_ref = weakref.ref(org_module)
-        self.scalar = torch.tensor(1.0, device=org_module.weight.device)
-        
+
         # if is ara lora module, mark it on the layer so memory manager can handle it
         if is_ara:
             org_module.ara_lora_ref = weakref.ref(self)
@@ -111,9 +111,9 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
                 self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=use_bias)
 
         if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_dim
+        self.scale = float(alpha) / self.lora_dim
         self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える
 
         # same as microsoft's
@@ -133,6 +133,131 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         self.org_forward = self.org_module[0].forward
         self.org_module[0].forward = self.forward
         # del self.org_module
+
+
+def _is_quantized_tensor(t) -> bool:
+    # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
+    # that are still nn.Parameter instances and expose .dequantize(). (quanto is intentionally not handled.)
+    return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
+
+
+def _dequantize_if_needed(t):
+    return t.dequantize() if _is_quantized_tensor(t) else t
+
+
+class FullModule(ToolkitModuleMixin, torch.nn.Module):
+    """
+    Full weight "lora" for layers that have no sensible low rank decomposition (norm layers, embeddings,
+    stray biases, etc). It does not have an up/down projection. It holds a trainable delta that is added to
+    the original weight (and bias) of the wrapped module. On save it emits `<name>.diff` (and `<name>.diff_b`
+    for bias) which ComfyUI applies as `weight += strength * diff`, so it merges directly into the model
+    weights without any extra adapter.
+
+    If the wrapped module's weight is torchao-quantized, the delta is kept in full precision and the original
+    weight is dequantized on the fly in the forward pass (the original quantized tensor is left untouched).
+    """
+
+    def __init__(
+            self,
+            lora_name,
+            org_module: torch.nn.Module,
+            multiplier=1.0,
+            network: 'LoRASpecialNetwork' = None,
+            **kwargs
+    ):
+        self.can_merge_in = True
+        ToolkitModuleMixin.__init__(self, network=network)
+        torch.nn.Module.__init__(self)
+        self.lora_name = lora_name
+        # keep the original module out of our state_dict (list hides it from nn.Module registration)
+        self.org_module = [org_module]
+        self.orig_module_ref = weakref.ref(org_module)
+        self.multiplier: Union[float, List[float]] = multiplier
+        # these are unused for full modules but the mixin/forward path expects them to exist
+        self.dropout = None
+        self.rank_dropout = None
+        self.module_dropout = None
+        self.is_checkpointing = False
+
+        # trainable delta, zero initialized so an untrained layer is a no-op (zero diff)
+        # dequantize first so the delta is full precision and shaped like the real (unpacked) weight
+        org_weight = org_module.weight  # single access: dequantizes on OstrisLinear
+        self.weight_is_quantized = _is_quantized_tensor(org_weight)
+        ref_weight = _dequantize_if_needed(org_weight)
+        self.diff = torch.nn.Parameter(torch.zeros_like(ref_weight))
+        # some modules (e.g. Embedding) have no bias attribute at all
+        org_bias = getattr(org_module, 'bias', None)
+        if org_bias is not None:
+            self.diff_b = torch.nn.Parameter(torch.zeros_like(org_bias))
+        else:
+            self.diff_b = None
+
+    def apply_to(self):
+        self.org_forward = self.org_module[0].forward
+        self.org_module[0].forward = self.forward
+
+    def forward(self, x, *args, **kwargs):
+        network: 'LoRASpecialNetwork' = self.network_ref()
+        skip = (not network.is_active) or network.is_merged_in or network._multiplier == 0 or network.is_lorm
+        if skip:
+            return self.org_forward(x, *args, **kwargs)
+
+        om = self.org_module[0]
+        multiplier = network.torch_multiplier
+        # weight space application can't be done per sample, so use the mean (same as the DoRA path)
+        mult = multiplier.mean() if isinstance(multiplier, torch.Tensor) else multiplier
+
+        orig_weight = om._parameters['weight']
+        # dequantize quantized weights to full precision so the delta can be added (the original
+        # quantized tensor is restored in the finally block below)
+        base_weight = _dequantize_if_needed(orig_weight)
+        eff_weight = base_weight + (self.diff.to(base_weight.device) * mult).to(base_weight.dtype)
+
+        has_bias = self.diff_b is not None and om._parameters.get('bias', None) is not None
+        if has_bias:
+            orig_bias = om._parameters['bias']
+            eff_bias = orig_bias + (self.diff_b.to(orig_bias.device) * mult).to(orig_bias.dtype)
+
+        # temporarily swap in the effective weights so the original forward (norm/linear/etc) uses them.
+        # this keeps autograd flowing into our delta while supporting any layer type.
+        om._parameters['weight'] = eff_weight
+        if has_bias:
+            om._parameters['bias'] = eff_bias
+        try:
+            out = self.org_forward(x, *args, **kwargs)
+        finally:
+            om._parameters['weight'] = orig_weight
+            if has_bias:
+                om._parameters['bias'] = orig_bias
+        return out
+
+    @torch.no_grad()
+    def merge_in(self: 'FullModule', merge_weight=1.0):
+        if not self.can_merge_in:
+            return
+        om = self.org_module[0]
+        if 'weight._data' in om.state_dict():
+            # quanto quantized weight, can't merge
+            return
+        org_weight = om.weight
+        orig_dtype = org_weight.dtype
+        # dequantize torchao weights so we can fold the full precision delta in
+        merged_weight = _dequantize_if_needed(org_weight).float() + merge_weight * self.diff.float().to(org_weight.device)
+        if self.weight_is_quantized:
+            # re-quantize so the model stays quantized across continuous merge/reset cycles
+            from toolkit.util.quantize import get_torchao_config, requantize_module_weight
+            requantize_module_weight(om, merged_weight, orig_dtype, get_torchao_config(self._get_base_qtype()))
+        else:
+            om.weight.data = merged_weight.to(org_weight.device, orig_dtype)
+        # bias is never quantized
+        if self.diff_b is not None and getattr(om, 'bias', None) is not None:
+            om.bias.data = (om.bias.data.float() + merge_weight * self.diff_b.float().to(om.bias.device)).to(om.bias.dtype)
+
+    def reset_weights(self: 'FullModule'):
+        with torch.no_grad():
+            self.diff.zero_()
+            if self.diff_b is not None:
+                self.diff_b.zero_()
 
 
 class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
@@ -187,6 +312,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
             is_lorm: bool = False,
             ignore_if_contains = None,
             only_if_contains = None,
+            full_if_contains = None,
             parameter_threshold: float = 0.0,
             attn_only: bool = False,
             target_lin_modules=LoRANetwork.UNET_TARGET_REPLACE_MODULE,
@@ -223,6 +349,13 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
         if ignore_if_contains is None:
             ignore_if_contains = []
         self.ignore_if_contains = ignore_if_contains
+        # full_if_contains: any layer (even linear/conv) whose name matches becomes a full weight
+        # module instead of a normal lora module
+        if full_if_contains is None:
+            full_if_contains = []
+        elif isinstance(full_if_contains, str):
+            full_if_contains = [full_if_contains]
+        self.full_if_contains = full_if_contains
         self.transformer_only = transformer_only
         self.base_model_ref = None
         if base_model is not None:
@@ -342,7 +475,6 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                         is_conv2d = child_module.__class__.__name__ in CONV_MODULES
                         is_conv2d_1x1 = is_conv2d and child_module.kernel_size == (1, 1)
 
-
                         lora_name = [prefix, name, child_name]
                         # filter out blank
                         lora_name = [x for x in lora_name if x and x != ""]
@@ -355,6 +487,25 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                             lora_name = lora_name.replace(".", "$$")
                         else:
                             lora_name = lora_name.replace(".", "_")
+
+                        # decide if this should be a full weight module instead of a normal lora.
+                        # - all_layers: every remaining weight bearing leaf that isn't linear/conv
+                        #   (norm layers, embeddings, stray biases, etc)
+                        # - full_if_contains: any matching layer, INCLUDING linear/conv, overriding the
+                        #   normal lora for it
+                        all_layers = self.network_config is not None and getattr(self.network_config, 'all_layers', False)
+                        is_leaf_with_weight = (
+                            len(list(child_module.children())) == 0
+                            and isinstance(getattr(child_module, 'weight', None), torch.nn.Parameter)
+                        )
+                        matches_full_if_contains = len(self.full_if_contains) > 0 and (
+                            any([word in clean_name for word in self.full_if_contains])
+                            or any([word in lora_name for word in self.full_if_contains])
+                        )
+                        is_full_layer = is_leaf_with_weight and (
+                            matches_full_if_contains
+                            or (all_layers and not is_linear and not is_conv2d)
+                        )
 
                         skip = False
                         if any([word in clean_name for word in self.ignore_if_contains]):
@@ -370,7 +521,10 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                 transformer_block_names = base_model.get_transformer_block_names()
                             
                             if transformer_block_names is not None:
-                                if not any([name in lora_name for name in transformer_block_names]):
+                                # match against clean_name (dotted) so block names can be
+                                # dotted paths (e.g. "model.language_model.layers"); lora_name
+                                # has dots replaced with "$$"/"_" and wouldn't match.
+                                if not any([block_name in clean_name for block_name in transformer_block_names]):
                                     skip = True
                             else:
                                 if self.is_pixart:
@@ -399,7 +553,7 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                     if "single_blocks" not in lora_name and "double_blocks" not in lora_name:
                                         skip = True
 
-                        if (is_linear or is_conv2d) and not skip:
+                        if (is_linear or is_conv2d) and not skip and not is_full_layer:
 
                             if self.only_if_contains is not None:
                                 if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
@@ -462,6 +616,21 @@ class LoRASpecialNetwork(ToolkitNetworkMixin, LoRANetwork):
                                     lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape)]
                                 else:
                                     lora_shape_dict[lora_name] = [list(lora.lora_down.weight.shape), list(lora.lora_up.weight.shape)]
+
+                        elif is_full_layer and not skip:
+                            if self.only_if_contains is not None:
+                                if not any([word in clean_name for word in self.only_if_contains]) and not any([word in lora_name for word in self.only_if_contains]):
+                                    continue
+
+                            lora = FullModule(
+                                lora_name,
+                                child_module,
+                                self.multiplier,
+                                network=self,
+                                parent=module,
+                            )
+                            loras.append(lora)
+                            lora_shape_dict[lora_name] = [list(lora.diff.shape)]
             return loras, skipped
 
         text_encoders = text_encoder if type(text_encoder) == list else [text_encoder]

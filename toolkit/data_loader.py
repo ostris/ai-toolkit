@@ -533,7 +533,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
-                    text_embedding_space_version=self.sd.model_config.arch if self.sd else "sd1",
+                    text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
                     temporal_compression=temporal_compression,
@@ -604,11 +604,6 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             if self.is_generating_controls:
                 # always do this last
                 self.setup_controls()
-        else:
-            if self.dataset_config.poi is not None:
-                # handle cropping to a specific point of interest
-                # setup buckets every epoch
-                self.setup_buckets(quiet=True)
         self.epoch_num += 1
 
     def __len__(self):
@@ -616,9 +611,29 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             return len(self.batch_indices)
         return len(self.file_list)
 
-    def _get_single_item(self, index) -> 'FileItemDTO':
+    def _get_replacement_index(self, index) -> int:
+        # when an image fails to load we have to swap in a different one. With buckets the
+        # replacement must come from the same bucket so the collated shapes still match.
+        if self.dataset_config.buckets:
+            for bucket in self.buckets.values():
+                if index in bucket.file_list_idx:
+                    candidates = [i for i in bucket.file_list_idx if i != index]
+                    if candidates:
+                        return random.choice(candidates)
+                    break
+        return random.randint(0, len(self.file_list) - 1)
+
+    def _get_single_item(self, index, _attempts=0) -> 'FileItemDTO':
         file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
-        file_item.load_and_process_image(self.transform)
+        try:
+            file_item.load_and_process_image(self.transform)
+        except Exception as e:
+            print(f"Error loading image, skipping and loading a different one: {file_item.path} ({e})")
+            if _attempts >= 10:
+                # avoid infinite recursion if many files are corrupt
+                raise
+            new_index = self._get_replacement_index(index)
+            return self._get_single_item(new_index, _attempts=_attempts + 1)
         file_item.load_caption(self.caption_dict)
         return file_item
 

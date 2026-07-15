@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use, useMemo, useCallback } from 'react';
+import { useEffect, useState, use, useMemo, useCallback, useRef } from 'react';
 import { LuImageOff, LuLoader, LuBan } from 'react-icons/lu';
 import { FaChevronLeft } from 'react-icons/fa';
 import { VirtuosoGrid } from 'react-virtuoso';
@@ -13,6 +13,8 @@ import { apiClient } from '@/utils/api';
 import useSettings from '@/hooks/useSettings';
 import { pathJoin } from '@/utils/basic';
 import AutoCaptionButton from '@/components/AutoCaptionButton';
+import CaptionMonitor from '@/components/CaptionMonitor';
+import { CreatableSelectInput } from '@/components/formInputs';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -22,23 +24,35 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const { settings, isSettingsLoaded } = useSettings();
   const [selectedImgPath, setSelectedImgPath] = useState<string | null>(null);
+  const [captionExt, setCaptionExt] = useState<string>('txt');
   const [captionRefreshKeys, setCaptionRefreshKeys] = useState<Record<string, number>>({});
   const [scrollParent, setScrollParent] = useState<HTMLDivElement | null>(null);
+  const [captionBarHeight, setCaptionBarHeight] = useState(0);
   const scrollParentCallback = useCallback((el: HTMLDivElement | null) => setScrollParent(el), []);
+  const isRefreshingRef = useRef(false);
 
   const refreshImageList = (dbName: string) => {
+    // Only allow one listImages request in flight at a time.
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     setStatus('loading');
     apiClient
       .post('/api/datasets/listImages', { datasetName: dbName })
       .then((res: any) => {
         const data = res.data;
-        // Server already sorts; avoid the client-side sort that's expensive on large lists.
-        setImgList(data.images);
+        // Server sends a shared root (with trailing OS separator) + each file's sub-path to
+        // keep the payload small. Plain concat rebuilds the native absolute path on any OS.
+        // Server already sorts; avoid a client-side sort on large lists.
+        const root = data.root;
+        setImgList(data.images.map((subPath: string) => ({ img_path: root + subPath })));
         setStatus('success');
       })
       .catch(error => {
         console.error('Error fetching images:', error);
         setStatus('error');
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
       });
   };
   useOpenImagesModalOnDrag(datasetName, () => refreshImageList(datasetName));
@@ -118,9 +132,23 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
         <div className="flex-1"></div>
         <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
+          <div className="flex items-center gap-1">
+            <label className="text-xs text-gray-400 hidden sm:inline whitespace-nowrap">Caption ext</label>
+            <CreatableSelectInput
+              className="w-44"
+              value={captionExt}
+              onChange={value => setCaptionExt(value)}
+              options={[
+                { value: 'txt', label: 'txt' },
+                { value: 'json', label: 'json' },
+                { value: 'caption', label: 'caption' },
+              ]}
+            />
+          </div>
           <AutoCaptionButton
             datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
             setIsAutoCaptioning={setIsAutoCaptioning}
+            captionExt={captionExt}
           />
           <Button
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md text-sm sm:text-base whitespace-nowrap"
@@ -151,20 +179,31 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
                   onImageClick={() => setSelectedImgPath(img.img_path)}
                   captionRefreshKey={captionRefreshKeys[img.img_path] || 0}
                   observerRoot={scrollParent}
+                  captionExt={captionExt}
                 />
               );
             }}
             computeItemKey={index => imgList[index]?.img_path ?? index}
           />
         )}
+        {/* Spacer so the last cards stay accessible above the floating caption bar.
+            Always keeps a baseline gap, plus the bar height when it is showing. */}
+        <div style={{ height: `${captionBarHeight + 24}px` }} className="transition-[height] duration-300" />
       </MainContent>
       <AddImagesModal />
+      {isSettingsLoaded && (
+        <CaptionMonitor
+          datasetPath={`${pathJoin(settings.DATASETS_FOLDER, datasetName)}`}
+          onHeightChange={setCaptionBarHeight}
+        />
+      )}
       <DatasetImageViewer
         imgPath={selectedImgPath}
         imageList={imgPaths}
         onChange={setSelectedImgPath}
         refreshImages={() => refreshImageList(datasetName)}
         onCaptionSaved={path => setCaptionRefreshKeys(prev => ({ ...prev, [path]: (prev[path] || 0) + 1 }))}
+        captionExt={captionExt}
       />
     </>
   );

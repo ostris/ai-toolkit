@@ -10,6 +10,8 @@ import DocModal from '@/components/DocModal';
 import os from 'os';
 import { CaptionDatasetModal } from '@/components/CaptionDatasetModal';
 import MergeLoRAsModal from '@/components/MergeLoRAsModal';
+import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
+import PromptBoxEditorModal from '@/components/PromptBoxEditorModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +65,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <DocModal />
         <CaptionDatasetModal />
         <MergeLoRAsModal />
+        <UpsamplePromptsModal />
+        <PromptBoxEditorModal />
       </body>
     </html>
   );

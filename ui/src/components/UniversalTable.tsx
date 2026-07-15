@@ -2,7 +2,7 @@ import Loading from './Loading';
 import classNames from 'classnames';
 
 export interface TableColumn {
-  title: string;
+  title: React.ReactNode;
   key: string;
   render?: (row: any) => React.ReactNode;
   className?: string;

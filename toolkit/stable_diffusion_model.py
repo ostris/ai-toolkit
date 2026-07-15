@@ -232,6 +232,9 @@ class StableDiffusion:
         # can be used on models to invalidate cache if things change.
         self.latent_space_version = None
         
+        # if a mask is passed, do the loss with the mask. May be set false for models that use a mask for other reasons.
+        self.do_masked_loss = True
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):
@@ -268,6 +271,10 @@ class StableDiffusion:
     @property
     def is_lumina2(self):
         return self.arch == 'lumina2'
+    
+    @property
+    def text_embedding_space_version(self):
+        return self.arch
     
     @property
     def unet_unwrapped(self):
@@ -3131,6 +3138,12 @@ class StableDiffusion:
         # override in child classes to get transformer block names for lora targeting
         return None
     
+    def get_quantization_exclude_modules(self) -> Optional[List[str]]:
+        # override in child classes to keep sensitive modules in full precision when
+        # quantizing. Returns fnmatch patterns matched against the transformer's module
+        # names (e.g. "model.x_embedder*").
+        return None
+    
     def get_base_model_version(self) -> str:
         if self.is_pixart:
             return 'pixart'
@@ -3154,3 +3167,7 @@ class StableDiffusion:
 
     def get_model_to_train(self):
         return self.unet
+        
+    def scale_loss(self, loss):
+        # called to get the loss scaler for the model. Can be overridden in child classes
+        return loss

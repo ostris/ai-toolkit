@@ -827,6 +827,9 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
             
             loss = loss * local_loss_scale
+            
+            # apply model specific loss scaling
+            loss = self.sd.scale_loss(loss)
                 
             do_weighted_timesteps = False
             if self.sd.is_flow_matching:
@@ -941,6 +944,12 @@ class SDTrainer(BaseSDTrainProcess):
 
         loss = loss + additional_loss
         
+        if hasattr(self.sd, "get_additional_loss"):
+            additional_model_loss = self.sd.get_additional_loss(pred, target)
+            if additional_model_loss is not None:
+                loss = loss + additional_model_loss
+                self.additional_logs["additional_model_loss"] = additional_model_loss.item()
+
         if self.train_config.max_loss_debug and self.train_config.max_loss is not None:
             if loss.item() > self.train_config.max_loss:
                 print_acc(f"Loss {loss.item()} is greater than max loss {self.train_config.max_loss}. Clipping to max loss.")
@@ -1382,7 +1391,7 @@ class SDTrainer(BaseSDTrainProcess):
                         clip_images = batch.clip_image_tensor.to(self.device_torch, dtype=dtype).detach()
 
             mask_multiplier = torch.ones((noisy_latents.shape[0], 1, 1, 1), device=self.device_torch, dtype=dtype)
-            if batch.mask_tensor is not None:
+            if batch.mask_tensor is not None and self.sd.do_masked_loss:
                 with self.timer('get_mask_multiplier'):
                     # upsampling no supported for bfloat16
                     mask_multiplier = batch.mask_tensor.to(self.device_torch, dtype=torch.float16).detach()
@@ -2057,10 +2066,6 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                     
                     if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
-                        # send the loss backwards otherwise checkpointing will fail
-                        self.accelerator.backward(loss)
-                        normal_loss = loss.detach() # dont send backward again
-                        
                         with torch.no_grad():
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
@@ -2081,13 +2086,10 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                         multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
                         preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
-                        self.accelerator.backward(preservation_loss)
+                        self.additional_logs['loss/normal'] = loss.item()
+                        self.additional_logs['loss/preservation'] = preservation_loss.item()
+                        loss = loss + preservation_loss
 
-                        loss = normal_loss + preservation_loss
-                        loss = loss.clone().detach()
-                        # require grad again so the backward wont fail
-                        loss.requires_grad_(True)
-                        
                 # check if nan
                 if torch.isnan(loss):
                     print_acc("loss is nan")

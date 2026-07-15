@@ -32,6 +32,7 @@ model Job {
   stop            Boolean  @default(false)
   return_to_queue Boolean  @default(false) // same as stop, but will be set to 'queued' when stopped
   step            Int      @default(0)
+  total_steps     Int?
   info            String   @default("")
   speed_string    String   @default("")
   queue_position  Int      @default(0)

@@ -18,6 +18,7 @@ interface DatasetImageCardProps {
   captionRefreshKey?: number;
   observerRoot?: Element | null;
   rootMargin?: string;
+  captionExt?: string;
 }
 
 const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
@@ -31,6 +32,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   captionRefreshKey = 0,
   observerRoot = null,
   rootMargin = '200px 0px',
+  captionExt = 'txt',
 }) => {
   const [loaded, setLoaded] = useState<boolean>(false);
   const [showAudioPlayer, setShowAudioPlayer] = useState(true);
@@ -110,6 +112,7 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   const { caption: fetchedCaption, isLoaded: isCaptionLoaded } = useCaptionBatch(
     isVisible ? imageUrl : null,
     combinedRefreshKey,
+    captionExt,
   );
 
   const [caption, setCaption] = useState<string>('');
@@ -138,10 +141,10 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
       return;
     }
     apiClient
-      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption })
+      .post('/api/img/caption', { imgPath: imageUrl, caption: trimmedCaption, ext: captionExt })
       .then(() => {
         setSavedCaption(trimmedCaption);
-        setCachedCaption(imageUrl, trimmedCaption);
+        setCachedCaption(imageUrl, trimmedCaption, captionExt);
         dirtyRef.current = false;
       })
       .catch(error => {
@@ -150,19 +153,19 @@ const DatasetImageCard: React.FC<DatasetImageCardProps> = ({
   };
 
   // Save any pending edit if the card unmounts (e.g. scrolled out of the virtualized window).
-  const latestRef = useRef({ caption, savedCaption, imageUrl });
+  const latestRef = useRef({ caption, savedCaption, imageUrl, captionExt });
   useEffect(() => {
-    latestRef.current = { caption, savedCaption, imageUrl };
+    latestRef.current = { caption, savedCaption, imageUrl, captionExt };
   });
   useEffect(() => {
     return () => {
       if (!dirtyRef.current) return;
-      const { caption: c, savedCaption: s, imageUrl: url } = latestRef.current;
+      const { caption: c, savedCaption: s, imageUrl: url, captionExt: ext } = latestRef.current;
       const trimmed = c.trim();
       if (trimmed === s) return;
       apiClient
-        .post('/api/img/caption', { imgPath: url, caption: trimmed })
-        .then(() => setCachedCaption(url, trimmed))
+        .post('/api/img/caption', { imgPath: url, caption: trimmed, ext })
+        .then(() => setCachedCaption(url, trimmed, ext))
         .catch(err => console.error('Error saving caption on unmount:', err));
     };
   }, []);

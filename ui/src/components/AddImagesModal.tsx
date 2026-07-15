@@ -212,6 +212,7 @@ export default function AddImagesModal() {
       'video/*': ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.m4v', '.flv'],
       'audio/*': ['.mp3', '.wav', '.flac', '.ogg'],
       'text/*': ['.txt'],
+      'application/json': ['.json'],
     }),
     [],
   );
@@ -270,7 +271,7 @@ export default function AddImagesModal() {
                     {!isUploading ? (
                       <>
                         <p className="text-sm text-gray-200 text-center">Drag & drop files here or click to select</p>
-                        <p className="text-xs text-gray-400 mt-1">Images, videos, or .txt supported</p>
+                        <p className="text-xs text-gray-400 mt-1">Images, videos, .txt or .json supported</p>
                       </>
                     ) : (
                       <p className="text-sm text-gray-200 text-center">Drop more files to add to queue</p>

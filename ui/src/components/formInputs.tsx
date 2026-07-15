@@ -284,6 +284,8 @@ export const SelectInput = (props: SelectInputProps) => {
         isMulti={multiple}
         className="aitk-react-select-container"
         classNamePrefix="aitk-react-select"
+        menuPosition="fixed"
+        menuPlacement="auto"
         onChange={selected => {
           if (multiple) {
             const arr = (selected as { value: string }[] | null) ?? [];
@@ -324,6 +326,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
   }
 
   const [isCustom, setIsCustom] = React.useState(!isInOptions && !!value);
+  const customInputRef = React.useRef<HTMLInputElement>(null);
 
   // Build select options with "Custom" at the top
   const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: 'Custom' };
@@ -361,13 +364,15 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
         </label>
       )}
       <div className="flex gap-2">
-        <div className={isCustom ? 'w-1/3' : 'w-full'}>
+        <div className={isCustom ? 'w-20 shrink-0' : 'w-full'}>
           <Select
             value={selectedOption}
             options={selectOptions}
             isDisabled={props.disabled}
             className="aitk-react-select-container"
             classNamePrefix="aitk-react-select"
+            menuPosition="fixed"
+            menuPlacement="auto"
             formatOptionLabel={(option: unknown) => {
               const opt = option as SelectOption;
               return opt.value === CUSTOM_SELECT_VALUE ? (
@@ -382,6 +387,8 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
                 if (val === CUSTOM_SELECT_VALUE) {
                   setIsCustom(true);
                   onChange('');
+                  // focus the custom input only when the user actively selects "Custom"
+                  requestAnimationFrame(() => customInputRef.current?.focus());
                 } else {
                   setIsCustom(false);
                   onChange(val);
@@ -392,13 +399,13 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
         </div>
         {isCustom && (
           <input
+            ref={customInputRef}
             type="text"
             value={value}
             onChange={e => onChange(e.target.value)}
-            className={`${inputClasses} w-2/3`}
+            className={`${inputClasses} flex-1 min-w-0`}
             placeholder={props.placeholder ?? 'Enter custom value'}
             disabled={props.disabled}
-            autoFocus
           />
         )}
       </div>

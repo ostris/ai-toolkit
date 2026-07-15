@@ -171,6 +171,13 @@ export interface ModelConfig {
   layer_offloading_transformer_percent?: number;
   layer_offloading_text_encoder_percent?: number;
   assistant_lora_path?: string;
+  unconditional_lora_path?: string;
+  compile?: boolean;
+  block_compile?: boolean;
+  compile_mode?: 'default' | 'max-autotune' | 'fastest';
+  compile_fullgraph?: boolean;
+  compile_dynamic?: boolean;
+  cache_size_limit?: number;
 }
 
 export interface SampleItem {
@@ -194,6 +201,7 @@ export interface SampleItem {
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
+  sample_start_step: number;
   width: number;
   height: number;
   prompts?: string[];
@@ -268,10 +276,13 @@ export interface CaptionProcessConfig {
     extensions: string[];
     path_to_caption: string;
     recaption: boolean;
+    compile?: boolean;
     caption_prompt?: string;
     max_res?: number;
     max_new_tokens?: number;
     fixed_caption?: string;
+    caption_extension?: string;
+    thinking?: boolean;
   }
 }
 

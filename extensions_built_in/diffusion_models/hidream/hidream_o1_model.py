@@ -127,6 +127,7 @@ class HidreamO1Model(BaseModel):
         super().__init__(
             device, model_config, dtype, custom_pipeline, noise_scheduler, **kwargs
         )
+        self.use_old_lokr_format = False
         self.is_flow_matching = True
         self.is_transformer = True
         self.target_lora_modules = ["Qwen3VLForConditionalGeneration"]
@@ -488,6 +489,7 @@ class HidreamO1Model(BaseModel):
         return False
 
     def save_model(self, output_path, meta, save_dtype):
+        from toolkit.util.quantize import dequantize_if_quantized
         transformer: Qwen3VLForConditionalGeneration = unwrap_model(self.model)
         if self.is_comfy_weight:
             sd = transformer.state_dict()
@@ -495,7 +497,8 @@ class HidreamO1Model(BaseModel):
             for key, value in sd.items():
                 if "lm_head.weight" in key:
                     continue  # comfy checkpoint doesnt have the lm head, so skip it
-                save_dict[key] = value.clone().to("cpu", dtype=save_dtype)
+                # dequantize any quantized (e.g. torchao) weights so we save plain full precision tensors
+                save_dict[key] = dequantize_if_quantized(value).clone().to("cpu", dtype=save_dtype)
             
             if not output_path.endswith(".safetensors"):
                 output_path += ".safetensors"
@@ -524,7 +527,7 @@ class HidreamO1Model(BaseModel):
         return self.arch
 
     def get_transformer_block_names(self) -> Optional[List[str]]:
-        return ["layers"]
+        return ["model.language_model.layers"]
 
     def convert_lora_weights_before_save(self, state_dict):
         new_sd = {}

@@ -9,7 +9,7 @@ import {
   jobTypeOptions,
   SampleTags,
 } from './options';
-import { defaultDatasetConfig } from './jobConfig';
+import { defaultCompileOptions, defaultDatasetConfig } from './jobConfig';
 import { GroupedSelectOption, JobConfig, SelectOption } from '@/types';
 import { objectCopy, tagsToObj, objToTags } from '@/utils/basic';
 import {
@@ -20,9 +20,12 @@ import {
   FormGroup,
   NumberInput,
   SliderInput,
+  CreatableSelectInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X, Copy } from 'lucide-react';
+import { X, Copy, Wand2, SquareDashed } from 'lucide-react';
+import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
+import { openPromptBoxEditor } from '@/components/PromptBoxEditorModal';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -304,6 +307,20 @@ export default function SimpleJob({
                 placeholder=""
               />
             )}
+            {modelArch?.additionalSections?.includes('model.unconditional_lora_path') && (
+              <TextInput
+                label="Unconditional Adapter Path"
+                value={jobConfig.config.process[0].model.unconditional_lora_path ?? ''}
+                docKey="config.process[0].model.unconditional_lora_path"
+                onChange={(value: string | undefined) => {
+                  if (value?.trim() === '') {
+                    value = undefined;
+                  }
+                  setJobConfig(value, 'config.process[0].model.unconditional_lora_path');
+                }}
+                placeholder=""
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.low_vram') && (
               <FormGroup label="Options">
                 <Checkbox
@@ -312,6 +329,14 @@ export default function SimpleJob({
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
               </FormGroup>
+            )}
+            {modelArch?.additionalSections?.includes('model.model_kwargs.kv_cache') && (
+              <Checkbox
+                label="KV Cache"
+                docKey="model.model_kwargs.kv_cache"
+                checked={jobConfig.config.process[0].model.model_kwargs.kv_cache || false}
+                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.kv_cache')}
+              />
             )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
               <Checkbox
@@ -365,7 +390,7 @@ export default function SimpleJob({
             )}
           </Card>
           {disableSections.includes('model.quantize') ? null : (
-            <Card title="Quantization">
+            <Card title="Quantize / Compile">
               <SelectInput
                 label="Transformer"
                 value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
@@ -398,6 +423,25 @@ export default function SimpleJob({
                   options={quantizationOptions}
                 />
               )}
+              <FormGroup label="Compile Options">
+                <></>
+              </FormGroup>
+              <Checkbox
+                label="Compile Model"
+                checked={jobConfig.config.process[0].model.compile || false}
+                onChange={value => {
+                  setJobConfig(value, 'config.process[0].model.compile');
+                  if (value) {
+                    for (const key in defaultCompileOptions) {
+                      setJobConfig((defaultCompileOptions as any)[key], `config.process[0].model.${key}`);
+                    }
+                  } else {
+                    for (const key in defaultCompileOptions) {
+                      setJobConfig(undefined, `config.process[0].model.${key}`);
+                    }
+                  }
+                }}
+              />
             </Card>
           )}
           {modelArch?.additionalSections?.includes('model.multistage') && (
@@ -585,6 +629,7 @@ export default function SimpleJob({
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'automagic', label: 'Automagic' },
                     { value: 'automagic2', label: 'Automagic v2' },
+                    { value: 'automagic3', label: 'Automagic v3' },
                     { value: 'prodigyopt', label: 'Prodigy' },
                     { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
@@ -957,6 +1002,18 @@ export default function SimpleJob({
                         min={0}
                         required
                       />
+                      <CreatableSelectInput
+                        label="Caption Extension"
+                        className="pt-2"
+                        value={dataset.caption_ext || 'txt'}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].caption_ext`)}
+                        options={[
+                          { value: 'txt', label: 'txt' },
+                          { value: 'json', label: 'json' },
+                          { value: 'caption', label: 'caption' },
+                        ]}
+                      />
+
                       {modelArch?.additionalSections?.includes('datasets.num_frames') && !dataset.auto_frame_count && (
                         <NumberInput
                           label="Num Frames"
@@ -1125,6 +1182,15 @@ export default function SimpleJob({
                   min={1}
                   required
                 />
+                <NumberInput
+                  label="Sample Start Step"
+                  value={jobConfig.config.process[0].sample.sample_start_step ?? 0}
+                  onChange={value => setJobConfig(value, 'config.process[0].sample.sample_start_step')}
+                  placeholder="eg. 0"
+                  className="pt-2"
+                  min={0}
+                  required
+                />
                 <SelectInput
                   label="Sampler"
                   className="pt-2"
@@ -1263,9 +1329,35 @@ export default function SimpleJob({
                 </FormGroup>
               </div>
             </div>
-            <FormGroup label={`Sample Prompts (${jobConfig.config.process[0].sample.samples.length})`} className="pt-2">
-              <div></div>
-            </FormGroup>
+            <div className="pt-2 mb-2 flex items-center justify-between">
+              <label className="block text-xs text-gray-300">
+                Sample Prompts ({jobConfig.config.process[0].sample.samples.length})
+              </label>
+              {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
+                <button
+                  type="button"
+                  disabled={jobConfig.config.process[0].sample.samples.length === 0}
+                  onClick={() => {
+                    const sampleCfg = jobConfig.config.process[0].sample;
+                    const items = sampleCfg.samples
+                      .map((s, i) => ({
+                        index: i,
+                        prompt: s.prompt || '',
+                        aspectRatio: toAspectRatio(s.width || sampleCfg.width, s.height || sampleCfg.height),
+                      }))
+                      .filter(it => it.prompt.trim() !== '');
+                    if (items.length === 0) return;
+                    openUpsamplePromptsModal(items, (index, newPrompt) => {
+                      setJobConfig(newPrompt, `config.process[0].sample.samples[${index}].prompt`);
+                    });
+                  }}
+                  className="px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-md inline-flex items-center gap-2"
+                >
+                  <Wand2 className="w-4 h-4" />
+                  Upsample Prompts
+                </button>
+              )}
+            </div>
             {jobConfig.config.process[0].sample.samples.map((sample, i) => (
               <div key={i} className="rounded-lg pl-4 pr-1 mb-4 bg-gray-950">
                 <div className="flex items-center space-x-2">
@@ -1348,6 +1440,31 @@ export default function SimpleJob({
                               />
                             )}
                           </>
+                        )}
+
+                        {modelArch?.additionalSections?.includes('ideogram_4_prompt') && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const sampleCfg = jobConfig.config.process[0].sample;
+                                openPromptBoxEditor({
+                                  prompt: sample.prompt || '',
+                                  aspectRatio: toAspectRatio(
+                                    sample.width || sampleCfg.width,
+                                    sample.height || sampleCfg.height,
+                                  ),
+                                  title: `Prompt #${i + 1}`,
+                                  onApply: newPrompt =>
+                                    setJobConfig(newPrompt, `config.process[0].sample.samples[${i}].prompt`),
+                                });
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800 transition-colors"
+                            >
+                              <SquareDashed className="w-3.5 h-3.5" />
+                              Edit caption &amp; boxes
+                            </button>
+                          </div>
                         )}
 
                         <div className="grid w-full lg:grid-flow-col lg:auto-cols-fr gap-4 mt-2">

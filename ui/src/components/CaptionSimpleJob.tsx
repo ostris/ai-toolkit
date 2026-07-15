@@ -30,6 +30,8 @@ type Props = {
 const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, setGpuIDs, gpuList, showGPUSelect }) => {
   const selectedCaptionOption = captionerTypes.find(option => option.name === jobConfig.config.process[0].type);
   const additionalSections = selectedCaptionOption?.additionalSections || [];
+  const minNewTokens = selectedCaptionOption?.minNewTokens ?? 0;
+  const newTokensOptions = maxNewTokensOptions.filter(option => parseInt(option.value) >= minNewTokens);
 
   return (
     <div className="text-sm text-gray-400">
@@ -119,6 +121,20 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
             }}
             options={quantizationOptions}
           />
+          <div className="mt-4">
+            <CreatableSelectInput
+              label="Caption Extension"
+              value={jobConfig.config.process[0].caption.caption_extension || 'txt'}
+              onChange={value => {
+                setJobConfig(value, 'config.process[0].caption.caption_extension');
+              }}
+              options={[
+                { value: 'txt', label: 'txt' },
+                { value: 'json', label: 'json' },
+                { value: 'caption', label: 'caption' },
+              ]}
+            />
+          </div>
           {additionalSections.includes('caption.max_res') && (
             <div className="mt-4">
               <SelectInput
@@ -145,7 +161,7 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
                     setJobConfig(intVal, 'config.process[0].caption.max_new_tokens');
                   }
                 }}
-                options={maxNewTokensOptions}
+                options={newTokensOptions}
               />
             </div>
           )}
@@ -162,6 +178,18 @@ const CaptionSimpleJob: React.FC<Props> = ({ jobConfig, setJobConfig, gpuIDs, se
               checked={jobConfig.config.process[0].caption.recaption}
               onChange={value => setJobConfig(value, 'config.process[0].caption.recaption')}
             />
+            <Checkbox
+              label="Compile Models"
+              checked={jobConfig.config.process[0].caption.compile || false}
+              onChange={value => setJobConfig(value, 'config.process[0].caption.compile')}
+            />
+            {additionalSections.includes('caption.thinking') && (
+              <Checkbox
+                label="Thinking"
+                checked={jobConfig.config.process[0].caption.thinking || false}
+                onChange={value => setJobConfig(value, 'config.process[0].caption.thinking')}
+              />
+            )}
           </FormGroup>
         </div>
       </div>

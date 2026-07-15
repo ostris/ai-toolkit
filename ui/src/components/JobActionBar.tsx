@@ -16,6 +16,9 @@ interface JobActionBarProps {
   hideView?: boolean;
   className?: string;
   autoStartQueue?: boolean;
+  // Where the gear menu opens; defaults to below. Use 'top end' when the bar is
+  // pinned to the bottom of the screen so the menu opens upward into view.
+  menuAnchor?: 'bottom' | 'top end';
 }
 
 export default function JobActionBar({
@@ -25,6 +28,7 @@ export default function JobActionBar({
   className,
   hideView,
   autoStartQueue = false,
+  menuAnchor = 'bottom',
 }: JobActionBarProps) {
   const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
 
@@ -140,7 +144,10 @@ export default function JobActionBar({
         <MenuButton className={'ml-1 sm:ml-2'}>
           <Cog className={iconSizeClass} />
         </MenuButton>
-        <MenuItems anchor="bottom" className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 mt-4">
+        <MenuItems
+          anchor={{ to: menuAnchor, gap: 16 }}
+          className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 z-50"
+        >
           {job.job_type === 'train' && (
             <MenuItem>
               <Link
@@ -152,7 +159,7 @@ export default function JobActionBar({
               </Link>
             </MenuItem>
           )}
-          {canStop && (
+          {job.job_type === 'train' && canStop && (
             <MenuItem>
               <div
                 className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"

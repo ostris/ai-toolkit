@@ -20,9 +20,8 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const trainingRoot = await getTrainingFolder();
   const trainingFolder = path.join(trainingRoot, job.name);
 
-  if (fs.existsSync(trainingFolder)) {
-    fs.rmSync(trainingFolder, { recursive: true, force: true });
-  }
+  // force:true makes this a no-op if the folder is already gone
+  await fs.promises.rm(trainingFolder, { recursive: true, force: true });
 
   await prisma.job.delete({
     where: { id: jobID },

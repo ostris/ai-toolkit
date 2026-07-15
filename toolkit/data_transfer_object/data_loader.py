@@ -15,7 +15,6 @@ from toolkit.dataloader_mixins import (
     LatentCachingFileItemDTOMixin,
     ControlFileItemDTOMixin,
     ArgBreakMixin,
-    PoiFileItemDTOMixin,
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
     UnconditionalFileItemDTOMixin,
@@ -51,7 +50,6 @@ class FileItemDTO(
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
     UnconditionalFileItemDTOMixin,
-    PoiFileItemDTOMixin,
     ArgBreakMixin,
 ):
     def __init__(self, *args, **kwargs):
@@ -215,8 +213,9 @@ class DataLoaderBatchDTO:
             
             self.num_frames: int = self.file_items[0].num_frames
 
-            if not is_latents_cached:
-                # only return a tensor if latents are not cached
+            if not is_latents_cached or self.file_items[0].dataset_config.load_image_when_caching_latents:
+                # only return a tensor if latents are not cached, or if we are explicitly
+                # loading the raw image alongside the cached latents
                 self.tensor: torch.Tensor = torch.cat(
                     [x.tensor.unsqueeze(0) for x in self.file_items]
                 )

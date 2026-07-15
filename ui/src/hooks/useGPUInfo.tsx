@@ -44,5 +44,15 @@ export default function useGPUInfo(gpuIds: null | number[] = null, reloadInterva
     }
   }, [gpuIds, reloadInterval]); // Added dependencies
 
+  // If the initial fetch failed (e.g. nvidia-smi was transiently busy on startup),
+  // retry automatically so users don't have to reload the page to see their GPUs.
+  useEffect(() => {
+    if (status !== 'error') return;
+    const retry = setTimeout(() => {
+      fetchGpuInfo();
+    }, 3000);
+    return () => clearTimeout(retry);
+  }, [status]);
+
   return { gpuList, setGpuList, isGPUInfoLoaded, status, refreshGpuInfo: fetchGpuInfo };
 }
