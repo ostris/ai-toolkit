@@ -1,3 +1,6 @@
+import torch
+
+import toolkit.quantization.torchao_compat as torchao_compat
 from toolkit.quantization.torchao_compat import (
     _release_tuple,
     intx_weight_only_config,
@@ -25,3 +28,16 @@ def test_arena_fp8_requires_tested_version_and_tensor_format():
 
 def test_current_intx_config_factory_is_available():
     assert intx_weight_only_config(4) is not None
+
+
+def test_torchao_010_uintx_config_factory_remains_supported(monkeypatch):
+    class LegacyUIntXConfig:
+        def __init__(self, dtype):
+            self.dtype = dtype
+
+    monkeypatch.setattr(torchao_compat, "_IntxConfig", None)
+    monkeypatch.setattr(torchao_compat, "_UIntXConfig", LegacyUIntXConfig)
+
+    config = intx_weight_only_config(4)
+    assert isinstance(config, LegacyUIntXConfig)
+    assert config.dtype is torch.uint4

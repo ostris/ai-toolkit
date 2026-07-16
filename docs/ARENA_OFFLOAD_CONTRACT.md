@@ -36,6 +36,20 @@ known boundary with the unmet contract in the error.
 - Transfer and residency code treats declared leaves as opaque tensors. It does
   not branch on qtype or quantization backend identity.
 
+## TorchAO dependency policy
+
+Fresh installations use the exact tested `torchao==0.17.0` release. This is the
+minimum submitted TorchAO endpoint whose `Float8Tensor` representation is
+supported by Arena's native FP8 forward and grad-input adapter.
+
+A code-only pull does not update an existing environment, so the compatibility
+layer remains importable with upstream's previous `torchao==0.10.0` install. In
+that stale environment, Toolkit configuration, the legacy offloader, dense
+Arena storage, and compatible Quanto, OstrisLinear, and TorchAO operations stay
+available. Only Arena's TorchAO-native FP8 execution is disabled, with a warning
+that reports the installed version and the required `0.17.0` version. Versions
+between `0.10.0` and `0.17.0` are not claimed as tested endpoints.
+
 ## Loading and lifecycle contract
 
 - Direct checkpoint loading may fall back to ordinary `load_state_dict()` only
