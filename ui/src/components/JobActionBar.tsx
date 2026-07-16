@@ -48,7 +48,7 @@ export default function JobActionBar({
             }
             if (onRefresh) onRefresh();
           }}
-          className={`ml-1 sm:ml-2 opacity-100`}
+          className={`ml-4 sm:ml-4 opacity-100`}
         >
           <Play className={iconSizeClass} />
         </Button>
@@ -60,7 +60,7 @@ export default function JobActionBar({
             await markJobAsStopped(job.id);
             if (onRefresh) onRefresh();
           }}
-          className={`ml-1 sm:ml-2 opacity-100`}
+          className={`ml-4 sm:ml-4 opacity-100`}
         >
           <X className={iconSizeClass} />
         </Button>
@@ -80,19 +80,19 @@ export default function JobActionBar({
               },
             });
           }}
-          className={`ml-1 sm:ml-2 opacity-100`}
+          className={`ml-4 sm:ml-4 opacity-100`}
         >
           <Pause className={iconSizeClass} />
         </Button>
       )}
       {!hideView && (
-        <Link href={`/jobs/${job.id}`} className="ml-1 sm:ml-2 text-gray-200 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/${job.id}`} className="ml-4 sm:ml-4 text-gray-200 hover:text-gray-100 inline-block">
           <Eye className={iconSizeClass} />
         </Link>
       )}
       {job.job_type === 'caption' && canEdit && (
         <div
-          className="ml-1 sm:ml-2 hover:text-gray-100 inline-block cursor-pointer"
+          className="ml-4 sm:ml-4 hover:text-gray-100 inline-block cursor-pointer"
           onClick={() =>
             openCaptionDatasetModal(
               job.job_ref || '',
@@ -107,7 +107,7 @@ export default function JobActionBar({
         </div>
       )}
       {job.job_type === 'train' && canEdit && (
-        <Link href={`/jobs/new?id=${job.id}`} className="ml-1 sm:ml-2 hover:text-gray-100 inline-block">
+        <Link href={`/jobs/new?id=${job.id}`} className="ml-4 sm:ml-4 hover:text-gray-100 inline-block">
           <Pen className={iconSizeClass} />
         </Link>
       )}
@@ -135,13 +135,13 @@ export default function JobActionBar({
             },
           });
         }}
-        className={`ml-1 sm:ml-2 opacity-100`}
+        className={`ml-4 sm:ml-4 opacity-100`}
       >
         <Trash2 className={iconSizeClass} />
       </Button>
-      <div className="border-r border-1 border-gray-700 ml-1 sm:ml-2 inline"></div>
+      <div className="border-r border-1 border-gray-700 ml-0 sm:ml-0 inline"></div>
       <Menu>
-        <MenuButton className={'ml-1 sm:ml-2'}>
+        <MenuButton className={'ml-4 sm:ml-4'}>
           <Cog className={iconSizeClass} />
         </MenuButton>
         <MenuItems
@@ -196,6 +196,7 @@ export default function JobActionBar({
           </MenuItem>
         </MenuItems>
       </Menu>
+      <div className="w-2 sm:w-3 flex-shrink-0"></div>
     </div>
   );
 }
