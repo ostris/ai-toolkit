@@ -370,6 +370,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         if self.ema is not None:
             self.ema.train()
+        print_acc("") # add a line break
 
     def update_training_metadata(self):
         o_dict = OrderedDict({
