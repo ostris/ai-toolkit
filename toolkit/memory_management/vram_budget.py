@@ -41,13 +41,15 @@ Vocabulary (each quantity has exactly one name):
 * ``hard`` -- device-free floor the card must keep (WDDM spill guard).
 * ``margin`` -- planning headroom subtracted from budgets; ``>= hard``.
 
-Everything here is pure (CPU-testable) except ``DeviceSnapshot.capture`` and
-``device_free_bytes``.
+Everything here is pure (CPU-testable) except the runtime allocator-setting
+query, ``DeviceSnapshot.capture``, and ``device_free_bytes``.
 """
 
 from __future__ import annotations
 
 import math
+import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -56,6 +58,78 @@ import torch
 from . import nvml_meminfo
 
 GIB = 1024 ** 3
+
+
+def _runtime_allocator_settings() -> str:
+    """Return the allocator configuration Torch actually initialized."""
+    getter = getattr(torch._C, "_accelerator_getAllocatorSettings", None)
+    if getter is not None:
+        try:
+            return str(getter() or "")
+        except (AttributeError, RuntimeError):
+            pass
+
+    # Older Torch builds do not expose the runtime settings. Match Torch's
+    # preferred/legacy environment-variable precedence as a compatibility
+    # fallback. In supported builds the runtime getter above remains the source
+    # of truth, so later environment mutations cannot lie about active policy.
+    for key in ("PYTORCH_ALLOC_CONF", "PYTORCH_CUDA_ALLOC_CONF"):
+        if key in os.environ:
+            return os.environ[key]
+    return ""
+
+
+def _allocator_setting(settings: str, name: str) -> str | None:
+    matches = re.findall(
+        rf"(?:^|,)\s*{re.escape(name)}\s*:\s*([^,\s]+)",
+        str(settings),
+    )
+    return matches[-1] if matches else None
+
+
+def allocator_gc_threshold() -> float:
+    """Return the effective GC target configured in Torch's live allocator.
+
+    Torch's native allocator disables proactive garbage collection when the
+    option is absent. For cap/allowance arithmetic that means allocations may
+    grow to the cap itself, represented here by an effective threshold of 1.0.
+    The option is also ignored by ``cudaMallocAsync``, with the same result for
+    this model.
+    """
+    settings = _runtime_allocator_settings()
+    backend = _allocator_setting(settings, "backend")
+    if backend is not None and backend.lower() == "cudamallocasync":
+        return 1.0
+
+    configured = _allocator_setting(settings, "garbage_collection_threshold")
+    if configured is None:
+        return 1.0
+    try:
+        threshold = float(configured)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            "invalid runtime garbage_collection_threshold: "
+            f"{configured!r}"
+        ) from error
+    if not 0.0 < threshold < 1.0:
+        raise ValueError(
+            "runtime garbage_collection_threshold must be between 0 and 1, "
+            f"got {threshold}"
+        )
+    return threshold
+
+
+def _resolve_gc_threshold(gc_threshold) -> float:
+    threshold = (
+        allocator_gc_threshold()
+        if gc_threshold is None
+        else float(gc_threshold)
+    )
+    if not 0.0 < threshold <= 1.0:
+        raise ValueError(
+            f"effective allocator GC threshold must be in (0, 1], got {threshold}"
+        )
+    return threshold
 
 
 def reconcile_free_bytes(driver_free_bytes, physical_free_bytes) -> int:
@@ -413,7 +487,7 @@ def sampling_allocator_budget_free_bytes(
     cap_fraction,
     hard_bytes,
     *,
-    gc_threshold=0.95,
+    gc_threshold=None,
 ):
     """Allocated-side equivalent of driver-free for the sampling planner (pure).
 
@@ -434,6 +508,7 @@ def sampling_allocator_budget_free_bytes(
     """
     if cap_fraction is None:
         return None
+    gc_threshold = _resolve_gc_threshold(gc_threshold)
     cap_bytes = float(cap_fraction) * float(max(1, int(total_bytes)))
     return int(
         float(gc_threshold) * cap_bytes
@@ -574,7 +649,8 @@ def estimate_training_working_reserve_bytes(
 # ---------------------------------------------------------------------------
 # Two-timescale residency control
 #
-# Allowance lives in *target-space* (0.95*cap - live); the allocator cap is set
+# Allowance lives in *target-space* (gc_threshold*cap - live); the allocator
+# cap is set
 # in *cap-space*. The two differ by the gc_threshold factor: a cap raise of ``d``
 # only adds ``gc_threshold * d`` of GC target / allowance. Every conversion below
 # carries the ``/ gc_threshold`` so no call site open-codes it (that missing
@@ -586,10 +662,7 @@ def estimate_training_working_reserve_bytes(
 # counters that lag its move by one window (the FSM's verify phases absorb this).
 # ---------------------------------------------------------------------------
 
-GC_THRESHOLD = 0.95
-
-
-def allocator_allowance_bytes(cap_bytes, live_bytes, *, gc_threshold=GC_THRESHOLD) -> int:
+def allocator_allowance_bytes(cap_bytes, live_bytes, *, gc_threshold=None) -> int:
     """Idle-cache allowance under the cap: ``gc_threshold*cap - live`` (pure).
 
     The caching allocator sweeps idle segments when reserved would cross the GC
@@ -600,6 +673,7 @@ def allocator_allowance_bytes(cap_bytes, live_bytes, *, gc_threshold=GC_THRESHOL
     every sweep dumps all cache and every reuse re-mallocs (self-sustaining
     thrash), so callers must keep this positive at the live peak.
     """
+    gc_threshold = _resolve_gc_threshold(gc_threshold)
     return int(float(gc_threshold) * float(max(0, int(cap_bytes))) - float(max(0, int(live_bytes))))
 
 
@@ -609,7 +683,7 @@ def cap_bytes_for_live(
     cliff_cap_bytes,
     *,
     floor_cap_bytes=0,
-    gc_threshold=GC_THRESHOLD,
+    gc_threshold=None,
 ) -> int:
     """Cap that hosts ``planned_live`` plus an idle-cache budget (pure).
 
@@ -619,6 +693,7 @@ def cap_bytes_for_live(
     Clamped to the WDDM cliff bound above (never license silent paging; see
     :func:`cap_fraction`) and an optional floor below.
     """
+    gc_threshold = _resolve_gc_threshold(gc_threshold)
     want = (float(max(0, int(planned_live_bytes))) + float(max(0, int(cache_budget_bytes)))) / float(gc_threshold)
     want = min(want, float(int(cliff_cap_bytes)))
     want = max(want, float(max(0, int(floor_cap_bytes))))
@@ -630,7 +705,7 @@ def cap_bytes_preserving_allowance_after_promotion(
     promotion_bytes,
     cliff_cap_bytes,
     *,
-    gc_threshold=GC_THRESHOLD,
+    gc_threshold=None,
 ) -> int:
     """Raise a cap enough that resident growth does not consume GC allowance."""
     current = max(0, int(cap_bytes))
@@ -638,6 +713,7 @@ def cap_bytes_preserving_allowance_after_promotion(
     cliff = max(0, int(cliff_cap_bytes))
     if promoted <= 0 or current >= cliff:
         return min(current, cliff)
+    gc_threshold = _resolve_gc_threshold(gc_threshold)
     growth = math.ceil(float(promoted) / float(gc_threshold))
     return min(cliff, current + int(growth))
 
@@ -648,7 +724,7 @@ def cap_can_host_promotion(
     allocator_cache_headroom_bytes,
     cliff_cap_bytes,
     *,
-    gc_threshold=GC_THRESHOLD,
+    gc_threshold=None,
 ) -> bool:
     """Can the cheap cap lever (tier 1) absorb one more resident block? (pure).
 
@@ -662,8 +738,9 @@ def cap_can_host_promotion(
     expensive resident demote (tier 2).
 
     The ``/ gc_threshold`` is load-bearing: a naive ``cliff - cap >= block`` test
-    under-reserves by the 0.95 factor.
+    under-reserves whenever allocator GC is configured below the cap.
     """
+    gc_threshold = _resolve_gc_threshold(gc_threshold)
     need_cap = (
         float(max(0, int(live_bytes)))
         + float(max(0, int(block_bytes)))
@@ -684,7 +761,7 @@ def residency_promote_ok(
     the telemetry proves the room is really there --
 
       * ``num_alloc_retries == 0`` over the window (nothing cap-binding), AND
-      * worst-shape allocator slack (``0.95 * cap - predicted_live``)
+      * worst-shape allocator slack (``gc_threshold * cap - predicted_live``)
         exceeds one block plus the pad, so the promotion still leaves
         ``allocator_cache_headroom`` of reusable-cache allowance.
 

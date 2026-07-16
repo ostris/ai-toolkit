@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from toolkit.memory_management import vram_budget
 from toolkit.memory_management.arena_offload.cap_calibrator import (
     CAP_PROBE_SETTLE,
     CAP_PROBE_VERIFY,
@@ -8,6 +9,12 @@ from toolkit.memory_management.arena_offload.cap_calibrator import (
     CAP_SETTLED,
     TrainingCapCalibrator,
 )
+
+GC_THRESHOLD = 0.95
+
+
+def make_calibrator(**kwargs):
+    return TrainingCapCalibrator(gc_threshold=GC_THRESHOLD, **kwargs)
 
 
 def peak(working, steps=2):
@@ -38,7 +45,7 @@ def drive(calibrator, previous, upcoming, peaks, current):
 
 
 def test_calibrator_verifies_every_bucket_and_restores_last_clean_cap():
-    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    calibrator = make_calibrator(enabled=True, notch_bytes=100)
     peaks = {("a",): peak(300), ("b",): peak(400)}
 
     decision = drive(calibrator, None, ("a",), peaks, 1000)
@@ -79,7 +86,7 @@ def test_calibrator_verifies_every_bucket_and_restores_last_clean_cap():
 
 
 def test_first_gc_during_probe_restores_last_clean_cap():
-    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    calibrator = make_calibrator(enabled=True, notch_bytes=100)
     peaks = {("a",): peak(400)}
     drive(calibrator, None, ("a",), peaks, 1000)
 
@@ -95,7 +102,7 @@ def test_first_gc_during_probe_restores_last_clean_cap():
 
 
 def test_unseen_bucket_restores_cliff_and_invalidates_settlement():
-    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    calibrator = make_calibrator(enabled=True, notch_bytes=100)
     calibrator.state = CAP_SETTLED
     calibrator.settled_cap_bytes = 600
     calibrator.learned_cache_pad_bytes = 70
@@ -113,7 +120,7 @@ def test_unseen_bucket_restores_cliff_and_invalidates_settlement():
 
 
 def test_compile_invalid_restores_cliff_and_discards_bucket_profiles():
-    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    calibrator = make_calibrator(enabled=True, notch_bytes=100)
     peaks = {("a",): peak(400)}
     drive(calibrator, None, ("a",), peaks, 1000)
 
@@ -130,7 +137,7 @@ def test_compile_invalid_restores_cliff_and_discards_bucket_profiles():
 
 
 def test_probe_oom_restores_before_residency_recovery():
-    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    calibrator = make_calibrator(enabled=True, notch_bytes=100)
     peaks = {("a",): peak(400)}
     drive(calibrator, None, ("a",), peaks, 1000)
 
@@ -143,7 +150,7 @@ def test_probe_oom_restores_before_residency_recovery():
 
 
 def test_probe_oom_adds_two_notches_when_last_clean_is_too_close():
-    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    calibrator = make_calibrator(enabled=True, notch_bytes=100)
     calibrator.state = CAP_PROBE_SETTLE
     calibrator.probe_cap_bytes = 500
     calibrator.last_clean_cap_bytes = 600
@@ -156,3 +163,16 @@ def test_probe_oom_adds_two_notches_when_last_clean_is_too_close():
     assert decision.target_cap_bytes == 700
     assert calibrator.last_clean_cap_bytes == 700
     assert calibrator.state == CAP_RESTORE_VERIFY
+
+
+def test_calibrator_uses_runtime_allocator_gc_threshold(monkeypatch):
+    monkeypatch.setattr(
+        vram_budget, "allocator_gc_threshold", lambda: 0.8
+    )
+    calibrator = TrainingCapCalibrator(enabled=True, notch_bytes=100)
+    peaks = {("a",): peak(400)}
+
+    decision = drive(calibrator, None, ("a",), peaks, 1000)
+
+    assert calibrator.gc_threshold == 0.8
+    assert decision.target_cap_bytes == 800

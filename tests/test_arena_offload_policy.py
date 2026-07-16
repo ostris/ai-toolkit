@@ -227,6 +227,7 @@ def test_worst_shape_allocator_slack_reconstructs_current_layout():
     runtime._residency = SimpleNamespace(resident_bytes=lambda: 120)
     runtime._smart_plan = {"singleton_resident_bytes": 30}
     runtime._training_ring_bytes = lambda: 50
+    runtime._allocator_gc_threshold = 0.95
 
     # working=600, current layout=150 resident + 50 ring => live=800.
     assert runtime._worst_shape_allocator_slack_bytes(1000) == 150
@@ -587,7 +588,8 @@ def test_controller_raises_cap_by_fixed_fsm_increment():
 
 def test_controller_exactly_prefunds_promotion_after_cap_calibration():
     controller = ArenaResidencyController(
-        allocator_cache_headroom_bytes=10
+        allocator_cache_headroom_bytes=10,
+        gc_threshold=0.8,
     )
     controller.bootstrapped = True
     controller.state = type(controller.state)("stable", 2)
@@ -611,12 +613,13 @@ def test_controller_exactly_prefunds_promotion_after_cap_calibration():
         learned_cache_pad_bytes=50,
     )
     assert decision.action == "raise_cap"
-    assert decision.target_cap_bytes == int(650 / 0.95)
+    assert decision.target_cap_bytes == int(650 / 0.8)
 
 
 def test_controller_holds_when_exact_promotion_cap_exceeds_cliff():
     controller = ArenaResidencyController(
-        allocator_cache_headroom_bytes=10
+        allocator_cache_headroom_bytes=10,
+        gc_threshold=0.95,
     )
     controller.bootstrapped = True
     controller.state = type(controller.state)("stable", 2)

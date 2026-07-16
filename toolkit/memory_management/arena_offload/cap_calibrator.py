@@ -61,10 +61,21 @@ class TrainingCapCalibrator:
         enabled=False,
         notch_bytes=DEFAULT_CAP_NOTCH_BYTES,
         monitor_settled=False,
+        gc_threshold=None,
     ):
         self.enabled = bool(enabled)
         self.monitor_settled = bool(monitor_settled)
         self.notch_bytes = max(1, int(notch_bytes))
+        self.gc_threshold = (
+            vram_budget.allocator_gc_threshold()
+            if gc_threshold is None
+            else float(gc_threshold)
+        )
+        if not 0.0 < self.gc_threshold <= 1.0:
+            raise ValueError(
+                "effective allocator GC threshold must be in (0, 1], "
+                f"got {self.gc_threshold}"
+            )
         self.state = CAP_WARMUP
         self.bucket_profiles: dict[tuple, BucketCapProfile] = {}
         self.probe_cap_bytes: int | None = None
@@ -286,7 +297,8 @@ class TrainingCapCalibrator:
     ):
         worst_live = self._worst_live_bytes(resident_bytes, ring_bytes)
         predicted = _ceil_to_notch(
-            int(worst_live / vram_budget.GC_THRESHOLD), self.notch_bytes
+            int(worst_live / self.gc_threshold),
+            self.notch_bytes,
         ) + self.notch_bytes
         candidate = min(int(cliff_cap_bytes), predicted)
         self.predicted_initial_cap_bytes = candidate
@@ -297,7 +309,9 @@ class TrainingCapCalibrator:
             self.learned_cache_pad_bytes = max(
                 0,
                 vram_budget.allocator_allowance_bytes(
-                    self.settled_cap_bytes, worst_live
+                    self.settled_cap_bytes,
+                    worst_live,
+                    gc_threshold=self.gc_threshold,
                 ),
             )
             return self._decision(
@@ -318,11 +332,17 @@ class TrainingCapCalibrator:
         self.last_clean_cap_bytes = clean_cap
         worst_live = self._worst_live_bytes(resident_bytes, ring_bytes)
         self.learned_cache_pad_bytes = max(
-            0, vram_budget.allocator_allowance_bytes(clean_cap, worst_live)
+            0,
+            vram_budget.allocator_allowance_bytes(
+                clean_cap,
+                worst_live,
+                gc_threshold=self.gc_threshold,
+            ),
         )
         next_cap = clean_cap - self.notch_bytes
         minimum = _ceil_to_notch(
-            int(worst_live / vram_budget.GC_THRESHOLD), self.notch_bytes
+            int(worst_live / self.gc_threshold),
+            self.notch_bytes,
         ) - self.notch_bytes
         next_cap = max(self.notch_bytes, minimum, next_cap)
         if next_cap >= clean_cap:
@@ -449,6 +469,7 @@ class TrainingCapCalibrator:
         return {
             "enabled": self.enabled,
             "monitor_settled": self.monitor_settled,
+            "gc_threshold": self.gc_threshold,
             "state": self.state,
             "notch_bytes": self.notch_bytes,
             "probe_cap_bytes": self.probe_cap_bytes,

@@ -27,7 +27,7 @@ from ..residency import (
     ResidencyState,
     ordered_demotion_block_keys,
 )
-from ..vram_budget import apply_simulated_card
+from ..vram_budget import allocator_gc_threshold, apply_simulated_card
 from .policy import (
     ArenaResidencyController,
     TrainingSignalWindow,
@@ -98,7 +98,10 @@ class ArenaOffloadRuntime:
         self._signals = TrainingSignalWindow()
         self._last_policy_error: str | None = None
         self._last_failure_event: dict | None = None
-        self._policy = ArenaResidencyController()
+        self._allocator_gc_threshold = allocator_gc_threshold()
+        self._policy = ArenaResidencyController(
+            gc_threshold=self._allocator_gc_threshold
+        )
         cap_calibration_requested = bool(config._policy.cap_calibration)
         cap_calibration_enabled = (
             cap_calibration_requested and sys.platform == "win32"
@@ -110,7 +113,8 @@ class ArenaOffloadRuntime:
                 stacklevel=2,
             )
         self._cap_calibrator = TrainingCapCalibrator(
-            enabled=cap_calibration_enabled
+            enabled=cap_calibration_enabled,
+            gc_threshold=self._allocator_gc_threshold,
         )
         self._cap_calibration_enabled = cap_calibration_enabled
         self._last_training_cap_target_bytes: int | None = None
@@ -843,6 +847,7 @@ class ArenaOffloadRuntime:
             current,
             int(promotion_bytes),
             cliff,
+            gc_threshold=self._allocator_gc_threshold,
         )
         if target <= current:
             return
@@ -925,9 +930,14 @@ class ArenaOffloadRuntime:
             and (int(occurrences) > 1 or profile is not None)
         )
         if profile is None and eligible:
+            gc_threshold = getattr(self, "_allocator_gc_threshold", None)
+            if gc_threshold is None:
+                gc_threshold = allocator_gc_threshold()
             profile = _SamplingCapProfile(
                 calibrator=TrainingCapCalibrator(
-                    enabled=True, monitor_settled=True
+                    enabled=True,
+                    monitor_settled=True,
+                    gc_threshold=gc_threshold,
                 ),
                 signals=TrainingSignalWindow(),
             )
@@ -1498,8 +1508,13 @@ class ArenaOffloadRuntime:
             return 0
         from .. import vram_budget
 
+        gc_threshold = getattr(self, "_allocator_gc_threshold", None)
+        if gc_threshold is None:
+            gc_threshold = allocator_gc_threshold()
         return vram_budget.allocator_allowance_bytes(
-            current_cap_bytes, predicted_live
+            current_cap_bytes,
+            predicted_live,
+            gc_threshold=gc_threshold,
         )
 
     def _worst_shape_live_bytes(self):
@@ -1688,6 +1703,9 @@ class ArenaOffloadRuntime:
         pinned_block_keys = self._arena.pinned_block_keys()
         selection = getattr(self._executor, "selection", None)
         state_audit = getattr(selection, "accounting", None)
+        gc_threshold = getattr(self, "_allocator_gc_threshold", None)
+        if gc_threshold is None:
+            gc_threshold = allocator_gc_threshold()
         return {
             "backend": "arena",
             "blocks": self.block_count,
@@ -1731,6 +1749,7 @@ class ArenaOffloadRuntime:
             "strict_vram_cap": bool(
                 getattr(self._config, "strict_vram_cap", False)
             ),
+            "allocator_gc_threshold": gc_threshold,
             "fp8_forward": bool(self._config.fp8_forward),
             "fp8_backward": bool(self._config.fp8_backward),
             "fp8_sampling": bool(self._config.fp8_sampling),

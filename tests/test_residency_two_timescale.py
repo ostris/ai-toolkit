@@ -11,6 +11,7 @@ import pytest
 from toolkit.memory_management import vram_budget as vb
 
 GIB = vb.GIB
+GC_THRESHOLD = 0.95
 
 
 def gib(x):
@@ -22,35 +23,55 @@ def gib(x):
 def test_allowance_matches_measured_knee():
     # 0.95*7.35 - 6.77 = +0.21 GiB (clean, the floor cap); 0.95*7.10 - 6.77 =
     # -0.02 GiB (dirty). The model validated to within one 0.25 notch.
-    clean = vb.allocator_allowance_bytes(gib(7.35), gib(6.77))
-    dirty = vb.allocator_allowance_bytes(gib(7.10), gib(6.77))
+    clean = vb.allocator_allowance_bytes(
+        gib(7.35), gib(6.77), gc_threshold=GC_THRESHOLD
+    )
+    dirty = vb.allocator_allowance_bytes(
+        gib(7.10), gib(6.77), gc_threshold=GC_THRESHOLD
+    )
     assert clean == pytest.approx(gib(0.2125), abs=gib(0.01))
     assert dirty < 0
 
 
 def test_cap_for_live_is_allowance_inverse():
     # To host 6.77 live + 0.21 cache budget the cap must be ~7.35 (the floor).
-    cap = vb.cap_bytes_for_live(gib(6.77), gib(0.21), cliff_cap_bytes=gib(9.85))
+    cap = vb.cap_bytes_for_live(
+        gib(6.77),
+        gib(0.21),
+        cliff_cap_bytes=gib(9.85),
+        gc_threshold=GC_THRESHOLD,
+    )
     assert cap == pytest.approx(gib(7.35), abs=gib(0.02))
     # Round-trips: that cap yields ~the requested cache budget back.
-    assert vb.allocator_allowance_bytes(cap, gib(6.77)) == pytest.approx(gib(0.21), abs=gib(0.01))
+    assert vb.allocator_allowance_bytes(
+        cap, gib(6.77), gc_threshold=GC_THRESHOLD
+    ) == pytest.approx(gib(0.21), abs=gib(0.01))
 
 
 def test_promotion_cap_growth_preserves_allocator_allowance():
     current = gib(6.5)
     promoted = gib(0.5)
     target = vb.cap_bytes_preserving_allowance_after_promotion(
-        current, promoted, gib(9.5)
+        current, promoted, gib(9.5), gc_threshold=GC_THRESHOLD
     )
 
-    before = vb.allocator_allowance_bytes(current, gib(5.5))
-    after = vb.allocator_allowance_bytes(target, gib(6.0))
+    before = vb.allocator_allowance_bytes(
+        current, gib(5.5), gc_threshold=GC_THRESHOLD
+    )
+    after = vb.allocator_allowance_bytes(
+        target, gib(6.0), gc_threshold=GC_THRESHOLD
+    )
     assert target > current + promoted
     assert after >= before
 
 
 def test_cap_for_live_clamped_to_cliff():
-    cap = vb.cap_bytes_for_live(gib(11.0), gib(2.0), cliff_cap_bytes=gib(9.85))
+    cap = vb.cap_bytes_for_live(
+        gib(11.0),
+        gib(2.0),
+        cliff_cap_bytes=gib(9.85),
+        gc_threshold=GC_THRESHOLD,
+    )
     assert cap == gib(9.85)
 
 
@@ -58,12 +79,18 @@ def test_promotion_precheck_uses_the_0p95_divisor():
     # need_cap = (6.77 + 0.375 + 0.21) / 0.95 = 7.742 GiB.
     live, block, slack = gib(6.77), gib(0.375), gib(0.21)
     # Sampling: cliff ~9.85 has room -> cap lever can fund the block.
-    assert vb.cap_can_host_promotion(live, block, slack, gib(9.85)) is True
+    assert vb.cap_can_host_promotion(
+        live, block, slack, gib(9.85), gc_threshold=GC_THRESHOLD
+    ) is True
     # Training-like: cap pinned at the 7.35 floor/cliff -> must demote instead.
-    assert vb.cap_can_host_promotion(live, block, slack, gib(7.35)) is False
+    assert vb.cap_can_host_promotion(
+        live, block, slack, gib(7.35), gc_threshold=GC_THRESHOLD
+    ) is False
     # The naive (no /0.95) test would wrongly pass at cliff = 7.36
     # (6.77+0.375+0.21 = 7.355 < 7.36); the real need_cap 7.742 rejects it.
-    assert vb.cap_can_host_promotion(live, block, slack, gib(7.36)) is False
+    assert vb.cap_can_host_promotion(
+        live, block, slack, gib(7.36), gc_threshold=GC_THRESHOLD
+    ) is False
 
 
 def test_promote_gate_needs_zero_retries_and_a_block_of_slack():

@@ -42,8 +42,19 @@ class ArenaResidencyController:
         allocator_cache_headroom_bytes=(
             DEFAULT_ALLOCATOR_CACHE_HEADROOM_BYTES
         ),
+        gc_threshold=None,
     ):
         self.state = vram_budget.ResidencyFsmState()
+        self.gc_threshold = (
+            vram_budget.allocator_gc_threshold()
+            if gc_threshold is None
+            else float(gc_threshold)
+        )
+        if not 0.0 < self.gc_threshold <= 1.0:
+            raise ValueError(
+                "effective allocator GC threshold must be in (0, 1], "
+                f"got {self.gc_threshold}"
+            )
         self.allocator_cache_headroom_bytes = max(
             0, int(allocator_cache_headroom_bytes)
         )
@@ -110,6 +121,7 @@ class ArenaResidencyController:
                     block_bytes,
                     cache_pad,
                     int(cliff_cap_bytes),
+                    gc_threshold=self.gc_threshold,
                 )
             )
             promote_ok = (
@@ -143,6 +155,7 @@ class ArenaResidencyController:
                 int(worst_shape_live_bytes) + block_bytes,
                 cache_pad,
                 int(cliff_cap_bytes),
+                gc_threshold=self.gc_threshold,
             )
             cap_covers = (
                 candidate is not None
@@ -153,6 +166,7 @@ class ArenaResidencyController:
                 int(worst_shape_live_bytes),
                 cache_pad,
                 int(cliff_cap_bytes),
+                gc_threshold=self.gc_threshold,
             )
             needed_cap = (
                 needed_promotion_cap
@@ -407,6 +421,7 @@ class ArenaResidencyController:
             "allocator_cache_headroom_bytes": (
                 self.allocator_cache_headroom_bytes
             ),
+            "gc_threshold": self.gc_threshold,
         }
 
 

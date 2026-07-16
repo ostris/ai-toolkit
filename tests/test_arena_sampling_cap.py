@@ -100,7 +100,9 @@ def test_sampling_forward_begin_uses_completed_generic_fsm(monkeypatch):
     runtime = ArenaOffloadRuntime.__new__(ArenaOffloadRuntime)
     key = _sampling_config_shape_key(config())
     profile = _SamplingCapProfile(
-        calibrator=TrainingCapCalibrator(enabled=True, notch_bytes=100),
+        calibrator=TrainingCapCalibrator(
+            enabled=True, notch_bytes=100, gc_threshold=0.95
+        ),
         signals=TrainingSignalWindow(),
     )
     profile.signals._shape_peaks[key] = ShapePeak(
