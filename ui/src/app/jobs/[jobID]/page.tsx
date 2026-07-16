@@ -13,10 +13,12 @@ import JobActionBar from '@/components/JobActionBar';
 import JobConfigViewer from '@/components/JobConfigViewer';
 import JobLossGraph from '@/components/JobLossGraph';
 import JobPlugin from '@/components/JobPlugin';
+import FlowGRPOVotingPanel from '@/components/FlowGRPOVotingPanel';
 import { Job } from '@prisma/client';
 import { apiClient } from '@/utils/api';
+import { getProcessType } from '@/utils/jobs';
 
-type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'plugin';
+type PageKey = 'overview' | 'samples' | 'config' | 'loss_log' | 'plugin' | 'voting';
 
 interface Page {
   name: string;
@@ -26,6 +28,7 @@ interface Page {
   menuItem?: React.ComponentType<{ job?: Job | null }> | null;
   mainCss?: string;
   jobTypes?: string[]; // if specified, only show this page for these job types
+  processTypes?: string[];
 }
 
 const pages: Page[] = [
@@ -52,6 +55,15 @@ const pages: Page[] = [
     component: JobLossGraph,
     mainCss: 'pt-24 pb-4',
     jobTypes: ['train'],
+  },
+  {
+    name: 'Voting',
+    value: 'voting',
+    icon: MdImage,
+    component: FlowGRPOVotingPanel,
+    mainCss: 'pt-24',
+    jobTypes: ['train'],
+    processTypes: ['flow_grpo_trainer'],
   },
   {
     name: 'Config File',
@@ -93,6 +105,13 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const page = pages.find(p => p.value === pageKey);
 
   const jobType = job?.job_type || 'unknown';
+  const processType = job ? getProcessType(job) : '';
+
+  useEffect(() => {
+    if (processType === 'flow_grpo_trainer') {
+      setPageKey(current => (current === 'overview' ? 'voting' : current));
+    }
+  }, [processType]);
 
   let title = `Job: ${job?.name || 'Loading...'}`;
   if (jobType === 'caption') {
@@ -142,6 +161,12 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             return null;
           }
           if (page.value === 'plugin' && !hasPlugin) {
+            return null;
+          }
+          if (page.processTypes && !page.processTypes.includes(processType)) {
+            return null;
+          }
+          if (page.value === 'samples' && processType === 'flow_grpo_trainer') {
             return null;
           }
           return (

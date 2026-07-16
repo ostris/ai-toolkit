@@ -1354,6 +1354,14 @@ class GenerateImageConfig:
                         self.fps = int(content)
                     elif flag == 'ctrl_img':
                         self.ctrl_img = content
+                        self.ctrl_img_1 = content
+                    elif flag == 'ctrl_img_1':
+                        self.ctrl_img_1 = content
+                        self.ctrl_img = content
+                    elif flag == 'ctrl_img_2':
+                        self.ctrl_img_2 = content
+                    elif flag == 'ctrl_img_3':
+                        self.ctrl_img_3 = content
                     elif flag == 'ctrl_idx':
                         self.ctrl_idx = int(content)
 
