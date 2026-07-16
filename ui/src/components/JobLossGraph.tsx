@@ -98,29 +98,18 @@ function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
   return out;
 }
 
-function hashToIndex(str: string, mod: number) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return Math.abs(h) % mod;
-}
-
+// Hue order is deliberate: adjacent slots are maximally separated for
+// colorblind viewers, validated against the gray-950 chart surface.
 const PALETTE = [
-  'rgba(96,165,250,1)', // blue-400
-  'rgba(52,211,153,1)', // emerald-400
-  'rgba(167,139,250,1)', // purple-400
-  'rgba(251,191,36,1)', // amber-400
-  'rgba(244,114,182,1)', // pink-400
-  'rgba(248,113,113,1)', // red-400
-  'rgba(34,211,238,1)', // cyan-400
-  'rgba(129,140,248,1)', // indigo-400
+  'rgba(57,135,229,1)', // blue
+  'rgba(0,131,0,1)', // green
+  'rgba(213,81,129,1)', // magenta
+  'rgba(201,133,0,1)', // yellow
+  'rgba(25,158,112,1)', // aqua
+  'rgba(217,89,38,1)', // orange
+  'rgba(144,133,233,1)', // violet
+  'rgba(230,103,103,1)', // red
 ];
-
-function strokeForKey(key: string) {
-  return PALETTE[hashToIndex(key, PALETTE.length)];
-}
 
 // Persisted, per-URL graph settings. Sliders + display toggles + which loss
 // series are visible. Zoom / highlighted window is intentionally NOT persisted.
@@ -243,6 +232,18 @@ export default function JobLossGraph({ job }: Props) {
 
   const activeKeys = useMemo(() => lossKeys.filter(k => enabled[k] !== false), [lossKeys, enabled]);
 
+  // Assign palette slots by position in the (sorted) lossKeys list rather than
+  // by hashing the key name — hashing let different keys collide onto the same
+  // color. Keyed off lossKeys (not activeKeys) so toggling a series off never
+  // repaints the others.
+  const colorByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    lossKeys.forEach((k, i) => {
+      m[k] = PALETTE[i % PALETTE.length];
+    });
+    return m;
+  }, [lossKeys]);
+
   // Build uPlot-aligned data + series configs.
   const built = useMemo(() => {
     const stride = Math.max(1, plotStride | 0);
@@ -305,7 +306,7 @@ export default function JobLossGraph({ job }: Props) {
       const smooth = emaWithNulls(raw, alpha);
       const fullSmooth = emaWithNulls(raw, fullAlpha);
 
-      const color = strokeForKey(key);
+      const color = colorByKey[key] ?? PALETTE[0];
       const colorDull = dulledColor(color);
 
       const colArrays: (number | null)[][] = [];
@@ -395,7 +396,7 @@ export default function JobLossGraph({ job }: Props) {
     }
 
     return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip, sparseFlags };
-  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
+  }, [series, activeKeys, colorByKey, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
 
   // Layout wrapper we measure for sizing — uPlot collapses its own mount node
   // to width:min-content, so we can't read sizes off it.
@@ -614,7 +615,7 @@ export default function JobLossGraph({ job }: Props) {
                     aria-pressed={enabled[k] !== false}
                     title={k}
                   >
-                    <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: strokeForKey(k) }} />
+                    <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: colorByKey[k] }} />
                     {k}
                   </button>
                 ))}
