@@ -20,7 +20,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
     }
     return job.gpu_ids.split(',').map(id => parseInt(id));
   }, [job.gpu_ids]);
-  const { log, setLog, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
+  const { log, status: statusLog, refresh: refreshLog } = useJobLog(job.id, 2000);
   const logRef = useRef<HTMLDivElement>(null);
   // Track whether we should auto-scroll to bottom
   const [isScrolledToBottom, setIsScrolledToBottom] = useState(true);
@@ -32,12 +32,8 @@ export default function JobOverview({ job }: JobOverviewProps) {
   const isStopping = job.stop && job.status === 'running';
 
   const logLines: string[] = useMemo(() => {
-    // split at line breaks on \n or \r\n but not \r
-    let splits: string[] = log.split(/\n|\r\n/);
-
-    splits = splits.map(line => {
-      return line.split(/\r/).pop();
-    }) as string[];
+    // Log is already terminal-rendered by useJobLog — one entry per line.
+    let splits: string[] = log.split('\n');
 
     // only return last 100 lines max
     const maxLines = 1000;

@@ -80,10 +80,12 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
 
 
 def is_quantized_tensor(t) -> bool:
-    # torchao and quanto both store quantized weights as tensor subclasses (e.g. AffineQuantizedTensor)
-    # that report as nn.Parameter and expose .dequantize(). OstrisLinear.weight returns an
-    # already-dequantized tensor tagged with _is_ostris_weight (its .dequantize() is a no-op) so the
-    # merge paths route through requantize_module_weight instead.
+    # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
+    # that still report as nn.Parameter and expose .dequantize(). (quanto is handled separately.)
+    # _is_ostris_weight tags two OstrisLinear tensors: the .weight property's eager tensor
+    # (already dequantized; .dequantize() is a no-op) so the merge paths route through
+    # requantize_module_weight, and the lazy OstrisLazyWeight emitted by state_dict()
+    # (holds no data; .dequantize() materializes) so save loops dequantize it per key.
     if getattr(t, '_is_ostris_weight', False):
         return True
     mod = type(t).__module__
@@ -141,6 +143,7 @@ def quantize(
     optimizer: Optional[Optimizer] = None,
     include: Optional[Union[str, List[str]]] = None,
     exclude: Optional[Union[str, List[str]]] = None,
+    quantize_device: Optional[torch.device] = None,
 ):
     """Quantize the specified model submodules
 
@@ -167,6 +170,10 @@ def quantize(
         exclude (`Optional[Union[str, List[str]]]`):
             Patterns constituting the denylist. If provided, module names must not match
             any patterns from the denylist.
+        quantize_device (`Optional[torch.device]`):
+            If provided, each module is moved to this device to quantize, then moved
+            back to the device its weights were on initially. Lets a CPU-resident
+            model (low vram) quantize layer-by-layer on the GPU.
     """
     if include is not None:
         include = [include] if isinstance(include, str) else include
@@ -183,7 +190,27 @@ def quantize(
             # check if m is QLinear or QConv2d
             if m.__class__.__name__ in Q_MODULES:
                 continue
-            else:
+            if (
+                isinstance(weights, aotype)
+                and not isinstance(m, torch.nn.Linear)
+                and (
+                    quantize_device is not None
+                    or include is not None
+                    or exclude is not None
+                )
+            ):
+                # torchao only quantizes nn.Linear; when a device round-trip or
+                # include/exclude filtering is in play, skip containers so each
+                # linear is handled individually (a container-level torchao call
+                # would quantize excluded children too)
+                continue
+            orig_device = None
+            if quantize_device is not None and next(m.children(), None) is None:
+                param = next(m.parameters(recurse=False), None)
+                if param is not None:
+                    orig_device = param.device
+                    m.to(quantize_device)
+            try:
                 if isinstance(weights, ostristype):
                     if isinstance(m, torch.nn.Linear):
                         convert_linear_to_ostris(m, weights.quantizer)
@@ -198,6 +225,10 @@ def quantize(
                         activations=activations,
                         optimizer=optimizer,
                     )
+            finally:
+                if orig_device is not None:
+                    # quanto replaces the module in its parent, so re-fetch by name
+                    model.get_submodule(name).to(orig_device)
         except Exception as e:
             print(f"Failed to quantize {name}: {e}")
             # raise e
@@ -391,7 +422,11 @@ def quantize_model(
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)
-            block.to("cpu", non_blocking=True)
+            # NOT non_blocking: an async D2H allocates the cpu destination in pinned
+            # memory, which the caching host allocator keeps forever (with power-of-2
+            # bucket rounding on top) — that silently retained a model-sized chunk of
+            # host ram after the weights moved back to the gpu for training
+            block.to("cpu")
 
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first

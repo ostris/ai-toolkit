@@ -80,6 +80,7 @@ class SampleConfig:
     def __init__(self, **kwargs):
         self.sampler: str = kwargs.get('sampler', 'ddpm')
         self.sample_every: int = kwargs.get('sample_every', 100)
+        self.sample_start_step: int = kwargs.get('sample_start_step', 0)
         self.width: int = kwargs.get('width', 512)
         self.height: int = kwargs.get('height', 512)
         self.neg = kwargs.get('neg', False)
@@ -593,7 +594,7 @@ class TrainConfig:
         self.max_loss: Optional[float] = kwargs.get("max_loss", None)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21', 'anima']
 
 
 class ModelConfig:

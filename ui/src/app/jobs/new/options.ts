@@ -63,9 +63,31 @@ export interface ModelArch {
 }
 
 const defaultNameOrPath = '';
-const defaultLinearRank = 32
+const defaultLinearRank = 32;
 
 export const modelArchs: ModelArch[] = [
+  {
+    name: 'anima',
+    label: 'Anima',
+    group: 'image',
+    defaults: {
+      // default updates when [selected, unselected] in the UI
+      'config.process[0].model.name_or_path': ['circlestone-labs/Anima-Base-v1.0-Diffusers', defaultNameOrPath],
+      'config.process[0].model.quantize': [false, false],
+      'config.process[0].model.quantize_te': [false, false],
+      'config.process[0].model.qtype': ['', 'qfloat8'],
+      'config.process[0].model.qtype_te': ['', 'qfloat8'],
+      'config.process[0].sample.sampler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
+      'config.process[0].train.timestep_type': ['weighted', 'sigmoid'],
+      'config.process[0].sample.neg': [
+        'worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, signature, artist name',
+        '',
+      ],
+    },
+    disableSections: ['network.conv'],
+    additionalSections: ['model.low_vram', 'model.layer_offloading'],
+  },
   {
     name: 'flux',
     label: 'FLUX.1',
@@ -1236,7 +1258,17 @@ export const groupedModelOptions: GroupedSelectOption[] = modelArchs.reduce((acc
 
 export const quantizationOptions: SelectOption[] = [
   { value: '', label: '- NONE -' },
-  { value: 'qfloat8', label: 'float8 (default)' },
+  { value: 'qfloat8', label: 'qfloat8 (default)' },
+  { value: 'float8', label: 'float8' },
+  { value: 'convrot8', label: '8bit convrot' },
+  { value: 'convrot4', label: '4bit convrot (nvfp4)' },
+  { value: 'convrotint7', label: '7bit convrot' },
+  { value: 'convrotint6', label: '6bit convrot' },
+  { value: 'convrotint5', label: '5bit convrot' },
+  { value: 'convrotint4', label: '4bit convrot' },
+  { value: 'convrotint3', label: '3bit convrot' },
+  { value: 'convrotint2', label: '2bit convrot' },
+  { value: 'convrotbitnet', label: '1.58bit convrot (bitnet)' },
   { value: 'uint7', label: '7 bit' },
   { value: 'uint6', label: '6 bit' },
   { value: 'uint5', label: '5 bit' },

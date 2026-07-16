@@ -69,8 +69,7 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         torch.nn.Module.__init__(self)
         self.lora_name = lora_name
         self.orig_module_ref = weakref.ref(org_module)
-        self.scalar = torch.tensor(1.0, device=org_module.weight.device)
-        
+
         # if is ara lora module, mark it on the layer so memory manager can handle it
         if is_ara:
             org_module.ara_lora_ref = weakref.ref(self)
@@ -112,9 +111,9 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
                 self.lora_up = torch.nn.Linear(self.lora_dim, out_dim, bias=use_bias)
 
         if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_dim
+        self.scale = float(alpha) / self.lora_dim
         self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える
 
         # same as microsoft's
@@ -183,8 +182,9 @@ class FullModule(ToolkitModuleMixin, torch.nn.Module):
 
         # trainable delta, zero initialized so an untrained layer is a no-op (zero diff)
         # dequantize first so the delta is full precision and shaped like the real (unpacked) weight
-        self.weight_is_quantized = _is_quantized_tensor(org_module.weight)
-        ref_weight = _dequantize_if_needed(org_module.weight)
+        org_weight = org_module.weight  # single access: dequantizes on OstrisLinear
+        self.weight_is_quantized = _is_quantized_tensor(org_weight)
+        ref_weight = _dequantize_if_needed(org_weight)
         self.diff = torch.nn.Parameter(torch.zeros_like(ref_weight))
         # some modules (e.g. Embedding) have no bias attribute at all
         org_bias = getattr(org_module, 'bias', None)

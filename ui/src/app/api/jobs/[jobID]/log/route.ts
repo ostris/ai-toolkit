@@ -28,7 +28,12 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ log: '', offset: 0, reset: true });
   }
 
-  const MAX_LINES = 2000;
+  // Cap on the initial payload. The client renders the log through a terminal
+  // emulator that collapses \r/cursor-movement rewrites (progress bars), so a
+  // small newline-counted tail would be mostly bar churn that collapses to a
+  // few rendered lines — send a generous byte tail instead and let the
+  // emulator (which caps its own scrollback) do the trimming.
+  const MAX_TAIL_BYTES = 5 * 1024 * 1024;
   // Client sends the byte offset it has already consumed so we only return new
   // content. `offset` omitted (or NaN) => initial load / full tail.
   const offsetParam = request.nextUrl.searchParams.get('offset');
@@ -52,9 +57,8 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     const fh = await fs.promises.open(logPath, 'r');
     try {
       if (isReset) {
-        // Read only the tail of the file to avoid loading huge logs into memory.
-        // Assume an average line length so we grab enough bytes to cover MAX_LINES.
-        const start = Math.max(0, size - MAX_LINES * 512);
+        // Read only the tail of very large files to bound memory/payload.
+        const start = Math.max(0, size - MAX_TAIL_BYTES);
         let log = await readRange(fh, start, size);
         // Drop a partial first line if we started mid-file.
         if (start > 0) {
@@ -62,10 +66,6 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
           if (newlineIdx !== -1) {
             log = log.slice(newlineIdx + 1);
           }
-        }
-        const lines = log.split('\n');
-        if (lines.length > MAX_LINES) {
-          log = lines.slice(-MAX_LINES).join('\n');
         }
         return NextResponse.json({ log, offset: size, reset: true });
       }
