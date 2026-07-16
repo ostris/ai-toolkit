@@ -82,8 +82,10 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
 def is_quantized_tensor(t) -> bool:
     # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
     # that still report as nn.Parameter and expose .dequantize(). (quanto is handled separately.)
-    # OstrisLinear.weight returns an already-dequantized tensor tagged with _is_ostris_weight
-    # (its .dequantize() is a no-op) so the merge paths route through requantize_module_weight.
+    # _is_ostris_weight tags two OstrisLinear tensors: the .weight property's eager tensor
+    # (already dequantized; .dequantize() is a no-op) so the merge paths route through
+    # requantize_module_weight, and the lazy OstrisLazyWeight emitted by state_dict()
+    # (holds no data; .dequantize() materializes) so save loops dequantize it per key.
     if getattr(t, '_is_ostris_weight', False):
         return True
     return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
