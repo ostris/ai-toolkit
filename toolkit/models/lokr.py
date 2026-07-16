@@ -26,7 +26,7 @@ def factorization(dimension: int, factor: int = -1) -> tuple[int, int]:
     In LoRA with Kroneckor Product, first value is a value for weight scale.
     secon value is a value for weight.
 
-    Becuase of non-commutative property, A⊗B ≠ B⊗A. Meaning of two matrices is slightly different.
+    Becuase of non-commutative property, A(kron)B != B(kron)A. Meaning of two matrices is slightly different.
 
     examples)
     factor
@@ -151,7 +151,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
                     torch.empty(shape[0][1], lora_dim))
                 self.lokr_w2_b = nn.Parameter(torch.empty(
                     lora_dim, shape[1][1]*shape[2]*shape[3]))
-                # w1 ⊗ (w2_a x w2_b) = (a, b)⊗((c, dim)x(dim, d*k1*k2)) = (a, b)⊗(c, d*k1*k2) = (ac, bd*k1*k2)
+                # w1 (kron) (w2_a x w2_b) = (a, b)(kron)((c, dim)x(dim, d*k1*k2)) = (a, b)(kron)(c, d*k1*k2) = (ac, bd*k1*k2)
 
             self.op = F.conv2d
             self.extra_args = {
@@ -191,7 +191,7 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
                     torch.empty(shape[0][1], lora_dim))
                 self.lokr_w2_b = nn.Parameter(
                     torch.empty(lora_dim, shape[1][1]))
-                # w1 ⊗ (w2_a x w2_b) = (a, b)⊗((c, dim)x(dim, d)) = (a, b)⊗(c, d) = (ac, bd)
+                # w1 (kron) (w2_a x w2_b) = (a, b)(kron)((c, dim)x(dim, d)) = (a, b)(kron)(c, d) = (ac, bd)
             else:
                 self.use_w2 = True
                 self.lokr_w2 = nn.Parameter(
