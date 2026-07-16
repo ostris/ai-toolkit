@@ -55,7 +55,7 @@ _EVICTABLES: list[Callable[[int], int]] = []
 # allocation strategy): they may reclaim the torch host cache during
 # reconcile, but must never shrink evictable higher-priority consumers
 # (the bounce pool) to make room for themselves.
-_WEIGHT_TIER_KINDS = ("weights", "ingraph_pack")
+_WEIGHT_TIER_KINDS = ("weights",)
 
 _SPILL_RESERVE_FLOOR_GIB_OVERRIDE: Optional[float] = None
 _SPILL_RESERVE_PCT_OVERRIDE: Optional[float] = None
@@ -174,16 +174,11 @@ def dxgi_spill_reserve_bytes(budget_bytes: Optional[int] = None) -> int:
 
 
 def _spill_reserve_for_kind(kind: str, budget_bytes: Optional[int]) -> int:
-    # Weight-tier pins are one-shot STATIC commitments sized at attach/enable
-    # and fail-closed (strict mode raises rather than degrade): the per-tensor
-    # weight pins, the ingraph packs, and the pinned arena (kind="weights").
+    # Weight-tier pins are one-shot static commitments sized at attach/enable:
+    # per-tensor legacy weight pins and canonical Arena storage (kind="weights").
     # The pct-based reserve exists as slack for the *dynamic* streaming
     # consumer (the bounce pool), which grows at runtime -- a static commitment
-    # does not need it and keeps only the floor. The all-28 ingraph proof ran
-    # at 14.07/15.13 GiB committed, which the pct reserve would have refused;
-    # the pinned arena feeding the same all-streamed trunk (Phase 3 Slice B) is
-    # the identical commitment and must get the same floor, or a full-model
-    # training arena loses its last block to the pct reserve -> non_pinned_pack.
+    # does not need it and keeps only the floor.
     if kind in _WEIGHT_TIER_KINDS:
         return int(_spill_reserve_floor_gib() * GIB)
     return dxgi_spill_reserve_bytes(budget_bytes)
@@ -365,9 +360,9 @@ def is_host_pinned(t: torch.Tensor) -> bool:
     caching host allocator; memory pinned in place with cudaHostRegister
     (``pin_tensor_in_place`` / ``pin_register`` -- the weight/arena tier)
     reports ``is_pinned() == False`` even though CUDA treats it as pinned for
-    transfer purposes. Consult the registration table too so consumers that
-    gate on "is this flat pinned" (e.g. borrowed ingraph packs) see registered
-    arena flats as pinned rather than falsely rejecting them as pageable.
+    transfer purposes. Consult the registration table too so canonical Arena
+    consumers recognize registered flats rather than falsely treating them as
+    pageable.
     """
     if not isinstance(t, torch.Tensor):
         return False
@@ -631,7 +626,7 @@ def pin_register(
     :func:`pin_register_commit` for callers with no data to populate before
     pinning (e.g. tests). Callers that populate a leaf-carrying flat should
     call the two steps directly with the copy in between (see
-    ``ingraph_stream.pack_block_host``).
+    canonical Arena construction).
     """
     nbytes = int(nbytes)
     kind = str(kind or "unknown")

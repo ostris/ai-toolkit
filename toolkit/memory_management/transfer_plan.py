@@ -5,10 +5,9 @@ A ``BlockTransferPlan`` says which byte ranges of a canonical block's host
 flat (``canonical_arena.BlockRecord``) need to move to the device for one
 residency phase, coalesced and packed into a compact destination layout.
 Pure data model + coalescing algorithm live here (no CUDA needed to build
-or inspect a plan); the runtime that actually submits the copies is
-``mm::fetch_start_multi`` in ``ingraph_stream``, reusing its existing
-ticket/ring/backpressure machinery unchanged (Slice 2's "single-ticket
-semantics").
+or inspect a plan); the Arena transfer runtime submits the copies through
+``mm::fetch_start_multi`` while preserving single-ticket ring/backpressure
+semantics.
 
 Immutable and fingerprintable per Invariant 8: two plans built from the
 same block + the same set of streamed leaf names always produce identical
@@ -46,7 +45,7 @@ class LeafRange:
 @dataclass(frozen=True)
 class CompactLeafSpec:
     """A streamed leaf's location within the plan's compact destination
-    buffer -- same shape as ``ingraph_stream.LeafSpec`` but the offset is
+    buffer -- the offset is
     in DESTINATION (compact device buffer) coordinates, not the arena
     flat's."""
 

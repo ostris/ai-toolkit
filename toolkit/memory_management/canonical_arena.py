@@ -2,11 +2,9 @@
 
 One page-exclusive pinned host flat per block, immutable leaf metadata, and
 a ONE-TIME repoint of frozen base Parameters into views over those flats
-(the canonical storage invariant). This is deliberately NOT the legacy
-``pinned_arena.py``:
-no generation counter, no ``is_current``/staleness oracle over live module
-storage, no invalidate/restore/rebuild path, no borrowed-vs-owned pack
-taxonomy. Promotion, demotion, and sampling
+(the canonical storage invariant). There is no generation counter or
+``is_current``/staleness oracle over live module storage, and no
+invalidate/restore/rebuild path. Promotion, demotion, and sampling
 transitions must never repoint a Parameter again once ``canonicalize()``
 has run -- that is the job of the residency sidecars, not this
 module.

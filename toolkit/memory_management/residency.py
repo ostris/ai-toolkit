@@ -16,10 +16,9 @@ import torch
 from toolkit.memory_management import pin_manager
 from toolkit.memory_management.canonical_arena import CanonicalArena
 from toolkit.memory_management.arena_offload.layout import (
-
-    _flatten_leaves,
-    _rebuild_from_leaves,
-    leaf_view,
+    flatten_leaves,
+    rebuild_from_leaves,
+    typed_view,
 )
 
 LeafKey = tuple[str, str]
@@ -155,7 +154,7 @@ class ResidentLeaf:
         weight_tensors = self.tensors[:self.weight_leaf_count]
         if self.weight_leaf_count == 1:
             return weight_tensors[0]
-        return _rebuild_from_leaves(self.weight_template, iter(weight_tensors))
+        return rebuild_from_leaves(self.weight_template, weight_tensors)
 
     @property
     def bias(self):
@@ -174,13 +173,13 @@ class ResidencyDelta:
 def _tensor_bytes(tensor: torch.Tensor | None) -> int:
     if tensor is None:
         return 0
-    return sum(leaf.numel() * leaf.element_size() for leaf in _flatten_leaves(tensor))
+    return sum(leaf.numel() * leaf.element_size() for leaf in flatten_leaves(tensor))
 
 
 def _record_stream(tensor: torch.Tensor | None, stream) -> None:
     if tensor is None:
         return
-    for leaf in _flatten_leaves(tensor):
+    for leaf in flatten_leaves(tensor):
         leaf.record_stream(stream)
 
 
@@ -234,7 +233,7 @@ class ResidencyState:
         )
         with torch.no_grad(), stream_context:
             tensors = tuple(
-                leaf_view(block.host_flat, item).to(
+                typed_view(block.host_flat, item).to(
                     self.device, non_blocking=non_blocking
                 )
                 for item in spec.tensors

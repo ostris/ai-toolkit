@@ -511,24 +511,6 @@ def _(host_flat, guard):
     return torch.empty(1, dtype=torch.int64, device="cpu")
 
 
-@torch.library.custom_op("mm::fetch_start_gated", mutates_args=())
-def fetch_start_gated(host_flat: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
-    """fetch_start with a REAL data dependency on `gate`.
-
-    fetch_start_after's guard is a declared mutation; that bookkeeping does
-    not survive Inductor's scheduler/reinplacer, which may hoist backward
-    re-fetches above frees (ring overrun). Here the gate is an ordinary
-    input, so the dependency is genuine dataflow no scheduling stage can
-    drop. Emitted by the post-grad ordering pass (ingraph_stream_scheduling);
-    not intended for hand-written model code."""
-    return _fetch_start_impl(host_flat)
-
-
-@fetch_start_gated.register_fake
-def _(host_flat, gate):
-    return torch.empty(1, dtype=torch.int64, device="cpu")
-
-
 @torch.library.custom_op("mm::fetch_start_multi", mutates_args=())
 def fetch_start_multi(
     host_flat: torch.Tensor, ranges: torch.Tensor, compact_nbytes: int
@@ -553,21 +535,6 @@ def fetch_start_multi_after(
 
 @fetch_start_multi_after.register_fake
 def _(host_flat, ranges, compact_nbytes: int, guard):
-    return torch.empty(1, dtype=torch.int64, device="cpu")
-
-
-@torch.library.custom_op("mm::fetch_start_multi_gated", mutates_args=())
-def fetch_start_multi_gated(
-    host_flat: torch.Tensor,
-    ranges: torch.Tensor,
-    compact_nbytes: int,
-    gate: torch.Tensor,
-) -> torch.Tensor:
-    return _fetch_start_multi_impl(host_flat, ranges, compact_nbytes)
-
-
-@fetch_start_multi_gated.register_fake
-def _(host_flat, ranges, compact_nbytes: int, gate):
     return torch.empty(1, dtype=torch.int64, device="cpu")
 
 

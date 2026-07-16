@@ -136,11 +136,12 @@ class PinConformanceTests(unittest.TestCase):
     SCOPED_FILES = (
         "toolkit/async_save.py",
         "toolkit/memory_management/bounce_pool.py",
-        "toolkit/memory_management/ingraph_stream.py",
+        "toolkit/memory_management/canonical_arena.py",
         "toolkit/memory_management/manager.py",
         "toolkit/memory_management/manager_modules.py",
         "toolkit/memory_management/checkpoint_autotuner.py",
-        "toolkit/memory_management/pinned_arena.py",
+        "toolkit/memory_management/arena_offload/construction.py",
+        "toolkit/memory_management/arena_offload/transfer.py",
     )
     PATTERN = re.compile(r"pin_memory\s*=\s*True|\.pin_memory\(\)")
 

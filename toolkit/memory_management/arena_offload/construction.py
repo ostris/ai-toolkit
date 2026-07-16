@@ -15,7 +15,6 @@ from .layout import (
     inspect_block,
     LayerStorageView,
     linear_views,
-    make_block_view_maker,
     substitution_views,
     typed_view,
 )
@@ -583,7 +582,6 @@ class PreparedCanonicalBuild:
                     bool(block.handle and block.handle.pinned),
                     pin_handle=block.handle,
                 )
-                pack.view_maker = make_block_view_maker(pack)
                 block.pack = pack
                 names = tuple(name for name, _ in block.entries)
                 modules = tuple(module for _, module in block.entries)

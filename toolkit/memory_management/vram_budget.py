@@ -589,8 +589,7 @@ def estimate_sampling_working_reserve_bytes(
 
     Used before any measured peak exists, so a high-resolution first sample
     plans enough streaming up front instead of discovering the working set
-    via mid-denoise OOM demotions (every demote invalidates compiled state
-    and, under strict ingraph, changes the pack set).
+    through mid-denoise OOM demotions.
 
     Linear-in-tokens model calibrated on Krea2 RTX 4070 smoke runs
     (2026-07-07/08, fp8 + cutlass attention, sequential CFG, partial
@@ -612,10 +611,9 @@ def estimate_sampling_working_reserve_bytes(
     variation, and
     ``headroom_bytes`` (flat +1 GiB) deliberately overestimates: streaming
     one extra block costs a little bandwidth, while underestimating costs a
-    mid-denoise demote -- which invalidates compiled state, mutates the
-    strict-ingraph pack set, and (observed at 2000px) can cascade into a
-    full streamed transition. The learned per-run reserve replaces this
-    estimate after the first measured sample.
+    mid-denoise demote, which can cascade into a full streamed transition. The
+    learned per-run reserve replaces this estimate after the first measured
+    sample.
     """
     tokens = max(0, int(image_tokens)) + max(0, int(text_tokens))
     token_bytes = int(tokens * per_token_bytes * (2.5 if batch_cfg else 1.0))
@@ -646,9 +644,9 @@ def estimate_training_working_reserve_bytes(
     an allocator-cap OOM; production permits WDDM spill, but the resulting
     paging is still far slower than choosing the right cold layout.
 
-    Linear-in-tokens model calibrated on Krea2 LoKr RTX 4070 smoke runs
-    (2026-07-14, ``--block-stream-only`` so zero blocks are resident and
-    ``torch_max_allocated`` is purely the forward+backward+optimizer
+    Linear-in-tokens model calibrated on fully streamed Krea2 LoKr RTX 4070
+    smoke runs (2026-07-14), where zero blocks were resident and
+    ``torch_max_allocated`` isolated the forward+backward+optimizer
     footprint, uncontaminated by the residency split this estimate feeds):
 
         512x512   -> 1024 tokens, torch_max_allocated ~= 5.76 GiB
