@@ -179,7 +179,6 @@ export interface ModelConfig {
   compile_mode?: 'default' | 'max-autotune' | 'fastest';
   compile_fullgraph?: boolean;
   compile_dynamic?: boolean;
-  compile_coordinate_descent?: boolean;
   cache_size_limit?: number;
 }
 

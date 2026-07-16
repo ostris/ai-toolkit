@@ -87,7 +87,7 @@ class _FakeModelConfig:
     compile_sample = True
     train_compile_blocks = False
     layer_offloading_smart_working_reserve_gb = -1.0
-    layer_offloading_smart_wddm_margin_gb = None
+    layer_offloading_smart_physical_vram_headroom_gb = None
     layer_offloading_smart_wddm_hard_gb = 1.0
     layer_offloading_smart_cap_calibration = True
     layer_offloading_wddm_spill_reserve_pct = 0.10
@@ -95,7 +95,7 @@ class _FakeModelConfig:
     layer_offloading_checkpoint_keep_last = 2
     layer_offloading_prefetch_depth = 3
     layer_offloading_smart_sampling_working_reserve_gb = -1.0
-    layer_offloading_smart_sampling_wddm_margin_gb = -1.0
+    layer_offloading_smart_sampling_physical_vram_headroom_gb = -1.0
     layer_offloading_smart_sampling_wddm_hard_gb = 1.0
     layer_offloading_strict_vram_cap = False
 
@@ -354,17 +354,6 @@ class ArenaOffloadConfigTest(unittest.TestCase):
 
         config = ArenaOffloadConfig.from_model_config(DeadAliases())
         self.assertFalse(config.compile_blocks)
-
-    def test_compatibility_aliases_map_to_internal_policy(self):
-        class Aliases:
-            layer_offloading_smart_headroom_gb = 4.0
-            layer_offloading_smart_buffer_gb = 1.5
-            layer_offloading_smart_hard_buffer_gb = 0.75
-
-        policy = ArenaOffloadConfig.from_model_config(Aliases())._policy
-        self.assertEqual(policy.working_reserve_gib, 4.0)
-        self.assertEqual(policy.physical_vram_headroom_gib, 1.5)
-        self.assertEqual(policy.wddm_hard_gib, 0.75)
 
     def test_backward_without_fp8_forward_is_ignored_once(self):
         class Invalid:

@@ -36,28 +36,6 @@ from .runtime import ArenaOffloadRuntime
 
 GIB = 1024**3
 _FP8_QTYPES = ("qfloat8", "float8")
-_COMPATIBILITY_ALIASES = {
-    "layer_offloading_smart_working_reserve_gb": (
-        "layer_offloading_smart_headroom_gb",
-    ),
-    "layer_offloading_smart_physical_vram_headroom_gb": (
-        "layer_offloading_smart_wddm_margin_gb",
-        "layer_offloading_smart_buffer_gb",
-    ),
-    "layer_offloading_smart_wddm_hard_gb": (
-        "layer_offloading_smart_hard_buffer_gb",
-    ),
-    "layer_offloading_smart_sampling_working_reserve_gb": (
-        "layer_offloading_smart_sampling_headroom_gb",
-    ),
-    "layer_offloading_smart_sampling_physical_vram_headroom_gb": (
-        "layer_offloading_smart_sampling_wddm_margin_gb",
-        "layer_offloading_smart_sampling_buffer_gb",
-    ),
-    "layer_offloading_smart_sampling_wddm_hard_gb": (
-        "layer_offloading_smart_sampling_hard_buffer_gb",
-    ),
-}
 
 
 def estimate_training_working_reserve_hint_bytes(
@@ -184,12 +162,7 @@ class ArenaOffloadConfig:
         cls, model_config, *, training_working_reserve_hint_bytes: int | None = None
     ) -> ArenaOffloadConfig:
         def get(name: str, default: Any = None) -> Any:
-            if hasattr(model_config, name):
-                return getattr(model_config, name)
-            for alias in _COMPATIBILITY_ALIASES.get(name, ()):
-                if hasattr(model_config, alias):
-                    return getattr(model_config, alias)
-            return default
+            return getattr(model_config, name, default)
 
         raw_working_reserve_gib = get("layer_offloading_smart_working_reserve_gb")
         working_reserve_gib = raw_working_reserve_gib
