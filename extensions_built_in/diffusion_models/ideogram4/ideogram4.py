@@ -1,8 +1,8 @@
 import os
 from typing import List, Optional
-
 import torch
 import yaml
+from tqdm import tqdm
 from safetensors.torch import load_file, save_file
 
 from toolkit.config_modules import GenerateImageConfig, ModelConfig, NetworkConfig
@@ -360,15 +360,15 @@ class Ideogram4Model(BaseModel):
         self.print_and_status_update("Loading Ideogram4 model")
         base = self.model_config.name_or_path
 
+        # ------------------------------------------------------------
+        # MODEL LOADING + QUANTIZE + OFFLOAD
+        # ------------------------------------------------------------
         transformer = self._load_transformer(base)
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
-        else:
-            transformer.to(self.device_torch, dtype=dtype)
-        flush()
 
         if (
             self.model_config.layer_offloading
@@ -384,20 +384,39 @@ class Ideogram4Model(BaseModel):
                     transformer.llm_cond_proj,
                 ],
             )
+
         elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
+
         else:
-            # quantize_model leaves the model on CPU; make sure it lands on device.
+            self.print_and_status_update("Moving transformer to device")
             transformer.to(self.device_torch)
         flush()
 
         tokenizer, text_encoder = self._load_text_encoder(base)
+
+        # always start device-agnostic
+        text_encoder.to("cpu")
+
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing Text Encoder")
-            text_encoder.to(self.device_torch)
-            quantize(text_encoder, weights=get_qtype(self.model_config.qtype_te))
-            freeze(text_encoder)
+            quantization_type = get_qtype(self.model_config.qtype_te)
+            te_blocks = getattr(getattr(text_encoder, 'language_model', None), 'layers', None)
+            if te_blocks is not None and self.model_config.low_vram:
+                for block in tqdm(te_blocks):
+                    block.to(self.device_torch, dtype=self.torch_dtype)
+                    quantize(block, weights=quantization_type)
+                    freeze(block)
+                    block.to("cpu")
+                text_encoder.to(self.device_torch, dtype=self.torch_dtype)
+                quantize(text_encoder, weights=quantization_type)
+                freeze(text_encoder)
+                text_encoder.to("cpu")
+            else:
+                text_encoder.to(self.device_torch)
+                quantize(text_encoder, weights=quantization_type)
+                freeze(text_encoder)
             flush()
         if (
             self.model_config.layer_offloading
