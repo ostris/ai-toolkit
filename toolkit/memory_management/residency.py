@@ -115,10 +115,10 @@ class ResidencyPlan:
     def from_smart_plan(
         cls, arena: CanonicalArena, smart_plan: dict, *, phase: str
     ) -> ResidencyPlan:
-        """Adapt the existing planner's ``offload_ids`` decision to sidecars.
+        """Adapt the Arena planner's ``offload_ids`` decision to sidecars.
 
-        This is the Slice 3 planner seam: priority and capacity remain owned by
-        ``MemoryManager.smart_training_plan``; only the mutation target changes.
+        Priority and capacity remain planner-owned; this method only translates
+        the decision into immutable canonical leaf residency.
         """
         offload_ids = set(smart_plan.get("offload_ids", ()))
         resident = []

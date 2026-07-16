@@ -212,7 +212,7 @@ class CanonicalTransactionTests(unittest.TestCase):
         layers = [frozen_linear(), frozen_linear()]
         originals = [layer.weight for layer in layers]
         arena = CanonicalArena()
-        from toolkit.memory_management.arena_offload import construction
+        import toolkit.memory_management.arena_offload.construction as construction
 
         real_inspect = construction.inspect_block
         calls = 0

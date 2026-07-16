@@ -8,12 +8,12 @@ import torch
 
 from toolkit.memory_management.arena_offload import (
     ArenaOffloadConfig,
-    ArenaSetupFatalError,
     prepare_canonical_storage,
     prepare_arena_offload,
 )
 from toolkit.memory_management.arena_offload.errors import (
     ArenaCleanupError,
+    ArenaSetupFatalError,
     is_fatal_arena_setup,
     recover_allows_next_job,
 )

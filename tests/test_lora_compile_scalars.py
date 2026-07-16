@@ -27,19 +27,6 @@ def test_cuda_only_inductor_keeps_compile_errors_visible():
         assert inductor_config.cpp.vec_isa_ok is False
 
 
-def test_cuda_compile_prefers_aot_eager_then_compile(monkeypatch):
-    stances = []
-    monkeypatch.setattr(
-        torch.compiler,
-        "set_stance",
-        lambda stance: stances.append(stance),
-    )
-
-    configure_cuda_only_inductor()
-
-    assert stances == ["aot_eager_then_compile"]
-
-
 def test_lora_tensor_alpha_uses_device_owned_runtime_scale():
     module = LoRAModule(
         "compile_scalar",

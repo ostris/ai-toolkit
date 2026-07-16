@@ -711,7 +711,7 @@ def training_guard_pressure(dxgi: dict, physical: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Two-timescale residency control (see tasks/done/RESIDENCY_TWO_TIMESCALE_PLAN.md)
+# Two-timescale residency control
 #
 # Allowance lives in *target-space* (0.95*cap - live); the allocator cap is set
 # in *cap-space*. The two differ by the gc_threshold factor: a cap raise of ``d``

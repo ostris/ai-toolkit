@@ -17,45 +17,51 @@ Arena planning, transfer, FP8 transforms, and lifecycle cleanup are owned here;
 the legacy manager remains a separate backend.
 """
 
-from .api import (
-    ArenaOffloadConfig,
-    close_arena_offload,
-    estimate_training_working_reserve_hint_bytes,
-    get_arena_runtime,
-    is_arena_offloaded,
-    is_memory_managed,
-    memory_runtime_owns_compile,
-    prepare_canonical_storage,
-    prepare_canonical_storage_from_state_dict,
-    prepare_arena_offload,
-    validate_arena_training_mode,
-)
-from .runtime import ArenaOffloadRuntime
-from .dispatcher import DISPATCHER_GENERATION
-from .discovery import BlockDiscoveryError, discover_blocks
-from .errors import ArenaCleanupError, ArenaSetupFatalError
-from .load_session import model_load_arena_session
-from ..runtime import close_memory_runtime, get_memory_runtime
-
 __all__ = [
     "ArenaOffloadConfig",
-    "ArenaCleanupError",
-    "ArenaOffloadRuntime",
-    "ArenaSetupFatalError",
-    "BlockDiscoveryError",
-    "DISPATCHER_GENERATION",
     "close_arena_offload",
-    "close_memory_runtime",
     "get_arena_runtime",
-    "get_memory_runtime",
-    "discover_blocks",
     "estimate_training_working_reserve_hint_bytes",
     "is_arena_offloaded",
-    "is_memory_managed",
-    "memory_runtime_owns_compile",
     "model_load_arena_session",
     "prepare_canonical_storage",
     "prepare_canonical_storage_from_state_dict",
     "prepare_arena_offload",
     "validate_arena_training_mode",
 ]
+
+_PUBLIC_ENTRY_POINTS = {
+    "ArenaOffloadConfig": (".api", "ArenaOffloadConfig"),
+    "close_arena_offload": (".api", "close_arena_offload"),
+    "get_arena_runtime": (".api", "get_arena_runtime"),
+    "estimate_training_working_reserve_hint_bytes": (
+        ".api",
+        "estimate_training_working_reserve_hint_bytes",
+    ),
+    "is_arena_offloaded": (".api", "is_arena_offloaded"),
+    "model_load_arena_session": (".load_session", "model_load_arena_session"),
+    "prepare_canonical_storage": (".api", "prepare_canonical_storage"),
+    "prepare_canonical_storage_from_state_dict": (
+        ".api",
+        "prepare_canonical_storage_from_state_dict",
+    ),
+    "prepare_arena_offload": (".api", "prepare_arena_offload"),
+    "validate_arena_training_mode": (".api", "validate_arena_training_mode"),
+}
+
+
+def __getattr__(name):
+    entry_point = _PUBLIC_ENTRY_POINTS.get(name)
+    if entry_point is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from importlib import import_module
+
+    module_name, attribute_name = entry_point
+    value = getattr(import_module(module_name, __name__), attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))

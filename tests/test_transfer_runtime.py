@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from toolkit.memory_management.arena_offload import transfer as ingraph_stream
+import toolkit.memory_management.arena_offload.transfer as ingraph_stream
 from toolkit.memory_management.canonical_arena import CanonicalArena
 from toolkit.memory_management.transfer_plan import build_transfer_plan
 

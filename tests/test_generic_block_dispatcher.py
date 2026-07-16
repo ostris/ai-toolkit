@@ -9,10 +9,12 @@ from torch.utils.checkpoint import checkpoint
 from toolkit.memory_management.arena_offload import (
     ArenaOffloadConfig,
     close_arena_offload,
-    discover_blocks,
     prepare_arena_offload,
 )
-from toolkit.memory_management.arena_offload.discovery import BlockDiscoveryError
+from toolkit.memory_management.arena_offload.discovery import (
+    BlockDiscoveryError,
+    discover_blocks,
+)
 from toolkit.memory_management.arena_offload.dispatcher import (
     _first_output_tensor,
     _first_tensor_argument,
@@ -59,7 +61,7 @@ def _frozen_transformer():
     return model
 
 
-def _fp8_transformer(device, count=3, width=32):
+def _fp8_transformer(device, count=3, width=32, *, qtype="float8"):
     from optimum.quanto import freeze
 
     from toolkit.util.quantize import get_qtype, quantize
@@ -91,8 +93,10 @@ def _fp8_transformer(device, count=3, width=32):
             return value
 
     model = Fp8Transformer().to(device=device, dtype=torch.bfloat16)
-    quantize(model, weights=get_qtype("float8"))
-    freeze(model)
+    quantize(model, weights=get_qtype(qtype))
+    if qtype in ("float8", "qfloat8"):
+        freeze(model)
+    model.requires_grad_(False)
     return model
 
 
@@ -463,7 +467,7 @@ def test_saved_installed_forward_checkpoint_backward_and_teardown():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_cuda_streamed_compiled_train_sample_train():
-    from toolkit.memory_management.arena_offload import transfer
+    import toolkit.memory_management.arena_offload.transfer as transfer
 
     torch.manual_seed(23)
     device = torch.device("cuda")
@@ -581,6 +585,31 @@ def test_cuda_streamed_compiled_train_sample_train():
     assert torch.isfinite(fourth).all()
     close_arena_offload(model)
     assert active_process_owner() is None
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    ("qtype", "native_fp8"),
+    (("qfloat8", True), ("orbit4", False)),
+)
+def test_cuda_retained_quantization_backends_stream_through_arena(
+    qtype, native_fp8
+):
+    device = torch.device("cuda")
+    model = _fp8_transformer(device, qtype=qtype)
+    runtime = _fp8_runtime(
+        model,
+        device,
+        forward=native_fp8,
+        backward=native_fp8,
+        compile_blocks=False,
+    )
+    try:
+        runtime.finalize()
+        output = _fp8_train_once(model, runtime, device, 1)
+        assert torch.isfinite(output).all()
+    finally:
+        close_arena_offload(model)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

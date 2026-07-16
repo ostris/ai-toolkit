@@ -85,8 +85,8 @@ class CanonicalizeTests(unittest.TestCase):
             loaded = torch.load(buffer, weights_only=True)
             for key, value in expected.items():
                 self.assertTrue(torch.equal(value, loaded[key]), key)
-            # load_state_dict must copy IN PLACE, preserving the arena view
-            # (Parameter identity/storage unchanged -- Invariant 4).
+            # load_state_dict must copy in place so Parameter identity and the
+            # canonical arena storage view remain unchanged.
             flat_ptr = arena.block_pack("blocks.0").host_flat.untyped_storage().data_ptr()
             layer.load_state_dict(loaded)
             self.assertEqual(layer.weight.untyped_storage().data_ptr(), flat_ptr)

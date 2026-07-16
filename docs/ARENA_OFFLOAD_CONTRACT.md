@@ -5,6 +5,34 @@ name. An explicitly selected model is accepted when its live module graph and
 storage satisfy the following contracts; otherwise setup fails at the narrowest
 known boundary with the unmet contract in the error.
 
+## Configuration contract
+
+Arena is selected only when both `layer_offloading` and
+`layer_offloading_smart` are true. Its public reserve controls are the canonical
+`layer_offloading_smart_working_reserve_gb`,
+`layer_offloading_smart_physical_vram_headroom_gb`, and
+`layer_offloading_smart_wddm_hard_gb` names, plus their corresponding
+`layer_offloading_smart_sampling_*` names. Negative reserve values request
+automatic planning.
+
+The remaining public controls are
+`layer_offloading_smart_cap_calibration`, `layer_offloading_strict_vram_cap`,
+`layer_offloading_fp8_forward`, `layer_offloading_fp8_grad_input`,
+`layer_offloading_fp8_sampling`, `layer_offloading_checkpoint_keep_last`,
+`layer_offloading_prefetch_depth`, and the validation-only
+`layer_offloading_simulated_vram_gb`. Development aliases are not accepted.
+
+## Integration surface
+
+The package facade exposes configuration and lifecycle entry points only:
+`ArenaOffloadConfig`, setup and close operations, Arena runtime lookup and state
+inspection, training-mode validation, direct canonical-loading operations, and
+the model-load session. Generic memory-runtime lookup remains in
+`toolkit.memory_management.runtime`. Discovery, dispatcher, layout, runtime
+classes, implementation exceptions, and dispatcher constants are internal and
+must be imported from their defining modules only by Arena implementation code
+and focused tests.
+
 ## Model contract
 
 - The transformer exposes one or more repeated `ModuleList` or `Sequential`

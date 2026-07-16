@@ -1,5 +1,4 @@
-"""Static multi-range transfer plans (Slice 2,
-tasks/open/IMMUTABLE_TRANSFER_ARENA_PLAN.md).
+"""Static multi-range transfer plans.
 
 A ``BlockTransferPlan`` says which byte ranges of a canonical block's host
 flat (``canonical_arena.BlockRecord``) need to move to the device for one
@@ -9,10 +8,10 @@ or inspect a plan); the Arena transfer runtime submits the copies through
 ``mm::fetch_start_multi`` while preserving single-ticket ring/backpressure
 semantics.
 
-Immutable and fingerprintable per Invariant 8: two plans built from the
-same block + the same set of streamed leaf names always produce identical
-ranges and the same fingerprint, independent of the actual tensor/storage
-identity behind the block's host flat at build time.
+Plans are immutable and fingerprintable: two plans built from the same block
+and the same set of streamed leaf names always produce identical ranges and
+the same fingerprint, independent of the tensor or storage identity behind the
+block's host flat at build time.
 """
 
 from __future__ import annotations
@@ -81,8 +80,7 @@ class BlockTransferPlan:
 
     def ranges_tensor(self) -> torch.Tensor:
         """(N, 3) int64 CPU tensor of [src_offset, dst_offset, nbytes] rows,
-        the exact argument shape the ``mm::fetch_start_multi`` custom op
-        expects (Slice 2's compile-visible extended fetch op)."""
+        matching the ``mm::fetch_start_multi`` custom op's argument shape."""
         if not self.ranges:
             return torch.empty((0, 3), dtype=torch.int64)
         return torch.tensor(
@@ -119,9 +117,9 @@ def build_transfer_plan(
 ) -> BlockTransferPlan:
     """Build a coalesced multi-range transfer plan for the STREAMED subset
     of ``block``'s leaves. ``streamed_leaf_names`` is the residency
-    decision (owned by the planner/controllers, Invariant 10) -- this
-    function only turns "which leaves stream this phase" into "which byte
-    ranges to copy and where."
+    decision owned by the planner and controllers; this function only turns
+    "which leaves stream this phase" into "which byte ranges to copy and
+    where."
 
     Two source items coalesce into one range when the gap between them is
     at most ``slack_bytes`` (default: one leaf's alignment padding,

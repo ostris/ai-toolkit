@@ -1,33 +1,79 @@
-"""Facade-level coverage for `toolkit.memory_management.arena_offload`.
-
-These test the seam, not the machine: the helpers shared code now relies on
-(`get_arena_runtime`, `is_memory_managed`, `memory_runtime_owns_compile`) and
-the config mapping. Building a real arena needs CUDA and a real model; lifecycle
-is covered by the arena contract tests and the Krea2 train smoke.
-"""
+"""Public Arena facade and generic memory-runtime seam coverage."""
 
 import ast
 from dataclasses import fields
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 import unittest
 
 import torch
 
+import toolkit.memory_management.arena_offload as arena_offload
 from toolkit.memory_management.arena_offload import (
     ArenaOffloadConfig,
     estimate_training_working_reserve_hint_bytes,
     get_arena_runtime,
     is_arena_offloaded,
-    is_memory_managed,
-    memory_runtime_owns_compile,
     validate_arena_training_mode,
 )
 from toolkit.memory_management.arena_offload.api import RUNTIME_ATTR, unwrap
 from toolkit.memory_management.arena_offload.runtime import _fixed_working_bytes
 from toolkit.memory_management.arena_offload.runtime import ArenaOffloadRuntime
+from toolkit.memory_management.runtime import (
+    is_memory_managed,
+    memory_runtime_owns_compile,
+)
 
 GIB = 1024**3
+
+
+def test_canonical_arena_import_does_not_depend_on_facade_import_order():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import toolkit.memory_management.canonical_arena; "
+                "from toolkit.memory_management.arena_offload import "
+                "ArenaOffloadConfig; assert ArenaOffloadConfig"
+            ),
+        ],
+        cwd=Path(__file__).parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_public_facade_is_limited_to_integration_entry_points():
+    assert arena_offload.__all__ == [
+        "ArenaOffloadConfig",
+        "close_arena_offload",
+        "get_arena_runtime",
+        "estimate_training_working_reserve_hint_bytes",
+        "is_arena_offloaded",
+        "model_load_arena_session",
+        "prepare_canonical_storage",
+        "prepare_canonical_storage_from_state_dict",
+        "prepare_arena_offload",
+        "validate_arena_training_mode",
+    ]
+    for implementation_name in (
+        "ArenaCleanupError",
+        "ArenaOffloadRuntime",
+        "ArenaSetupFatalError",
+        "BlockDiscoveryError",
+        "DISPATCHER_GENERATION",
+        "close_memory_runtime",
+        "discover_blocks",
+        "get_memory_runtime",
+        "is_memory_managed",
+        "memory_runtime_owns_compile",
+    ):
+        assert not hasattr(arena_offload, implementation_name)
 
 
 def test_arena_runtime_excludes_legacy_training_policy_calls():
