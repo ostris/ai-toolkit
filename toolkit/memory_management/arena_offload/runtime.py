@@ -33,6 +33,7 @@ from .policy import (
     TrainingSignalWindow,
 )
 from .cap_calibrator import CAP_SET, TrainingCapCalibrator
+from .compile_cache import ArenaCompileCacheSession
 from .errors import ArenaCleanupError, ArenaSetupFatalError
 from .fp8 import disable as disable_fp8
 from .fp8 import enable as enable_fp8
@@ -85,6 +86,7 @@ class ArenaOffloadRuntime:
         self._smart_plan = smart_plan
         self._canonical_modules = canonical_modules
         self._resources = resources
+        self._compile_cache = None
         self._closed = False
         self._disposed = False
 
@@ -249,6 +251,7 @@ class ArenaOffloadRuntime:
                 depth=policy.prefetch_depth,
                 compile_blocks=config.compile_blocks,
                 compile_dynamic=config._compile_dynamic,
+                compile_fullgraph=config._compile_fullgraph,
                 compile_dynamic_hints=config._compile_dynamic_hints,
                 protected_training_leaf_keys=smart_plan.get(
                     "protected_training_leaf_keys", ()
@@ -530,6 +533,10 @@ class ArenaOffloadRuntime:
             # installed, so compiled dispatcher kernels trace the selected
             # execution policy rather than Quanto's materializing fallback.
             self._executor.finalize_execution()
+            self._compile_cache = ArenaCompileCacheSession.for_runtime(
+                self._model, self._config, self._executor
+            )
+            self._compile_cache.load()
             self._executor.activate(self._executor.TRAIN, self._training_plan)
             return self
         except BaseException as error:
@@ -537,7 +544,15 @@ class ArenaOffloadRuntime:
 
     def close(self) -> None:
         """Release through the same owner used during preparation."""
+        self._save_compile_cache(force=True)
         self._resources.release()
+
+    def _save_compile_cache(self, *, force: bool = False) -> bool:
+        cache = getattr(self, "_compile_cache", None)
+        executor = getattr(self, "_executor", None)
+        if cache is None or getattr(executor, "active_executions", 0):
+            return False
+        return cache.save(force=force)
 
     def _fatal_setup_failure(self, error):
         try:
@@ -622,6 +637,7 @@ class ArenaOffloadRuntime:
                 except Exception as error:
                     # Diagnostics must never mask a successful training step.
                     self._last_policy_error = f"{type(error).__name__}: {error}"
+                self._save_compile_cache()
 
     def _handle_training_failure(self, error, *, shape_key, step_num):
         """Clean arena-owned state after the executor has unwound."""
@@ -1242,6 +1258,7 @@ class ArenaOffloadRuntime:
                             )
                             yielded = True
                             yield self
+                        self._save_compile_cache()
                         break
                     except BaseException as error:
                         if yielded or setup_retry_used:
@@ -1705,6 +1722,12 @@ class ArenaOffloadRuntime:
             "prefetch_depth": int(getattr(self._executor, "depth", 0)),
             "compile_blocks": bool(self._config.compile_blocks),
             "compile_dynamic": bool(self._config._compile_dynamic),
+            "compile_fullgraph": bool(self._config._compile_fullgraph),
+            "compile_cache": (
+                None
+                if self._compile_cache is None
+                else self._compile_cache.diagnostics()
+            ),
             "strict_vram_cap": bool(
                 getattr(self._config, "strict_vram_cap", False)
             ),

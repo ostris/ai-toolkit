@@ -18,6 +18,7 @@ from toolkit.memory_management.arena_offload.discovery import (
 from toolkit.memory_management.arena_offload.dispatcher import (
     _first_output_tensor,
     _first_tensor_argument,
+    _is_dynamo_compile_failure,
     _replace_tensor_argument,
 )
 from toolkit.memory_management.arena_offload.ownership import active_process_owner
@@ -388,6 +389,98 @@ def test_sampling_dispatch_retries_one_failed_compiled_block_in_eager_wrapper():
         close_arena_offload(model)
 
 
+def test_model_config_propagates_fullgraph_only_when_compile_is_enabled():
+    enabled = ArenaOffloadConfig.from_model_config(
+        type(
+            "Config",
+            (),
+            {
+                "layer_offloading": True,
+                "layer_offloading_smart": True,
+                "compile": True,
+                "compile_fullgraph": True,
+            },
+        )()
+    )
+    disabled = ArenaOffloadConfig.from_model_config(
+        type(
+            "Config",
+            (),
+            {
+                "layer_offloading": True,
+                "layer_offloading_smart": True,
+                "compile": False,
+                "compile_fullgraph": True,
+            },
+        )()
+    )
+
+    assert enabled._compile_fullgraph is True
+    assert disabled._compile_fullgraph is False
+
+
+def test_strict_compile_failure_classifier_includes_recompile_limit():
+    error = torch._dynamo.exc.FailOnRecompileLimitHit(
+        "synthetic recompile limit"
+    )
+    assert _is_dynamo_compile_failure(error)
+    assert not _is_dynamo_compile_failure(RuntimeError("ordinary block error"))
+
+
+def test_later_strict_recompile_failure_keeps_block_identity():
+    model = _frozen_transformer()
+    model.enable_gradient_checkpointing()
+    with mock.patch(
+        "toolkit.memory_management.arena_offload.planner.vram_budget.device_mem_info",
+        return_value=(8 * 1024**3, 12 * 1024**3),
+    ), mock.patch(
+        "toolkit.memory_management.arena_offload.planner.vram_budget."
+        "auto_physical_vram_headroom_gib",
+        return_value=1.0,
+    ):
+        runtime = prepare_arena_offload(
+            model,
+            device="cpu",
+            block_names=("blocks",),
+            config=ArenaOffloadConfig(enabled=True, compile_blocks=False),
+        )
+    try:
+        runtime.finalize()
+        executor = runtime._executor
+        executor.compile_fullgraph = True
+        executor._strict_kernels_executed.add(0)
+
+        def failed_recompile(_index):
+            def fail(*_args, **_kwargs):
+                raise torch._dynamo.exc.FailOnRecompileLimitHit(
+                    "synthetic later recompile"
+                )
+
+            return fail
+
+        executor._get_dispatch_kernel = failed_recompile
+        resident = [
+            (block_key, leaf_name)
+            for block_key in runtime._arena.block_keys()
+            for leaf_name in runtime._arena.block_record(block_key).leaf_names
+        ]
+        executor.activate(
+            executor.SAMPLE,
+            ResidencyPlan.build(executor.SAMPLE, resident),
+        )
+        with torch.no_grad(), executor.execution(executor.SAMPLE), pytest.raises(
+            RuntimeError,
+            match="fullgraph_block_compile_failed:blocks.0",
+        ) as raised:
+            model(torch.randn(2, 4))
+        assert isinstance(
+            raised.value.__cause__,
+            torch._dynamo.exc.FailOnRecompileLimitHit,
+        )
+    finally:
+        close_arena_offload(model)
+
+
 def test_saved_installed_forward_checkpoint_backward_and_teardown():
     torch.manual_seed(17)
     model = _frozen_transformer()
@@ -477,6 +570,7 @@ def test_cuda_streamed_compiled_train_sample_train():
         enabled=True,
         compile_blocks=True,
         _compile_dynamic=False,
+        _compile_fullgraph=True,
     )
     config = replace(
         config,
@@ -512,6 +606,9 @@ def test_cuda_streamed_compiled_train_sample_train():
         adapters.append(block.adapter_gain)
     runtime.finalize()
     diagnostics = runtime.diagnostics()
+    assert diagnostics["compile_fullgraph"] is True
+    assert diagnostics["compile_cache"]["enabled"] is True
+    assert diagnostics["compile_cache"]["load_attempted"] is True
     accounting = diagnostics["accounting"]
     assert accounting["payload_reconciled"]
     assert accounting["mixed_residency"]

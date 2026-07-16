@@ -145,6 +145,7 @@ class ArenaOffloadConfig:
     compile_blocks: bool = False
     strict_vram_cap: bool = False
     _compile_dynamic: bool | None = True
+    _compile_fullgraph: bool = False
     _compile_dynamic_hints: tuple[tuple[int, int | None, int | None], ...] = ()
     # Validation knob: pretend the card is this many GiB, so small-card
     # behaviour (deeper streaming, tighter caps, a residency plan that cannot
@@ -238,6 +239,9 @@ class ArenaOffloadConfig:
                 None
                 if get("compile_dynamic", True) is None
                 else bool(get("compile_dynamic", True))
+            ),
+            _compile_fullgraph=bool(
+                get("compile", False) and get("compile_fullgraph", False)
             ),
             _compile_dynamic_hints=tuple(
                 tuple(hint) for hint in (get("compile_dynamic_hints", ()) or ())

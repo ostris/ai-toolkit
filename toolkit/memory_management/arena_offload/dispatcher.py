@@ -21,7 +21,7 @@ from toolkit.memory_management.arena_offload.transfer import (
 )
 
 
-DISPATCHER_GENERATION = "generic-block-dispatcher-v1"
+DISPATCHER_GENERATION = "generic-block-dispatcher-v2-fullgraph"
 
 
 def _first_tensor_argument(args, kwargs):
@@ -70,6 +70,24 @@ def _in_backward_graph_task() -> bool:
         return False
 
 
+def _is_dynamo_compile_failure(error: BaseException) -> bool:
+    """Recognize strict-capture failures, including later recompiles."""
+    dynamo_errors = getattr(torch._dynamo, "exc", None)
+    if dynamo_errors is None:
+        return False
+    error_types = tuple(
+        error_type
+        for name in (
+            "BackendCompilerFailed",
+            "FailOnRecompileLimitHit",
+            "RecompileError",
+            "Unsupported",
+        )
+        if isinstance((error_type := getattr(dynamo_errors, name, None)), type)
+    )
+    return bool(error_types) and isinstance(error, error_types)
+
+
 class OriginalBlockInvoker(torch.nn.Module):
     """Own a selected block while calling its preserved installed forward."""
 
@@ -112,11 +130,14 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
         depth=3,
         compile_blocks=True,
         compile_dynamic=True,
+        compile_fullgraph=False,
         compile_dynamic_hints=(),
         protected_training_leaf_keys=(),
         owner_token=None,
     ):
         self.selection = selection
+        self.compile_fullgraph = bool(compile_blocks and compile_fullgraph)
+        self._strict_kernels_executed = set()
         super().__init__(
             model,
             residency,
@@ -221,7 +242,7 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
             kernel = torch.compile(
                 kernel,
                 mode="default",
-                fullgraph=False,
+                fullgraph=self.compile_fullgraph,
                 dynamic=self.compile_dynamic,
             )
         self._block_kernels[key] = kernel
@@ -343,6 +364,8 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
         while True:
             try:
                 output = self._get_dispatch_kernel(index)(leaf_args, args, kwargs)
+                if self.compile_fullgraph:
+                    self._strict_kernels_executed.add(int(index))
                 break
             except BaseException as error:
                 recover = (
@@ -358,8 +381,22 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
                 # normal post-forward release below. With no gradient-bearing
                 # input, frozen streamed state is not a backward dependency and
                 # there is no free_on_backward node, so release on that unwind.
-                if token is not None and not release_on_backward:
+                strict_compile_failed = (
+                    self.compile_fullgraph
+                    and (
+                        int(index) not in self._strict_kernels_executed
+                        or _is_dynamo_compile_failure(error)
+                    )
+                )
+                if token is not None and (
+                    not release_on_backward or strict_compile_failed
+                ):
                     torch.ops.mm.fetch_free(token)
+                if strict_compile_failed:
+                    raise ImmutableRuntimeError(
+                        "fullgraph_block_compile_failed:"
+                        f"{self._block_abis[index].block_key}"
+                    ) from error
                 raise
         if token is not None:
             # The first checkpoint pass discards its fetched views, so return
@@ -398,6 +435,7 @@ class GenericBlockDispatcherRuntime(ImmutableTransformerRuntime):
         self._sampling_forward_begin = None
         self._sampling_forward_end = None
         self._sampling_allocation_failure = None
+        self._strict_kernels_executed.clear()
         super().close()
 
 
@@ -409,6 +447,7 @@ def prepare_block_dispatcher_runtime(
     depth=3,
     compile_blocks=True,
     compile_dynamic=True,
+    compile_fullgraph=False,
     compile_dynamic_hints=(),
     protected_training_leaf_keys=(),
     owner_token=None,
@@ -420,6 +459,7 @@ def prepare_block_dispatcher_runtime(
         depth=depth,
         compile_blocks=compile_blocks,
         compile_dynamic=compile_dynamic,
+        compile_fullgraph=compile_fullgraph,
         compile_dynamic_hints=compile_dynamic_hints,
         protected_training_leaf_keys=protected_training_leaf_keys,
         owner_token=owner_token,
