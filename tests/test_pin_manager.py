@@ -1,3 +1,4 @@
+import os
 import re
 import unittest
 from pathlib import Path
@@ -13,11 +14,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 class PinManagerTests(unittest.TestCase):
     def setUp(self):
         pin_manager.reset_for_tests()
-        pin_manager.set_host_cache_reserve_bytes(None)
 
     def tearDown(self):
         pin_manager.reset_for_tests()
-        pin_manager.set_host_cache_reserve_bytes(None)
 
     def test_ledger_tracks_kinds(self):
         pin_manager.register_pinned_bytes(100, "weights")
@@ -31,35 +30,16 @@ class PinManagerTests(unittest.TestCase):
         )
 
     def test_reserve_reduces_available_grant(self):
-        pin_manager.set_host_cache_reserve_bytes(2 * GIB)
-        with mock.patch.object(pin_manager, "pinned_bytes_headroom", return_value=8 * GIB):
-            self.assertEqual(pin_manager.available_for_pin(mode="training"), 6 * GIB)
-            self.assertTrue(pin_manager.can_pin(6 * GIB, mode="training"))
-            self.assertFalse(pin_manager.can_pin(7 * GIB, mode="training"))
-
-    def test_plan_full_pin_disables_bounce(self):
-        pin_manager.set_host_cache_reserve_bytes(1 * GIB)
-        with mock.patch.object(pin_manager, "pinned_bytes_headroom", return_value=10 * GIB):
-            plan = pin_manager.plan_budgets(
-                offloaded_weight_bytes=8 * GIB,
-                requested_bounce_bytes=4 * GIB,
-                mode="training",
-            )
-        self.assertEqual(plan["strategy"], "full_pin_no_bounce")
-        self.assertEqual(plan["weight_budget_bytes"], 8 * GIB)
-        self.assertEqual(plan["bounce_budget_bytes"], 0)
-
-    def test_plan_partial_prioritizes_bounce_then_weights(self):
-        pin_manager.set_host_cache_reserve_bytes(1 * GIB)
-        with mock.patch.object(pin_manager, "pinned_bytes_headroom", return_value=10 * GIB):
-            plan = pin_manager.plan_budgets(
-                offloaded_weight_bytes=12 * GIB,
-                requested_bounce_bytes=4 * GIB,
-                mode="training",
-            )
-        self.assertEqual(plan["strategy"], "partial_bounce_first")
-        self.assertEqual(plan["bounce_budget_bytes"], 4 * GIB)
-        self.assertEqual(plan["weight_budget_bytes"], 5 * GIB)
+        with mock.patch.dict(
+            os.environ,
+            {"AI_TOOLKIT_PIN_HOST_CACHE_RESERVE_GIB": "2.0"},
+        ):
+            with mock.patch.object(
+                pin_manager, "pinned_bytes_headroom", return_value=8 * GIB
+            ):
+                self.assertEqual(
+                    pin_manager.available_for_pin(mode="training"), 6 * GIB
+                )
 
 
     def test_release_clamps_within_kind_only(self):
@@ -68,17 +48,6 @@ class PinManagerTests(unittest.TestCase):
         pin_manager.register_pinned_bytes(100, "weights")
         pin_manager.release_pinned_bytes(50, "bounce")
         self.assertEqual(pin_manager.pinned_bytes_by_kind(), {"weights": 100})
-
-    def test_weight_tier_reconcile_cannot_shrink_evictables(self):
-        # Priority guard: weights are the lowest pin tier, so a weights-tier
-        # shortfall may empty the host cache but must never evict the bounce
-        # pool to make room for itself.
-        calls = []
-        pin_manager.register_evictable(lambda need: calls.append(need) or 0)
-        pin_manager.reconcile(1 * GIB, allow_shrink=False)
-        self.assertEqual(calls, [])
-        pin_manager.reconcile(1 * GIB, allow_shrink=True)
-        self.assertEqual(calls, [1 * GIB])
 
     def test_release_handle_is_idempotent(self):
         pin_manager.register_pinned_bytes(64, "save_stager")
@@ -127,7 +96,7 @@ class PinManagerTests(unittest.TestCase):
 
 
 class PinConformanceTests(unittest.TestCase):
-    """No direct pinning outside the pin manager (PIN_MANAGER_PLAN S2).
+    """No direct pinning outside the pin manager.
 
     Every page-lock in the memory subsystem must route through pin_manager so
     the ledger stays authoritative. Scope is the offload subsystem + async
@@ -135,11 +104,9 @@ class PinConformanceTests(unittest.TestCase):
 
     SCOPED_FILES = (
         "toolkit/async_save.py",
-        "toolkit/memory_management/bounce_pool.py",
         "toolkit/memory_management/canonical_arena.py",
         "toolkit/memory_management/manager.py",
         "toolkit/memory_management/manager_modules.py",
-        "toolkit/memory_management/checkpoint_autotuner.py",
         "toolkit/memory_management/arena_offload/construction.py",
         "toolkit/memory_management/arena_offload/transfer.py",
     )

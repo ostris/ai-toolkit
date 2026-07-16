@@ -7,8 +7,6 @@ operators, statistics, and checkpoint/recompute ticket lifetime.
 from __future__ import annotations
 
 import collections
-import contextlib
-import itertools
 import threading
 import time
 from dataclasses import dataclass
@@ -75,16 +73,7 @@ _LIFETIME_STATS = dict(_STATS)
 # already completed, so accounting for a copy never blocks the host on it.
 _PENDING_H2D: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
 
-# Harness-only: restore the old behaviour of settling each copy's timing inside
-# fetch_wait. Kept solely so a benchmark can A/B the cost of that host sync on
-# the same build; production always drains lazily.
-_BLOCKING_H2D_TIMING = False
 _RUNTIME_OWNER_TOKEN = None
-
-
-def set_h2d_timing_blocking(enabled: bool) -> None:
-    global _BLOCKING_H2D_TIMING
-    _BLOCKING_H2D_TIMING = bool(enabled)
 
 
 def _drain_h2d(block: bool = False) -> None:
@@ -110,25 +99,6 @@ def _drain_h2d(block: bool = False) -> None:
             # Event never recorded (abandoned fetch, e.g. OOM unwind): drop it.
             pass
     _PENDING_H2D[:] = pending
-
-
-def raise_dynamo_recompile_limit(min_limit: int = 128) -> None:
-    """Lift dynamo's per-code-object recompile cap for the in-graph trunks.
-
-    Two legitimate recompile sources stack up on one code object: bucketed
-    training resolutions (dynamic=False -> one cache entry per distinct token
-    shape) and sampling-boundary rebuilds (fresh block-fn closures fail the
-    old entries' guards without evicting them). The default limit of 8 turned
-    that into FailOnRecompileLimitHit at the third boundary of a 200-step run
-    (~step 101). Each extra entry costs one ~3 min compile, not correctness;
-    the cap exists to flag accidental recompile storms, which the boundary
-    rebuild is not.
-    """
-    config = torch._dynamo.config
-    for attribute in ("recompile_limit", "cache_size_limit"):
-        current = getattr(config, attribute, None)
-        if isinstance(current, int) and current < min_limit:
-            setattr(config, attribute, min_limit)
 
 
 def configure_fetch_runtime(*, depth: int = 3, owner_token=None) -> None:
@@ -169,65 +139,6 @@ def lifetime_fetch_stats() -> dict:
     """Return monotonic fetch counters unaffected by report-window resets."""
     _drain_h2d(block=True)
     return dict(_LIFETIME_STATS)
-
-
-def fetch_performance_metrics(stats: dict, *, step_wall_ms=None) -> dict:
-    """Derive transfer-stream utilization from a settled reporting window.
-
-    ``h2d_ms`` is CUDA-event time on the single serialized transfer stream.
-    Dividing its window total by the matching step-wall total estimates transfer
-    duty. ``wait_ms`` is deliberately excluded: it is host blocking around an
-    event wait and does not say whether the GPU compute stream was idle.
-
-    H2D timing drains opportunistically, so callers should provide a multi-step
-    reporting window. Duty above 100% is retained and flagged rather than
-    clamped; it indicates accounting carried across a window boundary or a
-    mismatched denominator.
-    """
-    h2d_ms = float((stats or {}).get("h2d_ms", 0.0) or 0.0)
-    byte_count = int((stats or {}).get("bytes", 0) or 0)
-    wall_ms = None if step_wall_ms is None else float(step_wall_ms)
-    duty_pct = None
-    if wall_ms is not None and wall_ms > 0.0:
-        duty_pct = 100.0 * h2d_ms / wall_ms
-    achieved_gbps = None
-    if h2d_ms > 0.0:
-        achieved_gbps = byte_count / (h2d_ms * 1_000_000.0)
-    return {
-        "step_wall_ms": wall_ms,
-        "h2d_duty_pct": duty_pct,
-        "h2d_duty_overflow": bool(duty_pct is not None and duty_pct > 100.0),
-        "achieved_gbps": achieved_gbps,
-    }
-
-
-def fetch_report(reset: bool = False, *, step_wall_ms=None) -> str | None:
-    stats = fetch_stats(reset=reset)
-    if not stats["fetches"]:
-        return None
-    metrics = fetch_performance_metrics(stats, step_wall_ms=step_wall_ms)
-    gib = stats["bytes"] / 1024 ** 3
-    duty = (
-        "-" if metrics["h2d_duty_pct"] is None
-        else f"{metrics['h2d_duty_pct']:.1f}"
-    )
-    gbps = (
-        "-" if metrics["achieved_gbps"] is None
-        else f"{metrics['achieved_gbps']:.2f}"
-    )
-    wall = (
-        "-" if metrics["step_wall_ms"] is None
-        else f"{metrics['step_wall_ms']:.3f}"
-    )
-    return (
-        f"[InGraphStream] fetches={int(stats['fetches'])} "
-        f"copies={int(stats['copies'])} "
-        f"bytes={gib:.2f} GiB h2d_ms={stats['h2d_ms']:.3f} "
-        f"step_wall_ms={wall} h2d_duty_pct={duty} "
-        f"h2d_duty_overflow={int(metrics['h2d_duty_overflow'])} "
-        f"achieved_gbps={gbps} "
-        f"wait_ms={stats['wait_ms']:.3f} depth_waits={int(stats['depth_waits'])}"
-    )
 
 
 def _transfer_stream(device: torch.device):
@@ -561,7 +472,7 @@ def fetch_wait(token: torch.Tensor, nbytes: int) -> torch.Tensor:
         # and with the ring recycling device-side there is nothing to gain from
         # the throttle it used to provide.
         _PENDING_H2D.append((ticket.h2d_start, ticket.h2d_end))
-        _drain_h2d(block=_BLOCKING_H2D_TIMING)
+        _drain_h2d(block=False)
     return ticket.device_buffer
 
 
@@ -701,87 +612,5 @@ def free_on_backward(x: torch.Tensor, token: torch.Tensor) -> torch.Tensor:
     swaps it for the RECOMPUTE generation's token automatically, and this
     node's backward frees exactly the ticket backward actually read.
 
-    Canonical training block shape (see checkpoint_recompute_context):
-
-        token = fetch_start_after(host, x)
-        flat = fetch_wait(token, nbytes)
-        ...views...
-        x = free_on_backward(x, token)
-        out = <block math>(x, views)
-        if not in_recompute():
-            torch.ops.mm.fetch_free_after(token, out)  # first-pass gen only
-        return out
     """
     return _FreeOnBackwardFn.apply(x, token)
-
-
-_IN_RECOMPUTE = threading.local()
-
-
-def in_recompute() -> bool:
-    """True while a checkpoint recompute pass (via checkpoint_recompute_context)
-    is re-running the block fn."""
-    return bool(getattr(_IN_RECOMPUTE, "value", False))
-
-
-class _RecomputeMarker:
-    def __enter__(self):
-        self._prev = getattr(_IN_RECOMPUTE, "value", False)
-        _IN_RECOMPUTE.value = True
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        _IN_RECOMPUTE.value = self._prev
-        return False
-
-
-def checkpoint_recompute_context():
-    """``context_fn`` for torch.utils.checkpoint: null forward context, and a
-    recompute context that flips in_recompute() so the block fn suppresses the
-    first-pass forward free during recompute (the recompute ticket is freed by
-    free_on_backward instead). EAGER ONLY -- compiled checkpoint requires
-    TorchDispatchMode contexts; use compiled_checkpoint_context there."""
-    return contextlib.nullcontext(), _RecomputeMarker()
-
-
-def _compiled_free_policy(ctx, op, *args, **kwargs):
-    from torch.utils.checkpoint import CheckpointPolicy
-
-    if op in (
-        torch.ops.mm.fetch_free_after.default,
-        torch.ops.mm.fetch_free.default,
-    ):
-        # Keep the forward-side free OUT of the backward replay: replayed, it
-        # would free the backward re-fetch's buffer before the grad kernels
-        # read it. free_on_backward's op is the backward-side free.
-        return CheckpointPolicy.MUST_SAVE
-    if op in (
-        torch.ops.mm.fetch_start.default,
-        torch.ops.mm.fetch_start_after.default,
-        torch.ops.mm.fetch_start_multi.default,
-        torch.ops.mm.fetch_start_multi_after.default,
-        torch.ops.mm.fetch_wait.default,
-    ):
-        # The design's core invariant: fetched weights are NEVER saved for
-        # backward. PREFER_RECOMPUTE is advisory -- at Krea2 scale the
-        # partitioner chose to save all 28 fetched flats (12.25 GiB -> OOM).
-        return CheckpointPolicy.MUST_RECOMPUTE
-    # Everything else replays in backward (full-checkpoint mode).
-    return CheckpointPolicy.PREFER_RECOMPUTE
-
-
-def compiled_checkpoint_context():
-    """``context_fn`` for torch.utils.checkpoint under torch.compile."""
-    from torch.utils.checkpoint import create_selective_checkpoint_contexts
-
-    return create_selective_checkpoint_contexts(_compiled_free_policy)
-
-
-# NOTE: there is deliberately NO helper that "picks the right checkpoint
-# context automatically". The checkpoint HOP calls context_fn() OUTSIDE the
-# compiling frame, so an is_compiling() check inside such a helper always
-# reads False under compile and hands the HOP eager (non-TorchDispatchMode)
-# contexts, failing its assertion. Select the context at trunk level instead:
-#     context_fn = (compiled_checkpoint_context
-#                   if torch.compiler.is_compiling()
-#                   else checkpoint_recompute_context)

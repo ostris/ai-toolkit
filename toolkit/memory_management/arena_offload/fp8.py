@@ -7,8 +7,6 @@ import torch
 from toolkit.quantization.fp8_linear import (
     bind_parameter_operation,
     declare_fp8_linear,
-    fp8_grad_input_enabled,
-    set_fp8_grad_input_enabled,
 )
 
 

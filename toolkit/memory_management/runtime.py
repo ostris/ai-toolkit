@@ -66,17 +66,3 @@ def close_memory_runtime_preparation(model_owner) -> None:
     operation = getattr(model_owner, "cleanup_memory_runtime_preparation", None)
     if operation is not None:
         operation()
-
-
-def memory_sampling_step_trim(model) -> bool:
-    """Run the legacy backend's optional per-step sampling trim."""
-    inner = unwrap_memory_model(model)
-    operation = getattr(inner, "_mm_sampling_step_trim", None)
-    return bool(operation is not None and operation())
-
-
-def memory_sampling_demote(model, *, reason) -> bool:
-    """Request sampling residency relief from the active legacy backend."""
-    inner = unwrap_memory_model(model)
-    operation = getattr(inner, "_mm_sampling_demote", None)
-    return bool(operation is not None and operation(reason=reason))

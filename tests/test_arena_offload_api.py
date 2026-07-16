@@ -1,6 +1,5 @@
 """Public Arena facade and generic memory-runtime seam coverage."""
 
-import ast
 from dataclasses import fields
 from pathlib import Path
 import subprocess
@@ -18,10 +17,11 @@ from toolkit.memory_management.arena_offload import (
     is_arena_offloaded,
     validate_arena_training_mode,
 )
-from toolkit.memory_management.arena_offload.api import RUNTIME_ATTR, unwrap
+from toolkit.memory_management.arena_offload.api import unwrap
 from toolkit.memory_management.arena_offload.runtime import _fixed_working_bytes
 from toolkit.memory_management.arena_offload.runtime import ArenaOffloadRuntime
 from toolkit.memory_management.runtime import (
+    RUNTIME_ATTR,
     is_memory_managed,
     memory_runtime_owns_compile,
 )
@@ -74,43 +74,6 @@ def test_public_facade_is_limited_to_integration_entry_points():
         "memory_runtime_owns_compile",
     ):
         assert not hasattr(arena_offload, implementation_name)
-
-
-def test_arena_runtime_excludes_legacy_training_policy_calls():
-    source_path = (
-        Path(__file__).parents[1] / "jobs" / "process" / "BaseSDTrainProcess.py"
-    )
-    tree = ast.parse(source_path.read_text(encoding="utf-8"))
-    parents = {}
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            parents[child] = parent
-
-    guarded_calls = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else None
-        if name not in {
-            "prepare_training_memory_for_shape",
-            "auto_tune_training_memory",
-        }:
-            continue
-        ancestor = parents.get(node)
-        guarded = False
-        while ancestor is not None:
-            if isinstance(ancestor, ast.If):
-                condition = ast.unparse(ancestor.test)
-                if "arena_runtime is None" in condition:
-                    guarded = True
-                    break
-            ancestor = parents.get(ancestor)
-        guarded_calls.append((name, guarded))
-
-    # Upstream's legacy backend has no fork-local autotune calls. If those
-    # calls are added later, they must be explicitly excluded for arena runs.
-    assert all(guarded for _name, guarded in guarded_calls)
 
 
 class _Wrapper(torch.nn.Module):

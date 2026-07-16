@@ -282,5 +282,5 @@ class MemoryManager:
         for key in keys_to_delete:
             del _DEVICE_STATE[key]
 
-        pin_manager.reconcile(allow_shrink=False)
+        pin_manager.reconcile()
         torch.cuda.empty_cache()

@@ -8,7 +8,6 @@ state is inspected here.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 import torch
@@ -16,13 +15,6 @@ import torch.nn.functional as F
 
 from .fp8_transpose import column_major
 
-
-FP8_STATS = {
-    "enabled": False,
-    "training_enabled": False,
-    "kernel_calls": 0,
-    "fallback_calls": 0,
-}
 
 FP8_LINEAR_EXECUTION_KEY = "toolkit.quantization.fp8_linear"
 DEFAULT_ACTIVATION_FP8_DTYPE = torch.float8_e4m3fn
@@ -137,34 +129,17 @@ def declare_fp8_linear(value) -> Fp8LinearDeclaration | None:
     value = value.data if isinstance(value, torch.nn.Parameter) else value
     return _adapt_torchao_fp8(value) or _adapt_quanto_fp8(value)
 
-_FP8_GRAD_INPUT = os.environ.get("AI_TOOLKIT_FP8_GRAD_INPUT", "0").lower() not in (
-    "0", "false", "no", "off", "",
-)
-_FP8_GRAD_VERIFIED = None
-_REUSE_DEQUANT = os.environ.get("AI_TOOLKIT_REUSE_DEQUANT", "1").lower() not in (
-    "0", "false", "no", "off", "",
-)
-_REUSE_VERIFIED = None
+_FP8_GRAD_INPUT = False
 
 
 def set_fp8_grad_input_enabled(enabled: bool) -> None:
-    global _FP8_GRAD_INPUT, _FP8_GRAD_VERIFIED
-    if bool(enabled) and not _FP8_GRAD_INPUT:
-        _FP8_GRAD_VERIFIED = None
+    global _FP8_GRAD_INPUT
     _FP8_GRAD_INPUT = bool(enabled)
 
 
 def fp8_grad_input_enabled() -> bool:
     """Return the Toolkit-owned process policy for FP8 input gradients."""
     return bool(_FP8_GRAD_INPUT)
-
-
-def reference_dequantize_to(tensor: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-    try:
-        return tensor.dequantize(output_dtype=dtype)
-    except TypeError:
-        value = tensor.dequantize()
-        return value if value.dtype == dtype else value.to(dtype=dtype)
 
 
 def _scale_view_shape(spec, qdata, scale):
@@ -195,77 +170,6 @@ def dequantize_rowwise(qdata, scale, dtype):
     return materialize_fp8_weight(spec, qdata, scale, dtype)
 
 
-def fast_dequantize_into(qweight, dest):
-    declaration = declare_fp8_linear(qweight)
-    if declaration is None or dest is None:
-        return None
-    spec = declaration.spec
-    qdata, scale = declaration.qdata, declaration.scale
-    if qdata.shape != dest.shape or spec.has_zero_point:
-        return None
-    try:
-        view_shape = _scale_view_shape(spec, qdata, scale)
-    except ValueError:
-        return None
-    dest.copy_(qdata)
-    dest.mul_(scale.reshape(view_shape).to(dest.dtype))
-    return dest
-
-
-def fast_dequantize(qweight, dtype):
-    global _REUSE_VERIFIED
-    if not _REUSE_DEQUANT or _REUSE_VERIFIED is False:
-        return None
-    if dtype not in (torch.bfloat16, torch.float16, torch.float32):
-        return None
-    declaration = declare_fp8_linear(qweight)
-    if declaration is None:
-        return None
-    qdata = declaration.qdata
-    dest = torch.empty(qdata.shape, dtype=dtype, device=qdata.device)
-    fast = fast_dequantize_into(qweight, dest)
-    if fast is None:
-        return None
-    if _REUSE_VERIFIED is None:
-        try:
-            reference = reference_dequantize_to(qweight, dtype)
-            ok = reference.shape == fast.shape and torch.allclose(
-                fast, reference, rtol=1e-2, atol=1e-2
-            )
-        except Exception:
-            ok = False
-        _REUSE_VERIFIED = bool(ok)
-        if not ok:
-            return None
-    return fast
-
-
-def dequantize_to(tensor: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-    fast = fast_dequantize(tensor, dtype)
-    return fast if fast is not None else reference_dequantize_to(tensor, dtype)
-
-
-def dequantize_into(qweight, dest):
-    global _REUSE_VERIFIED
-    if not _REUSE_DEQUANT or _REUSE_VERIFIED is False or dest is None:
-        return None
-    fast = fast_dequantize_into(qweight, dest)
-    if fast is None:
-        return None
-    if _REUSE_VERIFIED is None:
-        try:
-            reference = reference_dequantize_to(qweight, dest.dtype)
-            ok = reference.shape == fast.shape and torch.allclose(
-                fast, reference, rtol=1e-2, atol=1e-2
-            )
-        except Exception:
-            ok = False
-        _REUSE_VERIFIED = bool(ok)
-        if not ok:
-            return None
-    return fast
-
-
 def native_variant_supported(spec) -> bool:
     return bool(
         spec.weight_dtype == NATIVE_SCALED_MM_FP8_DTYPE
@@ -293,11 +197,6 @@ def supports_native_scaled_mm(spec, qdata, scale, *, device=None) -> bool:
     )
 
 
-def native_rowwise_qualifies(qdata, scale, *, device=None) -> bool:
-    spec = _spec_for_payload(qdata, scale, "output_row")
-    return supports_native_scaled_mm(spec, qdata, scale, device=device)
-
-
 def native_device_supported(device) -> bool:
     target = torch.device(device)
     if target.type != "cuda" or not hasattr(torch, "_scaled_mm"):
@@ -306,31 +205,6 @@ def native_device_supported(device) -> bool:
         return torch.cuda.get_device_capability(target) >= (8, 9)
     except Exception:
         return False
-
-
-def weight_format_key(weight) -> str:
-    value = weight.data if isinstance(weight, torch.nn.Parameter) else weight
-    declaration = declare_fp8_linear(value)
-    if declaration is None:
-        return "other"
-    return (
-        "rowwise_fp8"
-        if native_variant_supported(declaration.spec)
-        else "fp8"
-    )
-
-
-def fp8_sampling_qualifies(weight, *, device=None) -> bool:
-    declaration = declare_fp8_linear(weight)
-    return bool(
-        declaration is not None
-        and supports_native_scaled_mm(
-            declaration.spec,
-            declaration.qdata,
-            declaration.scale,
-            device=device,
-        )
-    )
 
 
 def native_linear(
@@ -402,61 +276,6 @@ def _grad_input_compute(
         return None
 
 
-def grad_input_supported(qdata, scale, grad_out, spec=None) -> bool:
-    if not _FP8_GRAD_INPUT or _FP8_GRAD_VERIFIED is False:
-        return False
-    spec = spec or _spec_for_payload(qdata, scale, "output_row")
-    return bool(
-        supports_native_scaled_mm(spec, qdata, scale, device=grad_out.device)
-        and grad_out.dtype in (torch.bfloat16, torch.float16)
-        and grad_out.shape[-1] == qdata.shape[0]
-    )
-
-
-def grad_input_supported_weight(qweight, grad_out) -> bool:
-    declaration = declare_fp8_linear(qweight)
-    return bool(
-        declaration is not None
-        and grad_input_supported(
-            declaration.qdata,
-            declaration.scale,
-            grad_out,
-            declaration.spec,
-        )
-    )
-
-
-def grad_input(grad_out, qweight, target_dtype):
-    declaration = declare_fp8_linear(qweight)
-    if declaration is None:
-        return None
-    spec = declaration.spec
-    qdata, scale = declaration.qdata, declaration.scale
-    global _FP8_GRAD_VERIFIED
-    out = (
-        _grad_input_compute(
-            grad_out,
-            qdata,
-            scale,
-            target_dtype,
-            spec.activation_dtype,
-        )
-        if grad_input_supported(qdata, scale, grad_out, spec)
-        else None
-    )
-    if out is not None and _FP8_GRAD_VERIFIED is None:
-        try:
-            reference = grad_out.to(target_dtype) @ dequantize_to(qweight, target_dtype)
-            _FP8_GRAD_VERIFIED = bool(
-                torch.allclose(out, reference, rtol=2e-2, atol=2e-2)
-            )
-        except Exception:
-            _FP8_GRAD_VERIFIED = False
-    if out is not None and _FP8_GRAD_VERIFIED:
-        return out
-    return grad_out.to(target_dtype) @ dequantize_to(qweight, target_dtype)
-
-
 class _NativeTrainingFn(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, qdata_t, scale_row, bias, activation_dtype):
@@ -505,49 +324,6 @@ def native_linear_training(
         bias,
         activation_dtype,
     )
-
-
-def fp8_linear_inference(x, weight, bias):
-    declaration = declare_fp8_linear(weight)
-    if (
-        declaration is None
-        or x.dtype not in (torch.bfloat16, torch.float16)
-        or x.numel() == 0
-    ):
-        FP8_STATS["fallback_calls"] += int(
-            FP8_STATS["enabled"] or FP8_STATS["training_enabled"]
-        )
-        return None
-    spec = declaration.spec
-    qdata, scale = declaration.qdata, declaration.scale
-    if (
-        not supports_native_scaled_mm(spec, qdata, scale, device=x.device)
-        or qdata.device != x.device
-        or scale.device != x.device
-        or (bias is not None and bias.device != x.device)
-        or x.shape[-1] != qdata.shape[1]
-    ):
-        FP8_STATS["fallback_calls"] += int(
-            FP8_STATS["enabled"] or FP8_STATS["training_enabled"]
-        )
-        return None
-    try:
-        out = native_linear(
-            x,
-            qdata.t(),
-            scale,
-            bias,
-            spec.activation_dtype,
-        )
-    except RuntimeError:
-        FP8_STATS["fallback_calls"] += int(
-            FP8_STATS["enabled"] or FP8_STATS["training_enabled"]
-        )
-        return None
-    FP8_STATS["kernel_calls"] += int(
-        FP8_STATS["enabled"] or FP8_STATS["training_enabled"]
-    )
-    return out
 
 
 @dataclass(frozen=True)
@@ -630,18 +406,6 @@ def bind_fp8_linear(
     )
 
 
-def bind_rowwise_fp8(qdata, scale, *, device, has_bias=True) -> BoundFp8LinearOperation:
-    """Compatibility binder for an explicitly declared rowwise payload."""
-    spec = _spec_for_payload(qdata, scale, "output_row")
-    return bind_fp8_linear(
-        spec,
-        qdata,
-        scale,
-        device=device,
-        has_bias=has_bias,
-    )
-
-
 @dataclass(frozen=True)
 class BoundDenseLinearOperation:
     format_key = "dense"
@@ -683,26 +447,6 @@ class BoundDenseLinearOperation:
     def materialize(self, tensors, dtype=None):
         weight = tensors[0]
         return weight if dtype is None or weight.dtype == dtype else weight.to(dtype=dtype)
-
-
-def bind_linear_operation(weight, bias=None, *, device):
-    value = weight.data if isinstance(weight, torch.nn.Parameter) else weight
-    declaration = declare_fp8_linear(value)
-    if declaration is None:
-        try:
-            value.__tensor_flatten__()
-        except Exception:
-            pass
-        else:
-            raise ValueError("unsupported_quantized_linear_operation")
-        return BoundDenseLinearOperation(bias_index=1 if bias is not None else None)
-    return bind_fp8_linear(
-        declaration.spec,
-        declaration.qdata,
-        declaration.scale,
-        device=device,
-        has_bias=bias is not None,
-    )
 
 
 def bind_parameter_operation(weight, bias=None, *, device):
@@ -752,9 +496,3 @@ def bind_storage_operation(
     if int(weight_leaf_count) == 1 and dense_declaration:
         return BoundDenseLinearOperation(bias_index=1 if len(tensors) > 1 else None)
     raise ValueError("unsupported_linear_storage_operation")
-
-
-# Transitional names for callers migrating from manager_modules.
-_fp8_linear_compiled = native_linear
-_fp8_linear_training = native_linear_training
-_fp8_grad_input_compute = _grad_input_compute

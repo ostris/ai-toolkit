@@ -45,7 +45,9 @@ class ArenaRuntimeResources:
             self.owner_token = acquire_process_owner(self.device)
             try:
                 from .. import allocator_cap, vram_budget
-                from .fp8 import fp8_grad_input_enabled
+                from toolkit.quantization.fp8_linear import (
+                    fp8_grad_input_enabled,
+                )
 
                 self._previous_fp8_grad_input = fp8_grad_input_enabled()
                 self._previous_simulated_card = vram_budget.simulated_card_bytes()
@@ -198,7 +200,9 @@ class ArenaRuntimeResources:
                     self._transfer_runtime_released = True
 
             if self._restore_fp8_policy:
-                from .fp8 import set_fp8_grad_input_enabled
+                from toolkit.quantization.fp8_linear import (
+                    set_fp8_grad_input_enabled,
+                )
 
                 attempt(
                     "FP8 grad-input policy",

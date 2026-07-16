@@ -13,7 +13,6 @@ from toolkit.quantization.torchao_compat import (
     torchao_quantize_,
 )
 from optimum.quanto import freeze
-from optimum.quanto.tensor.qbytes import QBytesTensor
 from tqdm import tqdm
 from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
@@ -29,37 +28,6 @@ import os
 
 if TYPE_CHECKING:
     from toolkit.models.base_model import BaseModel
-
-
-def tensor_subclass_leaves(value: torch.Tensor) -> list[torch.Tensor]:
-    try:
-        names, _context = value.__tensor_flatten__()
-    except Exception:
-        return [value]
-    leaves = []
-    for name in names:
-        inner = getattr(value, name)
-        if inner is not None:
-            leaves.extend(tensor_subclass_leaves(inner))
-    return leaves
-
-
-def _tensor_subclass_to_meta(value: torch.Tensor) -> torch.Tensor:
-    try:
-        names, context = value.__tensor_flatten__()
-    except Exception:
-        return value.to(device="meta")
-    inner = {
-        name: (
-            None
-            if getattr(value, name) is None
-            else _tensor_subclass_to_meta(getattr(value, name))
-        )
-        for name in names
-    }
-    return type(value).__tensor_unflatten__(
-        inner, context, value.size(), value.stride()
-    )
 
 # the quantize function in quanto had a bug where it was using exclude instead of include
 
@@ -274,181 +242,6 @@ def quantize(
             # raise e
 
 
-def quantize_module_at_path(
-    model: torch.nn.Module,
-    name: str,
-    *,
-    weights,
-) -> torch.nn.Module:
-    """Quantize one already-materialized module and publish its replacement.
-
-    Recursive Quanto quantization cannot replace the root module: its relative
-    name is empty, so the generated QLinear is assigned to an unusable empty
-    attribute while the original Linear's weight is cleared. Bounded loaders
-    know the real parent path and use this helper for root quantization units.
-    """
-    module = model.get_submodule(name)
-    resolved = get_qtype(weights)
-    if isinstance(resolved, aotype):
-        quantize(module, weights=resolved)
-    elif isinstance(resolved, ostristype):
-        if isinstance(module, torch.nn.Linear):
-            # Shape-ineligible Ostris roots remain dense, matching recursive
-            # quantize() behavior for children (for example Krea's 12-wide
-            # text-fusion projector).
-            convert_linear_to_ostris(module, resolved.quantizer)
-        else:
-            quantize(module, weights=resolved)
-    else:
-        _quantize_submodule(
-            model,
-            name,
-            module,
-            weights=resolved,
-        )
-    return model.get_submodule(name)
-
-
-def assign_quantized_state_dict(
-    model: torch.nn.Module,
-    state_dict: dict,
-    weights,
-) -> None:
-    """Assign cached quantized state, using a generic active arena session."""
-    prepare_quantized_state_dict_model(model, state_dict, weights)
-    from toolkit.memory_management.arena_offload.load_session import (
-        try_prepare_canonical_from_state_dict,
-    )
-
-    if try_prepare_canonical_from_state_dict(model, state_dict) is not None:
-        try:
-            assign_quantized_state_dict_subset(model, state_dict, weights)
-            return
-        except BaseException:
-            from toolkit.memory_management.arena_offload.load_session import (
-                discard_pending_canonical_build,
-            )
-
-            discard_pending_canonical_build(model)
-            raise
-    missing, unexpected = model.load_state_dict(state_dict, strict=True, assign=True)
-    if missing or unexpected:
-        raise RuntimeError(f"missing={missing[:5]} unexpected={unexpected[:5]}")
-    model.requires_grad_(False)
-
-
-def prepare_quantized_state_dict_model(
-    model: torch.nn.Module,
-    state_dict: dict,
-    weights,
-) -> None:
-    """Reconstruct cached quantized wrappers with meta storage only."""
-    resolved = get_qtype(weights)
-    quanto_data_suffix = ".weight._data"
-    quanto_prefixes = [
-        key[: -len(quanto_data_suffix)]
-        for key in state_dict
-        if key.endswith(quanto_data_suffix)
-    ]
-    if quanto_prefixes:
-        if isinstance(resolved, (aotype, ostristype)):
-            raise ValueError("cached_quanto_state_qtype_mismatch")
-        quantize(model, weights=resolved)
-        modules = dict(model.named_modules())
-        for prefix in quanto_prefixes:
-            module = modules[prefix]
-            data = state_dict[f"{prefix}.weight._data"]
-            scale = state_dict[f"{prefix}.weight._scale"]
-            template = module.weight
-            meta_data = torch.empty_like(data, device="meta")
-            meta_scale = torch.empty_like(scale, device="meta")
-            wrapper = QBytesTensor(
-                resolved,
-                0,
-                template.size(),
-                template.stride(),
-                meta_data,
-                meta_scale,
-                requires_grad=False,
-            )
-            module.weight = torch.nn.Parameter(wrapper, requires_grad=False)
-            bias = getattr(module, "bias", None)
-            if bias is not None:
-                bias.requires_grad_(False)
-    else:
-        modules = dict(model.named_modules())
-        for key, value in state_dict.items():
-            if not key.endswith(".weight") or len(tensor_subclass_leaves(value)) == 1:
-                continue
-            prefix = key[: -len(".weight")]
-            module = modules.get(prefix)
-            if module is None or not hasattr(module, "weight"):
-                continue
-            module.weight = torch.nn.Parameter(
-                _tensor_subclass_to_meta(value), requires_grad=False
-            )
-
-
-def assign_quantized_state_dict_subset(
-    model: torch.nn.Module,
-    state_dict: dict,
-    weights,
-    *,
-    excluded_keys=(),
-) -> None:
-    """Assign cached values except leaves owned by a direct arena destination."""
-    excluded = set(excluded_keys)
-    prepare_quantized_state_dict_model(model, state_dict, weights)
-    resolved = get_qtype(weights)
-    data_suffix = ".weight._data"
-    prefixes = {
-        key[: -len(data_suffix)]
-        for key in state_dict
-        if key.endswith(data_suffix)
-    }
-    handled = set()
-    modules = dict(model.named_modules())
-    for prefix in prefixes:
-        data_key = f"{prefix}.weight._data"
-        scale_key = f"{prefix}.weight._scale"
-        if data_key in excluded and scale_key in excluded:
-            continue
-        if data_key in excluded or scale_key in excluded:
-            raise ValueError(f"partial_cached_quantized_weight:{prefix}")
-        module = modules[prefix]
-        template = module.weight
-        wrapper = QBytesTensor(
-            resolved,
-            0,
-            template.size(),
-            template.stride(),
-            state_dict[data_key],
-            state_dict[scale_key],
-            requires_grad=False,
-        )
-        module.weight = torch.nn.Parameter(wrapper, requires_grad=False)
-        handled.update((data_key, scale_key))
-
-    for key, value in state_dict.items():
-        if key in excluded or key in handled:
-            continue
-        *parents, leaf = key.split(".")
-        target = model
-        for component in parents:
-            target = getattr(target, component)
-        if leaf in target._parameters:
-            old = target._parameters[leaf]
-            requires_grad = bool(old.requires_grad) if old is not None else False
-            target._parameters[leaf] = torch.nn.Parameter(
-                value, requires_grad=requires_grad
-            )
-        elif leaf in target._buffers:
-            target._buffers[leaf] = value
-        else:
-            raise KeyError(f"unsupported_cached_state_leaf:{key}")
-    model.requires_grad_(False)
-
-
 def quantize_model(
     base_model: "BaseModel",
     model_to_quantize: torch.nn.Module,
@@ -503,7 +296,6 @@ def quantize_model(
             "transformer_only": False,
         }
         first_key = list(lora_state_dict.keys())[0]
-        first_weight = lora_state_dict[first_key]
         # if it starts with lycoris and includes lokr
         if first_key.startswith("lycoris") and any(
             "lokr" in key for key in lora_state_dict.keys()

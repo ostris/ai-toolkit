@@ -176,14 +176,9 @@ class ArenaResidencyController:
                 active_cap + max(0, int(cap_raise_bytes)),
             )
         aggressive_capacity = max(0, int(aggressive_promotion_capacity or 0))
-        bootstrap_pending = bool(
-            self.pending_promotion is not None
-            and self.pending_promotion.get("block_keys")
-        )
         aggressive_ok = (
             candidate is not None
             and aggressive_capacity >= AGGRESSIVE_PROMOTION_MIN_CAPACITY
-            and not bootstrap_pending
             and not bool(signal.get("compile_invalid"))
             and retries == 0
             and device_frees == 0
@@ -320,27 +315,6 @@ class ArenaResidencyController:
                 pending.get("block_keys") or (pending["block_key"],)
             ),
         )
-
-    def begin_bootstrap_promotion(
-        self, block_keys, block_bytes, resident_bytes_before, active_cap_bytes
-    ):
-        keys = tuple(str(key) for key in block_keys)
-        self.last_promoted_key = keys[-1] if keys else None
-        self.pending_promotion = {
-            "block_key": self.last_promoted_key,
-            "block_keys": keys,
-            "block_bytes": int(block_bytes),
-            "resident_bytes_before": int(resident_bytes_before),
-            "resident_bytes_after": int(resident_bytes_before) + int(block_bytes),
-            "previous_cap_target_bytes": int(active_cap_bytes),
-        }
-        self.state = vram_budget.ResidencyFsmState(
-            vram_budget.FSM_PROMOTION_VERIFY, 0
-        )
-        self.last_action = "promote"
-        self.last_reason = "bootstrap_physical_free"
-        self.last_block_key = self.last_promoted_key
-        self.last_block_bytes = int(block_bytes)
 
     def _begin_promotion(
         self, candidate, *, resident_bytes_before, active_cap_bytes

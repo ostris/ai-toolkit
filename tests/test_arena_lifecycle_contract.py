@@ -27,7 +27,7 @@ from toolkit.memory_management.arena_offload.resources import ArenaRuntimeResour
 from toolkit.memory_management.arena_offload.runtime import ArenaOffloadRuntime
 from toolkit.memory_management import pin_manager
 from toolkit.memory_management import vram_budget
-from toolkit.memory_management.arena_offload.fp8 import (
+from toolkit.quantization.fp8_linear import (
     fp8_grad_input_enabled,
     set_fp8_grad_input_enabled,
 )

@@ -12,8 +12,8 @@ memory cliffs with different failure modes:
   >= hard).
 * **Shared / DXGI NON_LOCAL budget** (NOT this module): pinned host memory
   commits against it and exhausting it is a hard cudaErrorMemoryAllocation.
-  That reserve lives in ``pin_manager`` / ``bounce_pool``
-  (``dxgi_spill_reserve_bytes``); do not conflate the two.
+  That reserve lives in ``pin_manager`` (``dxgi_spill_reserve_bytes``); do
+  not conflate the two.
 
 The free signal (do not regress this)
 -------------------------------------
@@ -48,7 +48,6 @@ Everything here is pure (CPU-testable) except ``DeviceSnapshot.capture`` and
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -57,11 +56,6 @@ import torch
 from . import nvml_meminfo
 
 GIB = 1024 ** 3
-
-
-def _env(name: str, default: str) -> str:
-    value = os.environ.get(name)
-    return default if value is None or value == "" else value
 
 
 def reconcile_free_bytes(driver_free_bytes, physical_free_bytes) -> int:
@@ -448,34 +442,6 @@ def sampling_allocator_budget_free_bytes(
     )
 
 
-def sampling_guard_predicted_peak_free(total_b, free_b, reserved_b, peak_reserved_b):
-    """Predicted free VRAM at the next forward's peak (pure).
-
-    ``non_torch = (total - free) - reserved`` plus the worst forward's reserved
-    high-water is what the next peak will occupy; the prediction is ``total``
-    minus that. It shrinks one-for-one as external use grows -- which is the
-    cohabitation guard's trigger. Forward-only sampling never OOMs at the cliff
-    (it pages silently), so the guard watches this instead of an exception.
-    """
-    other_b = max(0, (total_b - free_b) - reserved_b)
-    return total_b - (peak_reserved_b + other_b)
-
-
-def training_cliff_predicted_peak_free_gib(
-    total_gib, device_free_gib, torch_reserved_gib, peak_allocated_gib
-):
-    """Driver free expected when the next step rebuilds its live peak (pure).
-
-    ``empty_cache`` can make step-end free look healthy by dropping idle cached
-    blocks, but the next forward/backward will recreate the live peak. Keep
-    non-allocator residents (``non_torch``) from the current snapshot and ask
-    whether peak allocated memory itself clears the WDDM hard floor.
-    """
-    device_used_gib = max(0.0, total_gib - device_free_gib)
-    non_torch_gib = max(0.0, device_used_gib - torch_reserved_gib)
-    return total_gib - (max(0.0, peak_allocated_gib) + non_torch_gib)
-
-
 def training_promotion_worst_shape_free_gib(
     *,
     resident_gib,
@@ -511,66 +477,6 @@ def training_promotion_worst_shape_free_gib(
         + max(0.0, float(other_gib))
     )
     return float(total_gib) - predicted_used
-
-
-def training_eager_promote_blocks(
-    *,
-    resident_gib,
-    block_gib,
-    ring_gib,
-    worst_working_reserve_gib,
-    other_gib,
-    total_gib,
-    promote_floor_gib,
-    max_blocks,
-):
-    """How many equal-sized blocks may be promoted at once while keeping the
-    predicted worst-shape free margin at or above ``promote_floor_gib`` (pure).
-
-    This is the eager-fill counterpart of the one-block-at-a-time climb: a roomy
-    card leaves GiBs idle if residency only ever grows one block per cadence
-    window. The prediction is the same conservative worst-measured-resolution
-    model as ``training_promotion_worst_shape_free_gib`` -- the blocks are assumed
-    to add their full size and the ring is assumed not to shrink -- so the floor is
-    what the run actually keeps free on its tightest measured shape. Returns 0 when
-    not even one block fits, which the caller reports as a worst-shape veto.
-    """
-    block = float(block_gib)
-    limit = int(max_blocks)
-    if block <= 0.0 or limit <= 0:
-        return 0
-    free_now = training_promotion_worst_shape_free_gib(
-        resident_gib=resident_gib,
-        added_block_gib=0.0,
-        ring_gib=ring_gib,
-        worst_working_reserve_gib=worst_working_reserve_gib,
-        other_gib=other_gib,
-        total_gib=total_gib,
-    )
-    room = free_now - float(promote_floor_gib)
-    if room < block:
-        return 0
-    return min(limit, int(room // block))
-
-
-def sampling_step_should_trim(free_before_b, trim_margin_b) -> bool:
-    """Whether realized device-free warrants a per-step cache trim (pure).
-
-    WDDM pages on the committed footprint silently, so the trigger is realized
-    free, not an allocated-side or peak signal. Trim (empty_cache) is cheap and
-    non-destructive, so the bar is just "free has dropped into the margin."
-    """
-    return free_before_b < trim_margin_b
-
-
-def sampling_step_should_demote(free_after_b, hard_floor_b) -> bool:
-    """Whether to escalate to a block demote after a trim (pure).
-
-    Only when trimming left free still under the hard floor -- i.e. there was
-    no idle cache to reclaim, so the pressure is real (external) and the only
-    relief is giving back resident weights.
-    """
-    return free_after_b < hard_floor_b
 
 
 def estimate_sampling_working_reserve_bytes(
@@ -663,51 +569,6 @@ def estimate_training_working_reserve_bytes(
     tokens = max(0, int(image_tokens)) + max(0, int(text_tokens))
     estimate = int(base_bytes) + int(tokens * per_token_bytes)
     return int(estimate * float(safety)) + int(headroom_bytes)
-
-
-def sampling_overshoot_margin_bytes(
-    overshoot_gib: float = 0.86,
-    safety_gib: float = 0.375,
-    hard_bytes: int = 0,
-) -> int:
-    """Auto sampling margin in the allocator-cap era (pure, CPU-testable).
-
-    With the reclaim allocator cap guarding the WDDM cliff (a capped allocation
-    recycles cache or raises a loud OOM, it never silently pages), the sampling
-    margin's only remaining job is to cover the caching allocator's
-    reserved-over-allocated overshoot. Measured on Krea2 fp8 512px that overshoot
-    is ~0.86 GiB and rock-steady (std ~0.05 GiB across 8 seeds), so the auto
-    margin is that measured overshoot plus one safety block -- NOT the old
-    ``0.10 * card`` cushion, which was sized for a chaotic allocator that kept
-    jumping over the limit and no longer misbehaves. Narrowing it hands the
-    difference straight to resident weights (fewer streamed blocks). Floored at
-    the hard margin so it can never drop below the WDDM device-free floor.
-    """
-    return int(
-        max(float(overshoot_gib) + float(safety_gib), float(max(0, int(hard_bytes))) / GIB)
-        * GIB
-    )
-
-
-def training_guard_pressure(dxgi: dict, physical: dict) -> dict:
-    """Combine the DXGI LOCAL and physical cliff signals (pure).
-
-    Pressure if EITHER signal predicts the next step's peak crosses its floor.
-    The DXGI LOCAL budget is a per-process OS grant and its usage counter
-    excludes other processes, so it can bless a layout the physical
-    (mem_get_info) view already knows will overfill the card -- and vice versa
-    when the OS shrinks the budget early. The merged dict keeps the DXGI
-    fields at the top level (``source`` compatibility) and carries the
-    physical signal under ``physical_*``.
-    """
-    merged = dict(dxgi)
-    merged["pressure"] = bool(dxgi.get("pressure")) or bool(physical.get("pressure"))
-    merged["physical_predicted_peak_free_gib"] = physical.get("predicted_peak_free_gib")
-    merged["physical_target_free_gib"] = physical.get("target_free_gib")
-    merged["pressure_sources"] = [
-        src["source"] for src in (dxgi, physical) if src.get("pressure")
-    ]
-    return merged
 
 
 # ---------------------------------------------------------------------------

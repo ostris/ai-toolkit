@@ -29,7 +29,6 @@ from ..residency import (
 )
 from ..vram_budget import apply_simulated_card
 from .policy import (
-    AGGRESSIVE_PROMOTION_MIN_CAPACITY,
     ArenaResidencyController,
     TrainingSignalWindow,
 )
@@ -37,7 +36,7 @@ from .cap_calibrator import CAP_SET, TrainingCapCalibrator
 from .errors import ArenaCleanupError, ArenaSetupFatalError
 from .fp8 import disable as disable_fp8
 from .fp8 import enable as enable_fp8
-from .fp8 import set_fp8_grad_input_enabled
+from toolkit.quantization.fp8_linear import set_fp8_grad_input_enabled
 from .planner import (
     build_training_plan,
     impossible_training_plan_message,
@@ -49,8 +48,6 @@ from .resources import ArenaRuntimeResources
 RUNTIME_ATTR = "_arena_offload_runtime"
 
 GIB = 1024**3
-BOOTSTRAP_MARGIN_BYTES = GIB
-BOOTSTRAP_MIN_STEP = 2
 
 
 @dataclass
@@ -91,8 +88,8 @@ class ArenaOffloadRuntime:
         self._closed = False
         self._disposed = False
 
-        # Set by training_step(); the residency controller (git-bug 0c577ef)
-        # reads these at the step boundary.
+        # Set by training_step() and read by the residency controller at the
+        # step boundary.
         self._last_shape_key: tuple | None = None
         self._last_step_num: int | None = None
         self._successful_training_steps = 0
@@ -116,10 +113,6 @@ class ArenaOffloadRuntime:
         self._cap_calibration_enabled = cap_calibration_enabled
         self._last_training_cap_target_bytes: int | None = None
         self._last_training_pressure_relief: dict | None = None
-        self._bootstrap_complete = False
-        self._bootstrap_min_free_bytes: int | None = None
-        self._bootstrap_budget_bytes = 0
-        self._bootstrap_block_keys: tuple[str, ...] = ()
         self._training_fp8_restores = []
         self._training_fp8_canonical = 0
         self._training_fp8_singletons = 0
@@ -189,7 +182,6 @@ class ArenaOffloadRuntime:
             )
             set_fp8_grad_input_enabled(config.fp8_backward)
 
-            blocks = selection.blocks
             block_keys = selection.block_keys
             entries_by_block = {
                 key: list(selection.entries_by_block[key])
@@ -1273,21 +1265,6 @@ class ArenaOffloadRuntime:
             self._sampling_oom_retry_used = False
 
     # ------------------------------------------------------------------
-    def record_training_physical_free_min(self, free_bytes) -> None:
-        """Publish one successful step's physical high-water for bootstrap."""
-        if (
-            self._bootstrap_complete
-            or free_bytes is None
-            or self._successful_training_steps < BOOTSTRAP_MIN_STEP
-        ):
-            return
-        value = max(0, int(free_bytes))
-        self._bootstrap_min_free_bytes = (
-            value
-            if self._bootstrap_min_free_bytes is None
-            else min(self._bootstrap_min_free_bytes, value)
-        )
-
     def _training_physical_vram_headroom_bytes(self) -> int:
         policy = self._config._policy
         hard_gib = float(getattr(policy, "wddm_hard_gib", None) or 1.0)
@@ -1297,60 +1274,6 @@ class ArenaOffloadRuntime:
             hard_gib=hard_gib,
         )
         return int(headroom_gib * GIB)
-
-    def _bootstrap_training_residency(self, active_cap_bytes) -> bool:
-        if (
-            self._bootstrap_complete
-            or self._bootstrap_min_free_bytes is None
-            or int(self._successful_training_steps) < BOOTSTRAP_MIN_STEP
-        ):
-            return False
-        budget = max(
-            0,
-            self._bootstrap_min_free_bytes
-            - self._training_physical_vram_headroom_bytes()
-            - BOOTSTRAP_MARGIN_BYTES,
-        )
-        self._bootstrap_budget_bytes = budget
-        candidates = []
-        protected = self._protected_training_blocks()
-        plan = getattr(self._residency, "plan", None) or self._training_plan
-        for order, block_key in enumerate(self._arena.block_keys()):
-            record = self._arena.block_record(block_key)
-            keys = tuple((block_key, name) for name in record.leaf_names)
-            if block_key in protected or any(
-                key in plan.resident_leaf_keys for key in keys
-            ):
-                continue
-            candidates.append(
-                (int(record.committed_bytes), order, str(block_key))
-            )
-        selected = []
-        used = 0
-        for block_bytes, _order, block_key in sorted(candidates):
-            if used + block_bytes > budget:
-                continue
-            selected.append(block_key)
-            used += block_bytes
-        if not selected:
-            self._bootstrap_complete = True
-            return False
-        resident_before = (
-            int(self._residency.resident_bytes())
-            + int((self._smart_plan or {}).get("singleton_resident_bytes", 0))
-        )
-        result = self.transition_training_blocks(selected, resident=True)
-        if not result.get("changed"):
-            return False
-        self._bootstrap_complete = True
-        self._bootstrap_block_keys = tuple(result["block_keys"])
-        self._policy.begin_bootstrap_promotion(
-            self._bootstrap_block_keys,
-            used,
-            resident_before,
-            active_cap_bytes,
-        )
-        return True
 
     def _protected_training_blocks(self):
         return frozenset(
@@ -1646,11 +1569,6 @@ class ArenaOffloadRuntime:
             current_cap = int(cap_decision.target_cap_bytes)
         if cap_decision.hold_residency:
             return
-        if (
-            not self._cap_calibrator.enabled
-            and self._bootstrap_training_residency(current_cap)
-        ):
-            return
         aggressive_capacity = self._aggressive_promotion_capacity(current_cap)
         decision = self._policy.step(
             self._signals.last_signal,
@@ -1828,15 +1746,9 @@ class ArenaOffloadRuntime:
             "last_training_pressure_relief": getattr(
                 self, "_last_training_pressure_relief", None
             ),
-            "bootstrap_complete": self._bootstrap_complete,
-            "bootstrap_min_free_bytes": self._bootstrap_min_free_bytes,
-            "bootstrap_margin_bytes": BOOTSTRAP_MARGIN_BYTES,
             "training_physical_vram_headroom_bytes": (
                 self._training_physical_vram_headroom_bytes()
             ),
-            "bootstrap_min_step": BOOTSTRAP_MIN_STEP,
-            "bootstrap_budget_bytes": self._bootstrap_budget_bytes,
-            "bootstrap_block_keys": self._bootstrap_block_keys,
             "working_reserve_bytes": int(
                 (self._smart_plan or {}).get("working_reserve_bytes", 0)
             ),

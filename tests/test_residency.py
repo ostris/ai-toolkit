@@ -134,34 +134,6 @@ def test_required_repin_failure_precedes_residency_demotion(
     assert state.resident_bytes() > 0
 
 
-def test_runtime_training_transitions_are_whole_block(arena_layers):
-    arena, layers = arena_layers
-    block = SimpleNamespace(entries=tuple(layers.items()))
-    model = SimpleNamespace(blocks=(block,))
-    state = ResidencyState(arena, "cpu")
-    state.reconcile(ResidencyPlan.build("train", ()))
-    runtime = ImmutableTransformerRuntime(
-        model,
-        state,
-        blocks=model.blocks,
-        block_keys=("blocks.0",),
-        entries_by_block={"blocks.0": tuple(layers.items())},
-        compile_blocks=False,
-    )
-
-    growth = runtime.increase_training_residency(
-        arena.block_record("blocks.0").committed_bytes,
-    )
-    expected = frozenset(
-        ("blocks.0", leaf_name) for leaf_name in layers
-    )
-    assert state.plan.resident_leaf_keys == expected
-    assert growth["added_blocks"] == ("blocks.0",)
-
-    relief = runtime.reduce_training_residency(1)
-    assert relief["removed_blocks"] == ("blocks.0",)
-    assert state.plan.resident_leaf_keys == frozenset()
-
 def test_exact_training_block_transaction_uses_stable_key(arena_layers):
     arena, layers = arena_layers
     block = SimpleNamespace(entries=tuple(layers.items()))

@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import threading
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
 import torch
 
@@ -49,17 +49,10 @@ class PinHandle:
 
 _LOCK = threading.RLock()
 _LEDGER: dict[str, int] = {}
-_EVICTABLES: list[Callable[[int], int]] = []
 
-# Weight-tier consumers are the LOWEST pin priority (PIN_MANAGER_PLAN
-# allocation strategy): they may reclaim the torch host cache during
-# reconcile, but must never shrink evictable higher-priority consumers
-# (the bounce pool) to make room for themselves.
+# Weight-tier consumers use only the fixed spill-reserve floor because their
+# static commitments do not need the percentage reserve held for dynamic pins.
 _WEIGHT_TIER_KINDS = ("weights",)
-
-_SPILL_RESERVE_FLOOR_GIB_OVERRIDE: Optional[float] = None
-_SPILL_RESERVE_PCT_OVERRIDE: Optional[float] = None
-_HOST_CACHE_RESERVE_BYTES_OVERRIDE: Optional[int] = None
 
 dxgi_meminfo = None
 
@@ -125,22 +118,9 @@ def release_pinned_bytes(n: int, kind: str = "unknown") -> None:
 def reset_for_tests() -> None:
     with _LOCK:
         _LEDGER.clear()
-        _EVICTABLES.clear()
-
-
-def set_spill_reserve_policy(
-    floor_gib: Optional[float] = None, pct: Optional[float] = None
-) -> None:
-    global _SPILL_RESERVE_FLOOR_GIB_OVERRIDE, _SPILL_RESERVE_PCT_OVERRIDE
-    if floor_gib is not None:
-        _SPILL_RESERVE_FLOOR_GIB_OVERRIDE = max(0.0, float(floor_gib))
-    if pct is not None:
-        _SPILL_RESERVE_PCT_OVERRIDE = max(0.0, float(pct))
 
 
 def _spill_reserve_floor_gib() -> float:
-    if _SPILL_RESERVE_FLOOR_GIB_OVERRIDE is not None:
-        return _SPILL_RESERVE_FLOOR_GIB_OVERRIDE
     for name, default in (
         ("AI_TOOLKIT_WDDM_SPILL_RESERVE_FLOOR_GIB", None),
         ("AI_TOOLKIT_WDDM_SPILL_RESERVE_GIB", "1.0"),
@@ -158,8 +138,6 @@ def _spill_reserve_floor_gib() -> float:
 
 
 def _spill_reserve_pct() -> float:
-    if _SPILL_RESERVE_PCT_OVERRIDE is not None:
-        return _SPILL_RESERVE_PCT_OVERRIDE
     try:
         return max(0.0, float(os.environ.get("AI_TOOLKIT_WDDM_SPILL_RESERVE_PCT", "0.10")))
     except (TypeError, ValueError):
@@ -239,14 +217,7 @@ def pinned_bytes_headroom(
     return max(0, int(total * fraction) - total_pinned_bytes())
 
 
-def set_host_cache_reserve_bytes(nbytes: Optional[int]) -> None:
-    global _HOST_CACHE_RESERVE_BYTES_OVERRIDE
-    _HOST_CACHE_RESERVE_BYTES_OVERRIDE = None if nbytes is None else max(0, int(nbytes))
-
-
 def host_cache_reserve_bytes(mode: Optional[str] = None) -> int:
-    if _HOST_CACHE_RESERVE_BYTES_OVERRIDE is not None:
-        return _HOST_CACHE_RESERVE_BYTES_OVERRIDE
     if mode == "sampling":
         default = "0.0"
     else:
@@ -282,40 +253,9 @@ def _empty_host_pin_cache() -> None:
             pass
 
 
-def register_evictable(shrink: Callable[[int], int]) -> None:
-    with _LOCK:
-        if shrink not in _EVICTABLES:
-            _EVICTABLES.append(shrink)
-
-
-def unregister_evictable(shrink: Callable[[int], int]) -> None:
-    with _LOCK:
-        if shrink in _EVICTABLES:
-            _EVICTABLES.remove(shrink)
-
-
-def reconcile(required_bytes: int = 0, *, device=None, allow_shrink: bool = True) -> int:
-    """Escalation before failing a pin request: empty the torch host-pin cache,
-    then (for non-weight-tier requests) ask evictable consumers to shrink.
-
-    ``allow_shrink=False`` is the priority guard: weight-tier requests may not
-    evict the bounce pool -- eviction runs in reverse priority order, and
-    weights are already the lowest tier."""
+def reconcile() -> None:
+    """Return cached host-pin allocations before retrying a pin request."""
     _empty_host_pin_cache()
-    if not allow_shrink:
-        return 0
-    freed = 0
-    need = max(0, int(required_bytes or 0))
-    with _LOCK:
-        evictables = list(_EVICTABLES)
-    for shrink in evictables:
-        try:
-            freed += max(0, int(shrink(max(0, need - freed))))
-        except Exception:
-            pass
-        if need and freed >= need:
-            break
-    return freed
 
 
 _REGISTERED_HOST_PIN_LOCK = threading.Lock()
@@ -331,11 +271,7 @@ def pin_tensor_in_place(t: torch.Tensor, kind: str = "weights", *, device=None) 
         return False
     available = available_for_pin(kind=kind, nbytes=size, device=device)
     if available is not None and size > available:
-        reconcile(
-            size - available,
-            device=device,
-            allow_shrink=kind not in _WEIGHT_TIER_KINDS,
-        )
+        reconcile()
         available = available_for_pin(kind=kind, nbytes=size, device=device)
         if available is not None and size > available:
             return False
@@ -358,7 +294,8 @@ def is_host_pinned(t: torch.Tensor) -> bool:
 
     torch's ``is_pinned()`` only recognizes buffers allocated by its own
     caching host allocator; memory pinned in place with cudaHostRegister
-    (``pin_tensor_in_place`` / ``pin_register`` -- the weight/arena tier)
+    (``pin_tensor_in_place`` / register-mechanism pinning -- the
+    weight/arena tier)
     reports ``is_pinned() == False`` even though CUDA treats it as pinned for
     transfer purposes. Consult the registration table too so canonical Arena
     consumers recognize registered flats rather than falsely treating them as
@@ -490,12 +427,11 @@ def pin_alloc(
         tensor = torch.empty(nbytes, dtype=torch.uint8)
         return PinHandle(tensor=tensor, nbytes=nbytes, kind=kind, pinned=False)
 
-    allow_shrink = kind not in _WEIGHT_TIER_KINDS
     available = available_for_pin(
         kind=kind, nbytes=nbytes, device=device, reserve_bytes=reserve_bytes, mode=mode
     )
     if available is not None and nbytes > available:
-        reconcile(nbytes - available, device=device, allow_shrink=allow_shrink)
+        reconcile()
         available = available_for_pin(
             kind=kind, nbytes=nbytes, device=device, reserve_bytes=reserve_bytes, mode=mode
         )
@@ -512,7 +448,7 @@ def pin_alloc(
     try:
         tensor = torch.empty(nbytes, dtype=torch.uint8, pin_memory=True)
     except RuntimeError:
-        reconcile(nbytes, device=device, allow_shrink=allow_shrink)
+        reconcile()
         try:
             tensor = torch.empty(nbytes, dtype=torch.uint8, pin_memory=True)
         except RuntimeError as error:
@@ -534,16 +470,16 @@ def pin_register_prepare(nbytes: int) -> tuple[torch.Tensor, int]:
     """Allocate the page-aligned pageable buffer a register-mechanism pin
     will need, WITHOUT pinning it yet.
 
-    Split out of ``pin_register`` so callers who need to populate the buffer
-    (e.g. copying leaf tensors into a block flat) can do so on ordinary
+    Split into prepare/commit steps so callers can populate the buffer (for
+    example, copying leaf tensors into a block flat) on ordinary
     pageable memory -- a plain memcpy that faults in pages at normal RAM
     bandwidth -- before ``cudaHostRegister`` runs. Registering a virgin,
     never-touched buffer forces the OS to commit+pin every page during the
     syscall itself, which is measurably slower than registering pages that
-    are already resident (I1, ~1-1.5s per full arena build).
+    are already resident, saving roughly 1-1.5 seconds per full arena build.
 
     Returns ``(candidate, padded_nbytes)``; ``candidate`` is an untouched
-    pageable view, exactly the layout ``pin_register`` used to build inline.
+    pageable view with the layout required by ``pin_register_commit``.
     """
     nbytes = int(nbytes)
     if nbytes <= 0:
@@ -605,111 +541,6 @@ def pin_register_commit(
                      mechanism="register")
 
 
-def pin_register(
-    nbytes: int,
-    kind: str,
-    *,
-    device=None,
-    required: bool = False,
-) -> PinHandle:
-    """Exact-size host buffer pinned with cudaHostRegister.
-
-    Unlike pin_alloc, this never touches torch's caching host allocator, so
-    the DXGI shared-budget cost is exactly ``nbytes`` (the caching allocator
-    rounds up to power-of-two buckets: observed live, 8.86 GiB of pin_alloc
-    flats committed 12.70 GiB of DXGI usage -- ~40% invisible overhead) and
-    release returns the budget immediately. Intended for large long-lived
-    buffers (the pinned weight arena); small/churny consumers should keep
-    using pin_alloc.
-
-    Convenience wrapper over :func:`pin_register_prepare` +
-    :func:`pin_register_commit` for callers with no data to populate before
-    pinning (e.g. tests). Callers that populate a leaf-carrying flat should
-    call the two steps directly with the copy in between (see
-    canonical Arena construction).
-    """
-    nbytes = int(nbytes)
-    kind = str(kind or "unknown")
-    if nbytes <= 0 or not torch.cuda.is_available():
-        tensor = torch.empty(max(0, nbytes), dtype=torch.uint8)
-        return PinHandle(tensor=tensor, nbytes=max(0, nbytes) if nbytes > 0 else 0,
-                         kind=kind, pinned=False, mechanism="register")
-    candidate, _padded = pin_register_prepare(nbytes)
-    return pin_register_commit(candidate, nbytes, kind, device=device, required=required)
-
-
-def pin_empty(shape, dtype, kind: str, *, device=None, required: bool = False):
-    element_size = torch.empty((), dtype=dtype).element_size()
-    n = 1
-    for dim in tuple(shape):
-        n *= int(dim)
-    handle = pin_alloc(n * element_size, kind, device=device, required=required)
-    return handle.tensor.view(dtype).reshape(tuple(shape)), handle.pinned
-
-
-def can_pin(
-    nbytes: int,
-    *,
-    kind: str = "unknown",
-    device=None,
-    reserve_bytes: int = 0,
-    mode: Optional[str] = None,
-) -> bool:
-    available = available_for_pin(
-        kind=kind,
-        nbytes=nbytes,
-        device=device,
-        reserve_bytes=reserve_bytes,
-        mode=mode,
-    )
-    return available is None or int(nbytes) <= available
-
-
-
-def plan_budgets(
-    *,
-    offloaded_weight_bytes: int,
-    requested_bounce_bytes: int,
-    device=None,
-    mode: str = "training",
-) -> dict:
-    """Return pin budgets using the fixed priority policy from PIN_MANAGER_PLAN."""
-    weights = max(0, int(offloaded_weight_bytes or 0))
-    requested_bounce = max(0, int(requested_bounce_bytes or 0))
-    reserve = host_cache_reserve_bytes(mode)
-    headroom = pinned_bytes_headroom(_cuda_device_index(device))
-    if headroom is None:
-        # No authoritative probe: keep the old requested shape, but still report
-        # the reserve so diagnostics show the implicit consumer exists.
-        return {
-            "mode": mode,
-            "strategy": "fallback_no_probe",
-            "headroom_bytes": None,
-            "reserve_bytes": reserve,
-            "bounce_budget_bytes": requested_bounce,
-            "weight_budget_bytes": weights,
-        }
-    usable = max(0, int(headroom) - reserve)
-    if weights and weights <= usable:
-        return {
-            "mode": mode,
-            "strategy": "full_pin_no_bounce",
-            "headroom_bytes": int(headroom),
-            "reserve_bytes": reserve,
-            "bounce_budget_bytes": 0,
-            "weight_budget_bytes": weights,
-        }
-    bounce_budget = min(requested_bounce, usable)
-    weight_budget = max(0, usable - bounce_budget)
-    return {
-        "mode": mode,
-        "strategy": "partial_bounce_first",
-        "headroom_bytes": int(headroom),
-        "reserve_bytes": reserve,
-        "bounce_budget_bytes": bounce_budget,
-        "weight_budget_bytes": min(weights, weight_budget),
-    }
-
 def snapshot(device=None, mode: Optional[str] = None) -> dict:
     headroom = pinned_bytes_headroom(_cuda_device_index(device))
     reserve = host_cache_reserve_bytes(mode)
@@ -722,24 +553,6 @@ def snapshot(device=None, mode: Optional[str] = None) -> dict:
         "host_cache_reserve_bytes": reserve,
         "available_bytes": None if headroom is None else max(0, int(headroom) - reserve),
     }
-
-
-def format_snapshot(device=None, mode: Optional[str] = None) -> str:
-    snap = snapshot(device=device, mode=mode)
-    by_kind = " ".join(
-        f"{key}={value / GIB:.2f}GiB"
-        for key, value in sorted(snap["pinned_by_kind"].items())
-    )
-    headroom = snap["headroom_bytes"]
-    avail = snap["available_bytes"]
-    return (
-        "pin ledger: "
-        f"total={snap['pinned_total_bytes'] / GIB:.2f}GiB "
-        f"headroom={'n/a' if headroom is None else f'{headroom / GIB:.2f}GiB'} "
-        f"reserve={snap['host_cache_reserve_bytes'] / GIB:.2f}GiB "
-        f"free={'n/a' if avail is None else f'{avail / GIB:.2f}GiB'} "
-        f"{by_kind}"
-    ).strip()
 
 
 def _budget_message(kind: str, nbytes: int, available: Optional[int], *, device=None) -> str:

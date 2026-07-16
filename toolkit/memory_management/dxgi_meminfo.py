@@ -82,45 +82,6 @@ class DxgiMemoryInfo(NamedTuple):
     current_reservation_bytes: int
 
 
-# Which adapter-match methods are trustworthy enough to *drive control*
-# (aggressive pin-for-speed), versus only telemetry. Auto-detected confident
-# matches (single_nvidia, and the Stage-B luid match) are safe. An explicit
-# env override is honored for control but is a human-forced adapter, so it is
-# logged distinctly as "manual" -- a misconfiguration must be visible, not
-# silently trusted as if auto-verified. Everything else (sole_hardware_adapter,
-# global_conservative, or no adapter at all) stays conservative.
-_CONTROL_SAFE_METHODS = frozenset({"single_nvidia", "luid"})
-_CONTROL_MANUAL_METHODS = frozenset({"env_override"})
-
-
-def safe_for_control(match_method: Optional[str]) -> bool:
-    """Is a reading from this match method trustworthy enough to drive control?
-
-    Pure classifier (unit-testable, no ctypes). True for confidently
-    auto-detected adapters and for an explicit manual override; False for
-    ambiguous/fallback selections and when the sensor is unavailable.
-    """
-    if not match_method:
-        return False
-    return match_method in _CONTROL_SAFE_METHODS or match_method in _CONTROL_MANUAL_METHODS
-
-
-def is_manual_control(match_method: Optional[str]) -> bool:
-    """True when control is driven off a human-forced (env-override) adapter."""
-    return bool(match_method) and match_method in _CONTROL_MANUAL_METHODS
-
-
-class DxgiAdapterInfo(NamedTuple):
-    index: int
-    description: str
-    vendor_id: int
-    device_id: int
-    luid: str
-    match_method: str
-    safe_for_control: bool
-    manual_control: bool
-
-
 class DxgiAdapterRecord(NamedTuple):
     index: int
     description: str
@@ -136,7 +97,6 @@ class DxgiAdapterRecord(NamedTuple):
 
 class _AdapterSelection(NamedTuple):
     ptr: ctypes.c_void_p
-    info: DxgiAdapterInfo
 
 
 _selection_lock = threading.Lock()
@@ -247,23 +207,6 @@ def _enum_adapters1(factory) -> list[tuple[ctypes.c_void_p, DxgiAdapterRecord]]:
     return adapters
 
 
-def enumerate_adapters() -> list[DxgiAdapterRecord]:
-    """Return all DXGI adapters for diagnostics/probes, or [] if unavailable."""
-    if os.name != "nt":
-        return []
-    try:
-        factory = _create_dxgi_factory1()
-        if factory is None:
-            return []
-        return [record for _adapter, record in _enum_adapters1(factory)]
-    except Exception as exc:
-        _log_once(
-            "enumerate_failed",
-            f"[DXGI] adapter enumeration unavailable: {exc}",
-        )
-        return []
-
-
 def _query_interface_adapter3(adapter) -> ctypes.c_void_p:
     adapter3 = ctypes.c_void_p()
     # IUnknown::QueryInterface slot 0.
@@ -333,35 +276,22 @@ def _select_hardware_adapter3() -> Optional[_AdapterSelection]:
         )
     _log_once(
         "ambiguous_adapter",
-        "[DXGI] adapter selection is ambiguous in Stage A; using legacy pin proxy",
+        "[DXGI] adapter selection is ambiguous; using legacy pin proxy",
     )
     return None
 
 
 def _selection_from_record(adapter, record: DxgiAdapterRecord, match_method: str):
     adapter3 = _query_interface_adapter3(adapter)
-    manual = is_manual_control(match_method)
-    if manual:
+    if match_method == "env_override":
         # A human forced the adapter via AI_TOOLKIT_WDDM_DXGI_ADAPTER_INDEX. It
-        # still drives control, but log it distinctly so a misconfiguration is
-        # visible rather than lumped in with confident auto-detection.
+        # is worth logging distinctly so a misconfiguration is visible.
         _log_once(
-            "manual_control_override",
+            "manual_adapter_override",
             f"[DXGI] manual adapter override in effect (index={record.index} "
-            f"{record.description!r}); driving control as 'manual' -- verify "
-            "this is the training GPU",
+            f"{record.description!r}); verify this is the training GPU",
         )
-    info = DxgiAdapterInfo(
-        index=record.index,
-        description=record.description,
-        vendor_id=record.vendor_id,
-        device_id=record.device_id,
-        luid=record.luid,
-        match_method=match_method,
-        safe_for_control=safe_for_control(match_method),
-        manual_control=manual,
-    )
-    return _AdapterSelection(adapter3, info)
+    return _AdapterSelection(adapter3)
 
 
 def _selected_adapter() -> Optional[_AdapterSelection]:
@@ -386,32 +316,13 @@ def _selected_adapter() -> Optional[_AdapterSelection]:
         return _selection
 
 
-def selected_adapter_info() -> Optional[DxgiAdapterInfo]:
-    selection = _selected_adapter()
-    return selection.info if selection is not None else None
-
-
-def control_is_eligible(cuda_device_index: int = 0) -> bool:
-    """True when the resolved adapter is trustworthy enough to drive control.
-
-    Consumed by the pin-for-speed policy: aggressive full-pin engages only when
-    this is True (confident auto-detect or an explicit manual override). When
-    DXGI is unavailable/ambiguous this is False and the policy stays
-    conservative. ``cuda_device_index`` is accepted for the Stage-B per-device
-    match; Stage A resolves the single cached adapter.
-    """
-    del cuda_device_index  # Stage A: single cached adapter.
-    info = selected_adapter_info()
-    return bool(info is not None and info.safe_for_control)
-
-
 def query_video_memory_info(
     cuda_device_index: int = 0,
     segment_group: int = _DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL,
     min_interval_s: float = 0.5,
 ) -> Optional[DxgiMemoryInfo]:
     """Query LOCAL or NON_LOCAL DXGI video-memory info for the selected adapter."""
-    del cuda_device_index  # Stage A uses one cached adapter; Stage B matches per CUDA device.
+    del cuda_device_index  # The current implementation selects one adapter.
     if os.name != "nt":
         return None
     selection = _selected_adapter()
@@ -467,17 +378,6 @@ def query_non_local_video_memory_info(
     return query_video_memory_info(
         cuda_device_index=cuda_device_index,
         segment_group=_DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL,
-        min_interval_s=min_interval_s,
-    )
-
-
-def query_local_video_memory_info(
-    cuda_device_index: int = 0,
-    min_interval_s: float = 0.5,
-) -> Optional[DxgiMemoryInfo]:
-    return query_video_memory_info(
-        cuda_device_index=cuda_device_index,
-        segment_group=_DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
         min_interval_s=min_interval_s,
     )
 

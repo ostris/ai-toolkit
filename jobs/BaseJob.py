@@ -31,9 +31,9 @@ class BaseJob:
 
     def run(self):
         print("")
-        print(f"#############################################")
+        print("#############################################")
         print(f"# Running job: {self.name}")
-        print(f"#############################################")
+        print("#############################################")
         print("")
         # implement in child class
         # be sure to call super().run() first
@@ -67,14 +67,16 @@ class BaseJob:
 
     def cleanup(self):
         errors = []
+        failed = []
         processes = list(getattr(self, "process", ()))
         for process in reversed(processes):
             try:
                 process.cleanup()
             except Exception as error:
                 errors.append(f"{type(process).__name__}: {error}")
-        for process in processes:
-            process.job = None
-        self.process = []
+                failed.append(process)
+            else:
+                process.job = None
+        self.process = list(reversed(failed))
         if errors:
             raise RuntimeError("job cleanup failed: " + "; ".join(errors))

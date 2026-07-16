@@ -114,13 +114,6 @@ class DxgiHeadroomTests(unittest.TestCase):
 
 
 class SpillReserveMarginTests(unittest.TestCase):
-    def setUp(self):
-        def _clear():
-            pin_manager._SPILL_RESERVE_FLOOR_GIB_OVERRIDE = None
-            pin_manager._SPILL_RESERVE_PCT_OVERRIDE = None
-        _clear()
-        self.addCleanup(_clear)
-
     def test_margin_is_pct_of_budget_when_pct_dominates(self):
         with mock.patch.dict(
             os.environ,
@@ -153,34 +146,6 @@ class SpillReserveMarginTests(unittest.TestCase):
         ):
             self.assertEqual(pin_manager.dxgi_spill_reserve_bytes(None), 2 * GIB)
             self.assertEqual(pin_manager.dxgi_spill_reserve_bytes(0), 2 * GIB)
-
-    def test_config_override_supersedes_env(self):
-        with mock.patch.dict(
-            os.environ,
-            {"AI_TOOLKIT_WDDM_SPILL_RESERVE_FLOOR_GIB": "2.0",
-             "AI_TOOLKIT_WDDM_SPILL_RESERVE_PCT": "0.20"},
-            clear=False,
-        ):
-            pin_manager.set_spill_reserve_policy(floor_gib=3.0, pct=0.10)
-            # config floor 3 GiB dominates 0.10 * 16 = 1.6 GiB.
-            self.assertEqual(pin_manager.dxgi_spill_reserve_bytes(16 * GIB), 3 * GIB)
-
-
-class SafeForControlTests(unittest.TestCase):
-    def test_confident_auto_detect_is_safe(self):
-        self.assertTrue(dxgi_meminfo.safe_for_control("single_nvidia"))
-        self.assertTrue(dxgi_meminfo.safe_for_control("luid"))
-
-    def test_manual_override_is_safe_but_flagged_manual(self):
-        self.assertTrue(dxgi_meminfo.safe_for_control("env_override"))
-        self.assertTrue(dxgi_meminfo.is_manual_control("env_override"))
-        self.assertFalse(dxgi_meminfo.is_manual_control("single_nvidia"))
-
-    def test_fallback_methods_are_not_safe(self):
-        for method in ("sole_hardware_adapter", "global_conservative", "", None):
-            self.assertFalse(dxgi_meminfo.safe_for_control(method))
-            self.assertFalse(dxgi_meminfo.is_manual_control(method))
-
 
 if __name__ == "__main__":
     unittest.main()
