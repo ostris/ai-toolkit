@@ -11,8 +11,8 @@ import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { openConfirm } from '@/components/ConfirmModal';
-import { deleteJob, getTotalSteps, stopJob } from '@/utils/jobs';
-import { Trash2 } from 'lucide-react';
+import { deleteJob, getTotalSteps, reorderJobs, stopJob } from '@/utils/jobs';
+import { GripVertical, Trash2 } from 'lucide-react';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -26,6 +26,8 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
   const { gpuList, isGPUInfoLoaded } = useGPUInfo();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteProgress, setDeleteProgress] = useState<{ done: number; total: number } | null>(null);
+  const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
+  const [dropTargetJobId, setDropTargetJobId] = useState<string | null>(null);
 
   const refresh = () => {
     refreshJobs();
@@ -98,7 +100,49 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     });
   };
 
+  const syncQueueOrder = async (nextQueueIds: string[]) => {
+    await reorderJobs(nextQueueIds);
+    refreshJobs();
+  };
+
+  const getDraggedQueueIds = (queueJobs: JobListItem[], targetJobId: string) => {
+    if (!draggedJobId || draggedJobId === targetJobId) return null;
+    const fromIndex = queueJobs.findIndex(job => job.id === draggedJobId);
+    const toIndex = queueJobs.findIndex(job => job.id === targetJobId);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return null;
+
+    const nextQueueIds = queueJobs.map(job => job.id);
+    const [movedJobId] = nextQueueIds.splice(fromIndex, 1);
+    nextQueueIds.splice(toIndex, 0, movedJobId);
+    return nextQueueIds;
+  };
+
+  const getDropIndicatorClass = (queueJobs: JobListItem[], rowId: string) => {
+    if (!draggedJobId || draggedJobId === rowId) return '';
+
+    const fromIndex = queueJobs.findIndex(job => job.id === draggedJobId);
+    const toIndex = queueJobs.findIndex(job => job.id === rowId);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return '';
+
+    return fromIndex < toIndex
+      ? '!border-t-0 !border-b-4 !border-blue-400'
+      : '!border-b-0 !border-t-4 !border-blue-400';
+  };
+
   const columns: TableColumn[] = [
+    {
+      title: '',
+      key: 'drag',
+      className: 'w-10',
+      render: row => {
+        const isActiveQueueJob = ['queued', 'running', 'stopping'].includes(row.status);
+        return isActiveQueueJob && !onlyActive ? (
+          <span className="inline-flex cursor-grab text-gray-500" title="Drag to reorder queue">
+            <GripVertical className="w-4 h-4" />
+          </span>
+        ) : null;
+      },
+    },
     {
       title: (
         <input
@@ -198,7 +242,9 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       key: 'actions',
       className: 'text-right',
       render: row => {
-        return <JobActionBar job={row} onRefresh={refreshJobs} autoStartQueue={false} />;
+        const queueJobs = jobsDict[row.gpu_ids]?.jobs ?? [];
+        const queueJobIds = ['queued', 'running', 'stopping'].includes(row.status) ? queueJobs.map(job => job.id) : undefined;
+        return <JobActionBar job={row} onRefresh={refreshJobs} autoStartQueue={false} queueJobIds={queueJobIds} />;
       },
     },
   ];
@@ -331,6 +377,36 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
                 rows={jobsDict[gpuKey].jobs}
                 isLoading={isLoading}
                 onRefresh={refresh}
+                getRowKey={row => row.id}
+                getRowProps={row => ({
+                  draggable: !onlyActive,
+                  onDragStart: () => {
+                    setDraggedJobId(row.id);
+                    setDropTargetJobId(row.id);
+                  },
+                  onDragOver: event => {
+                    event.preventDefault();
+                    if (draggedJobId !== row.id) {
+                      setDropTargetJobId(row.id);
+                    }
+                  },
+                  onDrop: async event => {
+                    event.preventDefault();
+                    const nextQueueIds = getDraggedQueueIds(jobsDict[gpuKey].jobs, row.id);
+                    setDraggedJobId(null);
+                    setDropTargetJobId(null);
+                    if (!nextQueueIds) return;
+                    await syncQueueOrder(nextQueueIds);
+                  },
+                  onDragEnd: () => {
+                    setDraggedJobId(null);
+                    setDropTargetJobId(null);
+                  },
+                  className: classNames(
+                    draggedJobId === row.id && 'opacity-60',
+                    dropTargetJobId === row.id && getDropIndicatorClass(jobsDict[gpuKey].jobs, row.id),
+                  ),
+                })}
                 theadClassName={
                   queue?.is_running
                     ? 'bg-green-700 dark:bg-green-950 text-white dark:text-gray-400'

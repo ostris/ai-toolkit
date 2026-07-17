@@ -1,9 +1,17 @@
 import Link from 'next/link';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
 import { Job } from '@prisma/client';
-import { startJob, stopJob, deleteJob, getAvaliableJobActions, markJobAsStopped, saveJobNow } from '@/utils/jobs';
+import {
+  startJob,
+  stopJob,
+  deleteJob,
+  getAvaliableJobActions,
+  markJobAsStopped,
+  reorderJobs,
+  saveJobNow,
+} from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { redirect } from 'next/navigation';
@@ -19,6 +27,7 @@ interface JobActionBarProps {
   // Where the gear menu opens; defaults to below. Use 'top end' when the bar is
   // pinned to the bottom of the screen so the menu opens upward into view.
   menuAnchor?: 'bottom' | 'top end';
+  queueJobIds?: string[];
 }
 
 export default function JobActionBar({
@@ -29,10 +38,25 @@ export default function JobActionBar({
   hideView,
   autoStartQueue = false,
   menuAnchor = 'bottom',
+  queueJobIds,
 }: JobActionBarProps) {
   const { canStart, canStop, canDelete, canEdit, canRemoveFromQueue } = getAvaliableJobActions(job);
+  const queueIndex = queueJobIds?.findIndex(id => id === job.id) ?? -1;
+  const canMoveUp = queueIndex > 0;
+  const canMoveDown = queueIndex >= 0 && queueJobIds != null && queueIndex < queueJobIds.length - 1;
 
   if (!afterDelete) afterDelete = onRefresh;
+
+  const moveJob = async (direction: 'up' | 'down') => {
+    if (!queueJobIds || queueIndex < 0) return;
+    const swapIndex = direction === 'up' ? queueIndex - 1 : queueIndex + 1;
+    if (swapIndex < 0 || swapIndex >= queueJobIds.length) return;
+
+    const nextJobIds = [...queueJobIds];
+    [nextJobIds[queueIndex], nextJobIds[swapIndex]] = [nextJobIds[swapIndex], nextJobIds[queueIndex]];
+    await reorderJobs(nextJobIds);
+    onRefresh && onRefresh();
+  };
 
   const iconSizeClass = 'w-5 h-5 sm:w-6 sm:h-6';
   return (
@@ -145,8 +169,8 @@ export default function JobActionBar({
           <Cog className={iconSizeClass} />
         </MenuButton>
         <MenuItems
-          anchor={{ to: menuAnchor, gap: 16 }}
-          className="bg-gray-900 border border-gray-700 rounded shadow-lg w-52 px-2 py-2 z-50"
+          anchor={menuAnchor === 'top end' ? 'top end' : 'bottom end'}
+          className="bg-gray-900 border border-gray-700 rounded shadow-lg w-48 px-2 py-2 mt-1 z-50"
         >
           {job.job_type === 'train' && (
             <MenuItem>
@@ -194,6 +218,32 @@ export default function JobActionBar({
               Mark as Stopped
             </div>
           </MenuItem>
+          {canMoveUp && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+                onClick={async () => {
+                  await moveJob('up');
+                }}
+              >
+                <ArrowUp className="w-4 h-4" />
+                Move Up
+              </div>
+            </MenuItem>
+          )}
+          {canMoveDown && (
+            <MenuItem>
+              <div
+                className="cursor-pointer px-4 py-1 hover:bg-gray-800 rounded flex items-center gap-2"
+                onClick={async () => {
+                  await moveJob('down');
+                }}
+              >
+                <ArrowDown className="w-4 h-4" />
+                Move Down
+              </div>
+            </MenuItem>
+          )}
         </MenuItems>
       </Menu>
     </div>

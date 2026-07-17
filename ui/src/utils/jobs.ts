@@ -82,6 +82,22 @@ export const markJobAsStopped = (jobID: string) => {
   });
 };
 
+export const reorderJobs = (jobIds: string[]) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .post('/api/jobs/reorder', { jobIds })
+      .then(res => res.data)
+      .then(data => {
+        console.log('Jobs reordered:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error reordering jobs:', error);
+        reject(error);
+      });
+  });
+};
+
 export const getJobConfig = (job: Job) => {
   return JSON.parse(job.job_config) as JobConfig;
 };
