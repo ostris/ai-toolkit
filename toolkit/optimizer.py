@@ -64,13 +64,13 @@ def get_optimizer(
         import bitsandbytes
 
         if lower_type == "adam8bit":
-            return bitsandbytes.optim.Adam8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
-        if lower_type == "ademamix8bit":
-            return bitsandbytes.optim.AdEMAMix8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
+            optimizer = bitsandbytes.optim.Adam8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
+        elif lower_type == "ademamix8bit":
+            optimizer = bitsandbytes.optim.AdEMAMix8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
         elif lower_type == "adamw8bit":
-            return bitsandbytes.optim.AdamW8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
+            optimizer = bitsandbytes.optim.AdamW8bit(params, lr=learning_rate, eps=1e-6, **optimizer_params)
         elif lower_type == "lion8bit":
-            return bitsandbytes.optim.Lion8bit(params, lr=learning_rate, **optimizer_params)
+            optimizer = bitsandbytes.optim.Lion8bit(params, lr=learning_rate, **optimizer_params)
         else:
             raise ValueError(f'Unknown optimizer type {optimizer_type}')
     elif lower_type == 'adam':
@@ -80,7 +80,7 @@ def get_optimizer(
     elif lower_type == 'lion':
         try:
             from lion_pytorch import Lion
-            return Lion(params, lr=learning_rate, **optimizer_params)
+            optimizer = Lion(params, lr=learning_rate, **optimizer_params)
         except ImportError:
             raise ImportError("Please install lion_pytorch to use Lion optimizer -> pip install lion-pytorch")
     elif lower_type == 'adagrad':
@@ -105,4 +105,11 @@ def get_optimizer(
         optimizer = Automagic3(params, lr=float(learning_rate), **optimizer_params)
     else:
         raise ValueError(f'Unknown optimizer type {optimizer_type}')
+
+    total_training_paramiters = sum(
+        param.numel()
+        for group in optimizer.param_groups
+        for param in group['params']
+    )
+    print(f"Total training paramiters: {total_training_paramiters:,}")
     return optimizer
