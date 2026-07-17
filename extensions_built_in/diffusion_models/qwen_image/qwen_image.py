@@ -30,6 +30,9 @@ from transformers import (
     Qwen2VLProcessor,
 )
 from tqdm import tqdm
+from toolkit.util.qwen_vae_gradient_checkpointing import patch_qwen_vae_gradient_checkpointing
+
+patch_qwen_vae_gradient_checkpointing()
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
