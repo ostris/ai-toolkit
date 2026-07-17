@@ -31,9 +31,9 @@ class BaseJob:
 
     def run(self):
         print("")
-        print(f"#############################################")
+        print("#############################################")
         print(f"# Running job: {self.name}")
-        print(f"#############################################")
+        print("#############################################")
         print("")
         # implement in child class
         # be sure to call super().run() first
@@ -66,6 +66,17 @@ class BaseJob:
                 raise ValueError(f'config file is invalid. Unknown process type: {process["type"]}')
 
     def cleanup(self):
-        # if you implement this in child clas,
-        # be sure to call super().cleanup() LAST
-        del self
+        errors = []
+        failed = []
+        processes = list(getattr(self, "process", ()))
+        for process in reversed(processes):
+            try:
+                process.cleanup()
+            except Exception as error:
+                errors.append(f"{type(process).__name__}: {error}")
+                failed.append(process)
+            else:
+                process.job = None
+        self.process = list(reversed(failed))
+        if errors:
+            raise RuntimeError("job cleanup failed: " + "; ".join(errors))

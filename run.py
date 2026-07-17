@@ -39,6 +39,7 @@ import argparse
 from toolkit.job import get_job
 from toolkit.accelerator import get_accelerator
 from toolkit.print import print_acc, setup_log_to_file
+from toolkit.memory_management.arena_offload.errors import recover_allows_next_job
 
 accelerator = get_accelerator()
 
@@ -107,29 +108,59 @@ def main():
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
+        job = None
+        failure = None
+        cleanup_failed = False
         try:
             job = get_job(config_file, args.name)
             job.run()
-            job.cleanup()
-            jobs_completed += 1
         except Exception as e:
+            failure = e
             print_acc(f"Error running job: {e}")
-            jobs_failed += 1
             try:
                 job.process[0].on_error(e)
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
-            if not args.recover:
-                print_end_message(jobs_completed, jobs_failed)
-                raise e
+                try:
+                    e.add_note(f"on_error failed: {type(e2).__name__}: {e2}")
+                except AttributeError:
+                    pass
         except KeyboardInterrupt as e:
+            failure = e
             try:
                 job.process[0].on_error(e)
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
-            if not args.recover:
-                print_end_message(jobs_completed, jobs_failed)
-                raise e
+                try:
+                    e.add_note(f"on_error failed: {type(e2).__name__}: {e2}")
+                except AttributeError:
+                    pass
+        finally:
+            if job is not None:
+                try:
+                    job.cleanup()
+                except Exception as cleanup_error:
+                    cleanup_failed = True
+                    if failure is None:
+                        failure = cleanup_error
+                        print_acc(f"Error cleaning up job: {cleanup_error}")
+                    else:
+                        try:
+                            failure.add_note(
+                                "job cleanup failed: "
+                                f"{type(cleanup_error).__name__}: {cleanup_error}"
+                            )
+                        except AttributeError:
+                            pass
+
+        if failure is None:
+            jobs_completed += 1
+            continue
+
+        jobs_failed += 1
+        if cleanup_failed or not recover_allows_next_job(failure, args.recover):
+            print_end_message(jobs_completed, jobs_failed)
+            raise failure
 
 
 if __name__ == '__main__':

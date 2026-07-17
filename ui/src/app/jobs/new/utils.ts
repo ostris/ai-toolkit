@@ -45,6 +45,8 @@ export const handleModelArchChange = (
     if ('layer_offloading' in jobConfig.config.process[0].model) {
       const newModel = objectCopy(jobConfig.config.process[0].model);
       delete newModel.layer_offloading;
+      delete newModel.layer_offloading_smart;
+      delete newModel.layer_offloading_smart_cap_calibration;
       delete newModel.layer_offloading_text_encoder_percent;
       delete newModel.layer_offloading_transformer_percent;
       setJobConfig(newModel, 'config.process[0].model');
@@ -53,6 +55,8 @@ export const handleModelArchChange = (
     // set to false if not set
     if (!('layer_offloading' in jobConfig.config.process[0].model)) {
       setJobConfig(false, 'config.process[0].model.layer_offloading');
+      setJobConfig(false, 'config.process[0].model.layer_offloading_smart');
+      setJobConfig(false, 'config.process[0].model.layer_offloading_smart_cap_calibration');
       setJobConfig(1.0, 'config.process[0].model.layer_offloading_text_encoder_percent');
       setJobConfig(1.0, 'config.process[0].model.layer_offloading_transformer_percent');
     }

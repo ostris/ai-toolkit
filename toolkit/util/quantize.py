@@ -4,11 +4,13 @@ import torch
 
 from optimum.quanto.quantize import _quantize_submodule
 from optimum.quanto.tensor import Optimizer, qtype, qtypes
-from torchao.quantization.quant_api import (
-    quantize_ as torchao_quantize_,
+from toolkit.quantization.torchao_compat import (
     Float8WeightOnlyConfig,
-    UIntXWeightOnlyConfig,
-    Int8WeightOnlyConfig
+    Int8WeightOnlyConfig,
+    intx_weight_only_config,
+    torchao_is_float8_tensor,
+    torchao_is_linear,
+    torchao_quantize_,
 )
 from optimum.quanto import freeze
 from tqdm import tqdm
@@ -41,14 +43,13 @@ Q_MODULES = [
 ]
 
 torchao_qtypes = {
-    # "int4": Int4WeightOnlyConfig(),
-    "uint2": UIntXWeightOnlyConfig(torch.uint2),
-    "uint3": UIntXWeightOnlyConfig(torch.uint3),
-    "uint4": UIntXWeightOnlyConfig(torch.uint4),
-    "uint5": UIntXWeightOnlyConfig(torch.uint5),
-    "uint6": UIntXWeightOnlyConfig(torch.uint6),
-    "uint7": UIntXWeightOnlyConfig(torch.uint7),
-    "uint8": UIntXWeightOnlyConfig(torch.uint8),
+    "uint2": intx_weight_only_config(2),
+    "uint3": intx_weight_only_config(3),
+    "uint4": intx_weight_only_config(4),
+    "uint5": intx_weight_only_config(5),
+    "uint6": intx_weight_only_config(6),
+    "uint7": intx_weight_only_config(7),
+    "uint8": Int8WeightOnlyConfig(),
     "int8": Int8WeightOnlyConfig(),
     "float8": Float8WeightOnlyConfig(),
 }
@@ -171,6 +172,25 @@ def quantize(
         include = [include] if isinstance(include, str) else include
     if exclude is not None:
         exclude = [exclude] if isinstance(exclude, str) else exclude
+
+    if isinstance(weights, aotype):
+        # TorchAO quantize_ already walks the entire module tree. Calling it for
+        # every item yielded by named_modules() quantizes children once through
+        # their parent and then attempts to quantize them again directly.
+        def filter_fn(module: torch.nn.Module, fqn: str) -> bool:
+            if not torchao_is_linear(module, fqn):
+                return False
+            if torchao_is_float8_tensor(module.weight):
+                return False
+            if include is not None and not any(fnmatch(fqn, pattern) for pattern in include):
+                return False
+            if exclude is not None and any(fnmatch(fqn, pattern) for pattern in exclude):
+                return False
+            return True
+
+        torchao_quantize_(model, weights.config, filter_fn=filter_fn)
+        return
+
     for name, m in model.named_modules():
         if include is not None and not any(
             fnmatch(name, pattern) for pattern in include
@@ -206,8 +226,6 @@ def quantize(
                 if isinstance(weights, ostristype):
                     if isinstance(m, torch.nn.Linear):
                         convert_linear_to_ostris(m, weights.quantizer)
-                elif isinstance(weights, aotype):
-                    torchao_quantize_(m, weights.config)
                 else:
                     _quantize_submodule(
                         model,
@@ -280,7 +298,6 @@ def quantize_model(
             "transformer_only": False,
         }
         first_key = list(lora_state_dict.keys())[0]
-        first_weight = lora_state_dict[first_key]
         # if it starts with lycoris and includes lokr
         if first_key.startswith("lycoris") and any(
             "lokr" in key for key in lora_state_dict.keys()

@@ -158,7 +158,7 @@ class ExtractableModuleMixin:
 
         # set up alphas
         self.alpha = (self.alpha * 0) + down_weight.shape[0]
-        self.scale = float(self.alpha.detach().float().item()) / self.lora_dim
+        self._set_runtime_scale(float(self.alpha.detach().float().item()) / self.lora_dim)
 
         # assign them
 
@@ -178,6 +178,19 @@ class ToolkitModuleMixin:
         self.network_ref: weakref.ref = weakref.ref(network)
         self.is_checkpointing = False
         self._multiplier: Union[float, list, torch.Tensor] = None
+
+    def _set_runtime_scale(self: Module, value) -> None:
+        """Keep scale metadata as a float and compiled math on the module device."""
+        self.scale = float(value)
+        runtime_scale = getattr(self, "_runtime_scale", None)
+        if runtime_scale is None:
+            self.register_buffer(
+                "_runtime_scale",
+                torch.tensor(self.scale, dtype=torch.float32),
+                persistent=False,
+            )
+        else:
+            runtime_scale.fill_(self.scale)
 
     def _call_forward(self: Module, x):
         # module dropout
@@ -211,9 +224,9 @@ class ToolkitModuleMixin:
 
             # scaling for rank dropout: treat as if the rank is changed
             # maskから計算することも考えられるが、augmentation的な効果を期待してrank_dropoutを用いる
-            scale = self.scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
+            scale = self._runtime_scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
         else:
-            scale = self.scale
+            scale = self._runtime_scale
 
         lx = self.lora_up(lx)
 

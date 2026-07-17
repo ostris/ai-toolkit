@@ -96,7 +96,7 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule, ExtractableModuleMixin
         if type(alpha) == torch.Tensor:
             alpha = float(alpha.detach().float().item())
         alpha = lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = float(alpha) / self.lora_dim
+        self._set_runtime_scale(float(alpha) / self.lora_dim)
         self.register_buffer('alpha', torch.tensor(alpha))  # 定数として扱える
 
         # same as microsoft's

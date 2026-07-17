@@ -14,6 +14,8 @@ import torch.nn.functional as F
 from typing import TYPE_CHECKING, Optional, Tuple
 from torch.overrides import has_torch_function_unary  # (ADD) torchao detection
 
+from . import pin_manager
+
 if TYPE_CHECKING:
     from .manager import MemoryManager
 
@@ -190,15 +192,46 @@ def _pin_inner_tensors(t: torch.Tensor) -> None:
             continue
         if hasattr(inner, "__tensor_flatten__"):
             _pin_inner_tensors(inner)  # recurse: AQT -> tensor_impl -> data/scale
-        elif (
-            isinstance(inner, torch.Tensor)
-            and inner.device.type == "cpu"
-            and not inner.is_pinned()
-        ):
-            try:
-                setattr(t, name, inner.pin_memory())
-            except Exception:
-                pass
+        elif isinstance(inner, torch.Tensor) and inner.device.type == "cpu":
+            if pin_manager.is_host_pinned(inner):
+                continue
+            if pin_manager.pin_tensor_in_place(inner, kind="weights"):
+                continue
+            size = int(inner.numel() * inner.element_size())
+            handle = pin_manager.pin_alloc(
+                size, "weights", required=False
+            )
+            if handle.pinned:
+                view = handle.tensor.view(inner.dtype).reshape(inner.shape)
+                view.copy_(inner)
+                setattr(t, name, view)
+
+
+def _release_cpu_pin(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    """Release pin-manager ownership and return pageable storage when needed."""
+    if t is None or not isinstance(t, torch.Tensor) or t.device.type != "cpu":
+        return t
+    if hasattr(t, "__tensor_flatten__"):
+        try:
+            names, _ = t.__tensor_flatten__()
+        except Exception:
+            names = ()
+        for name in names:
+            inner = getattr(t, name, None)
+            if not isinstance(inner, torch.Tensor):
+                continue
+            replacement = _release_cpu_pin(inner)
+            if replacement is not inner:
+                setattr(t, name, replacement)
+        return t
+    if pin_manager.unpin_tensor_in_place(t, kind="weights"):
+        return t
+    if t.is_pinned():
+        pin_manager.release_pinned_bytes(
+            int(t.numel() * t.element_size()), kind="weights"
+        )
+        return t.clone()
+    return t
 
 
 def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -216,10 +249,16 @@ def _ensure_cpu_pinned(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
             _pin_inner_tensors(t)
         return t
     if torch.cuda.is_available():
-        try:
-            t = t.pin_memory()
-        except RuntimeError:
-            pass
+        if not pin_manager.is_host_pinned(t):
+            if not pin_manager.pin_tensor_in_place(t, kind="weights"):
+                size = int(t.numel() * t.element_size())
+                handle = pin_manager.pin_alloc(
+                    size, "weights", required=False
+                )
+                if handle.pinned:
+                    pinned = handle.tensor.view(t.dtype).reshape(t.shape)
+                    pinned.copy_(t)
+                    t = pinned
     return t
 
 
@@ -664,11 +703,8 @@ class OstrisLinearLayerMemoryManager(BaseLayerMemoryManager):
                     continue
                 if buf.device.type != "cpu":
                     buf = buf.to("cpu")
-                if torch.cuda.is_available() and not buf.is_pinned():
-                    try:
-                        buf = buf.pin_memory()
-                    except RuntimeError:
-                        pass
+                if torch.cuda.is_available():
+                    buf = _ensure_cpu_pinned(buf)
                 module._buffers[name] = buf
             bias = module._parameters.get("bias", None)
             if bias is not None:

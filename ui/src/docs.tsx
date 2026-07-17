@@ -245,6 +245,17 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'model.layer_offloading_smart': {
+    title: 'Automatic Arena Offloading',
+    description: (
+      <>
+        Uses the generic block arena to plan transformer residency automatically. Frozen base weights stay in one
+        canonical pinned host representation and are streamed by execution block, while trainable adapter weights stay
+        on the normal training path. Gradient checkpointing is required. Turn this off to use percentage-based layer
+        offloading instead.
+      </>
+    ),
+  },
   'model.qie.match_target_res': {
     title: 'Match Target Res',
     description: (

@@ -40,6 +40,7 @@ from toolkit.unloader import unload_text_encoder
 from PIL import Image
 from torchvision.transforms import functional as TF
 from toolkit.basic import flush
+from toolkit.memory_management.runtime import get_memory_runtime
 
 
 adapter_transforms = transforms.Compose([
@@ -242,7 +243,12 @@ class SDTrainer(BaseSDTrainProcess):
         super().hook_before_train_loop()
         if self.is_caching_text_embeddings:
             # make sure model is on cpu for this part so we don't oom.
-            self.sd.unet.to('cpu')
+            arena_runtime = get_memory_runtime(self.sd.unet)
+            if arena_runtime is not None:
+                arena_runtime.park_residency_for_external_phase()
+                arena_runtime.place_permanent_modules('cpu')
+            else:
+                self.sd.unet.to('cpu')
         
         # cache unconditional embeds (blank prompt)
         with torch.no_grad():

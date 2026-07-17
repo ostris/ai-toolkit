@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import glob
 import inspect
@@ -21,9 +22,15 @@ import torch
 import torch.backends.cuda
 from huggingface_hub import HfApi, interpreter_login
 from toolkit.memory_management import MemoryManager
+from toolkit.memory_management.runtime import (
+    close_memory_runtime_preparation,
+    get_memory_runtime,
+    memory_runtime_owns_compile,
+)
 
 from toolkit.basic import value_map
 from toolkit.clip_vision_adapter import ClipVisionAdapter
+from toolkit.compile_utils import configure_cuda_only_inductor
 from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
@@ -196,6 +203,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # to hold network if there is one
         self.network: Union[Network, None] = None
+        self._arena_runtime = None
+        self._cleanup_in_progress = False
+        self._cleanup_completed = False
         self.adapter: Union[T2IAdapter, IPAdapter, ClipVisionAdapter, ReferenceAdapter, CustomAdapter, ControlNetModel, None] = None
         self.embedding: Union[Embedding, None] = None
         self.decorator: Union[Decorator, None] = None
@@ -361,8 +371,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
         
-        # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        arena_runtime = get_memory_runtime(getattr(self.sd, "unet", None))
+        sampling_session = (
+            arena_runtime.sampling_session(
+                gen_configs=gen_img_config_list,
+            )
+            if arena_runtime is not None
+            else contextlib.nullcontext()
+        )
+        with sampling_session:
+            self.sd.generate_images(
+                gen_img_config_list, sampler=sample_config.sampler
+            )
 
         
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
@@ -482,6 +502,57 @@ class BaseSDTrainProcess(BaseTrainProcess):
     def post_save_hook(self, save_path):
         # override in subclass
         pass
+
+    def cleanup(self):
+        if self._cleanup_completed:
+            return
+        if self._cleanup_in_progress:
+            raise RuntimeError("training process cleanup is already in progress")
+        self._cleanup_in_progress = True
+        errors = []
+
+        def attempt(label, operation):
+            try:
+                operation()
+            except Exception as error:
+                errors.append(f"{label}: {type(error).__name__}: {error}")
+
+        try:
+            runtime = self._arena_runtime
+            sd = getattr(self, "sd", None)
+            if runtime is None and sd is not None:
+                runtime = get_memory_runtime(getattr(sd, "unet", None))
+            if runtime is not None:
+                try:
+                    runtime.close()
+                except Exception as error:
+                    errors.append(
+                        f"arena runtime: {type(error).__name__}: {error}"
+                    )
+                else:
+                    self._arena_runtime = None
+            if sd is not None:
+                attempt(
+                    "memory runtime preparation",
+                    lambda: close_memory_runtime_preparation(sd),
+                )
+                models = [getattr(sd, "unet", None)]
+                text_encoders = getattr(sd, "text_encoder", None)
+                if isinstance(text_encoders, (list, tuple)):
+                    models.extend(text_encoders)
+                else:
+                    models.append(text_encoders)
+                for model in models:
+                    if model is not None:
+                        attempt(
+                            "legacy memory manager",
+                            lambda model=model: MemoryManager.detach(model),
+                        )
+            if errors:
+                raise RuntimeError("; ".join(errors))
+            self._cleanup_completed = True
+        finally:
+            self._cleanup_in_progress = False
     
     def done_hook(self):
         pass
@@ -735,7 +806,13 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
         self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
-            self.sd.unet = self.accelerator.prepare(self.sd.unet)
+            arena_runtime = get_memory_runtime(self.sd.unet)
+            # The arena runtime is the sole transformer placement and
+            # residency authority. Accelerate's model preparation starts
+            # with whole-model placement and may install its own wrappers,
+            # so do not give it a second ownership path.
+            if arena_runtime is None:
+                self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
         if self.sd.text_encoder is not None and self.train_config.train_text_encoder:
@@ -1580,6 +1657,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
         ### HOOK ###
         self.hook_before_model_load()
         model_config_to_load = copy.deepcopy(self.model_config)
+        arena_requested = bool(
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_smart
+        )
+        if arena_requested:
+            if not self.train_config.gradient_checkpointing:
+                raise ValueError(
+                    "arena offload training requires "
+                    "train.gradient_checkpointing=true"
+                )
+            # Models should load on CPU without selecting their legacy
+            # per-layer offloader. Generic arena attachment happens below.
+            model_config_to_load.layer_offloading = False
+            model_config_to_load.low_vram = True
 
         if self.is_fine_tuning or self.train_config.merge_network_on_save:
             # get the latest checkpoint
@@ -1594,6 +1685,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.load_training_state_from_metadata(latest_save_path)
 
         ModelClass = get_model_class(self.model_config)
+        if arena_requested:
+            from toolkit.memory_management.arena_offload import (
+                validate_arena_training_mode,
+            )
+
+            validate_arena_training_mode(
+                full_finetune=self.is_fine_tuning,
+                mutates_base_weights=self.train_config.merge_network_on_save,
+                train_text_encoder=self.train_config.train_text_encoder,
+                unload_text_encoder=(
+                    self.train_config.unload_text_encoder
+                    or self.is_caching_text_embeddings
+                ),
+            )
         # if the model class has get_train_scheduler static method
         if hasattr(ModelClass, 'get_train_scheduler'):
             sampler = ModelClass.get_train_scheduler()
@@ -1629,10 +1734,34 @@ class BaseSDTrainProcess(BaseTrainProcess):
             custom_pipeline=self.custom_pipeline,
             noise_scheduler=sampler,
         )
+        self.sd.dataset_configs = self.dataset_configs
+        self.sd.train_config = self.train_config
         
         self.hook_after_sd_init_before_load()
         # run base sd process run
-        self.sd.load_model()
+        from toolkit.memory_management.arena_offload import model_load_arena_session
+
+        with model_load_arena_session(self.sd, enabled=arena_requested):
+            self.sd.load_model()
+
+        text_encoders = getattr(self.sd, "text_encoder", None)
+        if text_encoders is not None and not isinstance(
+            text_encoders, (list, tuple)
+        ):
+            text_encoders = (text_encoders,)
+        if (
+            arena_requested
+            and text_encoders
+            and self.model_config.layer_offloading_text_encoder_percent > 0
+        ):
+            for text_encoder in text_encoders:
+                MemoryManager.attach(
+                    text_encoder,
+                    self.device_torch,
+                    offload_percent=(
+                        self.model_config.layer_offloading_text_encoder_percent
+                    ),
+                )
         
         self.sd.add_after_sample_image_hook(self.sample_step_hook)
 
@@ -1725,9 +1854,40 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             text_encoder.requires_grad_(False)
             text_encoder.eval()
-        unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
+        if arena_requested:
+            from toolkit.memory_management.arena_offload import (
+                ArenaOffloadConfig,
+                estimate_training_working_reserve_hint_bytes,
+                prepare_arena_offload,
+            )
+
+            training_reserve_hint = (
+                estimate_training_working_reserve_hint_bytes(
+                    self.dataset_configs,
+                    batch_size=self.train_config.batch_size,
+                )
+            )
+            if training_reserve_hint is not None:
+                print_acc(
+                    "[ArenaOffload] configured-shape training reserve: "
+                    f"{training_reserve_hint / 1024**3:.2f} GiB"
+                )
+            arena_runtime = prepare_arena_offload(
+                unet,
+                device=self.device_torch,
+                block_names=self.sd.get_transformer_block_names(),
+                config=ArenaOffloadConfig.from_model_config(
+                    self.model_config,
+                    training_working_reserve_hint_bytes=(
+                        training_reserve_hint
+                    ),
+                ),
+            )
+            arena_runtime.place_permanent_modules(self.device_torch, dtype)
+        else:
+            unet.to(self.device_torch, dtype=dtype)
         vae = vae.to(torch.device('cpu'), dtype=dtype)
         vae.requires_grad_(False)
         vae.eval()
@@ -1982,6 +2142,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.setup_adapter()
         flush()
 
+        arena_runtime = get_memory_runtime(getattr(self.sd, "unet", None))
+        if arena_runtime is not None:
+            arena_runtime.finalize(self.network)
+            self._arena_runtime = arena_runtime
+
         ### HOOK ###
         params = self.hook_add_extra_train_params(params)
         self.params = params
@@ -2093,7 +2258,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             compiled_refs = []  # (block_list, index, original_block) for rollback on failure
             try:
                 inner_unet_check = unwrap_model(self.sd.unet)
-                is_unet_offloaded = hasattr(inner_unet_check, '_memory_manager')
+                is_unet_offloaded = (
+                    hasattr(inner_unet_check, '_memory_manager')
+                    or get_memory_runtime(inner_unet_check) is not None
+                )
 
                 text_encoder = getattr(self.sd, "text_encoder", None)
                 text_encoder_check = unwrap_model(text_encoder) if text_encoder is not None else None
@@ -2109,7 +2277,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 user_set_cache_limit = cache_size_limit is not None
                 if user_set_cache_limit:
                     torch._dynamo.config.cache_size_limit = cache_size_limit
-                torch._dynamo.config.suppress_errors = False
+                configure_cuda_only_inductor()
                 # torch 2.9 inductor bug: the new memory-coalescing tiling analysis
                 # crashes on some dynamic-shape index expressions (sympy PowByNatural
                 # "assert p >= 0", seen with Qwen Image). The analysis doesn't apply
@@ -2121,6 +2289,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 compile_dynamic = getattr(self.model_config, 'compile_dynamic', True)
                 compile_fullgraph = getattr(self.model_config, 'compile_fullgraph', False)
                 block_compile = getattr(self.model_config, 'block_compile', False)
+                runtime_owns_block_compile = memory_runtime_owns_compile(
+                    inner_unet_check
+                )
 
                 # quantized + offloaded unet is incompatible with fullgraph; force it off
                 if is_unet_quantized and is_unet_offloaded and compile_fullgraph:
@@ -2134,7 +2305,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # ====================================================
                 # BLOCK COMPILE
                 # ====================================================
-                if block_compile:
+                if runtime_owns_block_compile:
+                    print_acc(
+                        "Arena offload owns block compilation; "
+                        "skipping trainer compile."
+                    )
+                elif block_compile:
                     BLOCK_LIST_ATTRS = self.sd.get_transformer_block_names()
 
                     if BLOCK_LIST_ATTRS is None or len(BLOCK_LIST_ATTRS) == 0:
@@ -2448,9 +2624,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.torch_profiler.start()
             did_oom = False
             loss_dict = None
+            arena_runtime = self._arena_runtime or get_memory_runtime(
+                getattr(self.sd, "unet", None)
+            )
+            shape_key = MemoryManager.offload_shape_key_from_batch(batch_list)
+            execution_context = (
+                arena_runtime.training_step(
+                    shape_key=shape_key,
+                    step_num=self.step_num,
+                )
+                if arena_runtime is not None
+                else contextlib.nullcontext()
+            )
             try:
                 with self.accelerator.accumulate(self.modules_being_trained):
-                    loss_dict = self.hook_train_loop(batch_list)
+                    with execution_context:
+                        loss_dict = self.hook_train_loop(batch_list)
             except torch.cuda.OutOfMemoryError:
                 did_oom = True
             except RuntimeError as e:
@@ -2459,16 +2648,37 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 else:
                     raise  # not an OOM; surface real errors
             if did_oom:
-                self.num_consecutive_oom += 1
-                if self.num_consecutive_oom > 3:
-                    raise RuntimeError("OOM during training step 3 times in a row, aborting training")
+                recoverable_oom = False
+                if arena_runtime is not None:
+                    failure = arena_runtime.diagnostics().get(
+                        'last_failure_event'
+                    )
+                    if failure is not None:
+                        recoverable_oom = bool(
+                            failure.get('recoverable', False)
+                        )
+                        print_acc(
+                            f"[ArenaOffload] training failure: {failure}"
+                        )
+                if recoverable_oom:
+                    self.num_consecutive_oom = 0
+                else:
+                    self.num_consecutive_oom += 1
+                    if self.num_consecutive_oom > 3:
+                        raise RuntimeError("OOM during training step 3 times in a row, aborting training")
                 optimizer.zero_grad(set_to_none=True)
                 flush()
                 torch.cuda.ipc_collect()
                 # skip this step and keep going
                 print_acc("")
                 print_acc("################################################")
-                print_acc(f"# OOM during training step, skipping batch {self.num_consecutive_oom}/3 #")
+                if recoverable_oom:
+                    print_acc(
+                        "# Allocator guard recovered; skipping this batch "
+                        "and continuing #"
+                    )
+                else:
+                    print_acc(f"# OOM during training step, skipping batch {self.num_consecutive_oom}/3 #")
                 print_acc("################################################")
                 print_acc("")
             else:
@@ -2658,6 +2868,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     repo_id=self.save_config.hf_repo_id,
                     private=self.save_config.hf_private
                 )
+        # Deterministic teardown needs the model graph in order to close the
+        # arena and detach legacy managers (notably an offloaded text encoder).
+        # BaseJob.cleanup() becomes an idempotent no-op after this succeeds.
+        self.cleanup()
         del (
             self.sd,
             unet,
