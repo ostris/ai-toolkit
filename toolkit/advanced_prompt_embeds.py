@@ -1,5 +1,7 @@
 import os
+import json
 import torch
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 
@@ -136,7 +138,10 @@ class AdvancedPromptEmbeds:
 
     def save(self, path):
         data = {}
-        metadata = {"class_name": self.__class__.__name__}
+        metadata = {
+            "class_name": self.__class__.__name__,
+            "frozen_dtype_keys": json.dumps(self._frozen_dtype_keys),
+        }
         for key, value in self._store.items():
             if len(value) != 1:
                 raise ValueError(
@@ -149,6 +154,8 @@ class AdvancedPromptEmbeds:
     @classmethod
     def load(cls, path=None):
         if path is not None:
+            with safe_open(path, framework="pt", device="cpu") as f:
+                metadata = f.metadata() or {}
             loaded = load_file(path)
         else:
             raise ValueError("Must provide a path")
@@ -157,7 +164,18 @@ class AdvancedPromptEmbeds:
         for key in loaded.keys():
             data[key] = loaded[key]
 
-        return cls(**data)
+        prompt_embeds = cls(**data)
+        serialized_frozen_keys = metadata.get("frozen_dtype_keys")
+        if serialized_frozen_keys is not None:
+            try:
+                frozen_keys = json.loads(serialized_frozen_keys)
+            except (TypeError, json.JSONDecodeError):
+                frozen_keys = []
+            if isinstance(frozen_keys, list):
+                prompt_embeds.frozen_dtype_keys = [
+                    key for key in frozen_keys if isinstance(key, str)
+                ]
+        return prompt_embeds
 
     @classmethod
     def concat_prompt_embeds(
