@@ -65,7 +65,7 @@ class LoRAModule(torch.nn.Module):
         if type(alpha) == torch.Tensor:
             alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = float(alpha) / self.lora_dim
+        self._set_runtime_scale(float(alpha) / self.lora_dim)
         self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える
 
         # same as microsoft's
@@ -77,6 +77,21 @@ class LoRAModule(torch.nn.Module):
         self.dropout = dropout
         self.rank_dropout = rank_dropout
         self.module_dropout = module_dropout
+
+    def _set_runtime_scale(self, value) -> None:
+        """Keep float metadata while using a device tensor in compiled math."""
+        self.scale = float(value)
+        runtime_scale = getattr(self, "_runtime_scale", None)
+        if runtime_scale is None:
+            reference = next(self.parameters(), None)
+            if reference is None:
+                runtime_scale = torch.tensor(self.scale, dtype=torch.float32)
+            else:
+                runtime_scale = reference.new_tensor(self.scale, dtype=torch.float32)
+            self.register_buffer("_runtime_scale", runtime_scale, persistent=False)
+        else:
+            with torch.no_grad():
+                runtime_scale.fill_(self.scale)
 
     def apply_to(self):
         self.org_forward = self.org_module.forward
@@ -108,9 +123,9 @@ class LoRAModule(torch.nn.Module):
 
             # scaling for rank dropout: treat as if the rank is changed
             # maskから計算することも考えられるが、augmentation的な効果を期待してrank_dropoutを用いる
-            scale = self.scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
+            scale = self._runtime_scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
         else:
-            scale = self.scale
+            scale = self._runtime_scale
 
         lx = self.lora_up(lx)
 
@@ -219,7 +234,7 @@ class LoRAInfModule(LoRAModule):
 
     def default_forward(self, x):
         # print("default_forward", self.lora_name, x.size())
-        return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        return self.org_forward(x) + self.lora_up(self.lora_down(x)) * self.multiplier * self._runtime_scale
 
     def forward(self, x):
         if not self.enabled:
@@ -258,7 +273,7 @@ class LoRAInfModule(LoRAModule):
             return self.default_forward(x)
 
         # apply mask for LoRA result
-        lx = self.lora_up(self.lora_down(x)) * self.multiplier * self.scale
+        lx = self.lora_up(self.lora_down(x)) * self.multiplier * self._runtime_scale
         mask = self.get_mask_for_x(lx)
         # print("regional", self.lora_name, self.network.sub_prompt_index, lx.size(), mask.size())
         lx = lx * mask
@@ -302,7 +317,7 @@ class LoRAInfModule(LoRAModule):
 
         # apply sub prompt of X
         lx = x[emb_idx :: self.network.num_sub_prompts]
-        lx = self.lora_up(self.lora_down(lx)) * self.multiplier * self.scale
+        lx = self.lora_up(self.lora_down(lx)) * self.multiplier * self._runtime_scale
 
         # print("sub_prompt_forward", self.lora_name, x.size(), lx.size(), emb_idx)
 
@@ -322,7 +337,7 @@ class LoRAInfModule(LoRAModule):
 
         # call own LoRA
         x1 = x[self.network.batch_size + self.network.sub_prompt_index :: self.network.num_sub_prompts]
-        lx1 = self.lora_up(self.lora_down(x1)) * self.multiplier * self.scale
+        lx1 = self.lora_up(self.lora_down(x1)) * self.multiplier * self._runtime_scale
 
         if self.network.is_last_network:
             lx = torch.zeros(
