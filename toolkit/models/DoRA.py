@@ -63,7 +63,7 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         if type(alpha) == torch.Tensor:
             alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = float(alpha) / self.lora_dim
+        scale = float(alpha) / self.lora_dim
         # self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える eng: treat as constant
 
         self.multiplier: Union[float, List[float]] = multiplier
@@ -88,6 +88,8 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         self.lora_down = nn.Linear(d_in, self.lora_dim, bias=False)  # lora_A
         # self.lora_down.weight.data = torch.zeros_like(self.lora_down.weight.data)
         self.lora_down.weight.data = torch.randn_like(self.lora_down.weight.data) * std_dev
+
+        self._set_runtime_scale(scale)
 
         # m = Magnitude column-wise across output dimension
         weight = self.get_orig_weight()
