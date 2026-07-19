@@ -16,6 +16,12 @@ from safetensors.torch import load_file
 from huggingface_hub import hf_hub_download
 
 from toolkit.print import print_acc
+from toolkit.util.ostris_quant import (
+    OstrisLinear,
+    OstrisQuantizer,
+    convert_linear_to_ostris,
+    get_ostris_quantizer,
+)
 import os
 
 if TYPE_CHECKING:
@@ -31,6 +37,7 @@ Q_MODULES = [
     "QLayerNorm",
     "QConvTranspose2d",
     "QEmbeddingBag",
+    "OstrisLinear",
 ]
 
 torchao_qtypes = {
@@ -53,10 +60,20 @@ class aotype:
         self.config = torchao_qtypes[name]
 
 
+class ostristype:
+    # custom quantization backend (see toolkit/util/ostris_quant.py), e.g. orbit2/3/4
+    def __init__(self, name: str, quantizer: OstrisQuantizer):
+        self.name = name
+        self.quantizer = quantizer
+
+
 def get_qtype(qtype: Union[str, qtype]) -> qtype:
     if qtype in torchao_qtypes:
         return aotype(qtype)
     if isinstance(qtype, str):
+        ostris_quantizer = get_ostris_quantizer(qtype)
+        if ostris_quantizer is not None:
+            return ostristype(qtype, ostris_quantizer)
         return qtypes[qtype]
     else:
         return qtype
@@ -65,6 +82,12 @@ def get_qtype(qtype: Union[str, qtype]) -> qtype:
 def is_quantized_tensor(t) -> bool:
     # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
     # that still report as nn.Parameter and expose .dequantize(). (quanto is handled separately.)
+    # _is_ostris_weight tags two OstrisLinear tensors: the .weight property's eager tensor
+    # (already dequantized; .dequantize() is a no-op) so the merge paths route through
+    # requantize_module_weight, and the lazy OstrisLazyWeight emitted by state_dict()
+    # (holds no data; .dequantize() materializes) so save loops dequantize it per key.
+    if getattr(t, '_is_ostris_weight', False):
+        return True
     return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
 
 
@@ -73,20 +96,33 @@ def dequantize_if_quantized(t):
 
 
 def get_torchao_config(qtype):
-    # returns the torchao quantization config for a given qtype string, or None if it isn't torchao
+    # returns the requantization config for a given qtype string (a torchao config, or the
+    # ostristype for custom backends), or None if the qtype supports neither
     if qtype is None:
         return None
     try:
         q = get_qtype(qtype)
     except Exception:
         return None
-    return q.config if isinstance(q, aotype) else None
+    if isinstance(q, aotype):
+        return q.config
+    if isinstance(q, ostristype):
+        return q
+    return None
 
 
 def requantize_module_weight(module, fp_weight, orig_dtype, config) -> None:
-    """Write a full precision weight back into module.weight, re-quantizing in place if a torchao
-    config is provided so the module stays quantized (used by the continuous merge/reset method).
-    If config is None the weight is left in full precision."""
+    """Write a full precision weight back into module.weight, re-quantizing in place if a
+    requantization config is provided so the module stays quantized (used by the continuous
+    merge/reset method). If config is None the weight is left in full precision."""
+    if isinstance(module, OstrisLinear):
+        # the module's backend reuses its existing quantization state; config is not needed
+        module.requantize_(fp_weight)
+        return
+    if isinstance(config, ostristype):
+        # custom backend config but the module was never converted (e.g. skipped at
+        # quantize time); leave it in full precision
+        config = None
     module.weight = torch.nn.Parameter(fp_weight.to(orig_dtype), requires_grad=False)
     if config is not None:
         torchao_quantize_(module, config)
@@ -99,6 +135,7 @@ def quantize(
     optimizer: Optional[Optimizer] = None,
     include: Optional[Union[str, List[str]]] = None,
     exclude: Optional[Union[str, List[str]]] = None,
+    quantize_device: Optional[torch.device] = None,
 ):
     """Quantize the specified model submodules
 
@@ -125,6 +162,10 @@ def quantize(
         exclude (`Optional[Union[str, List[str]]]`):
             Patterns constituting the denylist. If provided, module names must not match
             any patterns from the denylist.
+        quantize_device (`Optional[torch.device]`):
+            If provided, each module is moved to this device to quantize, then moved
+            back to the device its weights were on initially. Lets a CPU-resident
+            model (low vram) quantize layer-by-layer on the GPU.
     """
     if include is not None:
         include = [include] if isinstance(include, str) else include
@@ -141,8 +182,31 @@ def quantize(
             # check if m is QLinear or QConv2d
             if m.__class__.__name__ in Q_MODULES:
                 continue
-            else:
-                if isinstance(weights, aotype):
+            if (
+                isinstance(weights, aotype)
+                and not isinstance(m, torch.nn.Linear)
+                and (
+                    quantize_device is not None
+                    or include is not None
+                    or exclude is not None
+                )
+            ):
+                # torchao only quantizes nn.Linear; when a device round-trip or
+                # include/exclude filtering is in play, skip containers so each
+                # linear is handled individually (a container-level torchao call
+                # would quantize excluded children too)
+                continue
+            orig_device = None
+            if quantize_device is not None and next(m.children(), None) is None:
+                param = next(m.parameters(recurse=False), None)
+                if param is not None:
+                    orig_device = param.device
+                    m.to(quantize_device)
+            try:
+                if isinstance(weights, ostristype):
+                    if isinstance(m, torch.nn.Linear):
+                        convert_linear_to_ostris(m, weights.quantizer)
+                elif isinstance(weights, aotype):
                     torchao_quantize_(m, weights.config)
                 else:
                     _quantize_submodule(
@@ -153,6 +217,10 @@ def quantize(
                         activations=activations,
                         optimizer=optimizer,
                     )
+            finally:
+                if orig_device is not None:
+                    # quanto replaces the module in its parent, so re-fetch by name
+                    model.get_submodule(name).to(orig_device)
         except Exception as e:
             print(f"Failed to quantize {name}: {e}")
             # raise e
@@ -346,7 +414,11 @@ def quantize_model(
             block.to(base_model.device_torch, dtype=base_model.torch_dtype, non_blocking=True)
             quantize(block, weights=quantization_type)
             freeze(block)
-            block.to("cpu", non_blocking=True)
+            # NOT non_blocking: an async D2H allocates the cpu destination in pinned
+            # memory, which the caching host allocator keeps forever (with power-of-2
+            # bucket rounding on top) — that silently retained a model-sized chunk of
+            # host ram after the weights moved back to the gpu for training
+            block.to("cpu")
 
         # todo, on extras find a universal way to quantize them on device and move them back to their original
         # device without having to move the transformer blocks to the device first

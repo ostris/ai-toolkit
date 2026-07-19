@@ -13,16 +13,21 @@ Flow-matching convention matches ai-toolkit exactly (t=1 noise -> t=0 clean,
 target = noise - clean), so ``get_noise_prediction`` does no time flip / negation.
 """
 
+import math
 import os
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import torch
+import torch.nn.functional as F
+from PIL import Image
+from torchvision.transforms.functional import to_tensor
 from safetensors.torch import load_file, save_file
 
 import huggingface_hub
 from huggingface_hub.errors import EntryNotFoundError
 from diffusers import AutoencoderKLQwenImage
 from transformers import (
+    AutoProcessor,
     AutoTokenizer,
     Qwen2TokenizerFast,
     Qwen3VLForConditionalGeneration,
@@ -50,6 +55,9 @@ from .src.mmdit import (
 )
 from .src.text_encoder import encode_krea_prompt, SELECT_LAYERS
 from .src.pipeline import Krea2Pipeline, pad_text_features, predict_velocity
+
+if TYPE_CHECKING:
+    from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
 
 
 # The reference "single_mmdit_large_wide" architecture (oss_raw / oss_turbo share it).
@@ -90,6 +98,30 @@ QWEN3_VL_PATH = "Qwen/Qwen3-VL-4B-Instruct"
 QWEN_IMAGE_VAE_PATH = "Qwen/Qwen-Image"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
+
+
+def patch_qwen_vl_patch_embed(model):
+    """Qwen-VL's vision patch_embed is a Conv3d whose kernel == stride, i.e. a plain
+    linear projection of each flattened patch. bf16 Conv3d has no fast cuDNN kernel and
+    falls back to a slow, GPU-underutilizing path. Swap it for the equivalent F.linear
+    (a GEMM). The weight is read lazily so this survives later .to(device)/dtype moves.
+    Returns the number of patch_embed modules patched. (Same patch as the
+    Qwen3VLCaptioner extension.)"""
+    patched = 0
+    for module in model.modules():
+        proj = getattr(module, "proj", None)
+        if isinstance(proj, torch.nn.Conv3d) and tuple(proj.kernel_size) == tuple(
+            proj.stride
+        ):
+
+            def fast_forward(hidden_states, _proj=proj):
+                w = _proj.weight.reshape(_proj.weight.shape[0], -1)
+                x = hidden_states.view(-1, w.shape[1]).to(w.dtype)
+                return F.linear(x, w, _proj.bias)
+
+            module.forward = fast_forward
+            patched += 1
+    return patched
 
 
 def _load_mmdit_state_dict(name_or_path: str, filename: Optional[str]) -> dict:
@@ -160,7 +192,32 @@ class Krea2Model(BaseModel):
         # Qwen2TokenizerFast used to tokenize the assistant suffix (matches the
         # reference's separate processor pass).
         self.processor = None
+        # Qwen3-VL AutoProcessor for encoding reference images into the prompt.
+        self.vl_processor = None
         self.use_old_lokr_format = False
+
+        # Optional reference-image (edit) conditioning, enabled with
+        # model_kwargs.edit = true. Control images feed the model in two places:
+        # through the Qwen3-VL encoder alongside the prompt (edit-plus style, so
+        # the text embeddings see them) and as clean VAE latents appended to the
+        # image sequence at t=0 (ComfyUI Kontext "index_timestep_zero"). Runs in
+        # ComfyUI with the ComfyUI-Krea2-Ostris-Edit custom nodes. With edit off
+        # (the default) all of it is skipped and this is the plain T2I model.
+        self.is_edit = bool(self.model_config.model_kwargs.get("edit", False))
+        self.encode_control_in_text_embeddings = self.is_edit
+        self.has_multiple_control_images = self.is_edit
+        # Reference images keep their own aspect/size (not resized to the target).
+        self.use_raw_control_images = self.is_edit
+        # model_kwargs.kv_cache = true: train with an asymmetric attention mask
+        # where the clean reference tokens attend only to each other (never to
+        # text / noisy tokens). Their hidden states then depend only on the
+        # refs + t=0 modulation, so at inference their per-layer K/V can be
+        # computed once and reused across all denoising steps
+        # (OminiControl2-style conditioning feature reuse). Off by default:
+        # the base model was trained fully bidirectional, so a LoRA must be
+        # trained with kv_cache enabled for kv-cached inference (the ComfyUI
+        # node / hub pipeline kv_cache toggles) to work properly.
+        self.kv_cache = bool(self.model_config.model_kwargs.get("kv_cache", False))
 
     @staticmethod
     def get_train_scheduler():
@@ -214,14 +271,22 @@ class Krea2Model(BaseModel):
         text_encoder = Qwen3VLForConditionalGeneration.from_pretrained(
             te_path, torch_dtype=dtype, token=HF_TOKEN
         )
-        # We only ever encode text, so the vision tower is dead weight -- drop it to
-        # free VRAM and skip loading its (bf16-slow) Conv3d patch_embed onto the GPU.
-        if getattr(text_encoder.model, "visual", None) is not None:
-            text_encoder.model.visual = None
+        vl_processor = None
+        if self.is_edit:
+            # Edit mode: reference images are encoded into the text embeddings,
+            # so the vision tower stays. Swap its Conv3d patch_embed for an
+            # equivalent GEMM (bf16 Conv3d has no fast cuDNN kernel).
+            vl_processor = AutoProcessor.from_pretrained(te_path, token=HF_TOKEN)
+            patch_qwen_vl_patch_embed(text_encoder)
+        else:
+            # We only ever encode text, so the vision tower is dead weight -- drop it to
+            # free VRAM and skip loading its (bf16-slow) Conv3d patch_embed onto the GPU.
+            if getattr(text_encoder.model, "visual", None) is not None:
+                text_encoder.model.visual = None
         text_encoder.eval()
         text_encoder.requires_grad_(False)
         flush()
-        return tokenizer, processor, text_encoder
+        return tokenizer, processor, vl_processor, text_encoder
 
     def _load_vae(self):
         vae_path = self.model_config.model_kwargs.get("vae_path", QWEN_IMAGE_VAE_PATH)
@@ -314,6 +379,24 @@ class Krea2Model(BaseModel):
 
         # tell the model to invert assistant on inference since we want remove lora effects
         self.invert_assistant_lora = True
+    
+    def get_quantization_exclude_modules(self):
+        # sensitive modules kept in full precision (fnmatch patterns on module
+        # names within SingleStreamDiT):
+        #   first             - patchified latent input projection
+        #   tmlp* / tproj*    - timestep embedder + modulation projection; feed
+        #                       every block's DoubleSharedModulation and LastLayer
+        #   txtmlp*           - text feature -> model width projection
+        #   txtfusion.projector - tiny (num_txt_layers -> 1) encoder-layer mixer
+        #   last*             - final norm/modulated output projection
+        return [
+            "first",
+            "tmlp*",
+            "tproj*",
+            "txtmlp*",
+            "txtfusion.projector",
+            "last*",
+        ]
 
     def load_model(self):
         dtype = self.torch_dtype
@@ -355,7 +438,7 @@ class Krea2Model(BaseModel):
             transformer.to(self.device_torch, dtype=dtype)
         flush()
 
-        tokenizer, processor, text_encoder = self._load_text_encoder()
+        tokenizer, processor, vl_processor, text_encoder = self._load_text_encoder()
         if self.model_config.quantize_te:
             self.print_and_status_update("Quantizing text encoder")
             text_encoder.to(self.device_torch)
@@ -388,6 +471,7 @@ class Krea2Model(BaseModel):
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
         self.processor = processor
+        self.vl_processor = vl_processor
         self.model = transformer
         self.pipeline = Krea2Pipeline(self)
         self.print_and_status_update("Model Loaded")
@@ -414,17 +498,131 @@ class Krea2Model(BaseModel):
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
 
+        # Reference image(s) -> clean VAE latents for the t=0 sequence tokens.
+        # The Qwen3-VL side already saw them (baked into the prompt embeds).
+        # ctrl_img_1 mirrors ctrl_img when unset, so use one or the other.
+        ctrl_paths = []
+        if self.is_edit:
+            if gen_config.ctrl_img is not None:
+                ctrl_paths.append(gen_config.ctrl_img)
+            elif gen_config.ctrl_img_1 is not None:
+                ctrl_paths.append(gen_config.ctrl_img_1)
+            if gen_config.ctrl_img_2 is not None:
+                ctrl_paths.append(gen_config.ctrl_img_2)
+            if gen_config.ctrl_img_3 is not None:
+                ctrl_paths.append(gen_config.ctrl_img_3)
+
+        ref_latents = None
+        if ctrl_paths:
+            ctrl_tensors = [
+                to_tensor(Image.open(path).convert("RGB")) for path in ctrl_paths
+            ]
+            target_pixels = gen_config.width * gen_config.height
+            # one batch item (preview batch size is 1) -> List[List[(16, h, w)]]
+            ref_latents = [
+                self._encode_ref_latents(ctrl_tensors, target_pixels=target_pixels)
+            ]
+        
+        # CFG is 0 normalized for this model
+        guidance = max(0.0, gen_config.guidance_scale - 1.0)
+
         img = pipeline(
             conditional_embeds=conditional_embeds,
             unconditional_embeds=unconditional_embeds,
             height=gen_config.height,
             width=gen_config.width,
             num_inference_steps=gen_config.num_inference_steps,
-            guidance_scale=gen_config.guidance_scale,
+            guidance_scale=guidance,
             latents=gen_config.latents,
             generator=generator,
+            ref_latents=ref_latents,
         )[0]
         return img
+
+    # ------------------------------------------------------------------
+    # Reference-image helpers
+    # ------------------------------------------------------------------
+    def _ref_target_pixels(self, target_pixels: Optional[int]) -> int:
+        """Pixel budget each reference image is resized to fit within.
+
+        - default: ``control_image_max_pixels`` model_kwarg (1 MP) -- a hard cap
+          so raw, full-size control images don't blow up the token count / VRAM.
+        - ``match_target_res`` model_kwarg: use the target generation area instead.
+        """
+        max_pixels = int(
+            self.model_config.model_kwargs.get("control_image_max_pixels", 1024 * 1024)
+        )
+        if (
+            self.model_config.model_kwargs.get("match_target_res", False)
+            and target_pixels
+        ):
+            return int(target_pixels)
+        return max_pixels
+
+    def _encode_ref_latents(
+        self, control_tensors, target_pixels: Optional[int] = None
+    ) -> List[torch.Tensor]:
+        """Encode ``[0, 1]`` reference image tensors to VAE latents.
+
+        Returns a list of ``(16, h, w)`` latents (one per reference image). Each
+        control image is resized so its area fits within the pixel budget (see
+        ``_ref_target_pixels``) -- preserving aspect ratio -- then snapped so the
+        latent grid is divisible by the patch size. ``control_tensors`` is a list
+        of ``(C, H, W)`` or ``(1, C, H, W)`` tensors in ``[0, 1]``.
+        """
+        sc = self.get_bucket_divisibility()  # 16: VAE(8) * patch(2)
+        budget = self._ref_target_pixels(target_pixels)
+        match = self.model_config.model_kwargs.get("match_target_res", False)
+
+        latents = []
+        for img in control_tensors:
+            if img.dim() == 3:
+                img = img.unsqueeze(0)
+            img = img.to(self.device_torch, dtype=self.torch_dtype)
+
+            h, w = img.shape[2], img.shape[3]
+            # match_target_res: scale area *to* the budget; otherwise only scale
+            # *down* when the image is larger than the budget.
+            area = h * w
+            if match or area > budget:
+                ratio = h / w
+                new_h = math.sqrt(budget * ratio)
+                new_w = new_h / ratio
+            else:
+                new_h, new_w = float(h), float(w)
+
+            # snap to a multiple of the bucket divisibility so the VAE latent grid
+            # is patchifiable (the transformer rearranges 2x2 latent patches).
+            new_h = max(sc, int(round(new_h / sc)) * sc)
+            new_w = max(sc, int(round(new_w / sc)) * sc)
+            if (new_h, new_w) != (h, w):
+                img = F.interpolate(img, size=(new_h, new_w), mode="bilinear")
+
+            # encode_images expects [-1, 1]; control tensors arrive in [0, 1].
+            latent = self.encode_images(
+                img * 2 - 1, device=self.device_torch, dtype=self.torch_dtype
+            )
+            latents.append(latent[0])  # drop batch dim -> (16, h, w)
+        return latents
+
+    def _batch_ref_latents_from_batch(
+        self,
+        batch: "DataLoaderBatchDTO",
+        batch_size: int,
+        target_pixels: Optional[int] = None,
+    ) -> Optional[List[List[torch.Tensor]]]:
+        """Build predict_velocity's ``ref_latents`` from a train batch."""
+        control_list = batch.control_tensor_list
+        if control_list is None and batch.control_tensor is not None:
+            control_list = [batch.control_tensor[b : b + 1] for b in range(batch_size)]
+        if control_list is None:
+            return None
+        if len(control_list) != batch_size:
+            raise ValueError("Control tensor list length does not match batch size")
+        return [
+            self._encode_ref_latents(controls, target_pixels=target_pixels)
+            for controls in control_list
+        ]
 
     # ------------------------------------------------------------------
     # Training hooks
@@ -434,10 +632,24 @@ class Krea2Model(BaseModel):
         latent_model_input: torch.Tensor,  # (B, 16, h, w)
         timestep: torch.Tensor,  # 0..1000 scale
         text_embeddings: AdvancedPromptEmbeds,
+        batch: "DataLoaderBatchDTO" = None,
         **kwargs,
     ):
         if self.model.device == torch.device("cpu"):
             self.model.to(self.device_torch)
+
+        # Clean reference latents from the batch's control images (if any); they
+        # ride along in the sequence at t=0 and are never noised.
+        ref_latents = None
+        if batch is not None and self.is_edit:
+            with torch.no_grad():
+                _, _, lh, lw = latent_model_input.shape
+                target_pixels = (lh * self.vae_scale_factor) * (
+                    lw * self.vae_scale_factor
+                )
+                ref_latents = self._batch_ref_latents_from_batch(
+                    batch, latent_model_input.shape[0], target_pixels=target_pixels
+                )
 
         # toolkit timestep (0..1000, 1000 = pure noise) -> Krea flow time t in
         # [0, 1] with t=1 = pure noise. Same convention -> straight divide.
@@ -457,15 +669,69 @@ class Krea2Model(BaseModel):
             t,
             context,
             text_mask,
+            ref_latents=ref_latents,
+            isolate_refs=self.kv_cache,
         )
         return pred
 
-    def get_prompt_embeds(self, prompt) -> AdvancedPromptEmbeds:
+    def _prep_vlm_images(self, ctrl: List[torch.Tensor]) -> List[torch.Tensor]:
+        """Resize reference images for the Qwen3-VL pass.
+
+        Downscaled (aspect-preserved, never upscaled) to fit ``vlm_max_pixels``
+        total area (384^2 by default, the boogu_image_edit / ComfyUI
+        TextEncodeQwenImageEditPlus budget) -- the MLLM only needs a coarse
+        understanding of the reference; high-res detail flows through the VAE
+        ref latents.
+        """
+        target = int(self.model_config.model_kwargs.get("vlm_max_pixels", 384 * 384))
+        images = []
+        for img in ctrl:
+            if img.dim() == 4:
+                img = img[0]
+            img = img.to(self.device_torch)
+            h, w = img.shape[1], img.shape[2]
+            scale = min(1.0, math.sqrt(target / (h * w)))
+            nh, nw = max(round(h * scale), 28), max(round(w * scale), 28)
+            if (nh, nw) != (h, w):
+                img = (
+                    F.interpolate(
+                        img.unsqueeze(0).float(),
+                        size=(nh, nw),
+                        mode="bicubic",
+                        antialias=True,
+                    )
+                    .squeeze(0)
+                    .clamp(0, 1)
+                )
+            images.append(img.float())
+        return images
+
+    def get_prompt_embeds(self, prompt, control_images=None) -> AdvancedPromptEmbeds:
         if isinstance(prompt, str):
             prompt = [prompt]
 
         if self.text_encoder.device == torch.device("cpu"):
             self.text_encoder.to(self.device_torch)
+
+        # Normalize control images to a per-prompt list (List[List[Tensor]]).
+        # They arrive as a (B, C, H, W) batch tensor (control_tensor), a list of
+        # per-sample lists (control_tensor_list), or a flat list of (1, C, H, W)
+        # tensors for a single prompt (sampling / blank-embed caching).
+        if control_images is not None:
+            if isinstance(control_images, torch.Tensor):
+                control_images = [
+                    [control_images[i]] for i in range(control_images.shape[0])
+                ]
+            elif len(control_images) > 0 and not isinstance(control_images[0], list):
+                control_images = [control_images]
+            if len(control_images) == 1 and len(prompt) > 1:
+                control_images = control_images * len(prompt)
+            if len(control_images) != len(prompt):
+                raise ValueError(
+                    "Number of prompts must match number of control image sets"
+                )
+        else:
+            control_images = [None] * len(prompt)
 
         # Encode each prompt at its natural length and store one (L, 12*2560)
         # tensor per batch item. The (L, 12, 2560) stack is flattened to 2D so the
@@ -474,7 +740,8 @@ class Krea2Model(BaseModel):
         # batch max is deferred to the model call so caches stay small and any
         # prompts can share a batch.
         features_list = []
-        for p in prompt:
+        for p, ctrl in zip(prompt, control_images):
+            images = self._prep_vlm_images(ctrl) if ctrl is not None else None
             features = encode_krea_prompt(
                 self.text_encoder,
                 self.tokenizer,
@@ -482,6 +749,9 @@ class Krea2Model(BaseModel):
                 p,
                 max_length=self.max_text_length,
                 select_layers=SELECT_LAYERS,
+                images=images,
+                vl_processor=self.vl_processor,
+                dtype=self.torch_dtype,
             )
             # (L, n, d) -> (L, n*d)
             features = features.reshape(features.shape[0], -1)
@@ -577,6 +847,7 @@ class Krea2Model(BaseModel):
     # ------------------------------------------------------------------
     def save_model(self, output_path, meta, save_dtype):
         from toolkit.util.quantize import dequantize_if_quantized
+
         if not output_path.endswith(".safetensors"):
             output_path = output_path + ".safetensors"
         transformer: SingleStreamDiT = unwrap_model(self.model)
@@ -584,7 +855,9 @@ class Krea2Model(BaseModel):
         save_dict = {}
         for k, v in state_dict.items():
             # dequantize any quantized (e.g. quanto/torchao) weights so we save plain full precision tensors
-            save_dict[k] = dequantize_if_quantized(v).clone().to("cpu", dtype=save_dtype)
+            save_dict[k] = (
+                dequantize_if_quantized(v).clone().to("cpu", dtype=save_dtype)
+            )
         meta = get_meta_for_safetensors(meta, name="krea2")
         save_file(save_dict, output_path, metadata=meta)
 

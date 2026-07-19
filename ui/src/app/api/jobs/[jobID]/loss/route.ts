@@ -42,7 +42,9 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const jobFolder = path.join(trainingFolder, job.name);
   const logPath = path.join(jobFolder, 'loss_log.db');
 
-  if (!fs.existsSync(logPath)) {
+  try {
+    await fs.promises.access(logPath);
+  } catch {
     return NextResponse.json({ keys: [], key: 'loss', points: [] });
   }
 

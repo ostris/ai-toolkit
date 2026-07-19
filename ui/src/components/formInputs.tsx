@@ -326,6 +326,7 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
   }
 
   const [isCustom, setIsCustom] = React.useState(!isInOptions && !!value);
+  const customInputRef = React.useRef<HTMLInputElement>(null);
 
   // Build select options with "Custom" at the top
   const customOption: SelectOption = { value: CUSTOM_SELECT_VALUE, label: 'Custom' };
@@ -386,6 +387,8 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
                 if (val === CUSTOM_SELECT_VALUE) {
                   setIsCustom(true);
                   onChange('');
+                  // focus the custom input only when the user actively selects "Custom"
+                  requestAnimationFrame(() => customInputRef.current?.focus());
                 } else {
                   setIsCustom(false);
                   onChange(val);
@@ -396,13 +399,13 @@ export const CreatableSelectInput = (props: CreatableSelectInputProps) => {
         </div>
         {isCustom && (
           <input
+            ref={customInputRef}
             type="text"
             value={value}
             onChange={e => onChange(e.target.value)}
             className={`${inputClasses} flex-1 min-w-0`}
             placeholder={props.placeholder ?? 'Enter custom value'}
             disabled={props.disabled}
-            autoFocus
           />
         )}
       </div>

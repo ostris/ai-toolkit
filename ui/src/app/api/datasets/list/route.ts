@@ -7,13 +7,14 @@ export async function GET() {
     let datasetsPath = await getDatasetsRoot();
 
     // if folder doesnt exist, create it
-    if (!fs.existsSync(datasetsPath)) {
-      fs.mkdirSync(datasetsPath);
+    try {
+      await fs.promises.access(datasetsPath);
+    } catch {
+      await fs.promises.mkdir(datasetsPath);
     }
 
     // find all the folders in the datasets folder
-    let folders = fs
-      .readdirSync(datasetsPath, { withFileTypes: true })
+    let folders = (await fs.promises.readdir(datasetsPath, { withFileTypes: true }))
       .filter(dirent => dirent.isDirectory())
       .filter(dirent => !dirent.name.startsWith('.'))
       .map(dirent => dirent.name);

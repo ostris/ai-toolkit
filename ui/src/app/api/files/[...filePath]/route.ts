@@ -28,14 +28,14 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       return new NextResponse('Access denied', { status: 403 });
     }
 
-    // Check if file exists
-    if (!fs.existsSync(resolvedFilePath)) {
+    // Check it exists and grab file info in one stat
+    let stat;
+    try {
+      stat = await fs.promises.stat(resolvedFilePath);
+    } catch {
       console.warn(`File not found: ${resolvedFilePath}`);
       return new NextResponse('File not found', { status: 404 });
     }
-
-    // Get file info
-    const stat = fs.statSync(resolvedFilePath);
     if (!stat.isFile()) {
       return new NextResponse('Not a file', { status: 400 });
     }

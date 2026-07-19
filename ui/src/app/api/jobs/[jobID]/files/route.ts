@@ -20,13 +20,14 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const trainingFolder = await getTrainingFolder();
   const jobFolder = path.join(trainingFolder, job.name);
 
-  if (!fs.existsSync(jobFolder)) {
+  try {
+    await fs.promises.access(jobFolder);
+  } catch {
     return NextResponse.json({ files: [] });
   }
 
   // find all safetensors files in the job folder
-  let files = fs
-    .readdirSync(jobFolder)
+  let files = (await fs.promises.readdir(jobFolder))
     .filter(file => {
       return file.endsWith('.safetensors');
     })
@@ -35,23 +36,27 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     })
     .sort();
 
-  // get the file size for each file
-  const fileObjects = files.map(file => {
-    const stats = fs.statSync(file);
-    return {
-      path: file,
-      size: stats.size,
-    };
-  });
+  // get the file size for each file (stat all in parallel)
+  const fileObjects = await Promise.all(
+    files.map(async file => {
+      const stats = await fs.promises.stat(file);
+      return {
+        path: file,
+        size: stats.size,
+      };
+    }),
+  );
 
   // include the optimizer state if it exists
   const optimizerPath = path.join(jobFolder, 'optimizer.pt');
-  if (fs.existsSync(optimizerPath)) {
-    const stats = fs.statSync(optimizerPath);
+  try {
+    const stats = await fs.promises.stat(optimizerPath);
     fileObjects.push({
       path: optimizerPath,
       size: stats.size,
     });
+  } catch {
+    // no optimizer state present, skip it
   }
 
   return NextResponse.json({ files: fileObjects });

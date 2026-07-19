@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 # diffusers specific stuff
 LINEAR_MODULES = [
     'Linear',
-    'LoRACompatibleLinear'
+    'LoRACompatibleLinear',
+    'OstrisLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
@@ -53,7 +54,6 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         ToolkitModuleMixin.__init__(self, network=network)
         torch.nn.Module.__init__(self)
         self.lora_name = lora_name
-        self.scalar = torch.tensor(1.0)
 
         self.lora_dim = lora_dim
 
@@ -61,9 +61,9 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
             raise NotImplementedError("Convolutional layers are not supported yet")
 
         if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
+            alpha = float(alpha.detach().float().item())
         alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
-        self.scale = alpha / self.lora_dim
+        scale = float(alpha) / self.lora_dim
         # self.register_buffer("alpha", torch.tensor(alpha))  # 定数として扱える eng: treat as constant
 
         self.multiplier: Union[float, List[float]] = multiplier
@@ -88,6 +88,8 @@ class DoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
         self.lora_down = nn.Linear(d_in, self.lora_dim, bias=False)  # lora_A
         # self.lora_down.weight.data = torch.zeros_like(self.lora_down.weight.data)
         self.lora_down.weight.data = torch.randn_like(self.lora_down.weight.data) * std_dev
+
+        self._set_runtime_scale(scale)
 
         # m = Magnitude column-wise across output dimension
         weight = self.get_orig_weight()

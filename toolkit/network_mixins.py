@@ -29,7 +29,8 @@ Module = Union['LoConSpecialModule', 'LoRAModule', 'DoRAModule']
 LINEAR_MODULES = [
     'Linear',
     'LoRACompatibleLinear',
-    'QLinear'
+    'QLinear',
+    'OstrisLinear',
     # 'GroupNorm',
 ]
 CONV_MODULES = [
@@ -157,7 +158,7 @@ class ExtractableModuleMixin:
 
         # set up alphas
         self.alpha = (self.alpha * 0) + down_weight.shape[0]
-        self.scale = self.alpha / self.lora_dim
+        self._set_runtime_scale(float(self.alpha.detach().float().item()) / self.lora_dim)
 
         # assign them
 
@@ -177,6 +178,21 @@ class ToolkitModuleMixin:
         self.network_ref: weakref.ref = weakref.ref(network)
         self.is_checkpointing = False
         self._multiplier: Union[float, list, torch.Tensor] = None
+
+    def _set_runtime_scale(self: Module, value) -> None:
+        """Keep float metadata while using a device tensor in compiled math."""
+        self.scale = float(value)
+        runtime_scale = getattr(self, "_runtime_scale", None)
+        if runtime_scale is None:
+            reference = next(self.parameters(), None)
+            if reference is None:
+                runtime_scale = torch.tensor(self.scale, dtype=torch.float32)
+            else:
+                runtime_scale = reference.new_tensor(self.scale, dtype=torch.float32)
+            self.register_buffer("_runtime_scale", runtime_scale, persistent=False)
+        else:
+            with torch.no_grad():
+                runtime_scale.fill_(self.scale)
 
     def _call_forward(self: Module, x):
         # module dropout
@@ -210,9 +226,9 @@ class ToolkitModuleMixin:
 
             # scaling for rank dropout: treat as if the rank is changed
             # maskから計算することも考えられるが、augmentation的な効果を期待してrank_dropoutを用いる
-            scale = self.scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
+            scale = self._runtime_scale * (1.0 / (1.0 - self.rank_dropout))  # redundant for readability
         else:
-            scale = self.scale
+            scale = self._runtime_scale
 
         lx = self.lora_up(lx)
 
@@ -386,7 +402,7 @@ class ToolkitModuleMixin:
         weight_device = weight.device
         if weight.device != down_weight.device:
             weight = weight.to(down_weight.device)
-        if scale.device != down_weight.device:
+        if isinstance(scale, torch.Tensor) and scale.device != down_weight.device:
             scale = scale.to(down_weight.device)
         # merge weight
         if self.full_rank:
