@@ -78,12 +78,13 @@ from toolkit.util.get_model import get_model_class
 # Import Oxen integration (with try/except for optional dependency)
 try:
     from toolkit.oxen_experiment import AIToolkitOxenExperiment
-    from toolkit.oxen_logger import AIToolkitOxenLogger
+    from toolkit.oxen_logger import AIToolkitOxenLogger, SampleMemoryMonitor
     OXEN_AVAILABLE = True
 except ImportError:
     OXEN_AVAILABLE = False
     AIToolkitOxenExperiment = None
     AIToolkitOxenLogger = None
+    SampleMemoryMonitor = None
 
 def flush():
     torch.cuda.empty_cache()
@@ -145,6 +146,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.oxen_config = OxenConfig(**self.get_conf('oxen', {}))
         self.oxen_experiment = None
         self.oxen_logger = None
+        self._sample_round = 0
+        self._sample_mem_monitor = None
 
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
@@ -387,9 +390,33 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # let adapter know we are sampling
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
             self.adapter.is_sampling = True
-        
-        # send to be generated
-        self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+
+        # Record a VRAM time series across this sampling round. The monitor only
+        # reads allocator counters on a side thread (no GPU memory, no sync); the
+        # per-image hook tags each tick with the sample being rendered.
+        mem_monitor = None
+        if SampleMemoryMonitor is not None and self.oxen_logger and self.oxen_config.enabled:
+            mem_monitor = SampleMemoryMonitor(sample_round=self._sample_round)
+            mem_monitor.set_index(0)
+            self._sample_mem_monitor = mem_monitor
+        try:
+            if mem_monitor is not None:
+                with mem_monitor:
+                    self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+            else:
+                self.sd.generate_images(gen_img_config_list, sampler=sample_config.sampler)
+        finally:
+            self._sample_mem_monitor = None
+            # Sampling spikes the shared CUDA peak counter; clear it so the next
+            # training row's peak_mem_gb reflects training, not this sample. Runs
+            # even if generation failed, so a partial spike can't leak either.
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+            except Exception:
+                pass
+        if mem_monitor is not None:
+            self._sample_round += 1
 
         
         if self.adapter is not None and isinstance(self.adapter, CustomAdapter):
@@ -403,6 +430,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
             try:
                 sample_dir = os.path.join(self.save_root, "samples")
                 self.oxen_logger.add_samples(sample_dir)
+                if mem_monitor is not None:
+                    self.oxen_logger.log_sample_series(
+                        mem_monitor.samples, self._sample_round - 1, step if step is not None else self.step_num
+                    )
             except Exception as e:
                 print_acc(f"Warning: Failed to save sample images to Oxen: {e}")
         
@@ -761,7 +792,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.prepare_accelerator()
         
     def sample_step_hook(self, img_num, total_imgs):
-        pass
+        # img_num is the 0-based index of the image just finished; point the
+        # memory monitor at the next one so its ticks carry the right index.
+        if self._sample_mem_monitor is not None:
+            self._sample_mem_monitor.set_index(img_num + 1)
     
     def prepare_accelerator(self):
         # set some config
