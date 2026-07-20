@@ -845,9 +845,9 @@ export default function SimpleJob({
                 setJobConfig(
                   {
                     validation_items: [{ image_path: '', prompt: '' }],
-                    resolution: 512,
-                    validate_every_n_steps: 10,
-                    validation_sigmas: [1.0, 0.75, 0.5, 0.25],
+                    resolution: 1024,
+                    validate_every_n_steps: 1,
+                    validation_sigmas: [0.5],
                   },
                   'config.process[0].train.validation_config',
                 );
