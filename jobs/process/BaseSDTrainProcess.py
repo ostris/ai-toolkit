@@ -25,6 +25,7 @@ from huggingface_hub import HfApi, interpreter_login
 from toolkit.memory_management import MemoryManager
 
 from toolkit.basic import value_map
+from toolkit.buckets import get_bucket_for_image_size
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
 from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
@@ -1602,14 +1603,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
         dtype = get_torch_dtype(self.train_config.dtype)
         resolution = val_config.resolution
 
+        divisibility = self.sd.get_bucket_divisibility()
+
         image_list = []
         prompt_list = []
         for item in validation_items:
             img = Image.open(item.image_path)
             img = ImageOps.exif_transpose(img).convert('RGB')
-            # deterministic resize, shortest side to resolution then center crop
-            img = transforms.Resize(resolution)(img)
-            img = transforms.CenterCrop(resolution)(img)
+            # deterministic resize that keeps the aspect ratio, matches the pixel budget
+            # of the resolution and the bucket divisibility of the model
+            bucket = get_bucket_for_image_size(
+                img.width, img.height,
+                resolution=resolution,
+                divisibility=divisibility,
+            )
+            img = img.resize((bucket['width'], bucket['height']), Image.BICUBIC)
             tensor = transforms.ToTensor()(img) * 2.0 - 1.0
             image_list.append(tensor)
             prompt = item.prompt
@@ -1638,21 +1646,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # seed so the vae latent dist sampling is always identical
             torch.manual_seed(42)
             orig_vae_device = self.sd.vae.device
-            latents = self.sd.encode_images(image_list, device=device, dtype=dtype)
+            # images can have different aspect ratios so they are encoded one at a time
+            latent_list = [
+                self.sd.encode_images([image], device=device, dtype=dtype).to('cpu', dtype=torch.float32)
+                for image in image_list
+            ]
             self.sd.vae.to(orig_vae_device)
 
             # fixed noise per image, seeds start at 42 and increment for each image
             noise_list = []
-            for i in range(latents.shape[0]):
+            for i, latent in enumerate(latent_list):
                 generator = torch.Generator(device='cpu').manual_seed(42 + i)
                 noise_list.append(
-                    torch.randn(latents[i:i + 1].shape, generator=generator, dtype=torch.float32)
+                    torch.randn(latent.shape, generator=generator, dtype=torch.float32)
                 )
-            noise = torch.cat(noise_list, dim=0)
 
         self._validation_cache = {
-            'latents': latents.to('cpu', dtype=torch.float32),
-            'noise': noise,
+            'latents': latent_list,
+            'noise': noise_list,
             'embeds': embeds_list,
         }
         flush()
@@ -1675,17 +1686,6 @@ class BaseSDTrainProcess(BaseTrainProcess):
         start_multiplier = network.multiplier
         network.multiplier = 1.0
         with torch.no_grad(), network:
-            latents = cache['latents'].to(device, dtype=dtype)
-            noise = cache['noise'].to(device, dtype=dtype)
-            num_images = latents.shape[0]
-
-            # single batch of every (image, sigma) pair, ordered sigma major
-            batch_latents = torch.cat([latents] * len(sigmas), dim=0)
-            batch_noise = torch.cat([noise] * len(sigmas), dim=0)
-            batch_embeds = concat_prompt_embeds(
-                [e.clone().to(device, dtype=dtype) for e in cache['embeds']] * len(sigmas)
-            )
-
             if self.sd.is_flow_matching:
                 timestep_values = [sigma * 1000.0 for sigma in sigmas]
             else:
@@ -1694,30 +1694,39 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     min(int(round(sigma * num_train_timesteps)), num_train_timesteps - 1)
                     for sigma in sigmas
                 ]
-            timesteps = torch.tensor(
-                [t for t in timestep_values for _ in range(num_images)],
-                device=device,
-            )
+            timesteps = torch.tensor(timestep_values, device=device)
 
-            noisy_latents = self.sd.add_noise(batch_latents, batch_noise, timesteps).detach()
+            # images can have different aspect ratios, so each image is predicted as its
+            # own batch with all sigmas at once
+            losses = []
+            for latents_cpu, noise_cpu, embeds_cpu in zip(cache['latents'], cache['noise'], cache['embeds']):
+                latents = latents_cpu.to(device, dtype=dtype)
+                noise = noise_cpu.to(device, dtype=dtype)
+                batch_latents = torch.cat([latents] * len(sigmas), dim=0)
+                batch_noise = torch.cat([noise] * len(sigmas), dim=0)
+                batch_embeds = concat_prompt_embeds([embeds_cpu.clone().to(device, dtype=dtype)] * len(sigmas))
 
-            noise_pred = self.sd.predict_noise(
-                latents=noisy_latents.to(device, dtype=dtype),
-                conditional_embeddings=batch_embeds,
-                timestep=timesteps,
-                guidance_scale=1.0,
-                guidance_embedding_scale=self.train_config.cfg_scale,
-                bypass_guidance_embedding=self.train_config.bypass_guidance_embedding,
-            )
+                noisy_latents = self.sd.add_noise(batch_latents, batch_noise, timesteps).detach()
 
-            if self.sd.is_flow_matching:
-                target = batch_noise - batch_latents
-            elif self.sd.prediction_type == 'v_prediction':
-                target = self.sd.noise_scheduler.get_velocity(batch_latents, batch_noise, timesteps)
-            else:
-                target = batch_noise
+                noise_pred = self.sd.predict_noise(
+                    latents=noisy_latents.to(device, dtype=dtype),
+                    conditional_embeddings=batch_embeds,
+                    timestep=timesteps,
+                    guidance_scale=1.0,
+                    guidance_embedding_scale=self.train_config.cfg_scale,
+                    bypass_guidance_embedding=self.train_config.bypass_guidance_embedding,
+                )
 
-            val_loss = torch.nn.functional.mse_loss(noise_pred.float(), target.float())
+                if self.sd.is_flow_matching:
+                    target = batch_noise - batch_latents
+                elif self.sd.prediction_type == 'v_prediction':
+                    target = self.sd.noise_scheduler.get_velocity(batch_latents, batch_noise, timesteps)
+                else:
+                    target = batch_noise
+
+                losses.append(torch.nn.functional.mse_loss(noise_pred.float(), target.float()))
+
+            val_loss = torch.stack(losses).mean()
             self.additional_logs['val/loss'] = val_loss.item()
         network.multiplier = start_multiplier
         if was_unet_training:
