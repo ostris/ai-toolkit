@@ -212,8 +212,9 @@ export default function JobLossGraph({ job }: Props) {
     }
   }, [hydrated, useLogScale, showTrend, smoothing, plotStride, clipOutliers, enabled]);
 
-  // keep enabled map in sync with discovered keys. Only "loss/loss" is on by
-  // default; every other metric starts deactivated (user can toggle it on).
+  // keep enabled map in sync with discovered keys. "loss/loss" and "val/loss"
+  // are on by default; every other metric starts deactivated (user can toggle
+  // it on).
   useEffect(() => {
     // Nothing discovered yet — don't prune, or we'd wipe a restored selection
     // before the keys have loaded.
@@ -221,7 +222,7 @@ export default function JobLossGraph({ job }: Props) {
     setEnabled(prev => {
       const next = { ...prev };
       for (const k of lossKeys) {
-        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? k === 'loss/loss';
+        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? (k === 'loss/loss' || k === 'val/loss');
       }
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
