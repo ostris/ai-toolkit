@@ -1612,7 +1612,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
             img = transforms.CenterCrop(resolution)(img)
             tensor = transforms.ToTensor()(img) * 2.0 - 1.0
             image_list.append(tensor)
-            prompt_list.append(item.prompt)
+            prompt = item.prompt
+            if self.trigger_word is not None:
+                prompt = self.sd.inject_trigger_into_prompt(
+                    prompt,
+                    trigger=self.trigger_word,
+                    add_if_not_present=False,
+                )
+            prompt_list.append(prompt)
 
         fork_devices = [device] if device.type == 'cuda' else []
         with torch.no_grad(), torch.random.fork_rng(devices=fork_devices):
