@@ -497,6 +497,17 @@ export default function SimpleJob({
             )}
             {jobConfig.config.process[0].network?.type == 'lora' && (
               <>
+                <TextInput
+                  label="Pretrained LoRA Path"
+                  value={jobConfig.config.process[0].network.pretrained_lora_path ?? ''}
+                  onChange={value =>
+                    setJobConfig(
+                      value.trim() === '' ? undefined : value.trim(),
+                      'config.process[0].network.pretrained_lora_path'
+                    )
+                  }
+                  placeholder="eg. /path/to/previous_lora.safetensors"
+                />
                 <NumberInput
                   label="Linear Rank"
                   value={jobConfig.config.process[0].network.linear}
