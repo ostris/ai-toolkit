@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 interface FileObject {
   path: string;
@@ -19,7 +20,7 @@ export default function useFilesList(jobID: string, reloadInterval: null | numbe
       loadStatus = 'refreshing';
     }
     setStatus(loadStatus);
-    apiClient
+    return apiClient
       .get(`/api/jobs/${jobID}/files`)
       .then(res => res.data)
       .then(data => {
@@ -36,19 +37,7 @@ export default function useFilesList(jobID: string, reloadInterval: null | numbe
       });
   };
 
-  useEffect(() => {
-    refreshFiles();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshFiles();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [jobID]);
+  usePollLoop(refreshFiles, reloadInterval, [jobID]);
 
   return { files, setFiles, status, refreshFiles };
 }

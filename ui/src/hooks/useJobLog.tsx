@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { apiClient } from '@/utils/api';
 import { TerminalEmulator } from '@/utils/terminalEmulator';
+import usePollLoop from '@/hooks/usePollLoop';
 
 interface FileObject {
   path: string;
@@ -38,7 +39,7 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
     }
     setStatus(loadStatus);
     const offset = offsetRef.current;
-    apiClient
+    return apiClient
       .get(`/api/jobs/${jobID}/log`, offset !== null ? { params: { offset } } : undefined)
       .then(res => res.data)
       .then(data => {
@@ -62,25 +63,17 @@ export default function useJobLog(jobID: string, reloadInterval: null | number =
       });
   };
 
+  // New job — start fresh. Declared before the poll loop so the reset runs
+  // before the first fetch when jobID changes.
   useEffect(() => {
-    // New job — start fresh.
     offsetRef.current = null;
     didInitialLoadRef.current = false;
     inFlightRef.current = false;
     terminalRef.current?.reset();
     setLog('');
-    refresh();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refresh();
-      }, reloadInterval);
-
-      return () => {
-        clearInterval(interval);
-      };
-    }
   }, [jobID]);
+
+  usePollLoop(refresh, reloadInterval, [jobID]);
 
   return { log, status, refresh };
 }

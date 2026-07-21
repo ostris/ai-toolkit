@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export interface LossPoint {
   step: number;
@@ -115,24 +116,17 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     }
   }, [jobID, reloadInterval]);
 
+  // reset when job changes. Declared before the poll loop so the reset runs
+  // before the first fetch when jobID changes.
   useEffect(() => {
-    // reset when job changes
     didInitialLoadRef.current = false;
     lastStepByKeyRef.current = {};
     setSeries({});
     setKeys([]);
     setStatus('idle');
+  }, [jobID]);
 
-    refreshLoss();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshLoss();
-      }, reloadInterval);
-
-      return () => clearInterval(interval);
-    }
-  }, [jobID, reloadInterval, refreshLoss]);
+  usePollLoop(refreshLoss, reloadInterval, [jobID]);
 
   return { series, keys, lossKeys, status, refreshLoss, setSeries };
 }
