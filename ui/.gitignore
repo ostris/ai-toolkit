@@ -40,3 +40,5 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 aitk_db.db
+aitk_db.db-wal
+aitk_db.db-shm

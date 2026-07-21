@@ -182,6 +182,8 @@ cython_debug/
 .DS_Store
 ._.DS_Store
 aitk_db.db
+aitk_db.db-wal
+aitk_db.db-shm
 /notes.md
 /data
 .claude
