@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
-const prisma = new PrismaClient();
 const isWindows = process.platform === 'win32';
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {

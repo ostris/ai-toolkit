@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { getTrainingFolder } from '@/server/settings';
@@ -7,8 +7,6 @@ import { getTrainingFolder } from '@/server/settings';
 import sqlite3 from 'sqlite3';
 
 export const runtime = 'nodejs';
-
-const prisma = new PrismaClient();
 
 function openDb(filename: string) {
   const db = new sqlite3.Database(filename);

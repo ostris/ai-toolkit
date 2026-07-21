@@ -1,10 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/server/prisma';
 import { defaultDatasetsFolder, defaultDataRoot } from '@/paths';
 import { defaultTrainFolder } from '@/paths';
 import NodeCache from 'node-cache';
 
 const myCache = new NodeCache();
-const prisma = new PrismaClient();
 
 export const flushCache = () => {
   myCache.flushAll();
