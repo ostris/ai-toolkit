@@ -317,7 +317,17 @@ class DiffusionTrainer(SDTrainer):
         super(DiffusionTrainer, self).on_error(e)
         if self.is_ui_trainer:
             try:
-                if self.accelerator.is_main_process and not self.is_stopping:
+                if isinstance(e, KeyboardInterrupt):
+                    # SIGINT (UI stop button or ctrl+c) is a stop, not an error
+                    self.is_stopping = True
+                    progress_bar = getattr(self, "progress_bar", None)
+                    if progress_bar is not None:
+                        # silence the bar so tqdm doesn't repaint it at interpreter exit
+                        progress_bar.disable = True
+                        progress_bar.close()
+                    if self.accelerator.is_main_process:
+                        self.update_status("stopped", "Job stopped")
+                elif self.accelerator.is_main_process and not self.is_stopping:
                     self.update_status("error", str(e))
                 self.update_db_key("step", self.last_save_step)
                 asyncio.run(self.wait_for_all_async())

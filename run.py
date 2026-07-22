@@ -128,8 +128,11 @@ def main():
             except Exception as e2:
                 print_acc(f"Error running on_error: {e2}")
             if not args.recover:
-                print_end_message(jobs_completed, jobs_failed)
-                raise e
+                print_acc("")
+                print_acc("========================================")
+                print_acc("Job stopped")
+                print_acc("========================================")
+                sys.exit(0)
 
 
 if __name__ == '__main__':
