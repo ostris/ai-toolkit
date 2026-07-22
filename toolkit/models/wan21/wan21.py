@@ -487,6 +487,7 @@ class Wan21(BaseModel):
         self.pipeline = pipe
         self.model = transformer
         self.vae = vae
+        self.vae.enable_tiling()
         self.text_encoder = text_encoder
         self.tokenizer = tokenizer
 
