@@ -199,6 +199,8 @@ export default function SimpleJob({
 
   const showGPUSelect = !isMac();
 
+  const validationConfig = jobConfig.config.process[0].train.validation_config;
+
   let numDatasetCols = 4;
   let numSampleTopCols = 4;
   let datasetStyleClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6';
@@ -329,6 +331,14 @@ export default function SimpleJob({
                   onChange={value => setJobConfig(value, 'config.process[0].model.low_vram')}
                 />
               </FormGroup>
+            )}
+            {modelArch?.additionalSections?.includes('model.model_kwargs.kv_cache') && (
+              <Checkbox
+                label="KV Cache"
+                docKey="model.model_kwargs.kv_cache"
+                checked={jobConfig.config.process[0].model.model_kwargs.kv_cache || false}
+                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.kv_cache')}
+              />
             )}
             {modelArch?.additionalSections?.includes('model.qie.match_target_res') && (
               <Checkbox
@@ -621,6 +631,7 @@ export default function SimpleJob({
                     { value: 'adamw8bit', label: 'AdamW8Bit' },
                     { value: 'automagic', label: 'Automagic' },
                     { value: 'automagic2', label: 'Automagic v2' },
+                    { value: 'automagic3', label: 'Automagic v3' },
                     { value: 'prodigyopt', label: 'Prodigy' },
                     { value: 'prodigy8bit', label: 'Prodigy8Bit' },
                   ]}
@@ -823,6 +834,136 @@ export default function SimpleJob({
                 )}
               </div>
             </div>
+          </Card>
+        </div>
+        <div>
+          <Card
+            title="Validation"
+            toggled={!!validationConfig}
+            onToggle={value => {
+              if (value) {
+                setJobConfig(
+                  {
+                    validation_items: [{ image_path: '', prompt: '' }],
+                    resolution: 1024,
+                    validate_every_n_steps: 1,
+                    validation_sigmas: [0.5],
+                  },
+                  'config.process[0].train.validation_config',
+                );
+              } else {
+                setJobConfig(undefined, 'config.process[0].train.validation_config');
+              }
+            }}
+          >
+            {validationConfig && (
+              <>
+                <p className="text-sm text-gray-400 mb-4">
+                  Validation runs a stable loss check on a fixed set of images. Each image is encoded once at startup
+                  and predicted at the selected sigmas with fixed seeds, so the result is always deterministic and
+                  comparable across the run. The average loss is logged as val/loss every time validation runs. The
+                  images need to match the concept of your dataset, but{' '}
+                  <span className="font-bold text-gray-300">do not include the validation images in the dataset</span>.
+                  They must be images containing the concept you want to train, but not an image trained on.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <NumberInput
+                    label="Validate Every"
+                    value={validationConfig.validate_every_n_steps}
+                    onChange={value =>
+                      setJobConfig(value, 'config.process[0].train.validation_config.validate_every_n_steps')
+                    }
+                    placeholder="eg. 10"
+                    min={1}
+                    required
+                  />
+                  <NumberInput
+                    label="Validation Resolution"
+                    value={validationConfig.resolution}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.validation_config.resolution')}
+                    placeholder="eg. 512"
+                    min={64}
+                    required
+                  />
+                  <SelectInput
+                    label="Validation Sigmas"
+                    value={(validationConfig.validation_sigmas ?? [1.0, 0.75, 0.5, 0.25]).join(', ')}
+                    onChange={value =>
+                      setJobConfig(
+                        value.split(',').map((v: string) => parseFloat(v)),
+                        'config.process[0].train.validation_config.validation_sigmas',
+                      )
+                    }
+                    options={[
+                      { value: '0.5', label: '0.5' },
+                      { value: '1, 0.5', label: '1.0, 0.5' },
+                      { value: '1, 0.66, 0.33', label: '1.0, 0.66, 0.33' },
+                      { value: '1, 0.75, 0.5, 0.25', label: '1.0, 0.75, 0.5, 0.25' },
+                    ]}
+                  />
+                </div>
+                <div className="mt-4">
+                  <label className="block text-xs text-gray-300 mb-2">
+                    Validation Images ({validationConfig.validation_items.length})
+                  </label>
+                  {validationConfig.validation_items.map((item, i) => (
+                    <div key={i} className="rounded-lg pl-4 pr-1 py-3 mb-4 bg-gray-950">
+                      <div className="flex items-center space-x-4">
+                        <SampleControlImage
+                          instruction="Add Image"
+                          src={item.image_path === '' ? null : item.image_path}
+                          onNewImageSelected={imagePath => {
+                            setJobConfig(
+                              imagePath ?? '',
+                              `config.process[0].train.validation_config.validation_items[${i}].image_path`,
+                            );
+                          }}
+                        />
+                        <div className="flex-1">
+                          <TextInput
+                            label="Prompt"
+                            value={item.prompt}
+                            onChange={value =>
+                              setJobConfig(
+                                value,
+                                `config.process[0].train.validation_config.validation_items[${i}].prompt`,
+                              )
+                            }
+                            placeholder="Enter prompt"
+                          />
+                        </div>
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setJobConfig(
+                                validationConfig.validation_items.filter((_, index) => index !== i),
+                                'config.process[0].train.validation_config.validation_items',
+                              )
+                            }
+                            className="rounded-full p-1 text-sm"
+                          >
+                            <X />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setJobConfig(
+                        [...validationConfig.validation_items, { image_path: '', prompt: '' }],
+                        'config.process[0].train.validation_config.validation_items',
+                      )
+                    }
+                    className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                  >
+                    Add Validation Image
+                  </button>
+                </div>
+              </>
+            )}
           </Card>
         </div>
         <div>
@@ -1171,6 +1312,15 @@ export default function SimpleJob({
                   onChange={value => setJobConfig(value, 'config.process[0].sample.sample_every')}
                   placeholder="eg. 250"
                   min={1}
+                  required
+                />
+                <NumberInput
+                  label="Sample Start Step"
+                  value={jobConfig.config.process[0].sample.sample_start_step ?? 0}
+                  onChange={value => setJobConfig(value, 'config.process[0].sample.sample_start_step')}
+                  placeholder="eg. 0"
+                  className="pt-2"
+                  min={0}
                   required
                 />
                 <SelectInput

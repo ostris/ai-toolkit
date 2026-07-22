@@ -140,7 +140,7 @@ class HidreamO1Model(BaseModel):
         print(f"Using noise scale: {self.noise_scale}")
         global _GLOBAL_NOISE_SCALE
         _GLOBAL_NOISE_SCALE = self.noise_scale
-        self.is_comfy_weight = False  # save as single file if true
+        self.is_comfy_weight = self.model_config.model_kwargs.get("is_comfy_weight", False)
 
     # static method to get the noise scheduler
     @staticmethod

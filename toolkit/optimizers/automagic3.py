@@ -93,8 +93,15 @@ class Automagic3(torch.optim.Optimizer):
     lr : float
         Starting learning rate for every group. The controller adapts away
         from this in whichever direction the pooled vote points, so it is a
-        launch point, not a tuned target. There are no min/max lr clamps
-        (only a numerical overflow guard far outside the usable range).
+        launch point, not a tuned target.
+    min_lr : float
+        Lower bound on the adapted lr (default 1e-30). At the default this is
+        purely a numerical overflow guard far outside the usable range; set it
+        higher to put a hard floor under the controller.
+    max_lr : float
+        Upper bound on the adapted lr (default 1e3). At the default this is
+        purely a numerical overflow guard far outside the usable range; set it
+        lower to put a hard ceiling on the controller.
     beta2 : float
         EMA decay for the second moment, as in Adam/Adafactor.
     eps : float
@@ -172,6 +179,8 @@ class Automagic3(torch.optim.Optimizer):
         self,
         params,
         lr: float = 1e-6,
+        min_lr: float = 1e-8,
+        max_lr: float = 1e3,
         beta2: float = 0.999,
         eps: float = 1e-30,
         clip_threshold: float = 1.0,
@@ -179,6 +188,10 @@ class Automagic3(torch.optim.Optimizer):
         polarity_history: int = 8,  # sign-history window length (2-64)
         fused: bool = True,
     ):
+        if min_lr > max_lr:
+            raise ValueError(
+                f"min_lr ({min_lr}) must be <= max_lr ({max_lr})"
+            )
         if lr > 1e-3:
             # No clamping: a too-high start just oscillates immediately and
             # the controller drives it down.
@@ -188,6 +201,8 @@ class Automagic3(torch.optim.Optimizer):
             )
         defaults = dict(
             lr=lr,
+            min_lr=min_lr,
+            max_lr=max_lr,
             beta2=beta2,
             eps=eps,
             clip_threshold=clip_threshold,
@@ -358,7 +373,9 @@ class Automagic3(torch.optim.Optimizer):
         # param rides the normal state_dict machinery and tolerates
         # multi-device groups).
         state["lr"] = torch.tensor(
-            float(group["lr"]), dtype=torch.float32, device=p.device
+            min(max(float(group["lr"]), group["min_lr"]), group["max_lr"]),
+            dtype=torch.float32,
+            device=p.device,
         )
         # Ring buffer of per-element update sign bits, one 1-bit-packed
         # plane per step (H/8 bytes per element). Sums are recomputed from
@@ -592,9 +609,11 @@ class Automagic3(torch.optim.Optimizer):
                     continue
                 lr_t = st["lr"]
                 f = factor if factor.device == lr_t.device else factor.to(lr_t.device)
-                # Numerical overflow guard only -- NOT a control rail
-                # (decades outside the usable range).
-                lr_t.mul_(f).clamp_(min=1e-30, max=1e3)
+                # Keep the adapted lr inside [min_lr, max_lr]. At the defaults
+                # this is a numerical overflow guard only (decades outside the
+                # usable range); tighter user-set bounds act as hard rails on
+                # the controller.
+                lr_t.mul_(f).clamp_(min=group["min_lr"], max=group["max_lr"])
             self._group_num[gi] = None
             self._group_den[gi] = None
 

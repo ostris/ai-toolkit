@@ -80,6 +80,7 @@ class SampleConfig:
     def __init__(self, **kwargs):
         self.sampler: str = kwargs.get('sampler', 'ddpm')
         self.sample_every: int = kwargs.get('sample_every', 100)
+        self.sample_start_step: int = kwargs.get('sample_start_step', 0)
         self.width: int = kwargs.get('width', 512)
         self.height: int = kwargs.get('height', 512)
         self.neg = kwargs.get('neg', False)
@@ -334,6 +335,23 @@ class AdapterConfig:
         # for i2v adapter
         # append the masked start frame. During pretraining we will only do the vision encoder
         self.i2v_do_start_frame: bool = kwargs.get('i2v_do_start_frame', False)
+
+
+class ValidationItem:
+    def __init__(self, **kwargs):
+        self.image_path: str = kwargs.get('image_path', '')
+        self.prompt: str = kwargs.get('prompt', '')
+
+
+class ValidationConfig:
+    def __init__(self, **kwargs):
+        self.validation_items: List[ValidationItem] = [
+            item if isinstance(item, ValidationItem) else ValidationItem(**item)
+            for item in kwargs.get('validation_items', [])
+        ]
+        self.resolution: int = kwargs.get('resolution', 512)
+        self.validate_every_n_steps: int = kwargs.get('validate_every_n_steps', 10)
+        self.validation_sigmas: List[float] = kwargs.get('validation_sigmas', [1.0, 0.75, 0.5, 0.25])
 
 
 class EmbeddingConfig:
@@ -591,9 +609,13 @@ class TrainConfig:
         self.max_loss_debug: bool = kwargs.get("max_loss_debug", False)
         # will clip the loss to this amount to prevent wild outliers
         self.max_loss: Optional[float] = kwargs.get("max_loss", None)
+        self.validation_config: Optional[ValidationConfig] = None
+        validation = kwargs.get('validation_config', None)
+        if validation is not None:
+            self.validation_config: ValidationConfig = ValidationConfig(**validation)
 
 
-ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21']
+ModelArch = Literal['sd1', 'sd2', 'sd3', 'sdxl', 'pixart', 'pixart_sigma', 'auraflow', 'flux', 'flex1', 'flex2', 'lumina2', 'vega', 'ssd', 'wan21', 'anima']
 
 
 class ModelConfig:
@@ -923,6 +945,10 @@ class DatasetConfig:
         self.flip_y: bool = kwargs.get('flip_y', False)
         self.augments: List[str] = kwargs.get('augments', [])
         self.control_path: Union[str,List[str]] = kwargs.get('control_path', None)  # depth maps, etc
+        # pull a random control image from the same folder as the image. Useful for folder grouped pairs.
+        self.control_from_same_folder: bool = kwargs.get('control_from_same_folder', False)
+        self.num_controls_from_same_folder: int = kwargs.get('num_controls_from_same_folder', 1)
+        
         if self.control_path == '':
             self.control_path = None
         
@@ -1412,5 +1438,3 @@ def validate_configs(
     
     if train_config.batch_size > 1 and any(dataset_config.auto_frame_count for dataset_config in dataset_configs):
         raise ValueError("Cannot use batch size greater than 1 with auto_frame_count. Please set batch_size to 1 or auto_frame_count to False.")
-
-    

@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createRequire } from 'module';
 import os from 'os';
+import { cached } from '@/server/apiCache';
 
 const execAsync = promisify(exec);
 
@@ -93,84 +94,89 @@ async function getMacGpuInfo(): Promise<MacGpuResult | null> {
   }
 }
 
-export async function GET() {
-  try {
-    // Get platform
-    const platform = os.platform();
-    const isWindows = platform === 'win32';
-    const isMac = platform === 'darwin';
+async function getGpuInfo() {
+  // Get platform
+  const platform = os.platform();
+  const isWindows = platform === 'win32';
+  const isMac = platform === 'darwin';
 
-    if (isMac) {
-      const macGpu = await getMacGpuInfo();
-      if (macGpu) {
-        return NextResponse.json({
-          hasNvidiaSmi: false,
-          isMac: true,
-          gpus: [
-            {
-              index: 0,
-              name: macGpu.name,
-              driverVersion: 'macOS',
-              temperature: Math.round(macGpu.temperature),
-              utilization: {
-                gpu: macGpu.gpuLoad,
-                memory: macGpu.memTotal > 0 ? Math.round((macGpu.memUsed / macGpu.memTotal) * 100) : 0,
-              },
-              memory: {
-                total: Math.round(macGpu.memTotal),
-                free: Math.round(macGpu.memTotal - macGpu.memUsed),
-                used: Math.round(macGpu.memUsed),
-              },
-              power: { draw: macGpu.powerDraw, limit: 0 },
-              clocks: { graphics: 0, memory: 0 },
-              fan: { speed: macGpu.fanSpeed },
-            },
-          ],
-        });
-      }
-      return NextResponse.json({
+  if (isMac) {
+    const macGpu = await getMacGpuInfo();
+    if (macGpu) {
+      return {
         hasNvidiaSmi: false,
         isMac: true,
-        gpus: [],
-        error: 'Could not read Mac GPU stats',
-      });
+        gpus: [
+          {
+            index: 0,
+            name: macGpu.name,
+            driverVersion: 'macOS',
+            temperature: Math.round(macGpu.temperature),
+            utilization: {
+              gpu: macGpu.gpuLoad,
+              memory: macGpu.memTotal > 0 ? Math.round((macGpu.memUsed / macGpu.memTotal) * 100) : 0,
+            },
+            memory: {
+              total: Math.round(macGpu.memTotal),
+              free: Math.round(macGpu.memTotal - macGpu.memUsed),
+              used: Math.round(macGpu.memUsed),
+            },
+            power: { draw: macGpu.powerDraw, limit: 0 },
+            clocks: { graphics: 0, memory: 0 },
+            fan: { speed: macGpu.fanSpeed },
+          },
+        ],
+      };
     }
-
-    // nvidia-smi can be installed but non-functional ("couldn't communicate
-    // with the NVIDIA driver") on machines with another GPU vendor, so a
-    // failed query falls through to amd-smi instead of erroring out.
-    if (await checkNvidiaSmi(isWindows)) {
-      try {
-        const gpuStats = await getGpuStats(isWindows);
-        return NextResponse.json({
-          hasNvidiaSmi: true,
-          gpus: gpuStats,
-        });
-      } catch {
-        // fall through to amd-smi
-      }
-    }
-
-    if (await checkAmdSmi(isWindows)) {
-      try {
-        const gpuStats = await getAmdGpuStats();
-        return NextResponse.json({
-          hasNvidiaSmi: false,
-          hasAmdSmi: true,
-          gpus: gpuStats,
-        });
-      } catch (error) {
-        console.error('Error fetching AMD GPU stats:', error);
-      }
-    }
-
-    return NextResponse.json({
+    return {
       hasNvidiaSmi: false,
-      hasAmdSmi: false,
-      isMac: false,
+      isMac: true,
       gpus: [],
-      error: 'No working GPU monitoring tool found (tried nvidia-smi and amd-smi)',
-    });
+      error: 'Could not read Mac GPU stats',
+    };
+  }
+
+  // nvidia-smi can be installed but non-functional ("couldn't communicate
+  // with the NVIDIA driver") on machines with another GPU vendor, so a
+  // failed query falls through to amd-smi instead of erroring out.
+  if (await checkNvidiaSmi(isWindows)) {
+    try {
+      const gpuStats = await getGpuStats(isWindows);
+      return {
+        hasNvidiaSmi: true,
+        gpus: gpuStats,
+      };
+    } catch {
+      // fall through to amd-smi
+    }
+  }
+
+  if (await checkAmdSmi(isWindows)) {
+    try {
+      const gpuStats = await getAmdGpuStats();
+      return {
+        hasNvidiaSmi: false,
+        hasAmdSmi: true,
+        gpus: gpuStats,
+      };
+    } catch (error) {
+      console.error('Error fetching AMD GPU stats:', error);
+    }
+  }
+
+  return {
+    hasNvidiaSmi: false,
+    hasAmdSmi: false,
+    isMac: false,
+    gpus: [],
+    error: 'No working GPU monitoring tool found (tried nvidia-smi and amd-smi)',
+  };
+}
+
+export async function GET() {
+  try {
+    const gpuInfo = await cached('gpu-info', getGpuInfo);
+    return NextResponse.json(gpuInfo);
   } catch (error) {
     console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
@@ -331,4 +337,3 @@ async function getAmdGpuStats() {
     };
   });
 }
-

@@ -98,29 +98,18 @@ function emaWithNulls(ys: (number | null)[], alpha: number): (number | null)[] {
   return out;
 }
 
-function hashToIndex(str: string, mod: number) {
-  let h = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return Math.abs(h) % mod;
-}
-
+// Hue order is deliberate: adjacent slots are maximally separated for
+// colorblind viewers, validated against the gray-950 chart surface.
 const PALETTE = [
-  'rgba(96,165,250,1)', // blue-400
-  'rgba(52,211,153,1)', // emerald-400
-  'rgba(167,139,250,1)', // purple-400
-  'rgba(251,191,36,1)', // amber-400
-  'rgba(244,114,182,1)', // pink-400
-  'rgba(248,113,113,1)', // red-400
-  'rgba(34,211,238,1)', // cyan-400
-  'rgba(129,140,248,1)', // indigo-400
+  'rgba(57,135,229,1)', // blue
+  'rgba(0,131,0,1)', // green
+  'rgba(213,81,129,1)', // magenta
+  'rgba(201,133,0,1)', // yellow
+  'rgba(25,158,112,1)', // aqua
+  'rgba(217,89,38,1)', // orange
+  'rgba(144,133,233,1)', // violet
+  'rgba(230,103,103,1)', // red
 ];
-
-function strokeForKey(key: string) {
-  return PALETTE[hashToIndex(key, PALETTE.length)];
-}
 
 // Persisted, per-URL graph settings. Sliders + display toggles + which loss
 // series are visible. Zoom / highlighted window is intentionally NOT persisted.
@@ -223,8 +212,9 @@ export default function JobLossGraph({ job }: Props) {
     }
   }, [hydrated, useLogScale, showTrend, smoothing, plotStride, clipOutliers, enabled]);
 
-  // keep enabled map in sync with discovered keys. Only "loss/loss" is on by
-  // default; every other metric starts deactivated (user can toggle it on).
+  // keep enabled map in sync with discovered keys. "loss/loss" and "val/loss"
+  // are on by default; every other metric starts deactivated (user can toggle
+  // it on).
   useEffect(() => {
     // Nothing discovered yet — don't prune, or we'd wipe a restored selection
     // before the keys have loaded.
@@ -232,7 +222,7 @@ export default function JobLossGraph({ job }: Props) {
     setEnabled(prev => {
       const next = { ...prev };
       for (const k of lossKeys) {
-        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? k === 'loss/loss';
+        if (next[k] === undefined) next[k] = persistedEnabledRef.current?.[k] ?? (k === 'loss/loss' || k === 'val/loss');
       }
       for (const k of Object.keys(next)) {
         if (!lossKeys.includes(k)) delete next[k];
@@ -242,6 +232,18 @@ export default function JobLossGraph({ job }: Props) {
   }, [lossKeys]);
 
   const activeKeys = useMemo(() => lossKeys.filter(k => enabled[k] !== false), [lossKeys, enabled]);
+
+  // Assign palette slots by position in the (sorted) lossKeys list rather than
+  // by hashing the key name — hashing let different keys collide onto the same
+  // color. Keyed off lossKeys (not activeKeys) so toggling a series off never
+  // repaints the others.
+  const colorByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    lossKeys.forEach((k, i) => {
+      m[k] = PALETTE[i % PALETTE.length];
+    });
+    return m;
+  }, [lossKeys]);
 
   // Build uPlot-aligned data + series configs.
   const built = useMemo(() => {
@@ -268,6 +270,7 @@ export default function JobLossGraph({ job }: Props) {
 
     const data: (number[] | (number | null)[])[] = [xs];
     const seriesConfigs: uPlot.Series[] = [{}]; // x
+    const sparseFlags: boolean[] = [];
 
     // Each metric gets its own y-scale (so unrelated magnitudes auto-range
     // independently) plus a matching colored axis.
@@ -295,10 +298,16 @@ export default function JobLossGraph({ job }: Props) {
         map.set(p.step, p.value as number);
       }
       const raw: (number | null)[] = xs.map(s => (map.has(s) ? (map.get(s) as number) : null));
+      // Metrics logged less often than every step are null at most x positions.
+      // With spanGaps:false and points hidden they'd render as nothing, so
+      // sparse series bridge their gaps and fall back to uPlot's default point
+      // markers (auto-shown when points are far apart, incl. isolated ones).
+      const sparse = map.size < xs.length;
+      sparseFlags.push(sparse);
       const smooth = emaWithNulls(raw, alpha);
       const fullSmooth = emaWithNulls(raw, fullAlpha);
 
-      const color = strokeForKey(key);
+      const color = colorByKey[key] ?? PALETTE[0];
       const colorDull = dulledColor(color);
 
       const colArrays: (number | null)[][] = [];
@@ -310,8 +319,8 @@ export default function JobLossGraph({ job }: Props) {
         scale: scaleKey,
         stroke: color,
         width: 2,
-        spanGaps: false,
-        points: { show: false },
+        spanGaps: sparse,
+        points: sparse ? { size: 6 } : { show: false },
         value: (_u, value) => formatNum(value),
       });
       colArrays.push(smooth);
@@ -323,7 +332,7 @@ export default function JobLossGraph({ job }: Props) {
           scale: scaleKey,
           stroke: colorDull,
           width: 2.5,
-          spanGaps: false,
+          spanGaps: sparse,
           points: { show: false },
           value: (_u, value) => formatNum(value),
         });
@@ -336,8 +345,17 @@ export default function JobLossGraph({ job }: Props) {
         distr: useLogScale ? 3 : 1,
         range: (_u, dataMin, dataMax) => {
           const c = yClipRef.current?.[scaleKey];
-          if (c) return [c.min, c.max];
-          return [dataMin, dataMax];
+          const min = c ? c.min : dataMin;
+          const max = c ? c.max : dataMax;
+          if (min == null || max == null) return [null, null];
+          // uPlot's log tick generator (logAxisSplits) assumes the scale min
+          // sits on a magnitude boundary — its default log range snaps via
+          // rangeLog before ticks are computed. Handing it raw data extents
+          // can wedge its split loop into an endless push (RangeError:
+          // Invalid array length + frozen UI) when the min lands just below
+          // a power of 10. Snap the same way uPlot's default does.
+          if (useLogScale) return uPlot.rangeLog(min, max, 10, false);
+          return [min, max];
         },
       };
 
@@ -378,8 +396,8 @@ export default function JobLossGraph({ job }: Props) {
       }
     }
 
-    return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip };
-  }, [series, activeKeys, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
+    return { data: data as uPlot.AlignedData, seriesConfigs, scales, axes, yClip, sparseFlags };
+  }, [series, activeKeys, colorByKey, smoothing, plotStride, windowSize, useLogScale, showTrend, clipOutliers]);
 
   // Layout wrapper we measure for sizing — uPlot collapses its own mount node
   // to width:min-content, so we can't read sizes off it.
@@ -402,9 +420,12 @@ export default function JobLossGraph({ job }: Props) {
   // Structural recreate key — recreate uPlot only when the series shape or
   // axis distribution changes. Data updates go through setData.
   const hasData = (built.data[0]?.length ?? 0) > 1;
+  // Sparsity is part of the key because spanGaps/points live in the series
+  // configs, which setData alone won't refresh.
+  const sparseKey = built.sparseFlags.map(s => (s ? 1 : 0)).join('');
   const structuralKey = useMemo(
-    () => `${activeKeys.join('|')}|trend=${showTrend}|log=${useLogScale}|has=${hasData}`,
-    [activeKeys, showTrend, useLogScale, hasData],
+    () => `${activeKeys.join('|')}|trend=${showTrend}|log=${useLogScale}|has=${hasData}|sparse=${sparseKey}`,
+    [activeKeys, showTrend, useLogScale, hasData, sparseKey],
   );
 
   useEffect(() => {
@@ -595,7 +616,7 @@ export default function JobLossGraph({ job }: Props) {
                     aria-pressed={enabled[k] !== false}
                     title={k}
                   >
-                    <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: strokeForKey(k) }} />
+                    <span className="inline-block h-2 w-2 rounded-full mr-2" style={{ background: colorByKey[k] }} />
                     {k}
                   </button>
                 ))}

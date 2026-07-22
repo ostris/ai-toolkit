@@ -198,18 +198,26 @@ export const NumberInput = (props: NumberInputProps) => {
 
           const numValue = Number(rawValue);
 
-          // Only apply constraints and call onChange when we have a valid number
+          // don't clamp to min/max while typing, it mangles partial input (typing 1024 with
+          // min 64 becomes 64024). Clamping happens on blur.
           if (!isNaN(numValue)) {
-            let constrainedValue = numValue;
-
-            // Apply min/max constraints if they exist
-            if (min !== undefined && constrainedValue < min) {
-              constrainedValue = min;
-            }
-            if (max !== undefined && constrainedValue > max) {
-              constrainedValue = max;
-            }
-
+            onChange(numValue);
+          }
+        }}
+        onBlur={() => {
+          const numValue = Number(inputValue);
+          if (inputValue === '' || isNaN(numValue)) {
+            return;
+          }
+          let constrainedValue = numValue;
+          if (min !== undefined && constrainedValue < min) {
+            constrainedValue = min;
+          }
+          if (max !== undefined && constrainedValue > max) {
+            constrainedValue = max;
+          }
+          if (constrainedValue !== numValue) {
+            setInputValue(constrainedValue);
             onChange(constrainedValue);
           }
         }}
