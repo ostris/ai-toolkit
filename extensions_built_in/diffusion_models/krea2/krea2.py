@@ -407,9 +407,6 @@ class Krea2Model(BaseModel):
         # load assistant lora if specified
         if self.model_config.assistant_lora_path is not None:
             self.load_training_adapter(transformer)
-            # set qtype to be float8 if it is qfloat8
-            if self.model_config.qtype == "qfloat8":
-                self.model_config.qtype = "float8"
 
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing transformer")
