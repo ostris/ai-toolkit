@@ -136,24 +136,40 @@ async function getGpuInfo() {
     };
   }
 
-  // Check if nvidia-smi is available
-  const hasNvidiaSmi = await checkNvidiaSmi(isWindows);
-
-  if (!hasNvidiaSmi) {
-    return {
-      hasNvidiaSmi: false,
-      isMac: false,
-      gpus: [],
-      error: 'nvidia-smi not found or not accessible',
-    };
+  // nvidia-smi can be installed but non-functional ("couldn't communicate
+  // with the NVIDIA driver") on machines with another GPU vendor, so a
+  // failed query falls through to amd-smi instead of erroring out.
+  if (await checkNvidiaSmi(isWindows)) {
+    try {
+      const gpuStats = await getGpuStats(isWindows);
+      return {
+        hasNvidiaSmi: true,
+        gpus: gpuStats,
+      };
+    } catch {
+      // fall through to amd-smi
+    }
   }
 
-  // Get GPU stats
-  const gpuStats = await getGpuStats(isWindows);
+  if (await checkAmdSmi(isWindows)) {
+    try {
+      const gpuStats = await getAmdGpuStats();
+      return {
+        hasNvidiaSmi: false,
+        hasAmdSmi: true,
+        gpus: gpuStats,
+      };
+    } catch (error) {
+      console.error('Error fetching AMD GPU stats:', error);
+    }
+  }
 
   return {
-    hasNvidiaSmi: true,
-    gpus: gpuStats,
+    hasNvidiaSmi: false,
+    hasAmdSmi: false,
+    isMac: false,
+    gpus: [],
+    error: 'No working GPU monitoring tool found (tried nvidia-smi and amd-smi)',
   };
 }
 
@@ -162,7 +178,7 @@ export async function GET() {
     const gpuInfo = await cached('gpu-info', getGpuInfo);
     return NextResponse.json(gpuInfo);
   } catch (error) {
-    console.error('Error fetching NVIDIA GPU stats:', error);
+    console.error('Error fetching GPU stats:', error);
     return NextResponse.json(
       {
         hasNvidiaSmi: false,
@@ -186,6 +202,15 @@ async function checkNvidiaSmi(isWindows: boolean): Promise<boolean> {
       // Linux/macOS check
       await execAsync('which nvidia-smi');
     }
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function checkAmdSmi(isWindows: boolean): Promise<boolean> {
+  try {
+    await execAsync(isWindows ? 'where amd-smi' : 'which amd-smi');
     return true;
   } catch (error) {
     return false;
@@ -253,4 +278,62 @@ async function getGpuStats(isWindows: boolean) {
     });
 
   return gpus;
+}
+
+// amd-smi reports missing values as the string 'N/A' and wraps most numbers
+// in { value, unit } objects; normalize both to a plain number.
+function amdSmiNumber(raw: any): number {
+  const value = raw && typeof raw === 'object' ? raw.value : raw;
+  const num = typeof value === 'number' ? value : parseFloat(String(value));
+  return Number.isFinite(num) ? num : 0;
+}
+
+// Older amd-smi versions emit a bare array instead of { gpu_data: [...] }.
+function parseAmdSmiJson(stdout: string): any[] {
+  const parsed = JSON.parse(stdout);
+  return Array.isArray(parsed) ? parsed : (parsed.gpu_data ?? []);
+}
+
+async function getAmdGpuStats() {
+  // Query only the sections we need: a bare `amd-smi metric` can crash on
+  // some cards when it tries to read the voltage-curve tables.
+  const [{ stdout: staticOut }, { stdout: metricOut }] = await Promise.all([
+    execAsync('amd-smi static --asic --limit --driver --json'),
+    execAsync('amd-smi metric --usage --power --temperature --mem-usage --fan --clock --json'),
+  ]);
+
+  const staticByGpu = new Map(parseAmdSmiJson(staticOut).map(gpu => [gpu.gpu, gpu]));
+
+  return parseAmdSmiJson(metricOut).map(metric => {
+    const staticInfo = staticByGpu.get(metric.gpu) ?? {};
+    const edgeTemp = amdSmiNumber(metric.temperature?.edge);
+
+    return {
+      index: metric.gpu,
+      name: staticInfo.asic?.market_name ?? 'AMD GPU',
+      driverVersion: staticInfo.driver?.name ?? 'amdgpu',
+      temperature: Math.round(edgeTemp || amdSmiNumber(metric.temperature?.hotspot)),
+      utilization: {
+        gpu: Math.round(amdSmiNumber(metric.usage?.gfx_activity)),
+        memory: Math.round(amdSmiNumber(metric.usage?.umc_activity)),
+      },
+      memory: {
+        total: Math.round(amdSmiNumber(metric.mem_usage?.total_vram)),
+        free: Math.round(amdSmiNumber(metric.mem_usage?.free_vram)),
+        used: Math.round(amdSmiNumber(metric.mem_usage?.used_vram)),
+      },
+      power: {
+        draw: amdSmiNumber(metric.power?.socket_power),
+        limit: amdSmiNumber(staticInfo.limit?.ppt0?.socket_power_limit),
+      },
+      clocks: {
+        graphics: Math.round(amdSmiNumber(metric.clock?.gfx_0?.clk)),
+        memory: Math.round(amdSmiNumber(metric.clock?.mem_0?.clk)),
+      },
+      fan: {
+        // The widget renders fan speed as a percentage
+        speed: Math.round(amdSmiNumber(metric.fan?.usage)),
+      },
+    };
+  });
 }
