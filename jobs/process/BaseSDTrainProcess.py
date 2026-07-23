@@ -2267,6 +2267,24 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_unet_quantized = getattr(self.model_config, 'quantize', False)
                 is_quantized = is_unet_quantized or getattr(self.model_config, 'quantize_te', False)
 
+                if is_quantized:
+                    # TorchAO quantization enables exhaustive coordinate-descent
+                    # tuning globally. That is unexpectedly expensive with the
+                    # default compile mode, so make it an explicit opt-in.
+                    coordinate_descent = bool(
+                        getattr(
+                            self.model_config,
+                            'compile_coordinate_descent',
+                            False,
+                        )
+                    )
+                    torch._inductor.config.coordinate_descent_tuning = (
+                        coordinate_descent
+                    )
+                    torch._inductor.config.coordinate_descent_check_all_directions = (
+                        coordinate_descent
+                    )
+
                 if not is_unet_offloaded:
                     self.sd.unet.to(self.device_torch)
 
