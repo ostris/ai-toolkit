@@ -25,9 +25,7 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
-  devIndicators: {
-    buildActivity: false,
-  },
+  devIndicators: false,
   typescript: {
     // Remove this. Build fails because of route types
     ignoreBuildErrors: true,
