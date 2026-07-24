@@ -89,7 +89,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
   }, [job]);
 
   const isAudioSamples = useMemo(() => sampleImages.length > 0 && sampleImages.every(isAudio), [sampleImages]);
-  const samplesPerRow = isAudioSamples ? Math.max(numSamples, 5) : numSamples;
+  const samplesPerRow = isAudioSamples ? Math.max(numSamples, 6) : numSamples;
 
   // Keep image and video samples grouped by iteration; use a denser grid for audio samples.
   const rows = useMemo(() => {
@@ -197,10 +197,12 @@ export default function SampleImages({ job }: SampleImagesProps) {
               return (
                 // pb-1 recreates the vertical gap between rows that the original single CSS grid provided via `gap-1`.
                 <div
-                  className={classNames('grid gap-1 pb-1', {
-                    'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5': isAudioSamples,
-                  })}
-                  style={isAudioSamples ? undefined : { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
+                  className="grid gap-2 pb-3"
+                  style={
+                    isAudioSamples
+                      ? { gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 180px))' }
+                      : { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }
+                  }
                 >
                   {row.map(sample => (
                     <SampleImageCard

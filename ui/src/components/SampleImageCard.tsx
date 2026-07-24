@@ -120,6 +120,13 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                     (e.target as HTMLImageElement).style.display = 'none';
                   }}
                 />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/20" aria-hidden="true">
+                  <span className="rounded-full border border-gray-700 bg-gray-950/80 p-4 text-gray-200 shadow-md">
+                    <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8.5 5.5v13l11-6.5-11-6.5z" fill="currentColor" />
+                    </svg>
+                  </span>
+                </div>
               </div>
             ) : isItVideo ? (
               <video
