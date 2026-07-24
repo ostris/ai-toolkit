@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { isVideo, isAudio } from '@/utils/basic';
+import { getFilename, isVideo, isAudio } from '@/utils/basic';
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -36,6 +36,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const isItAudio = isAudio(imageUrl);
   const isItVideo = isVideo(imageUrl);
   const isImageType = !isItAudio && !isItVideo;
+  const filename = getFilename(imageUrl);
 
   // Observe both enter and exit
   useEffect(() => {
@@ -139,6 +140,9 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
           {children && isVisible && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
         </div>
+      </div>
+      <div className="mt-1 truncate px-1 text-center text-xs text-gray-500 dark:text-gray-400" title={filename}>
+        {filename}
       </div>
     </div>
   );
