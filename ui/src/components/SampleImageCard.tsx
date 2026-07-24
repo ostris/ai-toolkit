@@ -1,6 +1,13 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
 import { getFilename, isVideo, isAudio } from '@/utils/basic';
 
+function sampleLabel(filename: string) {
+  const match = filename.match(/^.+__(\d+)_(\d+)\.[^.]+$/);
+  if (!match) return filename;
+
+  return `Step ${Number(match[1]).toLocaleString()} · Sample ${Number(match[2])}`;
+}
+
 interface SampleImageCardProps {
   imageUrl: string;
   alt: string;
@@ -37,6 +44,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const isItVideo = isVideo(imageUrl);
   const isImageType = !isItAudio && !isItVideo;
   const filename = getFilename(imageUrl);
+  const label = sampleLabel(filename);
 
   // Observe both enter and exit
   useEffect(() => {
@@ -149,7 +157,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
         </div>
       </div>
       <div className="mt-1 truncate px-1 text-center text-xs text-gray-500 dark:text-gray-400" title={filename}>
-        {filename}
+        {label}
       </div>
     </div>
   );
