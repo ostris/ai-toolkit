@@ -23,7 +23,8 @@ import {
   CreatableSelectInput,
 } from '@/components/formInputs';
 import Card from '@/components/Card';
-import { X, Copy, Wand2, SquareDashed } from 'lucide-react';
+import { X, Copy, Wand2, SquareDashed, Info } from 'lucide-react';
+import { openDoc } from '@/components/DocModal';
 import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
 import { openPromptBoxEditor } from '@/components/PromptBoxEditorModal';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
@@ -322,6 +323,59 @@ export default function SimpleJob({
                 }}
                 placeholder=""
               />
+            )}
+            {modelArch?.gateUrl && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const gateUrl = modelArch.gateUrl as string;
+                    openDoc({
+                      title: 'Gated Model',
+                      description: (
+                        <div className="space-y-3">
+                          <p>
+                            This model is gated on Huggingface. Before you can use it, you will need to accept the model
+                            terms on the model page:
+                          </p>
+                          <p>
+                            <a
+                              href={gateUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:text-blue-300 underline"
+                            >
+                              {gateUrl}
+                            </a>
+                          </p>
+                          <p>
+                            You will also need to create a Huggingface{' '}
+                            <a
+                              href="https://huggingface.co/settings/tokens"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-400 hover:text-blue-300 underline"
+                            >
+                              read token
+                            </a>{' '}
+                            and add it on the{' '}
+                            <a href="/settings" className="text-blue-400 hover:text-blue-300 underline">
+                              settings page
+                            </a>
+                            .
+                          </p>
+                        </div>
+                      ),
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 rounded-md bg-blue-950/60 border border-blue-800 px-3 py-2 text-sm text-blue-200 hover:bg-blue-900/60 text-left"
+                >
+                  <Info className="w-4 h-4 shrink-0 text-blue-400" />
+                  <span>
+                    Gated model. <span className="underline">Learn more.</span>
+                  </span>
+                </button>
+              </div>
             )}
             {modelArch?.additionalSections?.includes('model.low_vram') && (
               <FormGroup label="Options">
