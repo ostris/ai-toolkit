@@ -11,6 +11,7 @@ import { apiClient } from '@/utils/api';
 import classNames from 'classnames';
 import { FaCaretDown, FaCaretUp } from 'react-icons/fa';
 import SampleImageViewer from './SampleImageViewer';
+import { isAudio } from '@/utils/basic';
 
 interface SampleImagesMenuProps {
   job?: Job | null;
@@ -87,14 +88,17 @@ export default function SampleImages({ job }: SampleImagesProps) {
     return 10;
   }, [job]);
 
-  // Group samples into rows of `numSamples` for the virtualized list — one row per sample iteration.
+  const isAudioSamples = useMemo(() => sampleImages.length > 0 && sampleImages.every(isAudio), [sampleImages]);
+  const samplesPerRow = isAudioSamples ? Math.max(numSamples, 6) : numSamples;
+
+  // Keep image and video samples grouped by iteration; use a denser grid for audio samples.
   const rows = useMemo(() => {
     const out: string[][] = [];
-    for (let i = 0; i < sampleImages.length; i += numSamples) {
-      out.push(sampleImages.slice(i, i + numSamples));
+    for (let i = 0; i < sampleImages.length; i += samplesPerRow) {
+      out.push(sampleImages.slice(i, i + samplesPerRow));
     }
     return out;
-  }, [sampleImages, numSamples]);
+  }, [sampleImages, samplesPerRow]);
 
   const scrollToBottom = () => {
     virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end' });
@@ -158,7 +162,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
 
   // Inline style instead of Tailwind grid-cols-N classes — Tailwind only ships grid-cols-1..12,
   // so class-based columns silently break for larger sample counts.
-  const gridCols = Math.max(numSamples, 3);
+  const gridCols = Math.max(samplesPerRow, 3);
 
   const sampleConfig = useMemo(() => {
     if (job?.job_config) {
@@ -185,14 +189,21 @@ export default function SampleImages({ job }: SampleImagesProps) {
               const row = rows[index];
               if (!row) return null;
 
-              // Only pad the final row when numSamples < MIN_COLS and the row is short.
+              // Only pad the final row when samplesPerRow < MIN_COLS and the row is short.
               const MIN_COLS = 3;
-              const shouldPad = numSamples < MIN_COLS && row.length < MIN_COLS;
+              const shouldPad = samplesPerRow < MIN_COLS && row.length < MIN_COLS;
               const padsNeeded = shouldPad ? MIN_COLS - row.length : 0;
 
               return (
                 // pb-1 recreates the vertical gap between rows that the original single CSS grid provided via `gap-1`.
-                <div className="grid gap-1 pb-1" style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}>
+                <div
+                  className="grid gap-2 pb-3"
+                  style={
+                    isAudioSamples
+                      ? { gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 180px))' }
+                      : { gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }
+                  }
+                >
                   {row.map(sample => (
                     <SampleImageCard
                       key={sample}

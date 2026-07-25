@@ -1,5 +1,12 @@
 import React, { useRef, useEffect, useState, ReactNode } from 'react';
-import { isVideo, isAudio } from '@/utils/basic';
+import { getFilename, isVideo, isAudio } from '@/utils/basic';
+
+function sampleLabel(filename: string) {
+  const match = filename.match(/^.+__(\d+)_(\d+)\.[^.]+$/);
+  if (!match) return filename;
+
+  return `Step ${Number(match[1]).toLocaleString()} · Sample ${Number(match[2])}`;
+}
 
 interface SampleImageCardProps {
   imageUrl: string;
@@ -36,6 +43,8 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
   const isItAudio = isAudio(imageUrl);
   const isItVideo = isVideo(imageUrl);
   const isImageType = !isItAudio && !isItVideo;
+  const filename = getFilename(imageUrl);
+  const label = sampleLabel(filename);
 
   // Observe both enter and exit
   useEffect(() => {
@@ -119,6 +128,13 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                     (e.target as HTMLImageElement).style.display = 'none';
                   }}
                 />
+                <div className="absolute inset-0 flex items-center justify-center bg-black/20" aria-hidden="true">
+                  <span className="rounded-full border border-gray-700 bg-gray-950/80 p-4 text-gray-200 shadow-md">
+                    <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8.5 5.5v13l11-6.5-11-6.5z" fill="currentColor" />
+                    </svg>
+                  </span>
+                </div>
               </div>
             ) : isItVideo ? (
               <video
@@ -139,6 +155,9 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
 
           {children && isVisible && <div className="absolute inset-0 flex items-center justify-center">{children}</div>}
         </div>
+      </div>
+      <div className="mt-1 truncate px-1 text-center text-xs text-gray-500 dark:text-gray-400" title={filename}>
+        {label}
       </div>
     </div>
   );
