@@ -666,7 +666,7 @@ class BaseModel:
                         extra,
                     )
 
-                    gen_config.save_image(img, i)
+                    gen_config.save_image_atomic(img, i)
                     gen_config.log_image(img, i)
                     self._after_sample_image(i, len(image_configs))
                     flush()

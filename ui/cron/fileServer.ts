@@ -118,7 +118,7 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       .map(decodeURIComponent)
       .join('/');
 
-    const resolvedFilePath = path.resolve(decodedFilePath);
+    let resolvedFilePath = path.resolve(decodedFilePath);
     const roots = await getRoots();
     const allowedDirs = isImg ? [roots.datasets, roots.training, roots.data] : [roots.datasets, roots.training];
     const isAllowed = allowedDirs.some(
@@ -129,6 +129,17 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       res.writeHead(403);
       res.end('Access denied');
       return;
+    }
+
+    // ?thumb=1 serves the pre-generated 300x300 jpg from the sibling .thumbs
+    // folder (<name>.<ext>.jpg) when it exists; otherwise falls through to
+    // the full file exactly as before. Mirrors the Next.js /api/img route.
+    if (isImg && new URL(req.url || '', 'http://localhost').searchParams.has('thumb')) {
+      const thumbPath = path.join(path.dirname(resolvedFilePath), '.thumbs', path.basename(resolvedFilePath) + '.jpg');
+      const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
+      if (thumbStat && thumbStat.isFile()) {
+        resolvedFilePath = thumbPath;
+      }
     }
 
     let stat: fs.Stats;
