@@ -1199,6 +1199,16 @@ export default function SimpleJob({
                           { value: 'caption', label: 'caption' },
                         ]}
                       />
+                      <SelectInput
+                        label="Resize Method"
+                        className="pt-2"
+                        value={dataset.resize_method || 'lanczos'}
+                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].resize_method`)}
+                        options={[
+                          { value: 'lanczos', label: 'Lanczos' },
+                          { value: 'bicubic', label: 'Bicubic' },
+                        ]}
+                      />
 
                       {modelArch?.additionalSections?.includes('datasets.num_frames') && !dataset.auto_frame_count && (
                         <NumberInput

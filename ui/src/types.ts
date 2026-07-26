@@ -94,6 +94,7 @@ export interface DatasetConfig {
   network_weight: number;
   cache_latents_to_disk?: boolean;
   resolution: number[];
+  resize_method?: 'bicubic' | 'lanczos';
   controls: string[];
   control_path?: string | null;
   num_frames: number;

@@ -17,7 +17,7 @@ from tqdm import tqdm
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, SiglipImageProcessor
 
 from toolkit.audio.preserve_pitch import time_stretch_preserve_pitch
-from toolkit.basic import flush, value_map
+from toolkit.basic import flush, value_map, get_resize_method
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
 from toolkit.config_modules import ControlTypes
 from toolkit.control_generator import ControlGenerator
@@ -619,7 +619,7 @@ class ImageProcessingDTOMixin:
                     img = img.transpose(Image.FLIP_TOP_BOTTOM)
                 
                 # Apply bucketing
-                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                img = img.resize((self.scale_to_width, self.scale_to_height), get_resize_method(self.dataset_config.resize_method))
                 img = img.crop((
                     self.crop_x,
                     self.crop_y,
@@ -829,7 +829,7 @@ class ImageProcessingDTOMixin:
 
         if self.dataset_config.buckets:
             # scale and crop based on file item
-            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            img = img.resize((self.scale_to_width, self.scale_to_height), get_resize_method(self.dataset_config.resize_method))
             # crop to x_crop, y_crop, x_crop + crop_width, y_crop + crop_height
             if img.width < self.crop_x + self.crop_width or img.height < self.crop_y + self.crop_height:
                 # todo look into this. This still happens sometimes
@@ -847,7 +847,7 @@ class ImageProcessingDTOMixin:
             # TODO this is nto right
             img = img.resize(
                 (int(img.size[0] * self.dataset_config.scale), int(img.size[1] * self.dataset_config.scale)),
-                Image.BICUBIC)
+                get_resize_method(self.dataset_config.resize_method))
             min_img_size = min(img.size)
             if self.dataset_config.random_crop:
                 if self.dataset_config.random_scale and min_img_size > self.dataset_config.resolution:
@@ -860,11 +860,11 @@ class ImageProcessingDTOMixin:
                     scaler = scale_size / min_img_size
                     scale_width = int((img.width + 5) * scaler)
                     scale_height = int((img.height + 5) * scaler)
-                    img = img.resize((scale_width, scale_height), Image.BICUBIC)
+                    img = img.resize((scale_width, scale_height), get_resize_method(self.dataset_config.resize_method))
                 img = transforms.RandomCrop(self.dataset_config.resolution)(img)
             else:
                 img = transforms.CenterCrop(min_img_size)(img)
-                img = img.resize((self.dataset_config.resolution, self.dataset_config.resolution), Image.BICUBIC)
+                img = img.resize((self.dataset_config.resolution, self.dataset_config.resolution), get_resize_method(self.dataset_config.resize_method))
 
         if self.augments is not None and len(self.augments) > 0:
             # do augmentations
@@ -943,7 +943,7 @@ class InpaintControlFileItemDTOMixin:
 
             if self.dataset_config.buckets:
                 # scale and crop based on file item
-                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                img = img.resize((self.scale_to_width, self.scale_to_height), get_resize_method(self.dataset_config.resize_method))
                 # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
                 # crop
                 img = img.crop((
@@ -1061,7 +1061,7 @@ class ControlFileItemDTOMixin:
             if not self.full_size_control_images:
                 # we just scale them to 512x512:
                 w, h = img.size
-                img = img.resize((512, 512), Image.BICUBIC)
+                img = img.resize((512, 512), get_resize_method(self.dataset_config.resize_method))
 
             elif not self.use_raw_control_images:
                 w, h = img.size
@@ -1074,7 +1074,7 @@ class ControlFileItemDTOMixin:
 
                 if self.dataset_config.buckets:
                     # scale and crop based on file item
-                    img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                    img = img.resize((self.scale_to_width, self.scale_to_height), get_resize_method(self.dataset_config.resize_method))
                     # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
                     # crop
                     img = img.crop((
@@ -1295,7 +1295,7 @@ class ClipImageFileItemDTOMixin:
             else:
                 # image must be square. If it is not, we will resize/squish it so it is, that way we don't crop out data
                 # resize to the smallest dimension
-                img = img.resize((min_size, min_size), Image.BICUBIC)
+                img = img.resize((min_size, min_size), get_resize_method(self.dataset_config.resize_method))
 
         if self.has_clip_augmentations:
             self.clip_image_tensor = self.augment_clip_image(img, transform=None)
@@ -1522,7 +1522,7 @@ class MaskFileItemDTOMixin:
 
         if self.dataset_config.buckets:
             # scale and crop based on file item
-            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            img = img.resize((self.scale_to_width, self.scale_to_height), get_resize_method(self.dataset_config.resize_method))
             # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
             # crop
             img = img.crop((
@@ -1597,7 +1597,7 @@ class UnconditionalFileItemDTOMixin:
 
         if self.dataset_config.buckets:
             # scale and crop based on file item
-            img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+            img = img.resize((self.scale_to_width, self.scale_to_height), get_resize_method(self.dataset_config.resize_method))
             # img = transforms.CenterCrop((self.crop_height, self.crop_width))(img)
             # crop
             img = img.crop((
