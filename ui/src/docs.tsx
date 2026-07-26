@@ -153,6 +153,18 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.per_image_adaptive_lr': {
+    title: 'Per-Image Adaptive LR',
+    description: (
+      <>
+        Tracks each dataset image's loss trend across epochs. Images that stay hard without
+        improving (often a bad or mismatched caption) get their learning rate throttled, escalating
+        the longer they stay stuck, so one bad image can't keep yanking the weights all run.
+        Consistently healthy images get a small boost. Works for every model architecture and both
+        LoKr and LoRA. Needs a few epochs of history before it starts acting.
+      </>
+    ),
+  },
   'train.unload_text_encoder': {
     title: 'Unload Text Encoder',
     description: (

@@ -708,6 +708,19 @@ export default function SimpleJob({
                   min={0}
                   required
                 />
+                <Checkbox
+                  label="Per-Image Adaptive LR"
+                  className="pt-2"
+                  checked={jobConfig.config.process[0].train.per_image_adaptive_lr || false}
+                  docKey={'train.per_image_adaptive_lr'}
+                  onChange={value => {
+                    if (value) {
+                      setJobConfig(true, 'config.process[0].train.per_image_adaptive_lr');
+                    } else {
+                      setJobConfig(undefined, 'config.process[0].train.per_image_adaptive_lr');
+                    }
+                  }}
+                />
               </div>
               <div>
                 {disableSections.includes('train.timestep_type') ? null : (

@@ -907,6 +907,28 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss.mean([1, 2, 3, 4])
         else:
             loss = loss.mean([1, 2, 3])
+        # per-image adaptive LR: record each item's raw per-sample loss (pre-multiplier) against
+        # its timestep, keyed by file path. Model- and network-agnostic — this is the one shared
+        # loss path for every architecture and both LoKr and LoRA. Never raises into training.
+        if getattr(self.train_config, 'per_image_adaptive_lr', False) and self.loss_watch is not None:
+            try:
+                loss_detached = loss.detach()
+                ts_detached = timesteps.detach()
+                window_steps = max(getattr(self, '_adaptive_lr_window_steps', 1), 1)
+                window_idx = self.step_num // window_steps
+                # timesteps come in on a [0, num_train_timesteps] scale for every arch here
+                # (flow-matching schedulers included) — normalize to [0, 1] for the bucket index.
+                num_train_timesteps = float(getattr(self.train_config, 'num_train_timesteps', 1000) or 1000)
+                for idx, file_item in enumerate(batch.file_items):
+                    self.loss_watch.observe(
+                        epoch=window_idx,
+                        item_key=file_item.path,
+                        timestep=float(ts_detached[idx].item()) / num_train_timesteps,
+                        loss=float(loss_detached[idx].item()),
+                    )
+            except Exception as e:
+                print_acc(f"[adaptive-lr] observe failed: {e}")
+
         # apply loss multiplier before prior loss
         # multiply by our mask
         try:

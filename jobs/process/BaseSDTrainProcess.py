@@ -28,7 +28,7 @@ from toolkit.basic import value_map
 from toolkit.buckets import get_bucket_for_image_size
 from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.custom_adapter import CustomAdapter
-from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch
+from toolkit.data_loader import get_dataloader_from_datasets, trigger_dataloader_setup_epoch, get_dataloader_datasets
 from toolkit.data_transfer_object.data_loader import FileItemDTO, DataLoaderBatchDTO
 from toolkit.ema import ExponentialMovingAverage
 from toolkit.embedding import Embedding
@@ -98,6 +98,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.start_step = 0
         self.epoch_num = 0
         self.last_save_step = 0
+        self.loss_watch = None
         # start at 1 so we can do a sample at the start
         self.grad_accumulation_step = 1
         # if true, then we do not do an optimizer step. We are accumulating gradients
@@ -110,6 +111,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             self.network_config = None
         self.train_config = TrainConfig(**self.get_conf('train', {}))
+        if self.train_config.per_image_adaptive_lr:
+            from toolkit.loss_watch import PerImageAdaptiveLR
+            self.loss_watch = PerImageAdaptiveLR(log_fn=print_acc)
         model_config = self.get_conf('model', {})
         self.modules_being_trained: List[torch.nn.Module] = []
 
@@ -688,7 +692,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
             path_to_save = file_path = os.path.join(self.save_root, 'learnable_snr.json')
             with open(path_to_save, 'w') as f:
                 json.dump(json_data, f, indent=4)
-        
+
+        if self.loss_watch is not None:
+            try:
+                path_to_save = os.path.join(self.save_root, 'loss_watch_state.json')
+                with open(path_to_save, 'w') as f:
+                    json.dump(self.loss_watch.state_dict(), f, indent=2)
+            except Exception as e:
+                print_acc(f"[adaptive-lr] could not save watch state: {e}")
+
         print_acc(f"Saved checkpoint to {file_path}")
 
         # save optimizer
@@ -1910,6 +1922,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.snr_gos.scale.data = torch.tensor(json_data['scale'], device=self.device_torch)
                     self.snr_gos.gamma.data = torch.tensor(json_data['gamma'], device=self.device_torch)
 
+        if self.loss_watch is not None:
+            path_to_load = os.path.join(self.save_root, 'loss_watch_state.json')
+            if os.path.exists(path_to_load):
+                with open(path_to_load, 'r') as f:
+                    self.loss_watch.load_state_dict(json.load(f))
+
         self.hook_after_model_load()
         flush()
         if not self.is_fine_tuning:
@@ -2491,6 +2509,21 @@ class BaseSDTrainProcess(BaseTrainProcess):
             dataloader_reg = None
             dataloader_iterator_reg = None
 
+        # Per-image adaptive LR is evaluated on a STEP-count window, not epochs — ai-toolkit
+        # has no epoch concept in its config (training is defined purely by `steps`), and with a
+        # dataset larger than the step budget a dataloader may never actually exhaust once, so an
+        # exhaustion-triggered boundary could simply never fire. Approximate "one pass" in steps
+        # from the actual dataset size instead, so the watcher's cadence scales with the run
+        # regardless of dataset size, reg-image alternation, or how many datasets are concatenated.
+        self._adaptive_lr_window_steps = 1
+        if self.loss_watch is not None and dataloader is not None:
+            total_images = sum(len(getattr(ds, 'file_list', [])) for ds in get_dataloader_datasets(dataloader))
+            override = getattr(self.train_config, 'per_image_adaptive_lr_window_steps', None)
+            self._adaptive_lr_window_steps = int(override) if override else max(
+                1, round(total_images / max(self.train_config.batch_size, 1)))
+            print_acc(f"[adaptive-lr] evaluating every {self._adaptive_lr_window_steps} steps "
+                      f"(~one pass over {total_images} image(s))")
+
         # zero any gradients
         optimizer.zero_grad()
 
@@ -2806,6 +2839,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.step_num = step + 1
                 self.grad_accumulation_step += 1
                 self.end_step_hook()
+
+                if (self.loss_watch is not None
+                        and self.step_num % self._adaptive_lr_window_steps == 0):
+                    window_idx = self.step_num // self._adaptive_lr_window_steps
+                    self.loss_watch.epoch_boundary(window_idx)
+                    for ds in get_dataloader_datasets(dataloader):
+                        for file_item in getattr(ds, 'file_list', []):
+                            file_item.loss_multiplier = self.loss_watch.multiplier(file_item.path)
 
 
         ###################################################################
