@@ -920,11 +920,17 @@ class SDTrainer(BaseSDTrainProcess):
                 # (flow-matching schedulers included) — normalize to [0, 1] for the bucket index.
                 num_train_timesteps = float(getattr(self.train_config, 'num_train_timesteps', 1000) or 1000)
                 for idx, file_item in enumerate(batch.file_items):
+                    # nominal configured resolution (e.g. 256/512/1024), NOT the post-aspect-crop
+                    # dimensions — with bucketing, crop_width/crop_height vary per aspect ratio
+                    # within the same resolution tier (256/288/336/... are all "256"), which would
+                    # fragment one tier into several and defeat the point of grouping by it.
+                    res = int(getattr(getattr(file_item, 'dataset_config', None), 'resolution', 0) or 0)
                     self.loss_watch.observe(
                         epoch=window_idx,
                         item_key=file_item.path,
                         timestep=float(ts_detached[idx].item()) / num_train_timesteps,
                         loss=float(loss_detached[idx].item()),
+                        resolution=res,
                     )
             except Exception as e:
                 print_acc(f"[adaptive-lr] observe failed: {e}")
