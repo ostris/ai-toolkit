@@ -50,9 +50,13 @@ def detect_nvidia():
             driver = parts[2]
     if not gpus:
         return None
-    # Max CUDA version the driver supports only appears in the banner output
+    # Max CUDA version the driver supports only appears in the banner output.
+    # Windows/WDDM labels it "CUDA UMD Version:" on recent drivers, Linux just
+    # "CUDA Version:" — without the optional word we silently fall through to
+    # the "driver present but version unknown, assume current" path and can
+    # hand an old driver cu130 wheels it cannot run.
     banner = _run_quiet([smi]) or ""
-    m = re.search(r"CUDA Version:\s*([0-9]+\.[0-9]+)", banner)
+    m = re.search(r"CUDA(?:\s+[A-Z]+)?\s+Version:\s*([0-9]+\.[0-9]+)", banner)
     cuda_version = m.group(1) if m else None
     return {"gpus": gpus, "driver": driver, "cuda_version": cuda_version}
 

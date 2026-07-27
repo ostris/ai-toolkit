@@ -53,8 +53,37 @@ def run_doctor():
     has_venv = env.venv_exists()
     _check("venv", has_venv, venv_dir() if has_venv else "not created yet")
     if has_venv:
-        torch = env.installed_torch()
-        _check("torch", torch is not None, torch or "not installed")
+        from . import spec as spec_mod
+
+        stack = env.torch_stack()
+        torch = stack.get("torch")
+        if torch and torch.startswith("ERROR"):
+            torch = None
+        _check("torch", torch is not None, stack.get("torch") or "not installed")
+        # torchvision/torchaudio ship C++ extensions linked against libtorch —
+        # a version skew here fails at import, not at install
+        for name in ("torchvision", "torchaudio"):
+            found = stack.get(name)
+            _check(
+                name,
+                bool(found) and not found.startswith("ERROR"),
+                found or "not installed",
+            )
+        try:
+            want = spec_mod.build_spec(d, allow_cpu=True)
+            _check(
+                "torch stack pins",
+                env.torch_matches(want),
+                "expected %s (%s)"
+                % (
+                    ", ".join(
+                        "%s %s" % (k, v) for k, v in sorted(want.torch_packages.items())
+                    ),
+                    want.backend,
+                ),
+            )
+        except RuntimeError as e:
+            _check("torch stack pins", False, str(e))
         if torch and d["backend"] == "cuda":
             try:
                 out = subprocess.run(

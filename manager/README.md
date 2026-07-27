@@ -19,7 +19,7 @@ python3 -m manager doctor      # diagnose problems
   `install.ps1`) just shell out to this CLI and stay dumb. Machine-readable
   output via `check --json` / `detect --json`.
 - **Hardware → spec mapping** is in [spec.py](spec.py). One universal torch
-  pin (2.12.0 / torchvision 0.27.0 / torchaudio 2.11.0) on every platform:
+  pin (2.13.0 / torchvision 0.28.0 / torchaudio 2.11.0) on every platform:
   cu130 wheels when the driver supports CUDA 13 (cu126 fallback for older
   drivers, refused outright on Blackwell GPUs which need cu130), same stack +
   Python 3.11 + `dgx_requirements.txt` on DGX/Grace, PyPI wheels on Mac,
@@ -34,6 +34,18 @@ python3 -m manager doctor      # diagnose problems
   (whl.natten.org) on Linux both arches; triton bundled with torch on Linux
   and `triton-windows` 3.7.x on Windows. No flash-attn/NATTEN/triton on Mac,
   no NATTEN on Windows (no wheels exist).
+- **The torch stack is pinned against the resolver.** torch is an unpinned
+  transitive dep of timm/peft/accelerate/torchvision, so anything in
+  `requirements*.txt` that conflicts with what the pinned torch needs makes the
+  resolver silently backtrack to an older torch rather than fail — and prebuilt
+  accelerator wheels then reinstall a plain PyPI torch over the GPU one,
+  leaving torchvision/torchaudio's C++ extensions linked against a libtorch
+  that is gone. Every install pass after torch therefore carries a generated
+  constraints file (`torch==X+cu130`, ...) plus per-package `--find-links` to
+  the pytorch index, and `_verify_torch` re-checks (and repairs) the trio
+  before the optional accelerators are import-tested and again at the end.
+  Requirements files must never pin a torch dependency below what torch needs
+  (torch 2.13 wants `setuptools>=77.0.3`).
 - **Nothing global is ever installed.** FFmpeg (shared builds — the libs
   torchcodec dlopens) goes to `.ffmpeg/` ([ffmpeg.py](ffmpeg.py)), Node
   (when the system lacks >= 20) to `.node/` ([nodejs.py](nodejs.py)), the uv

@@ -22,6 +22,13 @@ kernels smoke-tested on an RTX 5090 / sm120 with torch 2.13.0+cu130):
 - triton: bundled with torch on Linux (incl. aarch64; torch 2.13 bundles
   triton 3.7.1); triton-windows 3.7.x matches on Windows; nothing for MPS.
 
+Requirements files must never pin anything torch itself depends on below what
+the pinned torch needs (torch 2.13 wants setuptools>=77.0.3). The resolver does
+not report that as a conflict — torch is an unpinned transitive dep of timm /
+peft / accelerate / torchvision, so it just silently backtracks to an older
+torch and drags torchvision down with it. `torch_constraints()` below turns
+that class of mistake into a hard resolution error instead of a broken venv.
+
 extra_packages are installed AFTER requirements.txt with --upgrade so they can
 override requirement pins (e.g. torchcodec). optional_packages are installed
 one-by-one and only warn on failure (accelerators the training code can live
@@ -90,6 +97,36 @@ class EnvSpec(object):
         if self.torch_index:
             args += ["--index-url", self.torch_index]
         return args
+
+    def torch_constraints(self):
+        """Exact pins for the torch trio, carrying the backend local tag.
+
+        Written to a constraints file and passed to every install pass after
+        torch itself, so nothing in requirements.txt (or a prebuilt accelerator
+        wheel that merely declares `torch`) can quietly swap the GPU build for
+        a PyPI one. Without this, a single conflicting pin anywhere in the tree
+        makes the resolver silently backtrack to an older torch instead of
+        failing, and the accelerator wheels then reinstall a plain PyPI torch
+        on top — which leaves torchaudio/torchvision linked against a libtorch
+        that is no longer there.
+        """
+        tag = "+%s" % self.backend if self.torch_index else ""
+        return [
+            "%s==%s%s" % (k, v, tag) for k, v in sorted(self.torch_packages.items())
+        ]
+
+    def torch_find_links(self):
+        """Per-package wheel pages making the constrained pins resolvable.
+
+        Deliberately per-package `--find-links` rather than `--extra-index-url`:
+        the pytorch index also mirrors numpy/pillow/setuptools/... and with uv's
+        default first-index strategy an extra index would win for those too,
+        pinning them to whatever stale copy pytorch happens to host.
+        """
+        if not self.torch_index:
+            return []
+        base = self.torch_index.rstrip("/")
+        return ["%s/%s/" % (base, name) for name in sorted(self.torch_packages)]
 
     def requirements_path(self):
         return os.path.join(REPO_ROOT, self.requirements_file)
