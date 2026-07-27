@@ -533,6 +533,11 @@ class TrainConfig:
         # ~one pass over the dataset (dataset_size / batch_size) when left None; set explicitly
         # to override, e.g. for a very large dataset where "one pass" would be too infrequent.
         self.per_image_adaptive_lr_window_steps = kwargs.get('per_image_adaptive_lr_window_steps', None)
+        # windows of history required before it starts classifying/throttling (default 2, i.e.
+        # first action at window index 3). With a resolution list, one auto-computed window
+        # already covers every resolution copy of every image, so this can cost more real steps
+        # than expected on a short run — lower it if warmup is eating too much of the budget.
+        self.per_image_adaptive_lr_warmup_windows = kwargs.get('per_image_adaptive_lr_warmup_windows', None)
         
         # do the loss on a timestep to 0 prediction
         self.t0_loss_target = kwargs.get('t0_loss_target', False)

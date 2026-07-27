@@ -113,7 +113,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.train_config = TrainConfig(**self.get_conf('train', {}))
         if self.train_config.per_image_adaptive_lr:
             from toolkit.loss_watch import PerImageAdaptiveLR
-            self.loss_watch = PerImageAdaptiveLR(log_fn=print_acc)
+            watch_kwargs = {'log_fn': print_acc}
+            if self.train_config.per_image_adaptive_lr_warmup_windows is not None:
+                watch_kwargs['warmup_epochs'] = int(self.train_config.per_image_adaptive_lr_warmup_windows)
+            self.loss_watch = PerImageAdaptiveLR(**watch_kwargs)
         model_config = self.get_conf('model', {})
         self.modules_being_trained: List[torch.nn.Module] = []
 
@@ -2517,12 +2520,23 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # regardless of dataset size, reg-image alternation, or how many datasets are concatenated.
         self._adaptive_lr_window_steps = 1
         if self.loss_watch is not None and dataloader is not None:
-            total_images = sum(len(getattr(ds, 'file_list', [])) for ds in get_dataloader_datasets(dataloader))
+            # Count UNIQUE images by path, not raw dataset entries — a resolution list (or
+            # num_repeats) makes a dataset's file_list contain multiple entries per physical
+            # image, all sharing the same file_item.path. Sizing the window off the raw entry
+            # count would make it grow with resolution count even though each unique image is
+            # still only observed roughly once per that many entries — a set naturally corrects
+            # for this regardless of how many resolutions/repeats are configured.
+            unique_paths = {
+                file_item.path
+                for ds in get_dataloader_datasets(dataloader)
+                for file_item in getattr(ds, 'file_list', [])
+            }
+            total_images = len(unique_paths)
             override = getattr(self.train_config, 'per_image_adaptive_lr_window_steps', None)
             self._adaptive_lr_window_steps = int(override) if override else max(
                 1, round(total_images / max(self.train_config.batch_size, 1)))
             print_acc(f"[adaptive-lr] evaluating every {self._adaptive_lr_window_steps} steps "
-                      f"(~one pass over {total_images} image(s))")
+                      f"(~one pass over {total_images} unique image(s))")
 
         # zero any gradients
         optimizer.zero_grad()

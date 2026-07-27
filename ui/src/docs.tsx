@@ -157,11 +157,25 @@ const docs: { [key: string]: ConfigDoc } = {
     title: 'Per-Image Adaptive LR',
     description: (
       <>
-        Tracks each dataset image's loss trend across epochs. Images that stay hard without
+        Tracks each dataset image's loss trend across training. Images that stay hard without
         improving (often a bad or mismatched caption) get their learning rate throttled, escalating
         the longer they stay stuck, so one bad image can't keep yanking the weights all run.
         Consistently healthy images get a small boost. Works for every model architecture and both
-        LoKr and LoRA. Needs a few epochs of history before it starts acting.
+        LoKr and LoRA. Needs a few evaluation windows of history before it starts acting. The window
+        auto-sizes to your unique image count regardless of resolution list or repeats, so a large
+        multi-resolution dataset won't inflate it — but on a short run (e.g. Krea at ~2000 steps) it
+        may still be worth lowering the warmup below so it has time to actually do something.
+      </>
+    ),
+  },
+  'train.per_image_adaptive_lr_warmup_windows': {
+    title: 'Adaptive LR Warmup',
+    description: (
+      <>
+        How many evaluation windows of loss history to collect before throttling/boosting starts.
+        Each window is auto-sized to roughly one pass over your unique images (resolution copies
+        and repeats don't inflate it). Lower this (e.g. to 1) if the run is short enough that the
+        default warmup would eat most of your step budget.
       </>
     ),
   },

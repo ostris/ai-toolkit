@@ -716,11 +716,24 @@ export default function SimpleJob({
                   onChange={value => {
                     if (value) {
                       setJobConfig(true, 'config.process[0].train.per_image_adaptive_lr');
+                      setJobConfig(2, 'config.process[0].train.per_image_adaptive_lr_warmup_windows');
                     } else {
                       setJobConfig(undefined, 'config.process[0].train.per_image_adaptive_lr');
+                      setJobConfig(undefined, 'config.process[0].train.per_image_adaptive_lr_warmup_windows');
                     }
                   }}
                 />
+                {jobConfig.config.process[0].train.per_image_adaptive_lr && (
+                  <NumberInput
+                    label="Adaptive LR Warmup (windows)"
+                    className="pt-2"
+                    value={jobConfig.config.process[0].train.per_image_adaptive_lr_warmup_windows}
+                    docKey={'train.per_image_adaptive_lr_warmup_windows'}
+                    onChange={value => setJobConfig(value, 'config.process[0].train.per_image_adaptive_lr_warmup_windows')}
+                    placeholder="eg. 2"
+                    min={0}
+                  />
+                )}
               </div>
               <div>
                 {disableSections.includes('train.timestep_type') ? null : (
