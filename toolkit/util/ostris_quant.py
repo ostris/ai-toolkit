@@ -32,6 +32,11 @@ class OstrisQuantizer:
     # get_ostris_quantizer); quantized saves need it to restore the backend
     qtype: Optional[str] = None
 
+    # backends that quantize in the weight's own dtype can set this False to
+    # receive the raw weight tensor in quantize_ instead of a float32 copy,
+    # avoiding a 2x-weight-size allocation during model quantization
+    wants_fp32_weight: bool = True
+
     def can_quantize(self, module: torch.nn.Linear) -> bool:
         """Whether this backend can quantize the given linear (e.g. shape constraints)."""
         return True
@@ -173,9 +178,10 @@ class OstrisLazyWeight(torch.Tensor):
 def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
     """Resolve a qtype string to a quantizer backend instance, or None if the qtype
     does not belong to a custom backend. Add new backends here."""
+    from toolkit.util.convrot_quant import CONVROT_QTYPES, get_convrot_quantizer
     from toolkit.util.orbit_quant import ORBIT_QTYPES, OrbitQuantizer
     from toolkit.util.orbit_vq_quant import ORBIT_VQ_QTYPES, OrbitVQQuantizer
-    from toolkit.util.convrot_quant import CONVROT_QTYPES, get_convrot_quantizer
+    from toolkit.util.uintx_quant import UINTX_QTYPES, UIntXQuantizer
 
     quantizer = None
     if qtype in ORBIT_QTYPES:
@@ -184,6 +190,8 @@ def get_ostris_quantizer(qtype: str) -> Optional[OstrisQuantizer]:
         quantizer = OrbitVQQuantizer(**ORBIT_VQ_QTYPES[qtype])
     elif qtype in CONVROT_QTYPES:
         quantizer = get_convrot_quantizer(qtype)
+    elif qtype in UINTX_QTYPES:
+        quantizer = UIntXQuantizer(UINTX_QTYPES[qtype])
     if quantizer is not None:
         # quantized saves read this back to restore the backend on load
         quantizer.qtype = qtype
@@ -327,7 +335,10 @@ def convert_linear_to_ostris(
         return False
     if not quantizer.can_quantize(module):
         return False
-    quantizer.quantize_(module, weight.data.to(torch.float32))
+    if quantizer.wants_fp32_weight:
+        quantizer.quantize_(module, weight.data.to(torch.float32))
+    else:
+        quantizer.quantize_(module, weight.data)
     module.ostris_quantizer = quantizer
     module.ostris_orig_dtype = weight.dtype
     del module._parameters["weight"]

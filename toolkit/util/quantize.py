@@ -7,7 +7,6 @@ from optimum.quanto.tensor import Optimizer, qtype, qtypes
 from torchao.quantization.quant_api import (
     quantize_ as torchao_quantize_,
     Float8WeightOnlyConfig,
-    UIntXWeightOnlyConfig,
     Int8WeightOnlyConfig
 )
 from optimum.quanto import freeze
@@ -42,13 +41,9 @@ Q_MODULES = [
 
 torchao_qtypes = {
     # "int4": Int4WeightOnlyConfig(),
-    "uint2": UIntXWeightOnlyConfig(torch.uint2),
-    "uint3": UIntXWeightOnlyConfig(torch.uint3),
-    "uint4": UIntXWeightOnlyConfig(torch.uint4),
-    "uint5": UIntXWeightOnlyConfig(torch.uint5),
-    "uint6": UIntXWeightOnlyConfig(torch.uint6),
-    "uint7": UIntXWeightOnlyConfig(torch.uint7),
-    "uint8": UIntXWeightOnlyConfig(torch.uint8),
+    # uint2..uint8 are handled by the UIntXQuantizer ostris backend
+    # (toolkit/util/uintx_quant.py), a bit-exact reproduction of torchao 0.10.0's
+    # UIntXWeightOnlyConfig, so ARAs stay byte-identical after torchao upgrades
     "int8": Int8WeightOnlyConfig(),
     "float8": Float8WeightOnlyConfig(),
 }
