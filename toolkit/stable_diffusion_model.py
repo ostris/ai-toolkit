@@ -235,6 +235,9 @@ class StableDiffusion:
         # if a mask is passed, do the loss with the mask. May be set false for models that use a mask for other reasons.
         self.do_masked_loss = True
         
+        # if the model outputs an x0 prediction (clean latent)
+        self.x0_pred = False
+        
     # properties for old arch for backwards compatibility
     @property
     def is_xl(self):
