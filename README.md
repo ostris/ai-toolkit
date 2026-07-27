@@ -81,7 +81,7 @@ cd ai-toolkit
 python3 -m venv venv
 source venv/bin/activate
 # install torch first
-pip3 install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip3 install --no-cache-dir torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 pip3 install -r requirements.txt
 ```
 
@@ -97,7 +97,7 @@ git clone https://github.com/ostris/ai-toolkit.git
 cd ai-toolkit
 python -m venv venv
 .\venv\Scripts\activate
-pip install --no-cache-dir torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip install --no-cache-dir torch==2.13.0 torchvision==0.28.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 pip install -r requirements.txt
 ```
 

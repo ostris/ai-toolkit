@@ -124,6 +124,9 @@ celerybeat.pid
 .venv
 .python
 .node
+.ffmpeg
+.mingit
+.uv
 env/
 venv/
 ENV/
