@@ -17,7 +17,6 @@ albumentations==1.4.15
 albucore==0.0.16
 pydantic
 omegaconf
-k-diffusion
 open_clip_torch
 timm==1.0.22
 prodigyopt
