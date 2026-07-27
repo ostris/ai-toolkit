@@ -14,6 +14,13 @@ if "SEED" in os.environ:
         print(f"Invalid SEED value: {os.environ['SEED']}. SEED must be an integer.")
 
 sys.path.insert(0, os.getcwd())
+
+# The UI launches jobs with no console; keep anything we shell out to (torch
+# compiles, HF git downloads) from flashing a console window. Must come before
+# any import that might spawn a subprocess.
+from toolkit.win_console import suppress_child_consoles
+suppress_child_consoles()
+
 # must come before ANY torch or fastai imports
 # import toolkit.cuda_malloc
 
