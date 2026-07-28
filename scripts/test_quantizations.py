@@ -17,15 +17,20 @@ Measures, per qtype:
     accumulated through the block stack
   - weight reconstruction error and one-time quantize (conversion) time
 
+Runs on CUDA or on Apple Silicon (MPS). See DEVICE NOTES below for what MPS
+can and cannot measure, and which qtypes it cannot run at all.
+
 Usage:
     python scripts/test_quantizations.py --gpu 1
     python scripts/test_quantizations.py --gpu 1 --qtypes bf16 convrot8
+    python scripts/test_quantizations.py --device mps
 """
 
 import argparse
 import math
 import os
 import sys
+import threading
 import time
 
 # set cuda bus ordering to be pcie
@@ -34,6 +39,124 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch  # noqa: E402
+
+# ---------------------------------------------------------------- DEVICE NOTES
+#
+# MPS differs from CUDA in three ways that matter to a benchmark, so the numbers
+# it prints are not interchangeable with CUDA's:
+#
+# 1. No peak-memory API. torch.mps has current_allocated_memory() but no
+#    max_memory_allocated()/reset_peak_memory_stats(), so the vram peaks are
+#    SAMPLED by a side thread polling the allocator (see _MpsPeakSampler)
+#    instead of read exactly. Steady-state values (resident weights) are exact.
+# 2. No fp8 dtype. torch.float8_e4m3fn is undefined on MPS, which rules out the
+#    qfloat8 qtype and convrot4 (its nvfp4 block scales are stored as e4m3).
+#    MPS_UNSUPPORTED lists them; they are dropped from a default run.
+# 3. No int8/fp4 tensor cores, so the convrot backends run their W8A16 fallback
+#    path rather than the W8A8/W4A4 fast path. Latency here says what Apple
+#    hardware does, not what the format is worth on a GPU that can run it.
+
+
+def pick_device(name: str, gpu: int) -> torch.device:
+    if name == "auto":
+        if torch.cuda.is_available():
+            name = "cuda"
+        elif torch.backends.mps.is_available():
+            name = "mps"
+        else:
+            raise SystemExit("no cuda or mps device available")
+    if name == "cuda":
+        if not torch.cuda.is_available():
+            raise SystemExit("--device cuda requested but cuda is not available")
+        device = torch.device(f"cuda:{gpu}")
+        torch.cuda.set_device(device)
+        return device
+    if name == "mps":
+        if not torch.backends.mps.is_available():
+            raise SystemExit("--device mps requested but mps is not available")
+        return torch.device("mps")
+    raise SystemExit(f"unsupported device {name!r}")
+
+
+def describe_device(device: torch.device) -> str:
+    if device.type == "cuda":
+        p = torch.cuda.get_device_properties(device)
+        return (f"{device} ({p.name}, sm_{p.major}{p.minor}, "
+                f"{p.total_memory / 1e9:.0f} GB)")
+    import platform
+    return (f"{device} (Apple {platform.machine()}, "
+            f"{torch.mps.recommended_max_memory() / 1e9:.0f} GB recommended max)")
+
+
+def sync(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+
+def empty_cache(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    elif device.type == "mps":
+        torch.mps.empty_cache()
+
+
+def mem_allocated(device: torch.device) -> int:
+    if device.type == "cuda":
+        return torch.cuda.memory_allocated(device)
+    if device.type == "mps":
+        return torch.mps.current_allocated_memory()
+    return 0
+
+
+class _MpsPeakSampler:
+    """Approximate max_memory_allocated for MPS by polling the allocator.
+
+    Tensors are allocated on the calling thread as ops are enqueued, so a
+    fine-grained poll from a side thread does observe the transients; on the
+    probe cases it recovered exact expected sizes (a 512 MiB transient and a
+    24 MiB matmul output). It can still miss a transient shorter than the poll
+    interval, so treat MPS peaks as a lower bound, not a hard number.
+    """
+
+    def __init__(self, device, interval=0.0002):
+        self.device, self.interval = device, interval
+        self.peak = 0
+        self._stop = threading.Event()
+
+    def __enter__(self):
+        self.peak = mem_allocated(self.device)
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+        return self
+
+    def _poll(self):
+        while not self._stop.is_set():
+            self.peak = max(self.peak, mem_allocated(self.device))
+            time.sleep(self.interval)
+
+    def __exit__(self, *exc):
+        sync(self.device)
+        self.peak = max(self.peak, mem_allocated(self.device))
+        self._stop.set()
+        self._thread.join()
+        return False
+
+
+def measure_peak(run, device: torch.device, base: int) -> int:
+    """Peak bytes allocated during run(), over base. run() is called once first
+    so lazy init and compilation are not charged to the steady-state peak."""
+    run()
+    sync(device)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+        run()
+        sync(device)
+        return torch.cuda.max_memory_allocated(device) - base
+    with _MpsPeakSampler(device) as sampler:
+        run()
+    return sampler.peak - base
 
 # (tokens, in_features, out_features) — FLUX/Wan-class projections
 SPEED_SHAPES = [
@@ -53,6 +176,12 @@ QTYPES = [
     "convrotint7", "convrotint6", "convrotint5", "convrotint4", "convrotint3",
     "convrotint2", "convrotbitnet", "convrotcomfyw4a4",
 ]
+
+# qtypes that cannot run on MPS at all (see DEVICE NOTES: no fp8 dtype).
+# quanto's float8 path is worse than a hard failure — it catches the dtype error,
+# prints "Failed to quantize", and leaves the layer in bf16, so it would benchmark
+# as bf16 under a quantized label. Dropped for the same reason.
+MPS_UNSUPPORTED = {"qfloat8", "float8", "convrot4"}
 
 STACK_KEY = f"{VRAM_BLOCKS}-block stack"
 
@@ -93,11 +222,11 @@ def fp_weight(module: torch.nn.Linear) -> torch.Tensor:
 def bench(fn, iters: int, device) -> float:
     for _ in range(max(3, iters // 5)):
         fn()
-    torch.cuda.synchronize(device)
+    sync(device)
     t0 = time.perf_counter()
     for _ in range(iters):
         fn()
-    torch.cuda.synchronize(device)
+    sync(device)
     return (time.perf_counter() - t0) / iters * 1000  # ms
 
 
@@ -195,20 +324,15 @@ def run_speed(qtype: str, device, iters: int, results: dict):
             )
         except Exception as e:
             print(f"  [{qtype}] compiled train failed for {m}x{k}->{n}: {e}")
-        torch.cuda.empty_cache()
+        empty_cache(device)
 
 
 def _stack_fwd_peak(blocks, x, device, base) -> int:
-    # warm up first so lazy-init allocations (and compilation) are not counted
-    # as steady-state peak
-    with torch.no_grad():
-        stack_forward(blocks, x)
-    torch.cuda.synchronize(device)
-    torch.cuda.reset_peak_memory_stats(device)
-    with torch.no_grad():
-        stack_forward(blocks, x)
-    torch.cuda.synchronize(device)
-    return torch.cuda.max_memory_allocated(device) - base
+    def fwd():
+        with torch.no_grad():
+            stack_forward(blocks, x)
+
+    return measure_peak(fwd, device, base)
 
 
 def _stack_train_peak(blocks, x, device, base, checkpoint) -> int:
@@ -217,24 +341,19 @@ def _stack_train_peak(blocks, x, device, base, checkpoint) -> int:
         xi = x.detach().requires_grad_(True)
         stack_forward(blocks, xi, checkpoint).float().pow(2).mean().backward()
 
-    train_step()
-    torch.cuda.synchronize(device)
-    torch.cuda.reset_peak_memory_stats(device)
-    train_step()
-    torch.cuda.synchronize(device)
-    return torch.cuda.max_memory_allocated(device) - base
+    return measure_peak(train_step, device, base)
 
 
 def run_vram(qtype: str, device, results: dict):
-    torch.cuda.empty_cache()
-    base = torch.cuda.memory_allocated(device)
+    empty_cache(device)
+    base = mem_allocated(device)
 
     blocks = make_stack(device)
     for b in blocks:
         for i in range(len(b)):
             b[i] = convert(b[i], qtype)
-    torch.cuda.empty_cache()
-    results[(qtype, "vram_weights")] = torch.cuda.memory_allocated(device) - base
+    empty_cache(device)
+    results[(qtype, "vram_weights")] = mem_allocated(device) - base
 
     x = torch.randn(VRAM_TOKENS, 3072, device=device, dtype=torch.bfloat16)
 
@@ -256,7 +375,7 @@ def run_vram(qtype: str, device, results: dict):
         print(f"  [{qtype}] compiled vram measurement failed: {e}")
 
     blocks = x = None  # release before the allocator accounting of the next run
-    torch.cuda.empty_cache()
+    empty_cache(device)
 
 
 def run_drift(qtype: str, device, results: dict):
@@ -270,7 +389,7 @@ def run_drift(qtype: str, device, results: dict):
             lin = convert(lin, qtype)
             y_q = lin(x).float()
         results[(qtype, "drift", (m, k, n))] = ((y_q - y_ref).norm() / y_ref.norm()).item()
-        torch.cuda.empty_cache()
+        empty_cache(device)
 
     blocks = make_stack(device)
     x = torch.randn(VRAM_TOKENS, 3072, device=device, dtype=torch.bfloat16)
@@ -282,24 +401,24 @@ def run_drift(qtype: str, device, results: dict):
         y_q = stack_forward(blocks, x).float()
     results[(qtype, "drift", STACK_KEY)] = ((y_q - y_ref).norm() / y_ref.norm()).item()
     blocks = x = None
-    torch.cuda.empty_cache()
+    empty_cache(device)
 
 
 def run_quality_and_quantize_time(qtype: str, device, results: dict):
     torch.manual_seed(0)
     lin = make_layer(3072, 3072, device)
     w0 = lin.weight.detach().float().clone()
-    torch.cuda.synchronize(device)
+    sync(device)
     t0 = time.perf_counter()
     lin = convert(lin, qtype)
-    torch.cuda.synchronize(device)
+    sync(device)
     results[(qtype, "quantize_ms")] = (time.perf_counter() - t0) * 1000
     if qtype == "bf16":
         results[(qtype, "weight_err")] = 0.0
     else:
         wq = fp_weight(lin)
         results[(qtype, "weight_err")] = ((wq - w0).norm() / w0.norm()).item()
-    torch.cuda.empty_cache()
+    empty_cache(device)
 
 
 def print_speed_table(title: str, kind: str, qts, results):
@@ -325,23 +444,37 @@ def print_speed_table(title: str, kind: str, qts, results):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--device", default="auto", choices=["auto", "cuda", "mps"],
+                    help="accelerator to run on (default: cuda if present, else mps)")
     ap.add_argument("--gpu", type=int, default=0, help="cuda device id to run on")
-    ap.add_argument("--qtypes", nargs="+", default=QTYPES, help=f"subset of {QTYPES}")
+    ap.add_argument("--qtypes", nargs="+", default=None, help=f"subset of {QTYPES}")
     ap.add_argument("--iters", type=int, default=50, help="timing iterations per case")
     args = ap.parse_args()
 
-    device = torch.device(f"cuda:{args.gpu}")
-    torch.cuda.set_device(device)
-    props = torch.cuda.get_device_properties(device)
-    print(f"device: cuda:{args.gpu} ({props.name}, sm_{props.major}{props.minor}, "
-          f"{props.total_memory / 1e9:.0f} GB)")
-    print(f"torch {torch.__version__}\n")
+    device = pick_device(args.device, args.gpu)
+    print(f"device: {describe_device(device)}")
+    print(f"torch {torch.__version__}")
+
+    explicit_qtypes = args.qtypes is not None
+    qtypes = args.qtypes if explicit_qtypes else list(QTYPES)
+    if device.type == "mps":
+        blocked = [qt for qt in qtypes if qt in MPS_UNSUPPORTED]
+        if blocked and not explicit_qtypes:
+            qtypes = [qt for qt in qtypes if qt not in MPS_UNSUPPORTED]
+            print(f"note: skipping {', '.join(blocked)} — no fp8 dtype on MPS")
+        elif blocked:
+            # asked for by name: try anyway, but say what is expected to happen
+            print(f"note: {', '.join(blocked)} need an fp8 dtype MPS does not have; "
+                  "expect them to fail or to silently stay in bf16")
+        print("note: MPS vram peaks are sampled, not exact; convrot backends run "
+              "their W8A16 fallback (no int8/fp4 tensor cores)")
+    print()
 
     # warm the toolkit import chain (module imports + custom-op registration) so it
     # isn't charged to the first qtype's quantize timing
-    if any(qt != "bf16" for qt in args.qtypes):
+    if any(qt != "bf16" for qt in qtypes):
         from toolkit.util.ostris_quant import get_ostris_quantizer
-        for qt in args.qtypes:
+        for qt in qtypes:
             if qt != "bf16":
                 get_ostris_quantizer(qt)
 
@@ -351,15 +484,36 @@ def main():
     torch._dynamo.config.cache_size_limit = 4096
 
     results = {}
-    for qt in args.qtypes:
+    ran = []
+    for qt in qtypes:
         print(f"benchmarking {qt} ...")
         torch._dynamo.reset()  # drop the previous qtype's compiled artifacts
-        run_quality_and_quantize_time(qt, device, results)
-        run_drift(qt, device, results)
-        run_speed(qt, device, args.iters, results)
-        run_vram(qt, device, results)
+        try:
+            run_quality_and_quantize_time(qt, device, results)
+            run_drift(qt, device, results)
+            run_speed(qt, device, args.iters, results)
+            run_vram(qt, device, results)
+        except Exception as e:
+            # one unsupported backend should not cost the whole run
+            print(f"  [{qt}] FAILED, dropped from the tables: {type(e).__name__}: {e}")
+            for key in list(results):
+                if key[0] == qt:
+                    del results[key]
+            empty_cache(device)
+            continue
+        if qt != "bf16" and results.get((qt, "weight_err")) == 0.0:
+            print(f"  [{qt}] quantization was a no-op (weights unchanged) — "
+                  "dropped so it is not reported as a quantized result")
+            for key in list(results):
+                if key[0] == qt:
+                    del results[key]
+            continue
+        ran.append(qt)
 
-    qts = args.qtypes
+    if not ran:
+        raise SystemExit("no qtype completed successfully")
+
+    qts = ran
     print_speed_table("layer latency, inference", "inf", qts, results)
     print_speed_table("layer latency, inference (compiled)", "inf_comp", qts, results)
     print_speed_table("layer latency, train fwd+bwd", "train", qts, results)
