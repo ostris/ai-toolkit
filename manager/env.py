@@ -62,24 +62,79 @@ def venv_exists():
     return os.path.isfile(venv_python())
 
 
+def _venv_platform():
+    """sysconfig platform of the existing venv ('win-amd64', 'win-arm64', ...)."""
+    if not venv_exists():
+        return None
+    try:
+        out = subprocess.run(
+            [venv_python(), "-c", "import sysconfig; print(sysconfig.get_platform())"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            env=clean_env(),
+        )
+        if out.returncode != 0:
+            return None
+        return out.stdout.decode().strip() or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _uv_python_platform(uv_python):
+    """'win-arm64' / 'win-amd64' expected for a pinned uv interpreter request."""
+    if not uv_python:
+        return None
+    if "windows-aarch64" in uv_python:
+        return "win-arm64"
+    if "windows-x86_64" in uv_python:
+        return "win-amd64"
+    return None
+
+
 def ensure_venv(spec, dry_run=False):
     """Create the venv if missing. Returns path to the venv python."""
+    if venv_exists():
+        # Switching stacks (e.g. Spark emulated x64 <-> native arm64) needs a
+        # different interpreter arch; the venv is disposable by design, so
+        # recreate it rather than install unresolvable wheels into it.
+        want = _uv_python_platform(spec.uv_python)
+        have = _venv_platform()
+        if want and have and want != have:
+            if dry_run:
+                info(
+                    "[dry-run] venv is %s but this spec needs %s — would "
+                    "recreate the venv." % (have, want)
+                )
+                return venv_python()
+            warn(
+                "Existing venv is %s but this spec needs %s — recreating the "
+                "venv (all packages will be reinstalled)." % (have, want)
+            )
+            import shutil
+
+            shutil.rmtree(venv_dir(), ignore_errors=True)
+        else:
+            return venv_python()
     if venv_exists():
         return venv_python()
 
     target = venv_dir()
     uv = find_uv()
+    # spec.uv_python pins the full interpreter build (arch included) where the
+    # default choice would be wrong — e.g. Windows-on-ARM must stay x86_64
+    python_request = spec.uv_python or spec.python_version
     if dry_run:
         info(
             "[dry-run] would create venv at %s (python %s, via %s)"
-            % (target, spec.python_version, "uv" if uv else "venv module")
+            % (target, python_request, "uv" if uv else "venv module")
         )
         return venv_python(target)
 
     if uv:
-        info("Creating venv with uv (python %s) at %s" % (spec.python_version, target))
+        info("Creating venv with uv (python %s) at %s" % (python_request, target))
         run(
-            [uv, "venv", target, "--python", spec.python_version, "--seed"],
+            [uv, "venv", target, "--python", python_request, "--seed"],
             env=clean_env(),
         )
     else:
@@ -89,7 +144,13 @@ def ensure_venv(spec, dry_run=False):
                 "Install uv (https://docs.astral.sh/uv/) or a newer Python, then re-run."
                 % (sys.version_info[:2] + MIN_SYSTEM_PYTHON)
             )
-        pyver = "%d.%d" % sys.version_info[:2]
+        if spec.uv_python:
+            warn(
+                "uv not found — the venv needs the %s interpreter and the "
+                "system Python may be a different build. Install uv if the "
+                "torch install below fails to resolve." % spec.uv_python
+            )
+        pyver = "%d.%d" % (sys.version_info[:2])
         if pyver != spec.python_version:
             warn(
                 "Recommended Python is %s but using system Python %s "
@@ -116,6 +177,20 @@ def _pip_install(args, dry_run=False, upgrade=False, check=True):
         info("[dry-run] would run: %s" % " ".join(cmd))
         return 0
     code, _ = run(cmd, stream=True, env=clean_env(), check=check)
+    return code
+
+
+def _pip_install_no_deps(pkg, dry_run=False):
+    """Install a single package with --no-deps. Returns exit code."""
+    uv = find_uv()
+    if uv:
+        cmd = [uv, "pip", "install", "--python", venv_python(), "--no-deps", pkg]
+    else:
+        cmd = [venv_python(), "-m", "pip", "install", "--no-deps", pkg]
+    if dry_run:
+        info("[dry-run] would run: %s" % " ".join(cmd))
+        return 0
+    code, _ = run(cmd, stream=True, env=clean_env(), check=False)
     return code
 
 
@@ -419,11 +494,13 @@ def ensure_requirements(spec, dry_run=False, force=False):
         _pip_uninstall(stale, dry_run=dry_run)
     # every pass below carries the torch pins so nothing can swap the GPU build
     pins = _torch_pin_args(spec, dry_run=dry_run)
-    info("Installing requirements from %s..." % spec.requirements_file)
-    _pip_install(["-r", spec.requirements_path()] + pins, dry_run=dry_run)
     find_links = list(pins)
     for url in spec.find_links:
         find_links += ["--find-links", url]
+    info("Installing requirements from %s..." % spec.requirements_file)
+    # find_links included: on Spark the requirements themselves resolve
+    # self-built wheels (opencv, soxr, ...) from the spark wheel set
+    _pip_install(["-r", spec.requirements_path()] + find_links, dry_run=dry_run)
     extras = _filter_extras(spec.extra_packages)
     if extras:
         info("Installing platform extras...")
@@ -454,6 +531,13 @@ def ensure_requirements(spec, dry_run=False, force=False):
                 "removing it (training falls back to native attention)." % name
             )
             _pip_uninstall([name])
+    # packages whose dependency metadata is unsatisfiable on this platform but
+    # which work fine without it (e.g. tensorboard's grpcio on win_arm64)
+    for pkg in spec.no_deps_packages:
+        info("Installing (no-deps): %s" % pkg)
+        code = _pip_install_no_deps(pkg, dry_run=dry_run)
+        if code != 0:
+            warn("No-deps package failed to install (continuing): %s" % pkg)
     _verify_torch(spec, dry_run=dry_run)
     if not dry_run:
         state = load_state()
@@ -467,13 +551,55 @@ def ensure_requirements(spec, dry_run=False, force=False):
 # ---------------------------------------------------------------- sitecustomize
 
 
-def write_sitecustomize(dry_run=False):
-    """Drop a sitecustomize.py into the venv that exposes the local ffmpeg.
+def _msvc_runtime_env():
+    """{env: value} + [bin dirs] from vcvarsarm64, for triton's runtime JIT.
+
+    Triton compiles its kernel launcher stubs with cl.exe at runtime (cached
+    afterwards in ~/.triton), which needs INCLUDE/LIB and cl on PATH. Capture
+    the values once at sync time and bake them into sitecustomize.
+    """
+    vcvars = (
+        r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
+        r"\VC\Auxiliary\Build\vcvarsarm64.bat"
+    )
+    if not os.path.isfile(vcvars):
+        return {}, []
+    try:
+        # string form: list2cmdline would mangle the nested quoting
+        out = subprocess.run(
+            'cmd /s /c "call "%s" >nul && set"' % vcvars,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+        if out.returncode != 0:
+            return {}, []
+        env = {}
+        for line in out.stdout.decode(errors="replace").splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                env[k.upper()] = v
+        bin_dirs = [
+            d for d in env.get("PATH", "").split(os.pathsep)
+            if os.path.isfile(os.path.join(d, "cl.exe"))
+        ][:1]
+        keep = {k: env[k] for k in ("INCLUDE", "LIB") if env.get(k)}
+        if keep and bin_dirs:
+            keep["CC"] = "cl"
+            return keep, bin_dirs
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {}, []
+
+
+def write_sitecustomize(dry_run=False, spec=None):
+    """Drop a sitecustomize.py into the venv exposing runtime DLL dirs.
 
     sitecustomize is imported automatically at interpreter startup, so ANY use
     of the venv python (UI-spawned training jobs, run.py from a terminal) gets
     .ffmpeg/bin on PATH — and on Windows, os.add_dll_directory so torchcodec
-    finds the FFmpeg DLLs.
+    finds the FFmpeg DLLs. On Spark the spec also carries the CUDA/cuDNN/APL
+    bin dirs, because the native torch wheel does not bundle its DLLs.
     """
     from . import ffmpeg
 
@@ -498,19 +624,29 @@ def write_sitecustomize(dry_run=False):
         warn("Could not locate venv site-packages — skipping sitecustomize.")
         return
     target = os.path.join(site_packages, "sitecustomize.py")
+    dll_dirs = [ffmpeg.bin_dir()] + list(getattr(spec, "runtime_dll_dirs", []) or [])
+    runtime_env = dict(getattr(spec, "runtime_env", {}) or {})
+    if getattr(spec, "backend", None) == "cu134":
+        # triton's runtime launcher JIT needs the MSVC environment
+        msvc_env, msvc_bins = _msvc_runtime_env()
+        runtime_env.update(msvc_env)
+        dll_dirs += msvc_bins
     content = (
         "# Generated by the AI Toolkit manager (manager/env.py). Do not edit;\n"
         "# regenerated on every `manager sync`.\n"
         "import os\n"
-        "_FFMPEG_BIN = %r\n"
+        "for _k, _v in %r.items():\n"
+        "    os.environ.setdefault(_k, _v)\n"
+        "_DLL_DIRS = %r\n"
         "_FFMPEG_LIB = %r\n"
-        "if os.path.isdir(_FFMPEG_BIN):\n"
-        "    os.environ['PATH'] = _FFMPEG_BIN + os.pathsep + os.environ.get('PATH', '')\n"
-        "    if hasattr(os, 'add_dll_directory'):\n"
-        "        try:\n"
-        "            os.add_dll_directory(_FFMPEG_BIN)\n"
-        "        except OSError:\n"
-        "            pass\n"
+        "for _d in _DLL_DIRS:\n"
+        "    if os.path.isdir(_d):\n"
+        "        os.environ['PATH'] = _d + os.pathsep + os.environ.get('PATH', '')\n"
+        "        if hasattr(os, 'add_dll_directory'):\n"
+        "            try:\n"
+        "                os.add_dll_directory(_d)\n"
+        "            except OSError:\n"
+        "                pass\n"
         "if os.path.isdir(_FFMPEG_LIB):\n"
         "    # inherited by child processes (the ffmpeg/ffprobe executables\n"
         "    # need it to find their own shared libs)\n"
@@ -519,7 +655,7 @@ def write_sitecustomize(dry_run=False):
         "        os.environ['LD_LIBRARY_PATH'] = (\n"
         "            _FFMPEG_LIB + ((os.pathsep + _prev) if _prev else '')\n"
         "        )\n"
-    ) % (ffmpeg.bin_dir(), ffmpeg.lib_dir())
+    ) % (runtime_env, dll_dirs, ffmpeg.lib_dir())
     if dry_run:
         info("[dry-run] would write %s" % target)
         return
@@ -538,13 +674,23 @@ def sync(spec, detection, dry_run=False, force=False):
         warn(note)
     uvbin.ensure_uv(dry_run=dry_run)
     gitwin.ensure_git(dry_run=dry_run)
+    if spec.backend == "cu134":
+        # native Spark stack: provision CUDA/cuDNN/APL runtime DLLs, VC
+        # redist, and (best-effort) MSVC for triton's kernel launcher JIT
+        from . import sparkdeps
+
+        sparkdeps.ensure_spark_runtime(dry_run=dry_run)
     ensure_venv(spec, dry_run=dry_run)
+    # sitecustomize must exist BEFORE any torch import check below: on Spark
+    # the torch wheel is unbundled and only imports once the CUDA/cuDNN/BLAS
+    # DLL dirs from the spec are exposed to the interpreter
+    write_sitecustomize(dry_run=dry_run, spec=spec)
     changed_torch = ensure_torch(spec, dry_run=dry_run)
     # a torch reinstall can clobber pinned deps; force req pass afterwards
     ensure_requirements(spec, dry_run=dry_run, force=force or changed_torch)
-    ffmpeg.ensure_ffmpeg(detection, dry_run=dry_run)
+    ffmpeg.ensure_ffmpeg(detection, dry_run=dry_run, spec=spec)
     nodejs.ensure_node(detection, dry_run=dry_run)
     nodejs.ensure_ui_deps(dry_run=dry_run)
-    write_sitecustomize(dry_run=dry_run)
+    write_sitecustomize(dry_run=dry_run, spec=spec)
     migrations.run_pending(dry_run=dry_run)
     ok("Environment is up to date.")

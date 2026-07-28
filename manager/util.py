@@ -201,8 +201,34 @@ def download(url, dest, label=None):
     except Exception as e:  # noqa: BLE001 - surface any network failure clearly
         if os.path.exists(tmp):
             os.remove(tmp)
-        die("Download failed for %s: %s" % (url, e))
+        # Windows: python's ssl verifies against the OS cert store but never
+        # triggers Windows' on-demand intermediate-CA fetching, so on a fresh
+        # machine github downloads can fail CERTIFICATE_VERIFY_FAILED even
+        # though the chain is fine. curl (bundled since Win10, schannel-based)
+        # does fetch intermediates — fall back to it before giving up.
+        if not _download_with_curl(url, tmp, label):
+            die("Download failed for %s: %s" % (url, e))
     os.replace(tmp, dest)
+
+
+def _download_with_curl(url, tmp, label):
+    curl = shutil.which("curl")
+    if not curl:
+        return False
+    info("  %s: retrying with curl..." % label)
+    try:
+        code = subprocess.call(
+            [curl, "-fSL", "--retry", "3", "-o", tmp, url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    if code != 0 or not os.path.exists(tmp):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return False
+    return True
 
 
 def extract_archive(archive, dest_dir):

@@ -43,20 +43,37 @@ def local_node_exe():
     return os.path.join(node_bin_dir(), "node.exe" if IS_WINDOWS else "node")
 
 
-def _node_major(exe):
+def _node_info(exe):
+    """(major, arch) for a node executable, e.g. (24, 'x64'), or (None, None)."""
     try:
         out = subprocess.run(
-            [exe, "--version"],
+            [exe, "-p", "process.version + ' ' + process.arch"],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=15,
         )
         if out.returncode != 0:
-            return None
-        text = out.stdout.decode().strip()  # v24.11.1
-        return int(text.lstrip("v").split(".")[0])
+            return None, None
+        version, arch = out.stdout.decode().strip().split()  # v24.11.1 x64
+        return int(version.lstrip("v").split(".")[0]), arch
     except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None, None
+
+
+def _usable_major(exe):
+    """Version if this node can run the UI, else None.
+
+    On Windows only an x64 node qualifies — the UI's native modules resolve
+    for the node process arch and Prisma ships no windows-arm64 query engine,
+    so a native ARM64 node loads the UI but dies on the first DB call. The
+    x64 node runs under emulation on ARM hosts.
+    """
+    major, arch = _node_info(exe)
+    if major is None or major < MIN_NODE_MAJOR:
         return None
+    if IS_WINDOWS and arch != "x64":
+        return None
+    return major
 
 
 def _dist_url(detection):
@@ -68,6 +85,8 @@ def _dist_url(detection):
         plat = "darwin-arm64" if arch == "arm64" else "darwin-x64"
         ext = "tar.gz"
     elif detection["os"] == "windows":
+        # win-x64 even on ARM hosts: Prisma has no windows-arm64 engine, so an
+        # arm64 node can't run the UI (see _usable_major); x64 node emulates fine
         plat = "win-x64"
         ext = "zip"
     else:
@@ -80,13 +99,13 @@ def have_usable_node():
     """(exe, major) for the best available node: local .node/ first, then system."""
     local = local_node_exe()
     if os.path.isfile(local):
-        major = _node_major(local)
-        if major is not None and major >= MIN_NODE_MAJOR:
+        major = _usable_major(local)
+        if major is not None:
             return local, major
     system = which("node")
     if system:
-        major = _node_major(system)
-        if major is not None and major >= MIN_NODE_MAJOR:
+        major = _usable_major(system)
+        if major is not None:
             return system, major
     return None, None
 
@@ -96,6 +115,15 @@ def ensure_node(detection, dry_run=False):
     if exe:
         ok("Node.js v%d found (%s)." % (major, exe))
         return False
+    system = which("node")
+    if system:
+        _, arch = _node_info(system)
+        if IS_WINDOWS and arch and arch != "x64":
+            info(
+                "System Node.js is %s but the UI needs an x64 node on Windows "
+                "(Prisma has no windows-arm64 engine) — installing a local x64 "
+                "copy." % arch
+            )
     url, inner_name = _dist_url(detection)
     if url is None:
         warn(

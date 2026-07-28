@@ -21,6 +21,14 @@ kernels smoke-tested on an RTX 5090 / sm120 with torch 2.13.0+cu130):
   {cp310..cp314} x {linux x86_64, linux aarch64}. No Windows/mac wheels.
 - triton: bundled with torch on Linux (incl. aarch64; torch 2.13 bundles
   triton 3.7.1); triton-windows 3.7.x matches on Windows; nothing for MPS.
+- Windows-on-ARM (verified 2026-07): there are NO win_arm64 wheels for any of
+  the CUDA stack — torch cu130, triton-windows, flash-attn and Prisma's node
+  engine are all x64-only. The supported configuration is therefore the x64
+  stack end to end (Python, torch, Node) running under Windows' x64 emulation,
+  with the GPU driven natively by the NVIDIA driver. build_spec() pins the
+  interpreter arch explicitly so uv can never flip the venv to native aarch64
+  (where torch would not resolve). Revisit if pytorch.org ever publishes
+  win_arm64 CUDA wheels.
 
 Requirements files must never pin anything torch itself depends on below what
 the pinned torch needs (torch 2.13 wants setuptools>=77.0.3). The resolver does
@@ -68,6 +76,51 @@ _WIN_HELPERS = ["wheel", "setuptools", "poetry-core", "hf_xet"]
 
 PYTORCH_INDEX = "https://download.pytorch.org/whl/"
 
+# ---- NVIDIA RTX Spark: native Windows-on-ARM CUDA ---------------------------
+# The CUDA 13.4 developer preview added native win_arm64 CUDA. No public wheels
+# exist for the GPU stack, so we build them ourselves (torch from main +
+# pytorch/pytorch#190448, plus torchvision/torchaudio/torchcodec and the deps
+# with no win_arm64 wheels). The manager installs them from a find-links
+# source: the local wheels/spark/ dir during development, or the hosted URL
+# once published. Without that source (or with a pre-13.4 driver) Spark
+# machines fall back to the emulated x64 stack below, which also works.
+SPARK_BACKEND = "cu134"
+SPARK_TORCH = {
+    "torch": "2.14.0.dev20260727",
+    "torchvision": "0.29.0.dev20260727",
+    "torchaudio": "2.11.0.dev20260727",
+}
+SPARK_WHEELS_DIR = os.path.join(REPO_ROOT, "wheels", "spark")
+# GitHub's expanded_assets endpoint serves plain HTML anchors — a valid
+# pip/uv find-links page pointing at the release assets.
+SPARK_WHEELS_URL = (
+    "https://github.com/ostris/ai-toolkit-spark-wheels/releases/"
+    "expanded_assets/cu134-20260727"
+)
+SPARK_UV_PYTHON = "cpython-3.12-windows-aarch64-none"
+# Runtime DLL homes for the unbundled native torch (TH_BINARY_BUILD=0) are
+# resolved dynamically (system installs of any version, else the downloadable
+# runtime bundle) — see sparkdeps.resolve_dll_dirs().
+
+
+def _spark_wheels_source():
+    """find-links source holding the self-built win_arm64 wheels, or None."""
+    if os.path.isdir(SPARK_WHEELS_DIR):
+        for name in os.listdir(SPARK_WHEELS_DIR):
+            if name.startswith("torch-") and "win_arm64" in name:
+                return SPARK_WHEELS_DIR
+    return SPARK_WHEELS_URL
+
+
+def _spark_capable(detection):
+    """Driver new enough for native win_arm64 CUDA (R616+ reports CUDA 13.4)."""
+    nvidia = detection.get("nvidia") or {}
+    try:
+        cuda = tuple(int(x) for x in (nvidia.get("cuda_version") or "").split("."))
+    except ValueError:
+        return False
+    return cuda >= (13, 4)
+
 
 class EnvSpec(object):
     def __init__(
@@ -81,8 +134,12 @@ class EnvSpec(object):
         optional_packages=None,
         find_links=None,
         notes=None,
+        uv_python=None,
+        torch_links=None,
+        no_deps_packages=None,
+        runtime_dll_dirs=None,
     ):
-        self.backend = backend  # cu130 / cu126 / rocm7.1 / mps / cpu
+        self.backend = backend  # cu134 / cu130 / cu126 / rocm7.1 / mps / cpu
         self.torch_packages = torch_packages  # {name: version}
         self.torch_index = torch_index  # None = PyPI
         self.python_version = python_version
@@ -91,11 +148,29 @@ class EnvSpec(object):
         self.optional_packages = optional_packages or []
         self.find_links = find_links or []
         self.notes = notes or []
+        # full uv interpreter request (e.g. "cpython-3.12-windows-x86_64-none")
+        # when the venv arch must not be left to uv's default; None = just
+        # python_version
+        self.uv_python = uv_python
+        # --find-links sources for the torch trio itself (self-built wheels);
+        # used when torch_index is None
+        self.torch_links = torch_links or []
+        # installed with --no-deps after everything else (e.g. tensorboard on
+        # Spark, whose grpcio dep has no win_arm64 wheels but is only needed
+        # for the server, not the log writer)
+        self.no_deps_packages = no_deps_packages or []
+        # extra DLL dirs the venv needs at runtime (unbundled CUDA/cuDNN/BLAS
+        # on Spark); baked into sitecustomize.py, missing dirs skipped
+        self.runtime_dll_dirs = runtime_dll_dirs or []
+        # env vars every venv python needs (sitecustomize setdefault)
+        self.runtime_env = {}
 
     def torch_args(self):
         args = ["%s==%s" % (k, v) for k, v in sorted(self.torch_packages.items())]
         if self.torch_index:
             args += ["--index-url", self.torch_index]
+        for links in self.torch_links:
+            args += ["--find-links", links]
         return args
 
     def torch_constraints(self):
@@ -142,6 +217,11 @@ class EnvSpec(object):
             "optional_packages": self.optional_packages,
             "find_links": self.find_links,
             "notes": self.notes,
+            "uv_python": self.uv_python,
+            "torch_links": self.torch_links,
+            "no_deps_packages": self.no_deps_packages,
+            "runtime_dll_dirs": self.runtime_dll_dirs,
+            "runtime_env": self.runtime_env,
         }
 
 
@@ -186,8 +266,14 @@ def _cuda_flavor(detection):
         return "cu130", []
     if cuda >= (13, 0):
         return "cu130", []
-    caps = [g.get("compute_cap") for g in nvidia.get("gpus", [])]
-    has_blackwell = any(c and float(c) >= 12.0 for c in caps if c)
+    # non-GPU rows (the NPU on ARM hybrids) report compute_cap as "[N/A]"
+    caps = []
+    for g in nvidia.get("gpus", []):
+        try:
+            caps.append(float(g.get("compute_cap")))
+        except (TypeError, ValueError):
+            pass
+    has_blackwell = any(c >= 12.0 for c in caps)
     if cuda >= (12, 6):
         if has_blackwell:
             raise RuntimeError(
@@ -226,7 +312,10 @@ def _cuda_spec(detection):
     optional = []
     find_links = []
 
-    fa_url = _flash_attn_url(flavor, os_name, arch, python_version)
+    # Windows-on-ARM runs the x64 wheel stack (see module docstring), so wheel
+    # selection uses x86_64 there regardless of the host arch.
+    wheel_arch = "x86_64" if os_name == "windows" else arch
+    fa_url = _flash_attn_url(flavor, os_name, wheel_arch, python_version)
     if fa_url:
         optional.append(fa_url)
 
@@ -250,8 +339,87 @@ def _cuda_spec(detection):
     )
 
 
+def _spark_spec(detection, wheels_source):
+    """Native win_arm64 CUDA 13.4 stack from self-built wheels (RTX Spark)."""
+    from . import sparkdeps
+
+    dll_dirs = sparkdeps.resolve_dll_dirs()
+    spec = _make_spark_spec(detection, wheels_source, dll_dirs)
+    # OpenCV's runtime CPU detection is blind to FP16/DOTPROD on Windows
+    # ARM64 and aborts the process at import even though the N1X supports
+    # both; the self-built cv2 wheels rely on this skip.
+    spec.runtime_env["OPENCV_SKIP_CPU_BASELINE_CHECK"] = "1"
+    # our triton wheel does not bundle NVIDIA's compiler tools (preview
+    # licensing) — point its knobs at the user's CUDA toolkit
+    spec.runtime_env.update(sparkdeps.triton_tool_env())
+    return spec
+
+
+def _make_spark_spec(detection, wheels_source, dll_dirs):
+    return EnvSpec(
+        SPARK_BACKEND,
+        SPARK_TORCH,
+        torch_index=None,
+        python_version="3.12",
+        requirements_file="spark_requirements.txt",
+        # all pins resolve from the spark wheel set (self-built win_arm64):
+        # torchcodec, plus our triton port (torch.compile / compiled flex
+        # attention) — see the wheel-set build notes
+        extra_packages=_WIN_HELPERS + [
+            "torchcodec==0.15.0",
+            "triton==3.8.0+git8743423b",
+        ],
+        # import-verified with rollback, like accelerators on other platforms
+        optional_packages=["flash-attn==2.8.3+cu134torch2.14", "natten==0.21.7"],
+        find_links=[wheels_source],
+        notes=[
+            "RTX Spark native mode: win_arm64 CUDA %s stack from the "
+            "ai-toolkit wheel set (CUDA 13.4 developer preview), including "
+            "self-built flash-attn, NATTEN and triton (torch.compile)."
+            % SPARK_BACKEND,
+        ],
+        uv_python=SPARK_UV_PYTHON,
+        torch_links=[wheels_source],
+        no_deps_packages=["tensorboard"],
+        runtime_dll_dirs=dll_dirs,
+    )
+
+
 def build_spec(detection, allow_cpu=False):
     """Returns EnvSpec, or raises RuntimeError with a user-facing message."""
+    if (
+        detection["os"] == "windows"
+        and detection["arch"] == "aarch64"
+        and detection.get("backend") == "cuda"
+        and os.environ.get("AITK_SPARK_NATIVE", "1") != "0"
+        and _spark_capable(detection)
+    ):
+        from . import sparkdeps
+
+        wheels_source = _spark_wheels_source()
+        # the CUDA toolkit is the one manual install (preview EULA) — without
+        # it the native wheels cannot run, so fall back to the x64 stack
+        if wheels_source and sparkdeps.cuda_bin_dir():
+            return _spark_spec(detection, wheels_source)
+
+    spec = _build_spec(detection, allow_cpu=allow_cpu)
+    if detection["os"] == "windows" and detection["arch"] == "aarch64":
+        # Emulated-x64 fallback (no native wheel source, old driver, or
+        # AITK_SPARK_NATIVE=0). Pin the venv interpreter to x64 explicitly:
+        # uv currently defaults to an emulated x86_64 Python on arm64 hosts,
+        # but says it will flip to native aarch64 once it considers support
+        # mature — which would silently leave a venv where the cu130 torch
+        # wheels don't resolve.
+        spec.uv_python = "cpython-%s-windows-x86_64-none" % spec.python_version
+        spec.notes.append(
+            "Windows-on-ARM detected: using the x64 stack under Windows' "
+            "emulation (GPU work still runs natively via the NVIDIA driver). "
+            "Native mode needs a CUDA 13.4+ driver and the Spark wheel set."
+        )
+    return spec
+
+
+def _build_spec(detection, allow_cpu=False):
     os_name = detection["os"]
 
     if os_name == "mac":

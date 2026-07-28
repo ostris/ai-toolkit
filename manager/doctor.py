@@ -25,7 +25,19 @@ def run_doctor():
 
     from . import gitwin
 
-    _check("os / arch", True, "%s %s" % (d["os"], d["arch"]))
+    arch_detail = "%s %s" % (d["os"], d["arch"])
+    if d["os"] == "windows" and d["arch"] == "aarch64":
+        from . import spec as spec_mod_arch
+
+        try:
+            _s = spec_mod_arch.build_spec(d, allow_cpu=True)
+            if _s.backend == "cu134":
+                arch_detail += " (RTX Spark: native win_arm64 CUDA stack)"
+            else:
+                arch_detail += " (Windows-on-ARM: x64 stack via emulation)"
+        except RuntimeError:
+            pass
+    _check("os / arch", True, arch_detail)
     git = gitwin.find_git()
     _check(
         "git",

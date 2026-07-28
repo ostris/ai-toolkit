@@ -48,7 +48,16 @@ _SOURCES = {
     ("linux", "x86_64"): _BTBN + "ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz",
     ("linux", "aarch64"): _BTBN + "ffmpeg-n8.1-latest-linuxarm64-gpl-shared-8.1.tar.xz",
     ("windows", "x86_64"): _BTBN + "ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip",
+    # Windows-on-ARM in the emulated-x64 stack gets the x64 build, NOT BtbN's
+    # winarm64 one: an x64 torchcodec can only dlopen x64 FFmpeg DLLs, and the
+    # exes run fine under emulation.
+    ("windows", "aarch64"): _BTBN + "ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip",
 }
+
+# Native Spark stack: the self-built win_arm64 torchcodec is linked against
+# (and dlopens) arm64 FFmpeg 8 — LGPL to keep the distributed torchcodec wheel
+# clean, matching C:\Dev spark build scripts / the wheel-set build recipe.
+_SPARK_NATIVE_SOURCE = _BTBN + "ffmpeg-n8.1-latest-winarm64-lgpl-shared-8.1.zip"
 
 
 def bin_dir():
@@ -124,15 +133,20 @@ def _install_mac(detection):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def source_url(detection):
+def source_url(detection, spec=None):
     if detection["os"] == "mac":
         arch = "arm64" if detection["arch"] == "arm64" else "amd64"
         return _RIEDL.format(arch=arch, tool="ffmpeg")
+    if (
+        getattr(spec, "backend", None) == "cu134"
+        and (detection["os"], detection["arch"]) == ("windows", "aarch64")
+    ):
+        return _SPARK_NATIVE_SOURCE
     return _SOURCES.get((detection["os"], detection["arch"]))
 
 
-def ensure_ffmpeg(detection, dry_run=False):
-    url = source_url(detection)
+def ensure_ffmpeg(detection, dry_run=False, spec=None):
+    url = source_url(detection, spec=spec)
     if url is None:
         warn(
             "No portable FFmpeg source for %s/%s — skipping local ffmpeg."

@@ -13,6 +13,7 @@ the manager just errors with install instructions elsewhere.
 """
 
 import os
+import platform
 import shutil
 import tempfile
 
@@ -20,10 +21,20 @@ from .util import IS_WINDOWS, REPO_ROOT, download, extract_archive, info, ok, wa
 
 MINGIT_DIR = os.path.join(REPO_ROOT, ".mingit")
 # Update this pin together with nothing else — it's independent of torch etc.
-MINGIT_URL = (
-    "https://github.com/git-for-windows/git/releases/download/"
-    "v2.55.0.windows.3/MinGit-2.55.0.3-64-bit.zip"
-)
+_MINGIT_TAG = "v2.55.0.windows.3"
+_MINGIT_VERSION = "2.55.0.3"
+
+
+def _mingit_url():
+    # git is a standalone subprocess (nothing dlopens it), so unlike
+    # node/ffmpeg it can be native arm64 on Windows-on-ARM
+    arm = platform.machine().lower() in ("arm64", "aarch64")
+    flavor = "arm64" if arm else "64-bit"
+    return "https://github.com/git-for-windows/git/releases/download/%s/MinGit-%s-%s.zip" % (
+        _MINGIT_TAG,
+        _MINGIT_VERSION,
+        flavor,
+    )
 
 
 def local_git_exe():
@@ -49,7 +60,7 @@ def ensure_git(dry_run=False):
     tmp = tempfile.mkdtemp(prefix="aitk_mingit_")
     try:
         archive = os.path.join(tmp, "mingit.zip")
-        download(MINGIT_URL, archive, label="MinGit")
+        download(_mingit_url(), archive, label="MinGit")
         # MinGit zips have no top-level folder: cmd/, mingw64/, etc at the root
         extracted = os.path.join(tmp, "mingit")
         extract_archive(archive, extracted)
