@@ -13,6 +13,11 @@ IS_WINDOWS = platform.system() == "Windows"
 IS_MAC = platform.system() == "Darwin"
 IS_LINUX = platform.system() == "Linux"
 
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
 # When --json is used, human output goes to stderr so stdout stays machine-readable
 _json_mode = False
 
@@ -180,24 +185,38 @@ def clean_env(extra=None):
 
 
 def download(url, dest, label=None):
-    """Download url to dest (stdlib only), logging progress every ~10%."""
+    """Download url to dest (stdlib only), logging progress every ~10%.
+
+    Sends a browser User-Agent: some mirrors (ffmpeg.martin-riedl.de) return
+    403 for the default "Python-urllib/x.y" agent.
+    """
     import urllib.request
 
     label = label or os.path.basename(dest)
     info("Downloading %s ..." % label)
     last = [-1]
 
-    def hook(blocks, block_size, total):
+    def report(read, total):
         if total <= 0:
             return
-        pct = min(100, int(blocks * block_size * 100 / total))
+        pct = min(100, int(read * 100 / total))
         if pct >= last[0] + 10:
             last[0] = pct
             info("  %s: %d%%" % (label, pct))
 
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     tmp = dest + ".part"
     try:
-        urllib.request.urlretrieve(url, tmp, reporthook=hook)
+        with urllib.request.urlopen(req) as resp, open(tmp, "wb") as out:
+            total = int(resp.headers.get("Content-Length") or 0)
+            read = 0
+            while True:
+                chunk = resp.read(1 << 16)
+                if not chunk:
+                    break
+                out.write(chunk)
+                read += len(chunk)
+                report(read, total)
     except Exception as e:  # noqa: BLE001 - surface any network failure clearly
         if os.path.exists(tmp):
             os.remove(tmp)
