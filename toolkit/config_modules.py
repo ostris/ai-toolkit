@@ -931,6 +931,9 @@ class DatasetConfig:
         self.random_scale: bool = kwargs.get('random_scale', False)
         self.random_crop: bool = kwargs.get('random_crop', False)
         self.resolution: int = kwargs.get('resolution', 512)
+        # PIL resample filter used for all image resize/scale ops on this dataset.
+        # One of: 'bicubic', 'lanczos'
+        self.resize_method: str = kwargs.get('resize_method', 'lanczos')
         self.scale: float = kwargs.get('scale', 1.0)
         self.buckets: bool = kwargs.get('buckets', True)
         self.bucket_tolerance: int = kwargs.get('bucket_tolerance', 64)

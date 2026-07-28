@@ -2,6 +2,24 @@ import gc
 import os
 
 import torch
+from PIL import Image
+
+# Maps the string stored on DatasetConfig.resize_method to the PIL resample
+# filter used for all image resize calls in data_loader.py, dataloader_mixins.py,
+# and control_generator.py.
+RESIZE_METHODS = {
+    'bicubic': Image.BICUBIC,
+    'lanczos': Image.LANCZOS,
+}
+
+
+def get_resize_method(name: str = 'lanczos'):
+    try:
+        return RESIZE_METHODS[name]
+    except KeyError:
+        raise ValueError(
+            f"Unknown resize_method '{name}'. Valid options are: {list(RESIZE_METHODS.keys())}"
+        )
 
 
 def value_map(inputs, min_in, max_in, min_out, max_out):

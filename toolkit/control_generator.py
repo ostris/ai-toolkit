@@ -9,6 +9,8 @@ from tqdm import tqdm
 
 from torchvision import transforms
 
+from toolkit.basic import get_resize_method
+
 # supress all warnings
 import warnings
 
@@ -76,7 +78,7 @@ class ControlGenerator:
             scale = math.sqrt(max_size / (w * h))
             w = int(w * scale)
             h = int(h * scale)
-            image = image.resize((w, h), Image.BICUBIC)
+            image = image.resize((w, h), get_resize_method('lanczos'))
         return image
 
     def control_save_path(self, img_path, control_type):
