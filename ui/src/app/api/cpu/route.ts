@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import si from 'systeminformation';
-import { createRequire } from 'module';
 import os from 'os';
 import { CpuInfo } from '@/types';
 import { cached } from '@/server/apiCache';
+import { loadMacstats } from '@/server/macstats';
 
 const isMac = os.platform() === 'darwin';
 
@@ -13,8 +13,8 @@ async function getCpuInfo(): Promise<CpuInfo> {
 
   if (isMac) {
     try {
-      const nativeRequire = createRequire(import.meta.url);
-      const ms = nativeRequire('macstats') as any;
+      const ms = loadMacstats();
+      if (!ms) throw new Error('macstats unavailable');
       const ramData = ms.getRAMUsageSync();
       const cpuData = ms.getCpuDataSync();
 
