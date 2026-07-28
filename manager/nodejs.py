@@ -14,10 +14,13 @@ from .util import (
     IS_MAC,
     IS_WINDOWS,
     REPO_ROOT,
+    clean_env,
     download,
     extract_archive,
+    file_hash,
     info,
     ok,
+    run,
     warn,
     which,
 )
@@ -26,6 +29,9 @@ NODE_DIR = os.path.join(REPO_ROOT, ".node")
 # Node 24 is the current LTS line and matches the dgx_instructions.md guidance.
 NODE_VERSION = "24.11.1"
 MIN_NODE_MAJOR = 20
+
+UI_DIR = os.path.join(REPO_ROOT, "ui")
+UI_STATE_KEY = "ui_deps_hash"
 
 
 def node_bin_dir():
@@ -119,3 +125,93 @@ def ensure_node(detection, dry_run=False):
         return True
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- ui deps
+
+
+def npm_env():
+    """Scrubbed env with the local .node/ ahead of PATH."""
+    env = clean_env()
+    if os.path.isdir(node_bin_dir()):
+        env["PATH"] = node_bin_dir() + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def find_npm(env=None):
+    """npm from the local .node/ copy when we installed one, else the system."""
+    path = (env or npm_env()).get("PATH")
+    return shutil.which("npm.cmd" if IS_WINDOWS else "npm", path=path)
+
+
+def _ui_deps_hash():
+    return file_hash(
+        [
+            os.path.join(UI_DIR, "package-lock.json"),
+            os.path.join(UI_DIR, "package.json"),
+        ]
+    )
+
+
+def ensure_ui_deps(env=None, dry_run=False):
+    """Install ui/node_modules without ever rewriting ui/package-lock.json.
+
+    A plain `npm install` treats the lockfile as writable and re-derives it for
+    the machine doing the install: on Windows it strips the `libc` fields off
+    the Linux-only optional binaries (@next/swc-linux-*, rollup, lightningcss),
+    on Linux it puts them back. Since the UI installs on every launch, everyone
+    ends up with a modified lockfile they never asked for — which then blocks
+    `manager update`, because a dirty tree aborts the pull.
+
+    `--no-save` keeps the resolution but stops the write-back, and stays an
+    incremental install (seconds) rather than the full wipe-and-refetch of
+    `npm ci`. The lockfile is snapshotted and restored regardless, so this
+    holds even if a future npm changes what `--no-save` covers.
+
+    Gated on a hash of the manifests so steady-state launches skip npm.
+    """
+    from . import env as env_mod
+
+    lock = os.path.join(UI_DIR, "package-lock.json")
+    if not os.path.isfile(lock):
+        warn("ui/package-lock.json is missing — skipping UI dependency install.")
+        return False
+    want = _ui_deps_hash()
+    if env_mod.venv_exists() and env_mod.load_state().get(UI_STATE_KEY) == want:
+        if os.path.isdir(os.path.join(UI_DIR, "node_modules")):
+            ok("UI dependencies already installed.")
+            return False
+    if dry_run:
+        info("[dry-run] would run: npm install --no-save (in %s)" % UI_DIR)
+        return False
+    env = env or npm_env()
+    npm = find_npm(env)
+    if npm is None:
+        warn("npm not found — skipping UI dependency install.")
+        return False
+
+    info("Installing UI dependencies...")
+    with open(lock, "rb") as f:
+        before = f.read()
+    code, _ = run(
+        [npm, "install", "--no-save", "--no-audit", "--no-fund"],
+        cwd=UI_DIR,
+        env=env,
+        stream=True,
+        check=False,
+    )
+    with open(lock, "rb") as f:
+        after = f.read()
+    if after != before:
+        with open(lock, "wb") as f:
+            f.write(before)
+        info("Reverted npm's edit to ui/package-lock.json (managed by the repo).")
+    if code != 0:
+        warn("UI dependency install failed — the UI may not start.")
+        return False
+    if env_mod.venv_exists():
+        state = env_mod.load_state()
+        state[UI_STATE_KEY] = want
+        env_mod.save_state(state)
+    ok("UI dependencies ready.")
+    return True

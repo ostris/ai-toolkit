@@ -46,6 +46,19 @@ python3 -m manager doctor      # diagnose problems
   before the optional accelerators are import-tested and again at the end.
   Requirements files must never pin a torch dependency below what torch needs
   (torch 2.13 wants `setuptools>=77.0.3`).
+- **`ui/package-lock.json` is never modified by installing.** A plain
+  `npm install` re-derives the lockfile for whichever machine runs it — on
+  Windows it strips the `libc` fields off the Linux-only optional binaries
+  (`@next/swc-linux-*`, rollup, lightningcss), on Linux it adds them back — so
+  with the install baked into `npm run build_and_start` every user got a dirty
+  tree on every launch, which then blocks `manager update` (a dirty tree aborts
+  the pull). `nodejs.ensure_ui_deps` owns the install instead: `npm install
+  --no-save`, gated on a hash of `ui/package.json` + `ui/package-lock.json`
+  (stored in the venv state), with the lockfile bytes snapshotted and restored
+  either way. `manager launch` therefore runs `npm run db_build_start`, not
+  `build_and_start`; the latter still exists for the manual
+  `cd ui && npm run build_and_start` flow in the README and calls the same
+  non-writing install via `npm run install_deps`.
 - **Nothing global is ever installed.** FFmpeg (shared builds — the libs
   torchcodec dlopens) goes to `.ffmpeg/` ([ffmpeg.py](ffmpeg.py)), Node
   (when the system lacks >= 20) to `.node/` ([nodejs.py](nodejs.py)), the uv

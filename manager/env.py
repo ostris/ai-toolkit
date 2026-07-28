@@ -544,6 +544,7 @@ def sync(spec, detection, dry_run=False, force=False):
     ensure_requirements(spec, dry_run=dry_run, force=force or changed_torch)
     ffmpeg.ensure_ffmpeg(detection, dry_run=dry_run)
     nodejs.ensure_node(detection, dry_run=dry_run)
+    nodejs.ensure_ui_deps(dry_run=dry_run)
     write_sitecustomize(dry_run=dry_run)
     migrations.run_pending(dry_run=dry_run)
     ok("Environment is up to date.")

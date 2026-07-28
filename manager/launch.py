@@ -1,4 +1,4 @@
-"""Launch the AI Toolkit web UI (ui/ -> npm run build_and_start)."""
+"""Launch the AI Toolkit web UI (ui/ -> npm run db_build_start)."""
 
 import os
 import subprocess
@@ -45,12 +45,6 @@ def build_env():
     return env
 
 
-def _find_npm(env):
-    import shutil
-
-    return shutil.which("npm.cmd" if IS_WINDOWS else "npm", path=env.get("PATH"))
-
-
 def _headless():
     return IS_LINUX and not (
         os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
@@ -79,7 +73,7 @@ def launch_ui(open_browser=True):
         die("No Python environment found. Run: python3 -m manager install")
 
     env = build_env()
-    npm = _find_npm(env)
+    npm = nodejs.find_npm(env)
     if not npm:
         die(
             "Node.js was not found. Run `python3 -m manager sync` to install a "
@@ -93,6 +87,10 @@ def launch_ui(open_browser=True):
             % (major, nodejs.MIN_NODE_MAJOR)
         )
 
+    # deps are installed here rather than by the npm script so the lockfile is
+    # never rewritten (see nodejs.ensure_ui_deps); a no-op once they're in sync
+    nodejs.ensure_ui_deps(env=env)
+
     info("Starting AI Toolkit UI (%s) ..." % UI_URL)
     stop_event = threading.Event()
     if open_browser and not _headless():
@@ -101,7 +99,7 @@ def launch_ui(open_browser=True):
         ).start()
 
     proc = subprocess.Popen(
-        [npm, "run", "build_and_start"], cwd=os.path.join(REPO_ROOT, "ui"), env=env
+        [npm, "run", "db_build_start"], cwd=os.path.join(REPO_ROOT, "ui"), env=env
     )
     try:
         return proc.wait()
