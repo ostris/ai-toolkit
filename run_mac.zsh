@@ -19,7 +19,7 @@ cat << 'BANNER'
  /_/   \_\|___|   |_|   \___/  \___/|_||_|\_\|_| \__|
 BANNER
 echo "\033[0m"
-echo "\033[90m  macOS Setup & Launcher\033[0m"
+echo "\033[90m  AI Toolkit Manager — macOS\033[0m"
 echo ""
 
 # ── 1. Ensure uv (prebuilt static binary, kept inside the repo) ─────

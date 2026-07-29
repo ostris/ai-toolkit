@@ -20,7 +20,7 @@ cat << 'BANNER'
  /_/   \_\|___|   |_|   \___/  \___/|_||_|\_\|_| \__|
 BANNER
 printf '\033[0m'
-printf '\033[90m  Linux Setup & Launcher\033[0m\n'
+printf '\033[90m  AI Toolkit Manager — Linux\033[0m\n'
 echo ""
 
 # ── 1. Ensure uv (prebuilt static binary, kept inside the repo) ─────

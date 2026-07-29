@@ -15,7 +15,7 @@ echo    / _ \   ^| ^|    ^| ^|   / _ \  / _ \^| ^|^| ^|/ /^| ^|^| __^|
 echo   / ___ \  ^| ^|    ^| ^|  ^| (_) ^|^| (_) ^| ^|^|   ^< ^| ^|^| ^|_
 echo  /_/   \_\^|___^|   ^|_^|   \___/  \___/^|_^|^|_^|\_\^|_^| \__^|
 echo.
-echo   Windows Setup ^& Launcher
+echo   AI Toolkit Manager - Windows
 echo.
 
 REM Clear env vars that let a stray conda/pyenv/system Python hijack things
