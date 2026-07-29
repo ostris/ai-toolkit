@@ -1899,6 +1899,13 @@ class TextEmbeddingFileItemDTOMixin:
         # if we have a control image, cache the path
         if self.encode_control_in_text_embeddings and self.control_path is not None:
             item["control_path"] = self.control_path
+        # first-frame vision conditioning changes the embedding content -> new cache key
+        elif (
+            getattr(self, "encode_first_frame_in_text_embeddings", False)
+            and self.dataset_config.do_i2v
+            and (self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1)
+        ):
+            item["first_frame_in_te"] = True
         return item
 
     def get_text_embedding_path(self: 'FileItemDTO', recalculate=False):
@@ -1984,6 +1991,27 @@ class TextEmbeddingCachingMixin:
                         else:
                             ctrl_img = ctrl_img_list
                         prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                    elif (
+                        getattr(self.sd, 'encode_first_frame_in_text_embeddings', False)
+                        and self.dataset_config.do_i2v
+                        and (self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1)
+                    ):
+                        # video item: encode the clip's FIRST FRAME into the text embeddings
+                        # as a vision reference, matching sampling (where the ctrl image goes
+                        # into the embeds and is held as the clean first frames)
+                        file_item.load_and_process_image(self.transform, only_load_latents=True)
+                        frames = file_item.tensor  # (T, C, H, W) or (C, H, W), in [-1, 1]
+                        first = frames[0] if frames.dim() == 4 else frames
+                        ctrl_img = (
+                            ((first + 1.0) / 2.0)
+                            .clamp(0, 1)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        if self.sd.has_multiple_control_images:
+                            ctrl_img = [ctrl_img]
+                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                        file_item.tensor = None
                     else:
                         prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
                     # save it
