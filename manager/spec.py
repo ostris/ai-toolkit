@@ -21,6 +21,11 @@ kernels smoke-tested on an RTX 5090 / sm120 with torch 2.13.0+cu130):
   {cp310..cp314} x {linux x86_64, linux aarch64}. No Windows/mac wheels.
 - triton: bundled with torch on Linux (incl. aarch64; torch 2.13 bundles
   triton 3.7.1); triton-windows 3.7.x matches on Windows; nothing for MPS.
+- flash-linear-attention 0.5.2: pure-Python (py3-none-any) Triton kernels —
+  installs anywhere, needs triton>=3.3 at runtime. Installed bare (no backend
+  extra) so it never pulls its own torch/triton over our pinned stack; usable
+  on every platform with a working triton (CUDA linux/windows, Spark, ROCm),
+  not on MPS/CPU.
 - Windows-on-ARM (verified 2026-07): there are NO win_arm64 wheels for any of
   the CUDA stack — torch cu130, triton-windows, flash-attn and Prisma's node
   engine are all x64-only. The supported configuration is therefore the x64
@@ -58,6 +63,10 @@ TRITON_WINDOWS = "triton-windows>=3.7,<3.8"
 
 NATTEN_VERSION = "0.21.7"
 NATTEN_FIND_LINKS = "https://whl.natten.org"
+
+# pure-Python triton kernels; bare install (no [cuda]/[rocm] extra) on purpose —
+# the extras only add torch/triton pins we already manage per-platform
+FLA = "flash-linear-attention==0.5.2"
 
 FLASH_ATTN_VERSION = "2.8.3"
 _FA_BASE = (
@@ -309,7 +318,7 @@ def _cuda_spec(detection):
         ]
 
     extras = [TORCHCODEC]
-    optional = []
+    optional = [FLA]
     find_links = []
 
     # Windows-on-ARM runs the x64 wheel stack (see module docstring), so wheel
@@ -370,7 +379,11 @@ def _make_spark_spec(detection, wheels_source, dll_dirs):
             "triton==3.8.0+git8743423b",
         ],
         # import-verified with rollback, like accelerators on other platforms
-        optional_packages=["flash-attn==2.8.3+cu134torch2.14", "natten==0.21.7"],
+        optional_packages=[
+            "flash-attn==2.8.3+cu134torch2.14",
+            "natten==0.21.7",
+            FLA,
+        ],
         find_links=[wheels_source],
         notes=[
             "RTX Spark native mode: win_arm64 CUDA %s stack from the "
@@ -423,7 +436,10 @@ def _build_spec(detection, allow_cpu=False):
     os_name = detection["os"]
 
     if os_name == "mac":
-        notes = ["flash-attn / NATTEN / triton are unavailable on macOS."]
+        notes = [
+            "flash-attn / NATTEN / triton / flash-linear-attention are "
+            "unavailable on macOS."
+        ]
         if detection["backend"] != "mps":
             notes.append("Intel Mac detected — training will be extremely slow.")
         return EnvSpec(
@@ -443,6 +459,8 @@ def _build_spec(detection, allow_cpu=False):
             TORCH,
             torch_index=PYTORCH_INDEX + "rocm7.1",
             extra_packages=[TORCHCODEC],
+            # runs on ROCm via the triton bundled with rocm torch
+            optional_packages=[FLA],
             notes=[
                 "AMD ROCm support is experimental and largely untested.",
                 "flash-attn / NATTEN prebuilt wheels are unavailable for ROCm.",

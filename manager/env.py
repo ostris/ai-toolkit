@@ -441,15 +441,23 @@ def _stale_git_pins(spec):
     return [name for name, line in current.items() if stored.get(name) != line]
 
 
-def _optional_import_name(pkg):
-    """Importable module name for an optional package spec or wheel URL."""
+# optional packages whose import name differs from the distribution name
+_IMPORT_ALIASES = {"flash_linear_attention": "fla"}
+# companion dists to remove on rollback (fla-core provides the `fla` module
+# itself; leaving it behind would keep the broken import resolvable)
+_ROLLBACK_EXTRAS = {"flash_linear_attention": ["fla-core"]}
+
+
+def _optional_names(pkg):
+    """(distribution, import) names for an optional package spec or wheel URL."""
     if "://" in pkg:
         name = os.path.basename(pkg).split("-")[0]
     else:
         name = pkg
         for sep in ("==", ">=", "<=", "<", ">", "["):
             name = name.split(sep)[0]
-    return name.strip().replace("-", "_")
+    name = name.strip().replace("-", "_")
+    return name, _IMPORT_ALIASES.get(name, name)
 
 
 def _venv_import_ok(module_name):
@@ -509,13 +517,15 @@ def ensure_requirements(spec, dry_run=False, force=False):
     # actually intend to ship, so repair it first if something got through
     _verify_torch(spec, dry_run=dry_run)
     # accelerators (flash-attn, NATTEN, ...): install one-by-one, warn on
-    # failure — training works without them, so never fail the whole install
+    # failure — training works without them, so never fail the whole install.
+    # No --upgrade here: every optional spec is an exact pin or wheel URL, and
+    # uv's -U eagerly upgrades the whole dependency closure, blowing past
+    # requirements.txt pins (numpy/transformers) that only the requirements
+    # pass enforces.
     for pkg in _filter_extras(spec.optional_packages):
         label = os.path.basename(pkg) if "://" in pkg else pkg
         info("Installing optional accelerator: %s" % label)
-        code = _pip_install(
-            [pkg] + find_links, dry_run=dry_run, upgrade=True, check=False
-        )
+        code = _pip_install([pkg] + find_links, dry_run=dry_run, check=False)
         if code != 0:
             warn("Optional package failed to install (continuing): %s" % label)
             continue
@@ -524,13 +534,14 @@ def ensure_requirements(spec, dry_run=False, force=False):
         # prebuilt accelerator wheels are sometimes built against a torch
         # nightly and fail to load against the release ABI — verify the
         # import and roll back rather than leaving a broken wheel installed
-        name = _optional_import_name(pkg)
-        if not _venv_import_ok(name):
+        dist_name, import_name = _optional_names(pkg)
+        if not _venv_import_ok(import_name):
             warn(
                 "%s installed but fails to import against this torch build — "
-                "removing it (training falls back to native attention)." % name
+                "removing it (training falls back to native attention)."
+                % import_name
             )
-            _pip_uninstall([name])
+            _pip_uninstall([dist_name] + _ROLLBACK_EXTRAS.get(dist_name, []))
     # packages whose dependency metadata is unsatisfiable on this platform but
     # which work fine without it (e.g. tensorboard's grpcio on win_arm64)
     for pkg in spec.no_deps_packages:
