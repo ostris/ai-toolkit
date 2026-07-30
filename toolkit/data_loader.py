@@ -533,6 +533,7 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
+                    encode_first_frame_in_text_embeddings=getattr(self.sd, 'encode_first_frame_in_text_embeddings', False) if self.sd else False,
                     text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
@@ -606,6 +607,14 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 self.setup_controls()
         self.epoch_num += 1
 
+    def __getstate__(self):
+        # on Windows/macOS dataloader workers are spawned, which pickles the dataset.
+        # sd (the model) is not picklable (weakrefs, cuda tensors) and is only needed
+        # for caching, which runs in the main process before iteration starts.
+        state = self.__dict__.copy()
+        state['sd'] = None
+        return state
+
     def __len__(self):
         if self.dataset_config.buckets:
             return len(self.batch_indices)
@@ -652,6 +661,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             return self._get_single_item(item)
 
 
+def dto_collation(batch: List['FileItemDTO']):
+    # must be a module level function so spawned dataloader workers can pickle it
+    return DataLoaderBatchDTO(
+        file_items=batch
+    )
+
+
 def get_dataloader_from_datasets(
         dataset_options,
         batch_size=1,
@@ -692,22 +708,26 @@ def get_dataloader_from_datasets(
     # todo build scheduler that can get buckets from all datasets that match
     # todo and evenly distribute reg images
 
-    def dto_collation(batch: List['FileItemDTO']):
-        # create DTO batch
-        batch = DataLoaderBatchDTO(
-            file_items=batch
-        )
-        return batch
-
     # check if is caching latents
 
     dataloader_kwargs = {}
-    
-    if is_native_windows() or is_macos():
-        dataloader_kwargs['num_workers'] = 0
-    else:
-        dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+
+    dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+    if dataloader_kwargs['num_workers'] > 0:
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        # keep workers alive across epochs. Without this, spawn platforms (Windows/macOS)
+        # boot new worker processes every epoch, which can take longer than the epoch
+        # itself on small datasets. The dataset is static after epoch 0 (setup_epoch only
+        # does work on the first call) and per-epoch shuffling happens in the main process
+        # sampler, so workers never hold stale state.
+        dataloader_kwargs['persistent_workers'] = True
+        # spawned workers re-import the full stack at boot and would repeat every
+        # import-time warning the parent already printed. Children inherit these env
+        # vars; the parent is unaffected since its imports already happened.
+        os.environ.setdefault('PYTHONWARNINGS', 'ignore::FutureWarning')
+        os.environ.setdefault('TORCH_LOGS', '-torch.utils._pytree')
+        os.environ.setdefault('DIFFUSERS_VERBOSITY', 'error')
+        os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
 
     if has_buckets:
         # make sure they all have buckets

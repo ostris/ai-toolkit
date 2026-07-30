@@ -711,11 +711,15 @@ class ModelConfig:
         if self.layer_offloading and self.qtype_te == "qfloat8":
             self.qtype_te = "float8"
             
-        # Mac mps only works with torachao uint
+        # MPS has no fp8 dtype, so qfloat8 has to become an 8 bit integer format.
+        # convrot8, not torchao int8: measured on an M3 against bf16, convrot8
+        # trains at 0.79x and holds 1.04 GB of resident weight where torchao int8
+        # trains at 0.52x and holds 1.21 GB, and convrot8 quantizes in 19ms
+        # against 2.8s. See scripts/test_quantizations.py --device mps.
         if torch.backends.mps.is_available() and self.qtype == "qfloat8":
-            self.qtype = "int8"
+            self.qtype = "convrot8"
         if torch.backends.mps.is_available() and self.qtype_te == "qfloat8":
-            self.qtype_te = "int8"
+            self.qtype_te = "convrot8"
         
         # 0 is off and 1.0 is 100% of the layers
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)

@@ -1,16 +1,17 @@
-#!/usr/bin/env zsh
-# Update-and-run script for macOS — thin bootstrap over the in-repo manager.
+#!/usr/bin/env bash
+# Update-and-run script for Linux — thin bootstrap over the in-repo manager.
 #
-# Everything (venv via uv-managed Python, torch, requirements, portable
-# Node.js and FFmpeg, dependency updates) is handled by `python -m manager`;
-# this script only makes sure uv + a Python interpreter exist, then delegates.
+# Everything (venv via uv-managed Python, torch for your GPU, requirements,
+# portable Node.js and FFmpeg, dependency updates) is handled by
+# `python -m manager`; this script only makes sure uv + a Python interpreter
+# exist, then delegates. Works on desktop and headless boxes alike.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Banner ─────────────────────────────────────────────────────────
 echo ""
-echo "\033[36m"
+printf '\033[36m'
 cat << 'BANNER'
      _     ___   _____               _  _     _  _
     / \   |_ _| |_   _|  ___    ___ | || | __(_)| |_
@@ -18,8 +19,8 @@ cat << 'BANNER'
   / ___ \  | |    | |  | (_) || (_) | ||   < | || |_
  /_/   \_\|___|   |_|   \___/  \___/|_||_|\_\|_| \__|
 BANNER
-echo "\033[0m"
-echo "\033[90m  AI Toolkit Manager — macOS\033[0m"
+printf '\033[0m'
+printf '\033[90m  AI Toolkit Manager — Linux\033[0m\n'
 echo ""
 
 # ── 1. Ensure uv (prebuilt static binary, kept inside the repo) ─────

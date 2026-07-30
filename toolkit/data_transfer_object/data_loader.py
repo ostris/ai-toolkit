@@ -65,6 +65,9 @@ class FileItemDTO(
         self.encode_control_in_text_embeddings = kwargs.get(
             "encode_control_in_text_embeddings", False
         )
+        self.encode_first_frame_in_text_embeddings = kwargs.get(
+            "encode_first_frame_in_text_embeddings", False
+        )
         self.te_padding_side = kwargs.get("te_padding_side", "right")
         self.latent_space_version = kwargs.get("latent_space_version", "sd1")
         self.text_embedding_space_version = kwargs.get("text_embedding_space_version", "sd1")
