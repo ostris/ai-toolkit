@@ -6,6 +6,7 @@ load_dotenv()
 os.environ["HF_XET_HIGH_PERFORMANCE"] = os.getenv("HF_XET_HIGH_PERFORMANCE", "1")
 os.environ["HF_HUB_DISABLE_XET"] = os.getenv("HF_HUB_DISABLE_XET", "0")
 os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
+os.environ["OPENCV_FFMPEG_LOGLEVEL"] = "-8"
 seed = None
 if "SEED" in os.environ:
     try:

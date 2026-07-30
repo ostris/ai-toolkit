@@ -560,6 +560,35 @@ class ImageProcessingDTOMixin:
             unique_frame_idxs = sorted(set(frames_to_extract))
             processed_frames = {}  # frame_idx -> processed frame (duplicates reuse it)
 
+            def process_frame(rgb_frame):
+                # Convert to PIL Image
+                img = Image.fromarray(rgb_frame)
+
+                # Apply the same processing as for single images
+                img = img.convert('RGB')
+
+                if self.flip_x:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if self.flip_y:
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                # Apply bucketing
+                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                img = img.crop((
+                    self.crop_x,
+                    self.crop_y,
+                    self.crop_x + self.crop_width,
+                    self.crop_y + self.crop_height
+                ))
+
+                # Apply transform if provided
+                if transform:
+                    img = transform(img)
+
+                return img
+
+            decode_with_pyav = False
+
             # Set frame position
             pos = unique_frame_idxs[0]
             if pos > 0:
@@ -580,10 +609,6 @@ class ImageProcessingDTOMixin:
                 if ret:
                     pos += 1
                 else:
-                    # Try to provide more detailed error information
-                    actual_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-                    frame_pos_info = f"Requested frame: {frame_idx}, Actual frame position: {actual_frame}"
-                    
                     # Try to read the next available frame as a fallback
                     fallback_success = False
                     for fallback_offset in [1, -1, 5, -5, 10, -10]:
@@ -600,38 +625,44 @@ class ImageProcessingDTOMixin:
                             pos = fallback_pos + 1
                             break
                     else:
-                        # No fallback worked, raise a more detailed exception
-                        video_info = f"Video: {self.path}, Total frames: {total_frames}, FPS: {video_fps}"
-                        raise Exception(f"Failed to read frame {frame_idx} from video. {frame_pos_info}. {video_info}")
+                        # No fallback worked. cv2's bundled ffmpeg cannot decode some codecs
+                        # at all (e.g. AV1 has no software decoder there), so retry the
+                        # remaining frames with PyAV below.
+                        decode_with_pyav = True
+                        break
                 
                 # Convert BGR to RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # Convert to PIL Image
-                img = Image.fromarray(frame)
-                
-                # Apply the same processing as for single images
-                img = img.convert('RGB')
-                
-                if self.flip_x:
-                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if self.flip_y:
-                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                
-                # Apply bucketing
-                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
-                img = img.crop((
-                    self.crop_x,
-                    self.crop_y,
-                    self.crop_x + self.crop_width,
-                    self.crop_y + self.crop_height
-                ))
-                
-                # Apply transform if provided
-                if transform:
-                    img = transform(img)
 
-                processed_frames[frame_idx] = img
+                processed_frames[frame_idx] = process_frame(frame)
+
+            if decode_with_pyav:
+                # cv2 could not decode this video (e.g. AV1: OpenCV's bundled ffmpeg has no
+                # software AV1 decoder). Decode the still-missing frames in one sequential
+                # PyAV pass; PyAV ships libdav1d so it handles codecs cv2 cannot.
+                import av
+
+                needed = {i for i in unique_frame_idxs if i not in processed_frames}
+                last_av_frame = None
+                with av.open(self.path) as container:
+                    decoded_idx = -1
+                    for av_frame in container.decode(video=0):
+                        decoded_idx += 1
+                        last_av_frame = av_frame
+                        if decoded_idx in needed:
+                            processed_frames[decoded_idx] = process_frame(av_frame.to_ndarray(format='rgb24'))
+                            needed.discard(decoded_idx)
+                            if not needed:
+                                break
+
+                if needed:
+                    if last_av_frame is None:
+                        video_info = f"Video: {self.path}, Total frames: {total_frames}, FPS: {video_fps}"
+                        raise Exception(f"Failed to read frames {sorted(needed)} from video with both cv2 and PyAV. {video_info}")
+                    # metadata frame count overshot the real stream; reuse the last decoded frame
+                    tail_frame = process_frame(last_av_frame.to_ndarray(format='rgb24'))
+                    for frame_idx in needed:
+                        processed_frames[frame_idx] = tail_frame
 
             # assemble in extraction order; stretched clips repeat decoded frames
             frames = [processed_frames[frame_idx] for frame_idx in frames_to_extract]
