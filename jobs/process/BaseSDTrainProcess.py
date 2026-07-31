@@ -1368,7 +1368,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 if self.train_config.random_noise_shift > 0.0:
                     # get random noise -1 to 1
                     noise_shift = torch.randn(
-                        batch_size, latents.shape[1], 1, 1,
+                        s,
                         device=noise.device,
                         dtype=noise.dtype
                     ) * self.train_config.random_noise_shift
