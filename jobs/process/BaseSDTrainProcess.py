@@ -794,6 +794,9 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 use_feedback=self.train_config.ema_config.use_feedback,
                 param_multiplier=self.train_config.ema_config.param_multiplier,
             )
+            # expose to the model: models that run an EMA-teacher forward during training
+            # (e.g. wan21_pixel self_flow) read it from here
+            self.sd.ema = self.ema
 
     def before_dataset_load(self):
         pass
