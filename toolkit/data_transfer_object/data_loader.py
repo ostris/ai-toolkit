@@ -232,24 +232,32 @@ class DataLoaderBatchDTO:
                 if any(
                     [x._cached_first_frame_latent is not None for x in self.file_items]
                 ):
+                    # find one to use as a base; item 0 may not have one
+                    base_first_frame_latent = None
+                    for x in self.file_items:
+                        if x._cached_first_frame_latent is not None:
+                            base_first_frame_latent = x._cached_first_frame_latent
+                            break
                     self.first_frame_latents = torch.cat(
                         [
                             x._cached_first_frame_latent.unsqueeze(0)
                             if x._cached_first_frame_latent is not None
-                            else torch.zeros_like(
-                                self.file_items[0]._cached_first_frame_latent
-                            ).unsqueeze(0)
+                            else torch.zeros_like(base_first_frame_latent).unsqueeze(0)
                             for x in self.file_items
                         ]
                     )
                 if any([x._cached_audio_latent is not None for x in self.file_items]):
+                    # find one to use as a base; item 0 may not have one
+                    base_audio_latent = None
+                    for x in self.file_items:
+                        if x._cached_audio_latent is not None:
+                            base_audio_latent = x._cached_audio_latent
+                            break
                     self.audio_latents = torch.cat(
                         [
                             x._cached_audio_latent.unsqueeze(0)
                             if x._cached_audio_latent is not None
-                            else torch.zeros_like(
-                                self.file_items[0]._cached_audio_latent
-                            ).unsqueeze(0)
+                            else torch.zeros_like(base_audio_latent).unsqueeze(0)
                             for x in self.file_items
                         ]
                     )
