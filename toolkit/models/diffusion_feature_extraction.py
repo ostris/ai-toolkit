@@ -689,7 +689,12 @@ class DiffusionFeatureExtractor6(nn.Module):
         self.losses = {}
         self.log_every = 100
         self.step = 0
-    
+
+        # cache normalization constants once so prepare_inputs doesn't rebuild
+        # them (CPU tensor construction + H2D copy) on every call
+        self.image_mean = torch.tensor(self.processor.image_mean, device=device, dtype=dtype).view(1, 3, 1, 1)
+        self.image_std = torch.tensor(self.processor.image_std, device=device, dtype=dtype).view(1, 3, 1, 1)
+
     def prepare_inputs(self, tensor_0_1: torch.Tensor):
         """
         tensor_0_1: (bs, 3, h, w), float, values in [0, 1]
@@ -703,8 +708,10 @@ class DiffusionFeatureExtractor6(nn.Module):
         if not torch.is_floating_point(x):
             x = x.float()
 
-        # VAE decode can overshoot [0, 1] slightly; clamp so the rescale
-        # heuristic below never mistakes an overshoot for 0..255 input
+        # VAE decode can overshoot [0, 1] slightly; clamp back into range.
+        # Inputs are documented as 0..1 and clamped here, so no 0..255 rescale
+        # heuristic is needed (the old max().item() check forced a GPU sync
+        # every call and could never trigger after this clamp anyway).
         x = torch.clamp(x, 0.0, 1.0)
 
         # Resize
@@ -722,17 +729,10 @@ class DiffusionFeatureExtractor6(nn.Module):
             target_w = (target_w // p) * p
             x = F.interpolate(x, size=(target_h, target_w), mode="bilinear", align_corners=False)
             
-        # Rescale (HF processors usually assume uint8 0..255 inputs; your inputs are already 0..1)
-        if self.processor.do_rescale:
-            # If it looks like [0..1], skip to avoid double-scaling.
-            # If user accidentally passed 0..255 floats, this will fix it.
-            if x.detach().max().item() > 1.0 + 1e-6:
-                x = x * float(self.processor.rescale_factor or 1.0 / 255.0)
-
         # Normalize
         if self.processor.do_normalize:
-            mean = torch.tensor(self.processor.image_mean, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
-            std = torch.tensor(self.processor.image_std, device=x.device, dtype=x.dtype).view(1, 3, 1, 1)
+            mean = self.image_mean.to(device=x.device, dtype=x.dtype)
+            std = self.image_std.to(device=x.device, dtype=x.dtype)
             x = (x - mean) / std
 
         return {"pixel_values": x}
@@ -814,18 +814,22 @@ class DiffusionFeatureExtractor6(nn.Module):
             pred_dino_output.float(), target_dino_output.float()
         )
         
+        # accumulate on-GPU; .item() every step forces a full pipeline sync,
+        # so only sync when we actually log
         if 'dinov3' not in self.losses:
-            self.losses['dinov3'] = dino_loss.item()
+            self.losses['dinov3'] = dino_loss.detach()
         else:
-            self.losses['dinov3'] += dino_loss.item()
+            self.losses['dinov3'] = self.losses['dinov3'] + dino_loss.detach()
 
         with torch.no_grad():
             if self.step % self.log_every == 0 and self.step > 0:
                 print(f"DFE losses:")
                 for key in self.losses:
-                    self.losses[key] /= self.log_every
+                    avg = self.losses[key] / self.log_every
+                    if torch.is_tensor(avg):
+                        avg = avg.item()
                     # print in 2.000e-01 format
-                    print(f" - {key}: {self.losses[key]:.3e}")
+                    print(f" - {key}: {avg:.3e}")
                     self.losses[key] = 0.0
             
             # total_loss += mse_loss
