@@ -378,20 +378,42 @@ class ToolkitModuleMixin:
             up_weight = self.lora_up.weight.clone().float()
         down_weight = self.lora_down.weight.clone().float()
 
-        # extract weight from org_module
-        org_sd = self.org_module[0].state_dict()
-        # todo find a way to merge in weights when doing quantized model
-        if 'weight._data' in org_sd:
-            # quantized weight
+        # a zero delta merges to identity: skip entirely. On quantized bases a
+        # "merge" is dequantize -> add -> requantize, which is not lossless (the
+        # scales resample), so an untrained module merging zero would still
+        # perturb the base weights the first time.
+        if self.full_rank:
+            if not down_weight.any():
+                return
+        elif not up_weight.any() or not down_weight.any():
             return
 
         weight_key = "weight"
         from toolkit.util.quantize import is_quantized_tensor
-        org_weight = self.org_module[0].weight
-        is_ao_quantized = is_quantized_tensor(org_weight)
-        orig_dtype = org_weight.dtype
-        # dequantize torchao weights so the delta can be merged in full precision
-        weight = (org_weight.dequantize() if is_ao_quantized else org_weight).float()
+        om = self.org_module[0]
+        org_sd = None
+        if not getattr(om, "is_ostris_quantized", False):
+            # extract weight from org_module (also dequantizes OstrisLinear, so
+            # only fetched on the non-ostris paths that actually use it)
+            org_sd = om.state_dict()
+            # todo find a way to merge in weights when doing quantized model
+            if 'weight._data' in org_sd:
+                # quantized weight
+                return
+        if getattr(om, "is_ostris_quantized", False):
+            # fp32 dequant straight from the backend. The bf16 weight property
+            # would re-round the reconstruction, and requantizing that resamples
+            # every row scale with bf16 error — repeated merge cycles walk the
+            # weights (~0.1% output drift per cycle per layer)
+            is_ao_quantized = True
+            orig_dtype = om.ostris_orig_dtype
+            weight = om.ostris_quantizer.dequantize(om)
+        else:
+            org_weight = om.weight
+            is_ao_quantized = is_quantized_tensor(org_weight)
+            orig_dtype = org_weight.dtype
+            # dequantize torchao weights so the delta can be merged in full precision
+            weight = (org_weight.dequantize() if is_ao_quantized else org_weight).float()
 
         multiplier = merge_weight
         scale = self.scale
