@@ -140,7 +140,8 @@ def _is_ao_quantized_tensor(t: Optional[torch.Tensor]) -> bool:
         return False
     try:
         if has_torch_function_unary(t):
-            return t.__class__.__module__.startswith("torchao.")
+            mod = t.__class__.__module__
+            return mod.startswith("torchao.") or mod.startswith("optimum.quanto.")
     except Exception:
         pass
     for attr in (

@@ -136,9 +136,10 @@ class LoRAModule(ToolkitModuleMixin, ExtractableModuleMixin, torch.nn.Module):
 
 
 def _is_quantized_tensor(t) -> bool:
-    # torchao stores quantized weights as tensor subclasses (e.g. AffineQuantizedTensor) under torchao.*
-    # that are still nn.Parameter instances and expose .dequantize(). (quanto is intentionally not handled.)
-    return 'torchao' in type(t).__module__ and hasattr(t, 'dequantize')
+    # torchao and quanto both store quantized weights as tensor subclasses that are still
+    # nn.Parameter instances and expose .dequantize().
+    mod = type(t).__module__
+    return ('torchao' in mod or mod.startswith('optimum.quanto')) and hasattr(t, 'dequantize')
 
 
 def _dequantize_if_needed(t):
@@ -236,9 +237,6 @@ class FullModule(ToolkitModuleMixin, torch.nn.Module):
         if not self.can_merge_in:
             return
         om = self.org_module[0]
-        if 'weight._data' in om.state_dict():
-            # quanto quantized weight, can't merge
-            return
         org_weight = om.weight
         orig_dtype = org_weight.dtype
         # dequantize torchao weights so we can fold the full precision delta in

@@ -706,10 +706,6 @@ class ModelConfig:
         if self.auto_memory:
             print("auto_memory is deprecated, use layer_offloading instead")
         self.layer_offloading = kwargs.get("layer_offloading", self.auto_memory )
-        if self.layer_offloading and self.qtype == "qfloat8":
-            self.qtype = "float8"
-        if self.layer_offloading and self.qtype_te == "qfloat8":
-            self.qtype_te = "float8"
             
         # MPS has no fp8 dtype, so qfloat8 has to become an 8 bit integer format.
         # convrot8, not torchao int8: measured on an M3 against bf16, convrot8

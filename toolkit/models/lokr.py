@@ -268,10 +268,6 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
 
         # extract weight from org_module
         org_sd = self.org_module[0].state_dict()
-        # todo find a way to merge in weights when doing quanto quantized model
-        if 'weight._data' in org_sd:
-            # quanto quantized weight
-            return
 
         weight_key = "weight"
         from toolkit.util.quantize import is_quantized_tensor
