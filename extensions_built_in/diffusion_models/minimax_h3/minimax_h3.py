@@ -921,10 +921,12 @@ class MinimaxH3Model(BaseModel):
         return ["blocks"]
 
     def get_quantization_exclude_modules(self) -> Optional[List[str]]:
-        # float32 islands, the conditioning projection, and the token refiner
-        # (shipped bf16 in the pre-quantized checkpoints — excluding it makes
-        # quantize with the checkpoint's own qtype an exact no-op). The
-        # per-block adaln_proj stays quantizable (half the parameter count).
+        # float32 islands, the conditioning projection, the token refiner and
+        # the AdaLN projections — all shipped unquantized in the pre-quantized
+        # checkpoints (pruned files carry tiny fp16 adaln linears fed by the
+        # 8-dim time table), so excluding them makes quantize with the
+        # checkpoint's own qtype an exact no-op and keeps the sensitive
+        # modulation path at full precision under any other qtype.
         return [
             "video_patch_proj*",
             "audio_patch_proj*",
@@ -932,6 +934,7 @@ class MinimaxH3Model(BaseModel):
             "final_layer*",
             "condition_proj*",
             "token_refiner*",
+            "*adaln_proj*",
         ]
 
     def convert_lora_weights_before_save(self, state_dict):
