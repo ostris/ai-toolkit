@@ -193,15 +193,28 @@ class MinimaxH3Model(BaseModel):
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
+    @staticmethod
+    def _find_file_recursive(root_dir: str, filename: str) -> Optional[str]:
+        """First (breadth-stable, sorted) match of ``filename`` anywhere under
+        ``root_dir``."""
+        if not os.path.isdir(root_dir):
+            return None
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            dirnames.sort()
+            if filename in filenames:
+                return os.path.join(dirpath, filename)
+        return None
+
     def _resolve_comfy_file(self, component: str) -> str:
         """Find a weight file at its local location, or download it there
         when (and only when) it is missing.
 
         Search order: model_kwargs override, the repo-relative path under
         MODELS_PATH (diffusion_models/, text_encoders/, vae/), the bare
-        filename at the root as a fallback, the same spots under name_or_path
-        when it is a local folder, then the hub — downloaded to the
-        repo-relative path under MODELS_PATH.
+        filename at the root, any subfolder of the component's category
+        folder (recursive — e.g. diffusion_models/my_custom_sub/), the same
+        spots under name_or_path when it is a local folder, then the hub —
+        downloaded to the repo-relative path under MODELS_PATH.
         """
         override = self.model_config.model_kwargs.get(f"{component}_path", None)
         if override is not None:
@@ -212,15 +225,21 @@ class MinimaxH3Model(BaseModel):
             return override
 
         rel_path = COMFY_FILES[component]
+        filename = os.path.basename(rel_path)
+        category = os.path.dirname(rel_path)
         roots = [MODELS_PATH]
         name_or_path = self.model_config.name_or_path
         if name_or_path and os.path.isdir(name_or_path):
             roots.append(name_or_path)
         for root in roots:
-            for rel in (rel_path, os.path.basename(rel_path)):
+            for rel in (rel_path, filename):
                 candidate = os.path.join(root, rel)
                 if os.path.exists(candidate):
                     return candidate
+        for root in roots:
+            found = self._find_file_recursive(os.path.join(root, category), filename)
+            if found is not None:
+                return found
 
         import huggingface_hub
 
