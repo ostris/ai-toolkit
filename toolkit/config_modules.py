@@ -1030,6 +1030,8 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        # threads used to prep (decode/resize) items ahead of the VAE while caching latents
+        self.cache_latents_num_workers: int = kwargs.get('cache_latents_num_workers', min(6, os.cpu_count() or 1))
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case
