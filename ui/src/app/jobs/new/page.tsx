@@ -1,22 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { defaultJobConfig, defaultDatasetConfig, migrateJobConfig } from './jobConfig';
 import { jobTypeOptions } from './options';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
-import { useNestedState } from '@/utils/hooks';
+import { useNestedState, setNestedValue } from '@/utils/hooks';
 import { SelectInput } from '@/components/formInputs';
 import useSettings from '@/hooks/useSettings';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import useDatasetList from '@/hooks/useDatasetList';
+import YAML from 'yaml';
 import path from 'path';
 import { TopBar, MainContent } from '@/components/layout';
 import { Button } from '@headlessui/react';
 import { FaChevronLeft } from 'react-icons/fa';
 import SimpleJob from './SimpleJob';
-import AdvancedJob from './AdvancedJob';
+import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
 
@@ -34,8 +35,51 @@ export default function TrainingForm() {
   const [datasetOptions, setDatasetOptions] = useState<{ value: string; label: string }[]>([]);
   const [showAdvancedView, setShowAdvancedView] = useState(false);
 
-  const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(defaultJobConfig));
+  const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(migrateJobConfig(defaultJobConfig)));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportConfig = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result as string;
+        let parsed: any;
+        if (file.name.endsWith('.json') || file.name.endsWith('.jsonc')) {
+          parsed = JSON.parse(text.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, ''));
+        } else {
+          parsed = YAML.parse(text);
+        }
+
+        // Set required fields (same pattern as AdvancedJob.handleChange)
+        try {
+          parsed.config.process[0].sqlite_db_path = './aitk_db.db';
+          parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
+          parsed.config.process[0].device = 'cuda';
+          parsed.config.process[0].performance_log_every = 10;
+        } catch (err) {
+          console.warn('Could not set required fields on imported config:', err);
+        }
+
+        migrateJobConfig(parsed);
+        setJobConfig(parsed);
+      } catch (err) {
+        console.error('Failed to parse config file:', err);
+        alert('Failed to parse config file. Please check the file format.');
+      }
+    };
+    reader.readAsText(file);
+
+    // Reset so the same file can be re-imported
+    e.target.value = '';
+  };
 
   useEffect(() => {
     if (!isSettingsLoaded) return;
@@ -43,15 +87,19 @@ export default function TrainingForm() {
 
     const datasetOptions = datasets.map(name => ({ value: path.join(settings.DATASETS_FOLDER, name), label: name }));
     setDatasetOptions(datasetOptions);
-    const defaultDatasetPath = defaultDatasetConfig.folder_path;
 
-    for (let i = 0; i < jobConfig.config.process[0].datasets.length; i++) {
-      const dataset = jobConfig.config.process[0].datasets[i];
-      if (dataset.folder_path === defaultDatasetPath) {
-        if (datasetOptions.length > 0) {
-          setJobConfig(datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+    if (datasetOptions.length > 0) {
+      const defaultDatasetPath = defaultDatasetConfig.folder_path;
+      // Use functional updater so we check the *current* state, not a stale closure
+      setJobConfig((prev: JobConfig) => {
+        let updated = prev;
+        for (let i = 0; i < prev.config.process[0].datasets.length; i++) {
+          if (prev.config.process[0].datasets[i].folder_path === defaultDatasetPath) {
+            updated = setNestedValue(updated, datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+          }
         }
-      }
+        return updated;
+      });
     }
   }, [datasets, settings, isSettingsLoaded, datasetFetchStatus]);
 
@@ -142,30 +190,38 @@ export default function TrainingForm() {
   return (
     <>
       <TopBar>
-        <div>
-          <Button className="text-gray-500 dark:text-gray-300 px-3 mt-1" onClick={() => history.back()}>
+        <div className="flex-shrink-0">
+          <Button className="text-gray-500 dark:text-gray-300 px-2 sm:px-3 mt-1" onClick={() => history.back()}>
             <FaChevronLeft />
           </Button>
         </div>
-        <div>
-          <h1 className="text-lg">{runId ? 'Edit Training Job' : 'New Training Job'}</h1>
+        <div className="flex-shrink-0">
+          <h1 className="text-base sm:text-lg truncate max-w-[120px] sm:max-w-none">
+            {runId ? 'Edit Training Job' : 'New Training Job'}
+          </h1>
         </div>
         <div className="flex-1"></div>
         {showAdvancedView && (
           <>
-            <div>
+            <div className="hidden sm:block">
               <SelectInput
                 value={`${gpuIDs}`}
                 onChange={value => setGpuIDs(value)}
                 options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
               />
             </div>
-            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+            <div className="hidden sm:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+            <div className="hidden md:block">
+              <Button className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md" onClick={handleImportConfig}>
+                Import Config
+              </Button>
+            </div>
+            <div className="hidden md:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
           </>
         )}
         {!showAdvancedView && (
           <>
-            <div>
+            <div className="hidden sm:block">
               <SelectInput
                 value={`${jobConfig?.config.process[0].type}`}
                 onChange={value => {
@@ -192,42 +248,61 @@ export default function TrainingForm() {
                 options={jobTypeOptions}
               />
             </div>
-            <div className="mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
+            <div className="hidden sm:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
           </>
         )}
 
-        <div className="pr-2">
+        <div className="pr-1 sm:pr-2 flex-shrink-0">
           <Button
-            className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
+            className="text-gray-200 bg-gray-800 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
             onClick={() => setShowAdvancedView(!showAdvancedView)}
           >
-            {showAdvancedView ? 'Show Simple' : 'Show Advanced'}
+            <span className="sm:hidden">{showAdvancedView ? 'Simple' : 'Advanced'}</span>
+            <span className="hidden sm:inline">{showAdvancedView ? 'Show Simple' : 'Show Advanced'}</span>
           </Button>
         </div>
-        <div>
+        <div className="flex-shrink-0">
           <Button
-            className="text-gray-200 bg-green-800 px-3 py-1 rounded-md"
+            className="text-white bg-green-600 hover:bg-green-700 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
             onClick={() => saveJob()}
             disabled={status === 'saving'}
           >
-            {status === 'saving' ? 'Saving...' : runId ? 'Update Job' : 'Create Job'}
+            {status === 'saving' ? (
+              'Saving...'
+            ) : (
+              <>
+                <span className="sm:hidden">{runId ? 'Update' : 'Create'}</span>
+                <span className="hidden sm:inline">{runId ? 'Update Job' : 'Create Job'}</span>
+              </>
+            )}
           </Button>
         </div>
       </TopBar>
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".yaml,.yml,.json,.jsonc"
+        style={{ display: 'none' }}
+        onChange={handleFileSelected}
+      />
+
       {showAdvancedView ? (
         <div className="pt-[48px] absolute top-0 left-0 w-full h-full overflow-auto">
-          <AdvancedJob
-            jobConfig={jobConfig}
-            setJobConfig={setJobConfig}
-            status={status}
-            handleSubmit={handleSubmit}
-            runId={runId}
-            gpuIDs={gpuIDs}
-            setGpuIDs={setGpuIDs}
-            gpuList={gpuList}
-            datasetOptions={datasetOptions}
-            settings={settings}
+          <AdvancedConfigEditor
+            config={jobConfig}
+            setConfig={setJobConfig}
+            transformOnParse={(parsed: any) => {
+              try {
+                parsed.config.process[0].sqlite_db_path = './aitk_db.db';
+                parsed.config.process[0].training_folder = settings.TRAINING_FOLDER;
+                parsed.config.process[0].device = 'cuda';
+                parsed.config.process[0].performance_log_every = 10;
+              } catch (e) {
+                console.warn(e);
+              }
+              return migrateJobConfig(parsed);
+            }}
           />
         </div>
       ) : (
@@ -249,6 +324,7 @@ export default function TrainingForm() {
               setGpuIDs={setGpuIDs}
               gpuList={gpuList}
               datasetOptions={datasetOptions}
+              isLoading={!isSettingsLoaded || !isGPUInfoLoaded || datasetFetchStatus !== 'success'}
             />
           </ErrorBoundary>
 

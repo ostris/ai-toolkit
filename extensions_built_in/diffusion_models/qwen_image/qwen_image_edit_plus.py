@@ -104,27 +104,22 @@ class QwenImageEditPlusModel(QwenImageModel):
 
         control_img_list = []
         if gen_config.ctrl_img is not None:
-            # print(f"gen_config.ctrl_img {gen_config.ctrl_img}")
             control_img = Image.open(gen_config.ctrl_img)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         elif gen_config.ctrl_img_1 is not None:
-            # print(f"gen_config.ctrl_img_1 {gen_config.ctrl_img_1}")
             control_img = Image.open(gen_config.ctrl_img_1)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
 
         if gen_config.ctrl_img_2 is not None:
-            # print(f"gen_config.ctrl_img_2 {gen_config.ctrl_img_2}")
             control_img = Image.open(gen_config.ctrl_img_2)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
         if gen_config.ctrl_img_3 is not None:
-            # print(f"gen_config.ctrl_img_3 {gen_config.ctrl_img_3}")
             control_img = Image.open(gen_config.ctrl_img_3)
             control_img = control_img.convert("RGB")
             control_img_list.append(control_img)
-        # print(f"control_img_list {control_img_list}")
 
         # flush for low vram if we are doing that
         # flush_between_steps = self.model_config.low_vram
@@ -137,6 +132,10 @@ class QwenImageEditPlusModel(QwenImageModel):
             latents = callback_kwargs["latents"]
 
             return {"latents": latents}
+
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
 
         img = pipeline(
             image=control_img_list,
@@ -158,6 +157,11 @@ class QwenImageEditPlusModel(QwenImageModel):
             do_cfg_norm=gen_config.do_cfg_norm,
             **extra,
         ).images[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
+
         return img
 
     def condition_noisy_latents(
@@ -166,7 +170,7 @@ class QwenImageEditPlusModel(QwenImageModel):
         # we get the control image from the batch
         return latents.detach()
 
-    def get_prompt_embeds(self, prompt: str, control_images=None) -> PromptEmbeds:
+    def get_prompt_embeds(self, prompt: List, control_images=None) -> PromptEmbeds:
         # todo handle not caching text encoder
         if self.pipeline.text_encoder.device != self.device_torch:
             self.pipeline.text_encoder.to(self.device_torch)
@@ -174,59 +178,54 @@ class QwenImageEditPlusModel(QwenImageModel):
         if control_images is None:
             raise ValueError("Missing control images for QwenImageEditPlusModel")
         
-        if not isinstance(control_images, List):
+        if not isinstance(control_images, list):
             control_images = [control_images]
+        
+        # expects a list of list of control images List[List[Tensor]] where each item corresponds to a batch item, 
+        # and each item in the inner list corresponds to a control image for that batch item.
+        # for single image/caching, it may come in as just List[Tensor], so we handle that case by wrapping it in another list
+        if not isinstance(control_images[0], list):
+            control_images = [control_images]
+        
+        if len(prompt) != len(control_images):
+            raise ValueError("Number of prompts must match number of control image sets")
+        
+        prompt_embeds_list = []
+        prompt_embeds_mask_list = []
+        
+        for b in range(len(prompt)):
+            batch_control_images = control_images[b]
 
-        # print(f"control_images {control_images}")
-        if control_images is not None and len(control_images) > 0:
-            # print(f"len(control_images) {len(control_images)}")
-            # print(f"type(control_images) {type(control_images)}")
-            
-            # Create a new list of control images with proper batch dimensions
-            new_control_images = []
-            for i, x in enumerate(control_images):
-                # print(f"before control_images[{i}].shape {x.shape}")
-
-                # Add batch dimension if needed
-                # print(f"x.ndim {x.ndim}")
-                if x.ndim == 3:                      # [C,H,W]
-                    x = x.unsqueeze(0)               # -> [1,C,H,W]
-                # print(f"x.ndim {x.ndim}")
-                
-                # Add to new list
-                new_control_images.append(x)
-                # print(f"after new_control_images[{i}].shape {x.shape}")
-                # print(f"after new_control_images[{i}].ndim {x.ndim}")
-                
-                ratio = x.shape[2] / x.shape[3]
-                # print(f"ratio {ratio}")
-                width = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
-                height = width / ratio
+            for i in range(len(batch_control_images)):
+                if len(batch_control_images[i].shape) == 3:
+                    batch_control_images[i] = batch_control_images[i].unsqueeze(0)
+                # control images are 0 - 1 scale, shape (bs, ch, height, width)
+                ratio = batch_control_images[i].shape[2] / batch_control_images[i].shape[3]
+                height = math.sqrt(CONDITION_IMAGE_SIZE * ratio)
+                width = height / ratio
 
                 width = round(width / 32) * 32
                 height = round(height / 32) * 32
 
-                # print(f"width {width} height {height}")
-
-                # Interpolate and update the tensor in the new list
-                new_control_images[i] = F.interpolate(
-                    x, size=(height, width), mode="bilinear"
+                batch_control_images[i] = F.interpolate(
+                    batch_control_images[i], size=(height, width), mode="bilinear"
                 )
 
-                # print(f"end new_control_images[{i}].shape {new_control_images[i].shape}")
-
-            # Replace the original list with the new one
-            control_images = new_control_images
-
-        # print(f"control_images {control_images}")
-        prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
-            prompt,
-            image=control_images,
-            device=self.device_torch,
-            num_images_per_prompt=1,
-        )
-        pe = PromptEmbeds(prompt_embeds)
-        pe.attention_mask = prompt_embeds_mask
+            prompt_embeds, prompt_embeds_mask = self.pipeline.encode_prompt(
+                prompt,
+                image=batch_control_images,
+                device=self.device_torch,
+                num_images_per_prompt=1,
+            )
+            # diffusers >=0.37 returns None when all tokens are valid (no padding)
+            if prompt_embeds_mask is None:
+                prompt_embeds_mask = torch.ones(
+                    prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.int64
+                )
+            prompt_embeds_list.append(prompt_embeds)
+            prompt_embeds_mask_list.append(prompt_embeds_mask)
+        pe = PromptEmbeds(torch.cat(prompt_embeds_list, dim=0))
+        pe.attention_mask = torch.cat(prompt_embeds_mask_list, dim=0)
         return pe
 
     def get_noise_prediction(
@@ -292,8 +291,8 @@ class QwenImageEditPlusModel(QwenImageModel):
                         if len(control_img.shape) == 3:
                             control_img = control_img.unsqueeze(0)
                         ratio = control_img.shape[2] / control_img.shape[3]
-                        c_width = math.sqrt(control_image_res * ratio)
-                        c_height = c_width / ratio
+                        c_height = math.sqrt(control_image_res * ratio)
+                        c_width = c_height / ratio
 
                         c_width = round(c_width / 32) * 32
                         c_height = round(c_height / 32) * 32
@@ -354,11 +353,7 @@ class QwenImageEditPlusModel(QwenImageModel):
             prompt_embeds_mask = text_embeddings.attention_mask.to(
                 self.device_torch, dtype=torch.int64
             )
-            txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
             enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
-            prompt_embeds_mask = text_embeddings.attention_mask.to(
-                self.device_torch, dtype=torch.int64
-            )
 
         noise_pred = self.transformer(
             hidden_states=latent_model_input.to(
@@ -369,7 +364,6 @@ class QwenImageEditPlusModel(QwenImageModel):
             encoder_hidden_states=enc_hs.detach(),
             encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
             return_dict=False,
             **kwargs,
         )[0]

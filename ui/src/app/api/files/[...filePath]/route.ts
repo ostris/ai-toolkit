@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
+import { Readable } from 'stream';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
 
 export async function GET(request: NextRequest, { params }: { params: { filePath: string } }) {
@@ -15,32 +16,36 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
     const trainingRoot = await getTrainingFolder();
     const allowedDirs = [datasetRoot, trainingRoot];
 
-    // Security check: Ensure path is in allowed directory
-    const isAllowed =
-      allowedDirs.some(allowedDir => decodedFilePath.startsWith(allowedDir)) && !decodedFilePath.includes('..');
+    // Security check: resolve so `..` segments collapse, then verify still under
+    // an allowed root. Substring `.includes('..')` false-positives on filenames
+    // containing `..` as text (e.g. an ellipsis in a filename).
+    const resolvedFilePath = path.resolve(decodedFilePath);
+    const isAllowed = allowedDirs.some(
+      allowedDir => resolvedFilePath === allowedDir || resolvedFilePath.startsWith(allowedDir + path.sep),
+    );
 
     if (!isAllowed) {
-      console.warn(`Access denied: ${decodedFilePath} not in ${allowedDirs.join(', ')}`);
+      console.warn(`Access denied: ${resolvedFilePath} not in ${allowedDirs.join(', ')}`);
       return new NextResponse('Access denied', { status: 403 });
     }
 
-    // Check if file exists
-    if (!fs.existsSync(decodedFilePath)) {
-      console.warn(`File not found: ${decodedFilePath}`);
+    // Check it exists and grab file info in one stat
+    let stat;
+    try {
+      stat = await fs.promises.stat(resolvedFilePath);
+    } catch {
+      console.warn(`File not found: ${resolvedFilePath}`);
       return new NextResponse('File not found', { status: 404 });
     }
-
-    // Get file info
-    const stat = fs.statSync(decodedFilePath);
     if (!stat.isFile()) {
       return new NextResponse('Not a file', { status: 400 });
     }
 
     // Get filename for Content-Disposition
-    const filename = path.basename(decodedFilePath);
+    const filename = path.basename(resolvedFilePath);
 
     // Determine content type
-    const ext = path.extname(decodedFilePath).toLowerCase();
+    const ext = path.extname(resolvedFilePath).toLowerCase();
     const contentTypeMap: { [key: string]: string } = {
       '.jpg': 'image/jpeg',
       '.jpeg': 'image/jpeg',
@@ -62,6 +67,8 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
       // Audio
       '.mp3': 'audio/mpeg',
       '.wav': 'audio/wav',
+      '.flac': 'audio/flac',
+      '.ogg': 'audio/ogg',
     };
 
     const contentType = contentTypeMap[ext] || 'application/octet-stream';
@@ -79,19 +86,27 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
     };
 
     if (range) {
-      // Parse range header
+      // Parse range header. An open-ended range (`bytes=0-`) must serve to EOF —
+      // capping it forces clients into serial re-requests and RTT-bound throughput.
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : Math.min(start + 10 * 1024 * 1024, stat.size - 1); // 10MB chunks
+      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+
+      if (isNaN(start) || isNaN(end) || start > end || start >= stat.size) {
+        return new NextResponse('Range Not Satisfiable', {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${stat.size}` },
+        });
+      }
       const chunkSize = end - start + 1;
 
-      const fileStream = fs.createReadStream(decodedFilePath, {
+      const fileStream = fs.createReadStream(resolvedFilePath, {
         start,
         end,
-        highWaterMark: 64 * 1024, // 64KB buffer
+        highWaterMark: 4 * 1024 * 1024, // large buffer to minimize per-chunk overhead
       });
 
-      return new NextResponse(fileStream as any, {
+      return new NextResponse(Readable.toWeb(fileStream) as any, {
         status: 206,
         headers: {
           ...commonHeaders,
@@ -100,12 +115,11 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
         },
       });
     } else {
-      // For full file download, read directly without streaming wrapper
-      const fileStream = fs.createReadStream(decodedFilePath, {
-        highWaterMark: 64 * 1024, // 64KB buffer
+      const fileStream = fs.createReadStream(resolvedFilePath, {
+        highWaterMark: 4 * 1024 * 1024, // large buffer to minimize per-chunk overhead
       });
 
-      return new NextResponse(fileStream as any, {
+      return new NextResponse(Readable.toWeb(fileStream) as any, {
         headers: {
           ...commonHeaders,
           'Content-Length': String(stat.size),

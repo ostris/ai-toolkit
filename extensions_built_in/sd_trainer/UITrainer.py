@@ -33,7 +33,12 @@ class UITrainer(SDTrainer):
         # Initialize the status
         self._run_async_operation(self._update_status("running", "Starting"))
         self._stop_watcher_started = False
-        # self.start_stop_watcher(interval_sec=2.0)
+        if os.name == "nt":
+            # On Windows the stop route cannot send us SIGINT from outside
+            # (no console to deliver a Ctrl+C to), so watch the stop flag
+            # and raise the interrupt from inside. On Linux the route
+            # sends a real SIGINT to the pid and this is unnecessary.
+            self.start_stop_watcher(interval_sec=2.0)
     
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
@@ -52,26 +57,21 @@ class UITrainer(SDTrainer):
         while True:
             try:
                 if self.should_stop():
-                    # Mark and update status (non-blocking; uses existing infra)
-                    self.is_stopping = True
-                    self._run_async_operation(
-                        self._update_status("stopped", "Job stopped (remote)")
-                    )
-                    # Best-effort flush pending async ops
-                    try:
-                        asyncio.run(self.wait_for_all_async())
-                    except RuntimeError:
-                        pass
-                    # Try to stop DB thread pool quickly
-                    try:
-                        self.thread_pool.shutdown(wait=False, cancel_futures=True)
-                    except TypeError:
-                        self.thread_pool.shutdown(wait=False)
+                    if self.is_stopping:
+                        # maybe_stop() already started the graceful shutdown;
+                        # a second interrupt would only break its cleanup.
+                        return
                     print("")
                     print("****************************************************")
                     print("    Stop signal received; terminating process.      ")
                     print("****************************************************")
-                    os.kill(os.getpid(), signal.SIGINT)
+                    # Deliver a real KeyboardInterrupt to the main thread so
+                    # on_error runs the normal shutdown (final DB write, last
+                    # log). os.kill(pid, SIGINT) must not be used here: on
+                    # Windows it is TerminateProcess and kills us instantly.
+                    # Leave the thread pool alone -- on_error still needs it.
+                    signal.raise_signal(signal.SIGINT)
+                    return
                 time.sleep(interval_sec)
             except Exception:
                 time.sleep(interval_sec)
@@ -217,7 +217,12 @@ class UITrainer(SDTrainer):
 
     def on_error(self, e: Exception):
         super(UITrainer, self).on_error(e)
-        if self.accelerator.is_main_process and not self.is_stopping:
+        if isinstance(e, KeyboardInterrupt):
+            # SIGINT (UI stop button or ctrl+c) is a stop, not an error
+            self.is_stopping = True
+            if self.accelerator.is_main_process:
+                self.update_status("stopped", "Job stopped")
+        elif self.accelerator.is_main_process and not self.is_stopping:
             self.update_status("error", str(e))
         self.update_db_key("step", self.last_save_step)
         asyncio.run(self.wait_for_all_async())

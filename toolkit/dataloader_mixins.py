@@ -106,6 +106,22 @@ def clean_caption(caption):
     # caption = ', '.join(caption_split)
     return caption
 
+def waveform_to_stereo(waveform):
+    c = waveform.shape[0]
+    if c == 2:
+        return waveform
+    if c == 1:
+        return waveform.expand(2, -1)
+    if c == 6:  # 5.1: FL, FR, FC, LFE, BL, BR
+        fl, fr, fc, _, bl, br = waveform
+        k = 0.7071
+        return torch.stack([fl + k * fc + k * bl, fr + k * fc + k * br])
+    if c == 8:  # 7.1: FL, FR, FC, LFE, BL, BR, SL, SR
+        fl, fr, fc, _, bl, br, sl, sr = waveform
+        k = 0.7071
+        return torch.stack([fl + k * fc + k * (bl + sl), fr + k * fc + k * (br + sr)])
+    return waveform.mean(0, keepdim=True).expand(2, -1)
+
 
 class CaptionMixin:
     def get_caption_item(self: 'AiToolkitDataset', index):
@@ -134,15 +150,9 @@ class CaptionMixin:
         if os.path.exists(prompt_path):
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 prompt = f.read()
-                # check if is json
-                if prompt_path.endswith('.json'):
-                    prompt = json.loads(prompt)
-                    if 'caption' in prompt:
-                        prompt = prompt['caption']
-
                 prompt = clean_caption(prompt)
         elif os.path.exists(default_prompt_path_with_ext):
-            with open(default_prompt_path, 'r', encoding='utf-8') as f:
+            with open(default_prompt_path_with_ext, 'r', encoding='utf-8') as f:
                 prompt = f.read()
                 prompt = clean_caption(prompt)
         elif os.path.exists(default_prompt_path):
@@ -189,6 +199,11 @@ class BucketsMixin:
             for start_idx in range(0, len(bucket.file_list_idx), self.batch_size):
                 end_idx = min(start_idx + self.batch_size, len(bucket.file_list_idx))
                 batch = bucket.file_list_idx[start_idx:end_idx]
+                # if the bucket has fewer items left than the requested batch size,
+                # duplicate items from this batch to pad it up to batch_size
+                if len(batch) < self.batch_size and len(batch) > 0:
+                    pad = [batch[i % len(batch)] for i in range(self.batch_size - len(batch))]
+                    batch = batch + pad
                 self.batch_indices.append(batch)
 
     def shuffle_buckets(self: 'AiToolkitDataset'):
@@ -201,7 +216,7 @@ class BucketsMixin:
         if not hasattr(self, 'dataset_config'):
             raise Exception(f'dataset_config not found on class instance {self.__class__.__name__}')
 
-        if self.epoch_num > 0 and self.dataset_config.poi is None:
+        if self.epoch_num > 0:
             # no need to rebuild buckets for now
             # todo handle random cropping for buckets
             return
@@ -215,13 +230,15 @@ class BucketsMixin:
         # for file_item in enumerate(file_list):
         for idx, file_item in enumerate(file_list):
             file_item: 'FileItemDTO' = file_item
+            if self.is_audio_model:
+                bucket_key = f"{file_item.width}ms"
+                if bucket_key not in self.buckets:
+                    self.buckets[bucket_key] = Bucket(file_item.width, 1)
+                self.buckets[bucket_key].file_list_idx.append(idx)
+                continue
             width = int(file_item.width * file_item.dataset_config.scale)
             height = int(file_item.height * file_item.dataset_config.scale)
 
-            did_process_poi = False
-            if file_item.has_point_of_interest:
-                # Attempt to process the poi if we can. It wont process if the image is smaller than the resolution
-                did_process_poi = file_item.setup_poi_bucket()
             if self.dataset_config.square_crop:
                 # we scale first so smallest size matches resolution
                 scale_factor_x = resolution / width
@@ -237,7 +254,7 @@ class BucketsMixin:
                 else:
                     file_item.crop_x = 0
                     file_item.crop_y = int(file_item.scale_to_height / 2 - resolution / 2)
-            elif not did_process_poi:
+            else:
                 bucket_resolution = get_bucket_for_image_size(
                     width, height,
                     resolution=resolution,
@@ -326,22 +343,6 @@ class CaptionProcessingDTOMixin:
                 with open(prompt_path, 'r', encoding='utf-8') as f:
                     prompt = f.read()
                     short_caption = None
-                    if prompt_path.endswith('.json'):
-                        # replace any line endings with commas for \n \r \r\n
-                        prompt = prompt.replace('\r\n', ' ')
-                        prompt = prompt.replace('\n', ' ')
-                        prompt = prompt.replace('\r', ' ')
-
-                        prompt_json = json.loads(prompt)
-                        if 'caption' in prompt_json:
-                            prompt = prompt_json['caption']
-                        if 'caption_short' in prompt_json:
-                            short_caption = prompt_json['caption_short']
-                            if self.dataset_config.use_short_captions:
-                                prompt = short_caption
-                        if 'extra_values' in prompt_json:
-                            self.extra_values = prompt_json['extra_values']
-
                     prompt = clean_caption(prompt)
                     if short_caption is not None:
                         short_caption = clean_caption(short_caption)
@@ -392,10 +393,6 @@ class CaptionProcessingDTOMixin:
 
         # get tokens
         token_list = raw_caption.split(',')
-        # trim whitespace
-        token_list = [x.strip() for x in token_list]
-        # remove empty strings
-        token_list = [x for x in token_list if x]
 
         # handle token dropout
         if self.dataset_config.token_dropout_rate > 0 and not short_caption and not self.dataset_config.cache_text_embeddings:
@@ -439,16 +436,33 @@ class CaptionProcessingDTOMixin:
         if self.dataset_config.shuffle_tokens:
             # shuffle again
             token_list = caption.split(',')
-            # trim whitespace
-            token_list = [x.strip() for x in token_list]
-            # remove empty strings
-            token_list = [x for x in token_list if x]
             random.shuffle(token_list)
             caption = ', '.join(token_list)
         if caption == '':
             pass
         return caption
 
+class AudioProcessingDTOMixin:
+    def load_and_process_audio(self: 'FileItemDTO'):
+        # Default to "no audio" unless we successfully extract it
+        self.audio_data = None
+        self.audio_tensor = None
+        self.tensor = None
+        try:
+            import torchaudio
+
+            waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+            waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
+            if sample_rate != self.sample_rate:
+                waveform = torchaudio.functional.resample(waveform, sample_rate, self.sample_rate)
+            self.tensor = waveform
+            self.audio_tensor = waveform
+            self.audio_data = {"waveform": waveform, "sample_rate": int(self.sample_rate)}
+
+        except Exception as e:
+            # if issue with libtorchcodec "Could not load libtorchcodec"
+            raise Exception(f"** WARNING ** - Error Processing audio for {self.path}. Error: {e}")
+        
 
 class ImageProcessingDTOMixin:
     def load_and_process_video(
@@ -491,11 +505,30 @@ class ImageProcessingDTOMixin:
             
             frames_to_extract = []
             
+            if self.dataset_config.auto_frame_count:
+                # allow for any length video here but make sure it is temporally compressable.
+                vid_length_seconds = total_frames / video_fps
+
+                desired_num_frames = int(vid_length_seconds * self.dataset_config.fps)
+
+                if getattr(self, 'frame_count_snapper', None) is not None:
+                    # model-specific valid-frame-count grid (e.g. minimax_h3's 17n+5)
+                    desired_num_frames = self.frame_count_snapper(desired_num_frames)
+                else:
+                    # make sure it is divisible by temporal_compression
+                    desired_num_frames = desired_num_frames // self.temporal_compression * self.temporal_compression
+
+                    # TODO, all models currently add a key frame, but future models may not, update here if this changes.
+                    desired_num_frames += 1  # add one for the key frame that is always added
+
+                self.num_frames = desired_num_frames
+                
+            
             # Always stretch/shrink to the requested number of frames if needed
-            if self.dataset_config.shrink_video_to_frames or total_frames < self.dataset_config.num_frames:
+            if self.dataset_config.shrink_video_to_frames or total_frames < self.num_frames:
                 # Distribute frames evenly across the entire video
-                interval = max_frame_index / (self.dataset_config.num_frames - 1) if self.dataset_config.num_frames > 1 else 0
-                frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.dataset_config.num_frames)]
+                interval = max_frame_index / (self.num_frames - 1) if self.num_frames > 1 else 0
+                frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.num_frames)]
             else:
                 # Calculate frame interval based on FPS ratio
                 fps_ratio = video_fps / self.dataset_config.fps
@@ -504,17 +537,17 @@ class ImageProcessingDTOMixin:
                 # Calculate max consecutive frames we can extract at desired FPS
                 max_consecutive_frames = (total_frames // frame_interval)
                 
-                if max_consecutive_frames < self.dataset_config.num_frames:
+                if max_consecutive_frames < self.num_frames:
                     # Not enough frames at desired FPS, so stretch instead
-                    interval = max_frame_index / (self.dataset_config.num_frames - 1) if self.dataset_config.num_frames > 1 else 0
-                    frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.dataset_config.num_frames)]
+                    interval = max_frame_index / (self.num_frames - 1) if self.num_frames > 1 else 0
+                    frames_to_extract = [min(int(round(i * interval)), max_frame_index) for i in range(self.num_frames)]
                 else:
                     # Calculate max start frame to ensure we can get all num_frames
-                    max_start_frame = max_frame_index - ((self.dataset_config.num_frames - 1) * frame_interval)
+                    max_start_frame = max_frame_index - ((self.num_frames - 1) * frame_interval)
                     start_frame = random.randint(0, max(0, max_start_frame))
                     
                     # Generate list of frames to extract
-                    frames_to_extract = [start_frame + (i * frame_interval) for i in range(self.dataset_config.num_frames)]
+                    frames_to_extract = [start_frame + (i * frame_interval) for i in range(self.num_frames)]
                     
             # Final safety check - ensure no frame exceeds max valid index
             frames_to_extract = [min(frame_idx, max_frame_index) for frame_idx in frames_to_extract]
@@ -523,28 +556,63 @@ class ImageProcessingDTOMixin:
             if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
                 print_acc(f"  Frames to extract: {frames_to_extract}")
             
-            # Extract frames
+            # Extract frames -- decode sequentially in a single pass. A cap.set() seek per
+            # frame forces a keyframe seek + GOP re-decode for every extracted frame
+            # (~20x slower); frames_to_extract is always ascending, so seek once to the
+            # first frame then grab() through the gaps.
             frames = []
-            for frame_idx in frames_to_extract:
-                # Safety check - ensure frame_idx is within bounds (silently fix)
-                if frame_idx > max_frame_index:
-                    frame_idx = max_frame_index
-                
-                # Set frame position
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-                
+            unique_frame_idxs = sorted(set(frames_to_extract))
+            processed_frames = {}  # frame_idx -> processed frame (duplicates reuse it)
+
+            def process_frame(rgb_frame):
+                # Convert to PIL Image
+                img = Image.fromarray(rgb_frame)
+
+                # Apply the same processing as for single images
+                img = img.convert('RGB')
+
+                if self.flip_x:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+                if self.flip_y:
+                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
+
+                # Apply bucketing
+                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
+                img = img.crop((
+                    self.crop_x,
+                    self.crop_y,
+                    self.crop_x + self.crop_width,
+                    self.crop_y + self.crop_height
+                ))
+
+                # Apply transform if provided
+                if transform:
+                    img = transform(img)
+
+                return img
+
+            decode_with_pyav = False
+
+            # Set frame position
+            pos = unique_frame_idxs[0]
+            if pos > 0:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+
                 # Silently verify position was set correctly (no warnings unless debug mode)
                 if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
                     actual_pos = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-                    if actual_pos != frame_idx:
-                        print_acc(f"Warning: Failed to set exact frame position. Requested: {frame_idx}, Actual: {actual_pos}")
-                
+                    if actual_pos != pos:
+                        print_acc(f"Warning: Failed to set exact frame position. Requested: {pos}, Actual: {actual_pos}")
+
+            for frame_idx in unique_frame_idxs:
+                # skip past frames between targets without decoding them to images
+                while pos < frame_idx and cap.grab():
+                    pos += 1
+
                 ret, frame = cap.read()
-                if not ret:
-                    # Try to provide more detailed error information
-                    actual_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-                    frame_pos_info = f"Requested frame: {frame_idx}, Actual frame position: {actual_frame}"
-                    
+                if ret:
+                    pos += 1
+                else:
                     # Try to read the next available frame as a fallback
                     fallback_success = False
                     for fallback_offset in [1, -1, 5, -5, 10, -10]:
@@ -557,41 +625,52 @@ class ImageProcessingDTOMixin:
                                 print_acc(f"Falling back to nearby frame {fallback_pos} instead of {frame_idx}")
                             frame = fallback_frame
                             fallback_success = True
+                            # resync sequential position after the fallback seek
+                            pos = fallback_pos + 1
                             break
                     else:
-                        # No fallback worked, raise a more detailed exception
-                        video_info = f"Video: {self.path}, Total frames: {total_frames}, FPS: {video_fps}"
-                        raise Exception(f"Failed to read frame {frame_idx} from video. {frame_pos_info}. {video_info}")
+                        # No fallback worked. cv2's bundled ffmpeg cannot decode some codecs
+                        # at all (e.g. AV1 has no software decoder there), so retry the
+                        # remaining frames with PyAV below.
+                        decode_with_pyav = True
+                        break
                 
                 # Convert BGR to RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                
-                # Convert to PIL Image
-                img = Image.fromarray(frame)
-                
-                # Apply the same processing as for single images
-                img = img.convert('RGB')
-                
-                if self.flip_x:
-                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
-                if self.flip_y:
-                    img = img.transpose(Image.FLIP_TOP_BOTTOM)
-                
-                # Apply bucketing
-                img = img.resize((self.scale_to_width, self.scale_to_height), Image.BICUBIC)
-                img = img.crop((
-                    self.crop_x,
-                    self.crop_y,
-                    self.crop_x + self.crop_width,
-                    self.crop_y + self.crop_height
-                ))
-                
-                # Apply transform if provided
-                if transform:
-                    img = transform(img)
-                
-                frames.append(img)
-            
+
+                processed_frames[frame_idx] = process_frame(frame)
+
+            if decode_with_pyav:
+                # cv2 could not decode this video (e.g. AV1: OpenCV's bundled ffmpeg has no
+                # software AV1 decoder). Decode the still-missing frames in one sequential
+                # PyAV pass; PyAV ships libdav1d so it handles codecs cv2 cannot.
+                import av
+
+                needed = {i for i in unique_frame_idxs if i not in processed_frames}
+                last_av_frame = None
+                with av.open(self.path) as container:
+                    decoded_idx = -1
+                    for av_frame in container.decode(video=0):
+                        decoded_idx += 1
+                        last_av_frame = av_frame
+                        if decoded_idx in needed:
+                            processed_frames[decoded_idx] = process_frame(av_frame.to_ndarray(format='rgb24'))
+                            needed.discard(decoded_idx)
+                            if not needed:
+                                break
+
+                if needed:
+                    if last_av_frame is None:
+                        video_info = f"Video: {self.path}, Total frames: {total_frames}, FPS: {video_fps}"
+                        raise Exception(f"Failed to read frames {sorted(needed)} from video with both cv2 and PyAV. {video_info}")
+                    # metadata frame count overshot the real stream; reuse the last decoded frame
+                    tail_frame = process_frame(last_av_frame.to_ndarray(format='rgb24'))
+                    for frame_idx in needed:
+                        processed_frames[frame_idx] = tail_frame
+
+            # assemble in extraction order; stretched clips repeat decoded frames
+            frames = [processed_frames[frame_idx] for frame_idx in frames_to_extract]
+
             # Release the video capture
             cap.release()
             
@@ -626,33 +705,43 @@ class ImageProcessingDTOMixin:
                     # Target duration is how this sampled/stretched clip is interpreted for training
                     # (i.e. num_frames at the configured dataset FPS).
                     if hasattr(self.dataset_config, "fps") and self.dataset_config.fps and self.dataset_config.fps > 0:
-                        target_duration = float(self.dataset_config.num_frames) / float(self.dataset_config.fps)
+                        target_duration = float(self.num_frames) / float(self.dataset_config.fps)
                     else:
                         target_duration = source_duration
 
-                    waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
-                    
-                    if self.dataset_config.audio_normalize:
-                        peak = waveform.abs().amax()  # global peak across channels
-                        eps = 1e-9
-                        target_peak = 0.999  # ~ -0.01 dBFS
-                        gain = target_peak / (peak + eps)
-                        waveform = waveform * gain
+                    # torchcodec's AudioDecoder raises when a video has no audio
+                    # track, so probe for a stream before decoding.
+                    import av
+                    with av.open(self.path) as container:
+                        has_audio_stream = len(container.streams.audio) > 0
 
-                    # Slice to the selected clip region (when we have a meaningful time range)
-                    if source_duration > 0.0:
-                        start_sample = int(round(clip_start_time * sample_rate))
-                        end_sample = int(round(clip_end_time * sample_rate))
-                        start_sample = max(0, min(start_sample, waveform.shape[-1]))
-                        end_sample = max(0, min(end_sample, waveform.shape[-1]))
-                        if end_sample > start_sample:
-                            waveform = waveform[..., start_sample:end_sample]
+                    waveform = None
+                    if has_audio_stream:
+                        waveform, sample_rate = torchaudio.load(self.path)  # [channels, samples]
+
+                        waveform = waveform_to_stereo(waveform)  # Convert to stereo if not already
+
+                        if self.dataset_config.audio_normalize:
+                            peak = waveform.abs().amax()  # global peak across channels
+                            eps = 1e-9
+                            target_peak = 0.999  # ~ -0.01 dBFS
+                            gain = target_peak / (peak + eps)
+                            waveform = waveform * gain
+
+                        # Slice to the selected clip region (when we have a meaningful time range)
+                        if source_duration > 0.0:
+                            start_sample = int(round(clip_start_time * sample_rate))
+                            end_sample = int(round(clip_end_time * sample_rate))
+                            start_sample = max(0, min(start_sample, waveform.shape[-1]))
+                            end_sample = max(0, min(end_sample, waveform.shape[-1]))
+                            if end_sample > start_sample:
+                                waveform = waveform[..., start_sample:end_sample]
+                            else:
+                                # No valid audio segment
+                                waveform = None
                         else:
-                            # No valid audio segment
+                            # If we can't compute a meaningful time range, treat as no-audio
                             waveform = None
-                    else:
-                        # If we can't compute a meaningful time range, treat as no-audio
-                        waveform = None
 
                     if waveform is not None and waveform.numel() > 0:
                         target_samples = int(round(target_duration * sample_rate))
@@ -670,11 +759,8 @@ class ImageProcessingDTOMixin:
                         self.audio_data = {"waveform": waveform, "sample_rate": int(sample_rate)}
 
                 except Exception as e:
-                    # Keep behavior identical for non-audio datasets; for audio datasets, just skip if missing/broken.
-                    if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
-                        print_acc(f"Could not extract/stretch audio for {self.path}: {e}")
-                    self.audio_data = None
-                    self.audio_tensor = None
+                    # if issue with libtorchcodec "Could not load libtorchcodec"
+                    raise Exception(f"** WARNING ** - Error Processing audio for {self.path}. Error: {e}")
             
             # Only log success in debug mode
             if hasattr(self.dataset_config, 'debug') and self.dataset_config.debug:
@@ -731,18 +817,24 @@ class ImageProcessingDTOMixin:
         # if we are caching latents, just do that
         if self.is_latent_cached:
             self.get_latent()
-            if self.has_control_image:
-                self.load_control_image()
-            if self.has_inpaint_image:
-                self.load_inpaint_image()
-            if self.has_clip_image:
-                self.load_clip_image()
-            if self.has_mask_image:
-                self.load_mask_image()
-            if self.has_unconditional:
-                self.load_unconditional_image()
+            # if load_image_when_caching_latents is set, we still need the raw image
+            # tensor in addition to the cached latent, so fall through to load it below
+            if not self.dataset_config.load_image_when_caching_latents:
+                if self.has_control_image:
+                    self.load_control_image()
+                if self.has_inpaint_image:
+                    self.load_inpaint_image()
+                if self.has_clip_image:
+                    self.load_clip_image()
+                if self.has_mask_image:
+                    self.load_mask_image()
+                if self.has_unconditional:
+                    self.load_unconditional_image()
+                return
+        if self.is_audio_model:
+            self.load_and_process_audio()
             return
-        if self.dataset_config.num_frames > 1:
+        if self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count:
             self.load_and_process_video(transform, only_load_latents)
             return
         try:
@@ -962,11 +1054,33 @@ class ControlFileItemDTOMixin:
                 # only do one
                 self.control_path = self.control_path[0]
 
+        if dataset_config.control_from_same_folder:
+            # assume we have them. We will pull them on load.
+            self.full_size_control_images = dataset_config.full_size_control_images
+            self.has_control_image = True
+
+    def get_new_control_paths(self: 'FileItemDTO'):
+        if self.dataset_config.control_from_same_folder:
+            # randomly grab image paths from the same folder as if they came from control_path
+            pool_folder = os.path.dirname(self.path)
+            # find all images in the folder
+            img_files = []
+            for ext in img_ext_list:
+                img_files += glob.glob(os.path.join(pool_folder, f'*{ext}'))
+            # remove the current image if len is greater than 1
+            if len(img_files) > 1:
+                img_files.remove(self.path)
+            num_controls = min(self.dataset_config.num_controls_from_same_folder, len(img_files))
+            # randomly grab them
+            return random.sample(img_files, num_controls)
+        else:
+            return self.control_path
+
     def load_control_image(self: 'FileItemDTO'):
         control_tensors = []
-        control_path_list = self.control_path
-        if not isinstance(self.control_path, list):
-            control_path_list = [self.control_path]
+        control_path_list = self.get_new_control_paths()
+        if not isinstance(control_path_list, list):
+            control_path_list = [control_path_list]
         
         for control_path in control_path_list:
             try:
@@ -1547,165 +1661,20 @@ class UnconditionalFileItemDTOMixin:
         self.unconditional_tensor = None
         self.unconditional_latent = None
 
-
-class PoiFileItemDTOMixin:
-    # Point of interest bounding box. Allows for dynamic cropping without cropping out the main subject
-    # items in the poi will always be inside the image when random cropping
-    def __init__(self: 'FileItemDTO', *args, **kwargs):
-        if hasattr(super(), '__init__'):
-            super().__init__(*args, **kwargs)
-        # poi is a name of the box point of interest in the caption json file
-        dataset_config = kwargs.get('dataset_config', None)
-        path = kwargs.get('path', None)
-        self.poi: Union[str, None] = dataset_config.poi
-        self.has_point_of_interest = self.poi is not None
-        self.poi_x: Union[int, None] = None
-        self.poi_y: Union[int, None] = None
-        self.poi_width: Union[int, None] = None
-        self.poi_height: Union[int, None] = None
-
-        if self.poi is not None:
-            # make sure latent caching is off
-            if dataset_config.cache_latents or dataset_config.cache_latents_to_disk:
-                raise Exception(
-                    f"Error: poi is not supported when caching latents. Please set cache_latents and cache_latents_to_disk to False in the dataset config"
-                )
-                # make sure we are loading through json
-            if dataset_config.caption_ext != 'json':
-                raise Exception(
-                    f"Error: poi is only supported when using json captions. Please set caption_ext to json in the dataset config"
-                )
-            self.poi = self.poi.strip()
-            # get the caption path
-            file_path_no_ext = os.path.splitext(path)[0]
-            caption_path = file_path_no_ext + '.json'
-            if not os.path.exists(caption_path):
-                raise Exception(f"Error: caption file not found for poi: {caption_path}")
-            with open(caption_path, 'r', encoding='utf-8') as f:
-                json_data = json.load(f)
-            if 'poi' not in json_data:
-                print_acc(f"Warning: poi not found in caption file: {caption_path}")
-            if self.poi not in json_data['poi']:
-                print_acc(f"Warning: poi not found in caption file: {caption_path}")
-            # poi has, x, y, width, height
-            # do full image if no poi
-            self.poi_x = 0
-            self.poi_y = 0
-            self.poi_width = self.width
-            self.poi_height = self.height
-            try:
-                if self.poi in json_data['poi']:
-                    poi = json_data['poi'][self.poi]
-                    self.poi_x = int(poi['x'])
-                    self.poi_y = int(poi['y'])
-                    self.poi_width = int(poi['width'])
-                    self.poi_height = int(poi['height'])
-            except Exception as e:
-                pass
-
-            # handle flipping
-            if kwargs.get('flip_x', False):
-                # flip the poi
-                self.poi_x = self.width - self.poi_x - self.poi_width
-            if kwargs.get('flip_y', False):
-                # flip the poi
-                self.poi_y = self.height - self.poi_y - self.poi_height
-
-    def setup_poi_bucket(self: 'FileItemDTO'):
-        initial_width = int(self.width * self.dataset_config.scale)
-        initial_height = int(self.height * self.dataset_config.scale)
-        # we are using poi, so we need to calculate the bucket based on the poi
-
-        # if img resolution is less than dataset resolution, just return and let the normal bucketing happen
-        img_resolution = get_resolution(initial_width, initial_height)
-        if img_resolution <= self.dataset_config.resolution:
-            return False  # will trigger normal bucketing
-
-        bucket_tolerance = self.dataset_config.bucket_tolerance
-        poi_x = int(self.poi_x * self.dataset_config.scale)
-        poi_y = int(self.poi_y * self.dataset_config.scale)
-        poi_width = int(self.poi_width * self.dataset_config.scale)
-        poi_height = int(self.poi_height * self.dataset_config.scale)
-
-        # loop to keep expanding until we are at the proper resolution. This is not ideal, we can probably handle it better
-        num_loops = 0
-        while True:
-            # crop left
-            if poi_x > 0:
-                poi_x = random.randint(0, poi_x)
-            else:
-                poi_x = 0
-
-            # crop right
-            cr_min = poi_x + poi_width
-            if cr_min < initial_width:
-                crop_right = random.randint(poi_x + poi_width, initial_width)
-            else:
-                crop_right = initial_width
-
-            poi_width = crop_right - poi_x
-
-            if poi_y > 0:
-                poi_y = random.randint(0, poi_y)
-            else:
-                poi_y = 0
-
-            if poi_y + poi_height < initial_height:
-                crop_bottom = random.randint(poi_y + poi_height, initial_height)
-            else:
-                crop_bottom = initial_height
-
-            poi_height = crop_bottom - poi_y
-            try:
-                # now we have our random crop, but it may be smaller than resolution. Check and expand if needed
-                current_resolution = get_resolution(poi_width, poi_height)
-            except Exception as e:
-                print_acc(f"Error: {e}")
-                print_acc(f"Error getting resolution: {self.path}")
-                raise e
-                return False
-            if current_resolution >= self.dataset_config.resolution:
-                # We can break now
-                break
-            else:
-                num_loops += 1
-                if num_loops > 100:
-                    print_acc(
-                        f"Warning: poi bucketing looped too many times. This should not happen. Please report this issue.")
-                    return False
-
-        new_width = poi_width
-        new_height = poi_height
-
-        bucket_resolution = get_bucket_for_image_size(
-            new_width, new_height,
-            resolution=self.dataset_config.resolution,
-            divisibility=bucket_tolerance
-        )
-
-        width_scale_factor = bucket_resolution["width"] / new_width
-        height_scale_factor = bucket_resolution["height"] / new_height
-        # Use the maximum of the scale factors to ensure both dimensions are scaled above the bucket resolution
-        max_scale_factor = max(width_scale_factor, height_scale_factor)
-
-        self.scale_to_width = math.ceil(initial_width * max_scale_factor)
-        self.scale_to_height = math.ceil(initial_height * max_scale_factor)
-        self.crop_width = bucket_resolution['width']
-        self.crop_height = bucket_resolution['height']
-        self.crop_x = int(poi_x * max_scale_factor)
-        self.crop_y = int(poi_y * max_scale_factor)
-
-        if self.scale_to_width < self.crop_x + self.crop_width or self.scale_to_height < self.crop_y + self.crop_height:
-            # todo look into this. This still happens sometimes
-            print_acc('size mismatch')
-
-        return True
-
-
 class ArgBreakMixin:
     # just stops super calls form hitting object
     def __init__(self, *args, **kwargs):
         pass
+
+
+def _latent_to_uint8(latent: torch.Tensor) -> torch.Tensor:
+    # pixel-space latents in [-1, 1] -> uint8 0..255 for compact caching
+    return ((latent.float().clamp(-1, 1) + 1.0) * 127.5).round().to(torch.uint8)
+
+
+def _latent_from_uint8(latent: torch.Tensor, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    # uint8 0..255 -> pixel-space latents in [-1, 1]
+    return (latent.to(torch.float32) / 127.5 - 1.0).to(dtype)
 
 
 class LatentCachingFileItemDTOMixin:
@@ -1736,21 +1705,33 @@ class LatentCachingFileItemDTOMixin:
             ("latent_space_version", self.latent_space_version),
             ("latent_version", self.latent_version),
         ])
+        is_video = False
         # when adding items, do it after so we dont change old latents
         if self.flip_x:
             item["flip_x"] = True
         if self.flip_y:
             item["flip_y"] = True
-        if self.dataset_config.num_frames > 1:
+        if self.dataset_config.auto_frame_count:
+            # don't store num frames here as it is calculated dynamically
+            item["auto_frame_count"] = True
+            is_video = True
+        elif self.dataset_config.num_frames > 1:
             item["num_frames"] = self.dataset_config.num_frames
-            if self.dataset_config.do_i2v:
+            is_video = True
+        if is_video and self.dataset_config.fps != 24:
+            # only add fps if it deviates from the default
+            item["fps"] = self.dataset_config.fps
+        if is_video and self.dataset_config.do_i2v:
                 item["do_i2v"] = True
-        if self.dataset_config.do_audio:
+        if is_video and self.dataset_config.do_audio:
             item["do_audio"] = True
             if self.dataset_config.audio_normalize:
                 item["audio_normalize"] = True
             if self.dataset_config.audio_preserve_pitch:
                 item["audio_preserve_pitch"] = True
+        if self.is_audio_model:
+            item["is_audio_model"] = True
+            item["sample_rate"] = self.sample_rate
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
@@ -1796,10 +1777,17 @@ class LatentCachingFileItemDTOMixin:
                 device='cpu'
             )
             self._encoded_latent = state_dict['latent']
+            if self._encoded_latent.dtype == torch.uint8:
+                # pixel-space latents cached as uint8
+                self._encoded_latent = _latent_from_uint8(self._encoded_latent)
             if 'first_frame_latent' in state_dict:
                 self._cached_first_frame_latent = state_dict['first_frame_latent']
+                if self._cached_first_frame_latent.dtype == torch.uint8:
+                    self._cached_first_frame_latent = _latent_from_uint8(self._cached_first_frame_latent)
             if 'audio_latent' in state_dict:
                 self._cached_audio_latent = state_dict['audio_latent']
+            if 'num_frames' in state_dict:
+                self.num_frames = int(state_dict['num_frames'].item())
         return self._encoded_latent
 
 
@@ -1837,9 +1825,16 @@ class LatentCachingMixin:
                     if to_memory:
                         # load it into memory
                         state_dict = load_file(latent_path, device='cpu')
-                        file_item._encoded_latent = state_dict['latent'].to('cpu', dtype=self.sd.torch_dtype)
+                        cached_latent = state_dict['latent']
+                        if cached_latent.dtype == torch.uint8:
+                            # pixel-space latents cached as uint8
+                            cached_latent = _latent_from_uint8(cached_latent)
+                        file_item._encoded_latent = cached_latent.to('cpu', dtype=self.sd.torch_dtype)
                         if 'first_frame_latent' in state_dict:
-                            file_item._cached_first_frame_latent = state_dict['first_frame_latent'].to('cpu', dtype=self.sd.torch_dtype)
+                            cached_first_frame = state_dict['first_frame_latent']
+                            if cached_first_frame.dtype == torch.uint8:
+                                cached_first_frame = _latent_from_uint8(cached_first_frame)
+                            file_item._cached_first_frame_latent = cached_first_frame.to('cpu', dtype=self.sd.torch_dtype)
                         if 'audio_latent' in state_dict:
                             file_item._cached_audio_latent = state_dict['audio_latent'].to('cpu', dtype=self.sd.torch_dtype)
                 else:
@@ -1851,18 +1846,24 @@ class LatentCachingMixin:
                     state_dict = OrderedDict()
                     first_frame_latent = None
                     audio_latent = None
+                    frames = None
                     # add batch dimension
+                    cache_uint8 = getattr(self.sd, 'cache_latents_as_uint8', False)
                     try:
                         imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
                         latent = self.sd.encode_images(imgs).squeeze(0)
                         if to_disk:
-                            state_dict['latent'] = latent.clone().detach().cpu()
+                            if cache_uint8:
+                                state_dict['latent'] = _latent_to_uint8(latent).cpu()
+                            else:
+                                state_dict['latent'] = latent.clone().detach().cpu()
                     except Exception as e:
                         print_acc(f"Error processing image: {file_item.path}")
                         print_acc(f"Error: {str(e)}")
                         raise e
                     # do first frame
-                    if self.dataset_config.num_frames > 1 and self.dataset_config.do_i2v:
+                    is_video = self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1
+                    if is_video and self.dataset_config.do_i2v:
                         frames = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
                         if len(frames.shape) == 4:
                             first_frames = frames
@@ -1872,13 +1873,19 @@ class LatentCachingMixin:
                             raise ValueError(f"Unknown frame shape {frames.shape}")
                         first_frame_latent = self.sd.encode_images(first_frames).squeeze(0)
                         if to_disk:
-                            state_dict['first_frame_latent'] = first_frame_latent.clone().detach().cpu()
+                            if cache_uint8:
+                                state_dict['first_frame_latent'] = _latent_to_uint8(first_frame_latent).cpu()
+                            else:
+                                state_dict['first_frame_latent'] = first_frame_latent.clone().detach().cpu()
                     
-                    # audio
-                    if file_item.audio_data is not None:
+                    # audio (video+audio models only — audio-only models already encoded above via encode_images)
+                    if not self.is_audio_model and file_item.audio_data is not None:
                         audio_latent = self.sd.encode_audio([file_item.audio_data]).squeeze(0)
                         if to_disk:
                             state_dict['audio_latent'] = audio_latent.clone().detach().cpu()
+                    
+                    if is_video:
+                        state_dict['num_frames'] = torch.tensor(file_item.num_frames, dtype=torch.int32)
                     
                     # save_latent
                     if to_disk:
@@ -1897,7 +1904,11 @@ class LatentCachingMixin:
 
                     del imgs
                     del latent
+                    del frames
                     del file_item.tensor
+                    del state_dict
+                    del first_frame_latent
+                    del audio_latent
                     file_item.cleanup()
 
                 file_item.is_latent_cached = True
@@ -1931,6 +1942,13 @@ class TextEmbeddingFileItemDTOMixin:
         # if we have a control image, cache the path
         if self.encode_control_in_text_embeddings and self.control_path is not None:
             item["control_path"] = self.control_path
+        # first-frame vision conditioning changes the embedding content -> new cache key
+        elif (
+            getattr(self, "encode_first_frame_in_text_embeddings", False)
+            and self.dataset_config.do_i2v
+            and (self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1)
+        ):
+            item["first_frame_in_te"] = True
         return item
 
     def get_text_embedding_path(self: 'FileItemDTO', recalculate=False):
@@ -1989,9 +2007,7 @@ class TextEmbeddingCachingMixin:
                         self.sd.set_device_state_preset('cache_text_encoder')
                         did_move = True
                         
-                    if file_item.encode_control_in_text_embeddings:
-                        if file_item.control_path is None:
-                            raise Exception(f"Could not find a control image for {file_item.path} which is needed for this model")
+                    if file_item.encode_control_in_text_embeddings and file_item.control_path is not None:
                         ctrl_img_list = []
                         control_path_list = file_item.control_path
                         if not isinstance(file_item.control_path, list):
@@ -2018,6 +2034,27 @@ class TextEmbeddingCachingMixin:
                         else:
                             ctrl_img = ctrl_img_list
                         prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                    elif (
+                        getattr(self.sd, 'encode_first_frame_in_text_embeddings', False)
+                        and self.dataset_config.do_i2v
+                        and (self.dataset_config.auto_frame_count or self.dataset_config.num_frames > 1)
+                    ):
+                        # video item: encode the clip's FIRST FRAME into the text embeddings
+                        # as a vision reference, matching sampling (where the ctrl image goes
+                        # into the embeds and is held as the clean first frames)
+                        file_item.load_and_process_image(self.transform, only_load_latents=True)
+                        frames = file_item.tensor  # (T, C, H, W) or (C, H, W), in [-1, 1]
+                        first = frames[0] if frames.dim() == 4 else frames
+                        ctrl_img = (
+                            ((first + 1.0) / 2.0)
+                            .clamp(0, 1)
+                            .unsqueeze(0)
+                            .to(self.sd.device_torch, dtype=self.sd.torch_dtype)
+                        )
+                        if self.sd.has_multiple_control_images:
+                            ctrl_img = [ctrl_img]
+                        prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption, control_images=ctrl_img)
+                        file_item.tensor = None
                     else:
                         prompt_embeds: PromptEmbeds = self.sd.encode_prompt(file_item.caption)
                     # save it
@@ -2214,7 +2251,7 @@ class ControlCachingMixin:
         if control_type == 'inpaint':
             file_item.inpaint_path = control_path
             file_item.has_inpaint_image = True
-        elif control_type == 'mask':
+        elif control_type == 'mask' or control_type == 'sapiens2_mask':
             file_item.mask_path = control_path
             file_item.has_mask_image = True
         else:

@@ -491,7 +491,9 @@ class Wan21(BaseModel):
         self.tokenizer = tokenizer
 
     def get_generation_pipeline(self):
-        scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
+        # todo unipc got broken in a diffusers update. Use euler for now.
+        # scheduler = UniPCMultistepScheduler(**self._wan_generation_scheduler_config)
+        scheduler = self.get_train_scheduler()
         if self.model_config.low_vram:
             pipeline = AggressiveWanUnloadPipeline(
                 vae=self.vae,
@@ -518,6 +520,13 @@ class Wan21(BaseModel):
 
         return pipeline
 
+    @property
+    def use_vae_tiling(self):
+        # tile the vae decode when sampling if in low vram or explicitly enabled
+        return self.model_config.low_vram or self.model_config.model_kwargs.get(
+            "vae_tiling", False
+        )
+
     def generate_single_image(
         self,
         pipeline: WanPipeline,
@@ -530,6 +539,11 @@ class Wan21(BaseModel):
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
         pipeline = pipeline.to(self.device_torch)
+
+        if self.use_vae_tiling:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         # todo, figure out how to do video
         output = pipeline(
             prompt_embeds=conditional_embeds.text_embeds.to(
@@ -547,6 +561,10 @@ class Wan21(BaseModel):
             output_type="pil",
             **extra
         )[0]
+
+        if self.use_vae_tiling:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
 
         # shape = [1, frames, channels, height, width]
         batch_item = output[0]  # list of pil images
@@ -652,6 +670,31 @@ class Wan21(BaseModel):
         latents = (latents - latents_mean) * latents_std
 
         return latents.to(device, dtype=dtype)
+    
+    def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        if self.vae.device == torch.device('cpu'):
+            self.vae.to(device)
+
+        latents = latents.to(device, dtype=dtype)
+
+        latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
+        )
+        latents_std = torch.tensor(self.vae.config.latents_std).view(
+            1, self.vae.config.z_dim, 1, 1, 1
+        ).to(latents.device, latents.dtype)
+        latents = latents * latents_std + latents_mean
+
+        images = self.vae.decode(latents).sample
+
+        return images.to(device, dtype=dtype)
 
     def get_model_has_grad(self):
         return False

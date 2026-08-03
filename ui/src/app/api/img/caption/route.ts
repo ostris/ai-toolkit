@@ -5,7 +5,7 @@ import { getDatasetsRoot } from '@/server/settings';
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { imgPath, caption } = body;
+    const { imgPath, caption, ext } = body;
     let datasetsPath = await getDatasetsRoot();
     // make sure the dataset path is in the image path
     if (!imgPath.startsWith(datasetsPath)) {
@@ -13,14 +13,17 @@ export async function POST(request: Request) {
     }
 
     // if img doesnt exist, ignore
-    if (!fs.existsSync(imgPath)) {
+    try {
+      await fs.promises.access(imgPath);
+    } catch {
       return NextResponse.json({ error: 'Image does not exist' }, { status: 404 });
     }
 
-    // check for caption
-    const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.txt';
+    // check for caption (default extension txt)
+    const captionExt = ((ext || 'txt') as string).replace(/^\.+/, '').trim() || 'txt';
+    const captionPath = imgPath.replace(/\.[^/.]+$/, '') + '.' + captionExt;
     // save caption to file
-    fs.writeFileSync(captionPath, caption);
+    await fs.promises.writeFile(captionPath, caption);
 
     return NextResponse.json({ success: true });
   } catch (error) {

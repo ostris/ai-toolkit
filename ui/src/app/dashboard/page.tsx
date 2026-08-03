@@ -10,7 +10,7 @@ export default function Dashboard() {
     <>
       <TopBar>
         <div>
-          <h1 className="text-lg">Dashboard</h1>
+          <h1 className="text-base sm:text-lg">Dashboard</h1>
         </div>
         <div className="flex-1"></div>
       </TopBar>

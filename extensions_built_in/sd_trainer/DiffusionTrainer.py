@@ -8,6 +8,8 @@ from typing import Literal, Optional
 import threading
 import time
 import signal
+from toolkit.basic import flush
+from toolkit.print import print_acc
 
 AITK_Status = Literal["running", "stopped", "error", "completed"]
 
@@ -37,7 +39,12 @@ class DiffusionTrainer(SDTrainer):
             # Initialize the status
             self._run_async_operation(self._update_status("running", "Starting"))
             self._stop_watcher_started = False
-            # self.start_stop_watcher(interval_sec=2.0)
+            if os.name == "nt":
+                # On Windows the stop route cannot send us SIGINT from outside
+                # (no console to deliver a Ctrl+C to), so watch the stop flag
+                # and raise the interrupt from inside. On Linux the route
+                # sends a real SIGINT to the pid and this is unnecessary.
+                self.start_stop_watcher(interval_sec=2.0)
     
     def start_stop_watcher(self, interval_sec: float = 5.0):
         """
@@ -58,26 +65,21 @@ class DiffusionTrainer(SDTrainer):
         while True:
             try:
                 if self.should_stop():
-                    # Mark and update status (non-blocking; uses existing infra)
-                    self.is_stopping = True
-                    self._run_async_operation(
-                        self._update_status("stopped", "Job stopped (remote)")
-                    )
-                    # Best-effort flush pending async ops
-                    try:
-                        asyncio.run(self.wait_for_all_async())
-                    except RuntimeError:
-                        pass
-                    # Try to stop DB thread pool quickly
-                    try:
-                        self.thread_pool.shutdown(wait=False, cancel_futures=True)
-                    except TypeError:
-                        self.thread_pool.shutdown(wait=False)
+                    if self.is_stopping:
+                        # maybe_stop() already started the graceful shutdown;
+                        # a second interrupt would only break its cleanup.
+                        return
                     print("")
                     print("****************************************************")
                     print("    Stop signal received; terminating process.      ")
                     print("****************************************************")
-                    os.kill(os.getpid(), signal.SIGINT)
+                    # Deliver a real KeyboardInterrupt to the main thread so
+                    # on_error runs the normal shutdown (final DB write, last
+                    # log). os.kill(pid, SIGINT) must not be used here: on
+                    # Windows it is TerminateProcess and kills us instantly.
+                    # Leave the thread pool alone -- on_error still needs it.
+                    signal.raise_signal(signal.SIGINT)
+                    return
                 time.sleep(interval_sec)
             except Exception:
                 time.sleep(interval_sec)
@@ -101,15 +103,36 @@ class DiffusionTrainer(SDTrainer):
             loop.run_until_complete(task)
 
     async def _execute_db_operation(self, operation_func):
-        """Execute a database operation in a separate thread to avoid blocking."""
+        """Execute a database operation in a separate thread with retry on lock."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.thread_pool, operation_func)
+        return await loop.run_in_executor(
+            self.thread_pool, lambda: self._retry_db_operation(operation_func)
+        )
 
     def _db_connect(self):
         """Create a new connection for each operation to avoid locking."""
-        conn = sqlite3.connect(self.sqlite_db_path, timeout=10.0)
+        conn = sqlite3.connect(self.sqlite_db_path, timeout=30.0)
         conn.isolation_level = None  # Enable autocommit mode
         return conn
+
+    def _retry_db_operation(self, operation_func, max_retries=3, base_delay=2.0):
+        """Retry a database operation with exponential backoff on lock errors."""
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return operation_func()
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e):
+                    last_error = e
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt)  # 2s, 4s, 8s
+                        print(f"[AITK] Database locked (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                    else:
+                        print(f"[AITK] Database locked after {max_retries + 1} attempts, giving up.")
+                else:
+                    raise
+        raise last_error
 
     def should_stop(self):
         if not self.is_ui_trainer:
@@ -122,7 +145,7 @@ class DiffusionTrainer(SDTrainer):
                 stop = cursor.fetchone()
                 return False if stop is None else stop[0] == 1
 
-        return _check_stop()
+        return self._retry_db_operation(_check_stop)
 
     def should_return_to_queue(self):
         if not self.is_ui_trainer:
@@ -135,7 +158,7 @@ class DiffusionTrainer(SDTrainer):
                 return_to_queue = cursor.fetchone()
                 return False if return_to_queue is None else return_to_queue[0] == 1
 
-        return _check_return_to_queue()
+        return self._retry_db_operation(_check_return_to_queue)
 
     def maybe_stop(self):
         if not self.is_ui_trainer:
@@ -150,6 +173,69 @@ class DiffusionTrainer(SDTrainer):
                 self._update_status("queued", "Job queued"))
             self.is_stopping = True
             raise Exception("Job returning to queue")
+
+    def should_save(self):
+        if not self.is_ui_trainer:
+            return False
+        def _check_save():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT save_now FROM Job WHERE id = ?", (self.job_id,))
+                save_now = cursor.fetchone()
+                return False if save_now is None else save_now[0] == 1
+
+        return self._retry_db_operation(_check_save)
+
+    def maybe_save(self):
+        if not self.is_ui_trainer:
+            return
+        if self.should_save():
+            self.update_db_key("save_now", 0)
+            if self.progress_bar is not None:
+                self.progress_bar.pause()
+            print_acc(f"\nSaving at step {self.step_num}")
+            # clear any grads
+            self.optimizer.zero_grad()
+            self.save(self.step_num)
+            self.ensure_params_requires_grad()
+            flush()
+            if self.progress_bar is not None:
+                self.progress_bar.unpause()
+
+    def should_sample(self):
+        if not self.is_ui_trainer:
+            return False
+        def _check_sample():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT sample_now FROM Job WHERE id = ?", (self.job_id,))
+                sample_now = cursor.fetchone()
+                return False if sample_now is None else sample_now[0] == 1
+
+        return self._retry_db_operation(_check_sample)
+
+    def maybe_sample(self):
+        if not self.is_ui_trainer:
+            return
+        if self.should_sample():
+            self.update_db_key("sample_now", 0)
+            if self.progress_bar is not None:
+                self.progress_bar.pause()
+            print_acc(f"\nSampling at step {self.step_num}")
+            # clear any grads
+            self.optimizer.zero_grad()
+            if self.train_config.free_u:
+                self.sd.pipeline.disable_freeu()
+            self.sample(self.step_num)
+            if self.train_config.unload_text_encoder:
+                # make sure the text encoder is unloaded
+                self.sd.text_encoder_to('cpu')
+            self.ensure_params_requires_grad()
+            flush()
+            if self.progress_bar is not None:
+                self.progress_bar.unpause()
 
     async def _update_key(self, key, value):
         if not self.accelerator.is_main_process:
@@ -230,11 +316,25 @@ class DiffusionTrainer(SDTrainer):
     def on_error(self, e: Exception):
         super(DiffusionTrainer, self).on_error(e)
         if self.is_ui_trainer:
-            if self.accelerator.is_main_process and not self.is_stopping:
-                self.update_status("error", str(e))
-            self.update_db_key("step", self.last_save_step)
-            asyncio.run(self.wait_for_all_async())
-            self.thread_pool.shutdown(wait=True)
+            try:
+                if isinstance(e, KeyboardInterrupt):
+                    # SIGINT (UI stop button or ctrl+c) is a stop, not an error
+                    self.is_stopping = True
+                    progress_bar = getattr(self, "progress_bar", None)
+                    if progress_bar is not None:
+                        # silence the bar so tqdm doesn't repaint it at interpreter exit
+                        progress_bar.disable = True
+                        progress_bar.close()
+                    if self.accelerator.is_main_process:
+                        self.update_status("stopped", "Job stopped")
+                elif self.accelerator.is_main_process and not self.is_stopping:
+                    self.update_status("error", str(e))
+                self.update_db_key("step", self.last_save_step)
+                asyncio.run(self.wait_for_all_async())
+            except Exception as db_err:
+                print(f"[AITK] Warning: failed to update DB during error handling: {db_err}")
+            finally:
+                self.thread_pool.shutdown(wait=True)
 
     def handle_timing_print_hook(self, timing_dict):
         if "train_loop" not in timing_dict:
@@ -262,6 +362,8 @@ class DiffusionTrainer(SDTrainer):
         if self.is_ui_trainer:
             self.update_step()
             self.maybe_stop()
+            self.maybe_save()
+            self.maybe_sample()
 
     def hook_before_model_load(self):
         super().hook_before_model_load()

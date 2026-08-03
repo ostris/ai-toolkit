@@ -3,6 +3,7 @@
 import { GPUApiResponse, GpuInfo } from '@/types';
 import { useEffect, useState } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export default function useGPUInfo(gpuIds: null | number[] = null, reloadInterval: null | number = null) {
   const [gpuList, setGpuList] = useState<GpuInfo[]>([]);
@@ -27,22 +28,17 @@ export default function useGPUInfo(gpuIds: null | number[] = null, reloadInterva
     }
   };
 
+  usePollLoop(fetchGpuInfo, reloadInterval, [gpuIds]);
+
+  // If the initial fetch failed (e.g. nvidia-smi was transiently busy on startup),
+  // retry automatically so users don't have to reload the page to see their GPUs.
   useEffect(() => {
-    // Fetch immediately on component mount
-    fetchGpuInfo();
-
-    // Set up interval if specified
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        fetchGpuInfo();
-      }, reloadInterval);
-
-      // Cleanup interval on unmount
-      return () => {
-        clearInterval(interval);
-      };
-    }
-  }, [gpuIds, reloadInterval]); // Added dependencies
+    if (status !== 'error') return;
+    const retry = setTimeout(() => {
+      fetchGpuInfo();
+    }, 3000);
+    return () => clearTimeout(retry);
+  }, [status]);
 
   return { gpuList, setGpuList, isGPUInfoLoaded, status, refreshGpuInfo: fetchGpuInfo };
 }

@@ -30,6 +30,9 @@ from transformers import (
     Qwen2VLProcessor,
 )
 from tqdm import tqdm
+from toolkit.util.qwen_vae_gradient_checkpointing import patch_qwen_vae_gradient_checkpointing
+
+patch_qwen_vae_gradient_checkpointing()
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
@@ -125,11 +128,14 @@ class QwenImageModel(BaseModel):
             quantize_model(self, transformer)
             flush()
 
-        if self.model_config.layer_offloading and self.model_config.layer_offloading_transformer_percent > 0:
+        if (
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_transformer_percent > 0
+        ):
             MemoryManager.attach(
                 transformer,
                 self.device_torch,
-                offload_percent=self.model_config.layer_offloading_transformer_percent
+                offload_percent=self.model_config.layer_offloading_transformer_percent,
             )
 
         if self.model_config.low_vram:
@@ -151,11 +157,14 @@ class QwenImageModel(BaseModel):
         if not self._qwen_image_keep_visual:
             text_encoder.model.visual = None
 
-        if self.model_config.layer_offloading and self.model_config.layer_offloading_text_encoder_percent > 0:
+        if (
+            self.model_config.layer_offloading
+            and self.model_config.layer_offloading_text_encoder_percent > 0
+        ):
             MemoryManager.attach(
                 text_encoder,
                 self.device_torch,
-                offload_percent=self.model_config.layer_offloading_text_encoder_percent
+                offload_percent=self.model_config.layer_offloading_text_encoder_percent,
             )
 
         text_encoder.to(self.device_torch, dtype=dtype)
@@ -278,6 +287,11 @@ class QwenImageModel(BaseModel):
         sc = self.get_bucket_divisibility()
         gen_config.width = int(gen_config.width // sc * sc)
         gen_config.height = int(gen_config.height // sc * sc)
+
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         img = pipeline(
             prompt_embeds=conditional_embeds.text_embeds,
             prompt_embeds_mask=conditional_embeds.attention_mask.to(
@@ -296,6 +310,11 @@ class QwenImageModel(BaseModel):
             callback_on_step_end=callback_on_step_end,
             **extra,
         ).images[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
+
         return img
 
     def get_noise_prediction(
@@ -327,7 +346,6 @@ class QwenImageModel(BaseModel):
         prompt_embeds_mask = text_embeddings.attention_mask.to(
             self.device_torch, dtype=torch.int64
         )
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
 
         noise_pred = self.transformer(
             hidden_states=latent_model_input.to(
@@ -338,7 +356,6 @@ class QwenImageModel(BaseModel):
             encoder_hidden_states=enc_hs.detach(),
             encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
             return_dict=False,
             **kwargs,
         )[0]
@@ -360,6 +377,11 @@ class QwenImageModel(BaseModel):
             device=self.device_torch,
             num_images_per_prompt=1,
         )
+        # diffusers >=0.37 returns None when all tokens are valid (no padding)
+        if prompt_embeds_mask is None:
+            prompt_embeds_mask = torch.ones(
+                prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.int64
+            )
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
@@ -441,3 +463,35 @@ class QwenImageModel(BaseModel):
         latents = latents.squeeze(2)  # remove the frame count dimension
 
         return latents
+
+    def decode_latents(self, latents: torch.Tensor, device=None, dtype=None):
+        if device is None:
+            device = self.vae_device_torch
+        if dtype is None:
+            dtype = self.vae_torch_dtype
+
+        if self.vae.device == torch.device("cpu"):
+            self.vae.to(device)
+
+        latents = latents.to(device, dtype=dtype)
+
+        # add frame count dim for wan vae
+        latents = latents.unsqueeze(2)
+
+        latents_mean = (
+            torch.tensor(self.vae.config.latents_mean)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
+        )
+        latents_std = (
+            torch.tensor(self.vae.config.latents_std)
+            .view(1, self.vae.config.z_dim, 1, 1, 1)
+            .to(latents.device, latents.dtype)
+        )
+        latents = latents * latents_std + latents_mean
+
+        images = self.vae.decode(latents).sample
+
+        images = images.squeeze(2)  # remove the frame count dimension
+
+        return images.to(device, dtype=dtype)

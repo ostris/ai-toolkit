@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { apiClient } from '@/utils/api';
+import usePollLoop from '@/hooks/usePollLoop';
 
 export interface LossPoint {
   step: number;
@@ -10,12 +11,6 @@ export interface LossPoint {
 }
 
 type SeriesMap = Record<string, LossPoint[]>;
-
-function isLossKey(key: string) {
-  // treat anything containing "loss" as a loss-series
-  // (covers loss, train_loss, val_loss, loss/xyz, etc.)
-  return /loss/i.test(key);
-}
 
 export default function useJobLossLog(jobID: string, reloadInterval: null | number = null) {
   const [series, setSeries] = useState<SeriesMap>({});
@@ -29,10 +24,10 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
   const lastStepByKeyRef = useRef<Record<string, number | null>>({});
 
   const lossKeys = useMemo(() => {
-    const base = (keys ?? []).filter(isLossKey);
+    const base = keys ?? [];
     // if keys table is empty early on, fall back to just "loss"
     if (base.length === 0) return ['loss'];
-    return base.sort();
+    return [...base].sort();
   }, [keys]);
 
   const refreshLoss = useCallback(async () => {
@@ -54,7 +49,7 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
       const newKeys = first.keys ?? [];
       setKeys(newKeys);
 
-      const wantedLossKeys = (newKeys.filter(isLossKey).length ? newKeys.filter(isLossKey) : ['loss']).sort();
+      const wantedLossKeys = (newKeys.length ? [...newKeys] : ['loss']).sort();
 
       // Step 2: fetch each loss key incrementally (since_step per key if polling)
       const requests = wantedLossKeys.map(k => {
@@ -64,8 +59,7 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
           params.since_step = lastStepByKeyRef.current[k];
         }
 
-        // keep default limit from server (or set explicitly if you want)
-        // params.limit = 2000;
+        params.limit = 1000000;
 
         return apiClient
           .get(`/api/jobs/${jobID}/loss`, { params })
@@ -101,9 +95,9 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
             : (lastStepByKeyRef.current[k] ?? null);
         }
 
-        // remove stale loss keys that no longer exist (rare, but keeps UI clean)
+        // remove stale keys that no longer exist (rare, but keeps UI clean)
         for (const existingKey of Object.keys(next)) {
-          if (isLossKey(existingKey) && !wantedLossKeys.includes(existingKey)) {
+          if (!wantedLossKeys.includes(existingKey)) {
             delete next[existingKey];
             delete lastStepByKeyRef.current[existingKey];
           }
@@ -122,24 +116,17 @@ export default function useJobLossLog(jobID: string, reloadInterval: null | numb
     }
   }, [jobID, reloadInterval]);
 
+  // reset when job changes. Declared before the poll loop so the reset runs
+  // before the first fetch when jobID changes.
   useEffect(() => {
-    // reset when job changes
     didInitialLoadRef.current = false;
     lastStepByKeyRef.current = {};
     setSeries({});
     setKeys([]);
     setStatus('idle');
+  }, [jobID]);
 
-    refreshLoss();
-
-    if (reloadInterval) {
-      const interval = setInterval(() => {
-        refreshLoss();
-      }, reloadInterval);
-
-      return () => clearInterval(interval);
-    }
-  }, [jobID, reloadInterval, refreshLoss]);
+  usePollLoop(refreshLoss, reloadInterval, [jobID]);
 
   return { series, keys, lossKeys, status, refreshLoss, setSeries };
 }

@@ -50,6 +50,38 @@ export const deleteJob = (jobID: string) => {
   });
 };
 
+export const saveJobNow = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/save_now`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job set to save on next step:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error setting job to save on next step:', error);
+        reject(error);
+      });
+  });
+};
+
+export const sampleJobNow = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/sample_now`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job set to sample on next step:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error setting job to sample on next step:', error);
+        reject(error);
+      });
+  });
+};
+
 export const markJobAsStopped = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
@@ -74,12 +106,12 @@ export const getAvaliableJobActions = (job: Job) => {
   const jobConfig = getJobConfig(job);
   const isStopping = job.stop && job.status === 'running';
   const canDelete = ['queued', 'completed', 'stopped', 'error'].includes(job.status) && !isStopping;
-  const canEdit = ['queued','completed', 'stopped', 'error'].includes(job.status) && !isStopping;
+  let canEdit = ['queued', 'completed', 'stopped', 'error'].includes(job.status) && !isStopping;
   const canRemoveFromQueue = job.status === 'queued';
   const canStop = job.status === 'running' && !isStopping;
   let canStart = ['stopped', 'error'].includes(job.status) && !isStopping;
   // can resume if more steps were added
-  if (job.status === 'completed' && jobConfig.config.process[0].train.steps > job.step && !isStopping) {
+  if (job.status === 'completed' && (jobConfig.config.process[0].train?.steps || 0) > job.step && !isStopping) {
     canStart = true;
   }
   return { canDelete, canEdit, canStop, canStart, canRemoveFromQueue };
@@ -91,6 +123,9 @@ export const getNumberOfSamples = (job: Job) => {
 };
 
 export const getTotalSteps = (job: Job) => {
+  if (job.total_steps != null) {
+    return job.total_steps;
+  }
   const jobConfig = getJobConfig(job);
-  return jobConfig.config.process[0].train.steps;
+  return jobConfig.config.process[0].train?.steps || 0;
 };

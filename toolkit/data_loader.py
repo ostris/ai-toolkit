@@ -29,12 +29,16 @@ import platform
 def is_native_windows():
     return platform.system() == "Windows" and platform.release() != "2"
 
+def is_macos():
+    return platform.system() == "Darwin"
+
 if TYPE_CHECKING:
     from toolkit.stable_diffusion_model import StableDiffusion
     
 
 image_extensions = ['.jpg', '.jpeg', '.png', '.webp']
 video_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.wmv', '.m4v', '.flv']
+audio_extensions = ['.mp3', '.wav', '.flac', '.aac', '.ogg', '.m4a']
 
 
 class RescaleTransform:
@@ -389,7 +393,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         self.dataset_config = dataset_config
         # update bucket divisibility
         self.dataset_config.bucket_tolerance = sd.get_bucket_divisibility()
-        self.is_video = dataset_config.num_frames > 1
+        self.is_video = dataset_config.num_frames > 1 or dataset_config.auto_frame_count
+        self.is_audio_model = hasattr(sd, 'is_audio_model') and sd.is_audio_model if sd is not None else False
         super().__init__()
         folder_path = dataset_config.folder_path
         self.dataset_path = dataset_config.dataset_path
@@ -422,10 +427,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         # check if dataset_path is a folder or json
         if os.path.isdir(self.dataset_path):
             extensions = image_extensions
-            if self.is_video:
+            if self.is_audio_model:
+                # only look for audio files
+                extensions = audio_extensions
+            elif self.is_video:
                 # only look for videos
                 extensions = video_extensions
-            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions))]
+            file_list = [os.path.join(root, file) for root, _, files in os.walk(self.dataset_path) for file in files if file.lower().endswith(tuple(extensions)) and not file.startswith('.')]
         else:
             # assume json
             with open(self.dataset_path, 'r') as f:
@@ -491,6 +499,8 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         latent_space_version = "sd1"
         if self.sd is not None and self.sd.model_config.latent_space_version is not None:
             latent_space_version = self.sd.model_config.latent_space_version
+        elif self.sd is not None and self.sd.latent_space_version is not None:
+            latent_space_version = self.sd.latent_space_version
         elif self.sd.is_xl:
             latent_space_version = 'sdxl'
         elif self.sd.is_v3:
@@ -503,6 +513,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             latent_space_version = 'sdxl'
         else:
             latent_space_version = self.sd.model_config.arch if self.sd is not None else "sd1"
+            
+        temporal_compression = 8
+        if self.sd is not None:
+            if hasattr(self.sd.vae, 'config') and hasattr(self.sd.vae.config, 'scale_factor_temporal'):
+                temporal_compression = self.sd.vae.config.scale_factor_temporal
+            if hasattr(self.sd.unet, 'config') and hasattr(self.sd.unet.config, 'temporal_compression_ratio'):
+                temporal_compression = self.sd.unet.config.temporal_compression_ratio
         
         bad_count = 0
         for file in tqdm(file_list):
@@ -510,14 +527,18 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
                 file_item = FileItemDTO(
                     sd=self.sd,
                     path=file,
+                    is_audio_model=self.is_audio_model,
                     dataset_config=dataset_config,
                     dataloader_transforms=self.transform,
                     size_database=self.size_database,
                     dataset_root=dataset_folder,
                     encode_control_in_text_embeddings=self.sd.encode_control_in_text_embeddings if self.sd else False,
-                    text_embedding_space_version=self.sd.model_config.arch if self.sd else "sd1",
+                    encode_first_frame_in_text_embeddings=getattr(self.sd, 'encode_first_frame_in_text_embeddings', False) if self.sd else False,
+                    text_embedding_space_version=self.sd.text_embedding_space_version if self.sd else "sd1",
                     te_padding_side=self.sd.te_padding_side if self.sd else "right",
                     latent_space_version=latent_space_version,
+                    temporal_compression=temporal_compression,
+                    sample_rate=self.sd.sample_rate if self.is_audio_model and self.sd is not None else 48000,
                 )
                 self.file_list.append(file_item)
             except Exception as e:
@@ -584,21 +605,44 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
             if self.is_generating_controls:
                 # always do this last
                 self.setup_controls()
-        else:
-            if self.dataset_config.poi is not None:
-                # handle cropping to a specific point of interest
-                # setup buckets every epoch
-                self.setup_buckets(quiet=True)
         self.epoch_num += 1
+
+    def __getstate__(self):
+        # on Windows/macOS dataloader workers are spawned, which pickles the dataset.
+        # sd (the model) is not picklable (weakrefs, cuda tensors) and is only needed
+        # for caching, which runs in the main process before iteration starts.
+        state = self.__dict__.copy()
+        state['sd'] = None
+        return state
 
     def __len__(self):
         if self.dataset_config.buckets:
             return len(self.batch_indices)
         return len(self.file_list)
 
-    def _get_single_item(self, index) -> 'FileItemDTO':
+    def _get_replacement_index(self, index) -> int:
+        # when an image fails to load we have to swap in a different one. With buckets the
+        # replacement must come from the same bucket so the collated shapes still match.
+        if self.dataset_config.buckets:
+            for bucket in self.buckets.values():
+                if index in bucket.file_list_idx:
+                    candidates = [i for i in bucket.file_list_idx if i != index]
+                    if candidates:
+                        return random.choice(candidates)
+                    break
+        return random.randint(0, len(self.file_list) - 1)
+
+    def _get_single_item(self, index, _attempts=0) -> 'FileItemDTO':
         file_item: 'FileItemDTO' = copy.deepcopy(self.file_list[index])
-        file_item.load_and_process_image(self.transform)
+        try:
+            file_item.load_and_process_image(self.transform)
+        except Exception as e:
+            print(f"Error loading image, skipping and loading a different one: {file_item.path} ({e})")
+            if _attempts >= 10:
+                # avoid infinite recursion if many files are corrupt
+                raise
+            new_index = self._get_replacement_index(index)
+            return self._get_single_item(new_index, _attempts=_attempts + 1)
         file_item.load_caption(self.caption_dict)
         return file_item
 
@@ -615,6 +659,13 @@ class AiToolkitDataset(LatentCachingMixin, ControlCachingMixin, CLIPCachingMixin
         else:
             # Dataloader is batching
             return self._get_single_item(item)
+
+
+def dto_collation(batch: List['FileItemDTO']):
+    # must be a module level function so spawned dataloader workers can pickle it
+    return DataLoaderBatchDTO(
+        file_items=batch
+    )
 
 
 def get_dataloader_from_datasets(
@@ -657,22 +708,26 @@ def get_dataloader_from_datasets(
     # todo build scheduler that can get buckets from all datasets that match
     # todo and evenly distribute reg images
 
-    def dto_collation(batch: List['FileItemDTO']):
-        # create DTO batch
-        batch = DataLoaderBatchDTO(
-            file_items=batch
-        )
-        return batch
-
     # check if is caching latents
 
     dataloader_kwargs = {}
-    
-    if is_native_windows():
-        dataloader_kwargs['num_workers'] = 0
-    else:
-        dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+
+    dataloader_kwargs['num_workers'] = dataset_config_list[0].num_workers
+    if dataloader_kwargs['num_workers'] > 0:
         dataloader_kwargs['prefetch_factor'] = dataset_config_list[0].prefetch_factor
+        # keep workers alive across epochs. Without this, spawn platforms (Windows/macOS)
+        # boot new worker processes every epoch, which can take longer than the epoch
+        # itself on small datasets. The dataset is static after epoch 0 (setup_epoch only
+        # does work on the first call) and per-epoch shuffling happens in the main process
+        # sampler, so workers never hold stale state.
+        dataloader_kwargs['persistent_workers'] = True
+        # spawned workers re-import the full stack at boot and would repeat every
+        # import-time warning the parent already printed. Children inherit these env
+        # vars; the parent is unaffected since its imports already happened.
+        os.environ.setdefault('PYTHONWARNINGS', 'ignore::FutureWarning')
+        os.environ.setdefault('TORCH_LOGS', '-torch.utils._pytree')
+        os.environ.setdefault('DIFFUSERS_VERBOSITY', 'error')
+        os.environ.setdefault('NO_ALBUMENTATIONS_UPDATE', '1')
 
     if has_buckets:
         # make sure they all have buckets

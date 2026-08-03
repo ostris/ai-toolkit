@@ -68,7 +68,7 @@ class CustomFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
                 device=timesteps.device,
                 dtype=timesteps.dtype
             )
-        if v2:
+        elif v2:
             weights = self.linear_timesteps_weights2[step_indices].flatten()
         else:
             weights = self.linear_timesteps_weights[step_indices].flatten()

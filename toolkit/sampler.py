@@ -20,7 +20,6 @@ from toolkit.samplers.mean_flow_scheduler import MeanFlowScheduler
 
 from toolkit.samplers.custom_flowmatch_sampler import CustomFlowMatchEulerDiscreteScheduler
 
-
 from toolkit.samplers.custom_lcm_scheduler import CustomLCMScheduler
 
 # scheduler:

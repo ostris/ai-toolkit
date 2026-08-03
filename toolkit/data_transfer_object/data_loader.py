@@ -5,7 +5,8 @@ import torch
 
 from PIL import Image
 from PIL.ImageOps import exif_transpose
-
+import av
+            
 from toolkit import image_utils
 from toolkit.basic import get_quick_signature_string
 from toolkit.dataloader_mixins import (
@@ -14,13 +15,13 @@ from toolkit.dataloader_mixins import (
     LatentCachingFileItemDTOMixin,
     ControlFileItemDTOMixin,
     ArgBreakMixin,
-    PoiFileItemDTOMixin,
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
     UnconditionalFileItemDTOMixin,
     ClipImageFileItemDTOMixin,
     InpaintControlFileItemDTOMixin,
     TextEmbeddingFileItemDTOMixin,
+    AudioProcessingDTOMixin,
 )
 from toolkit.prompt_utils import PromptEmbeds, concat_prompt_embeds
 
@@ -42,23 +43,38 @@ class FileItemDTO(
     TextEmbeddingFileItemDTOMixin,
     CaptionProcessingDTOMixin,
     ImageProcessingDTOMixin,
+    AudioProcessingDTOMixin,
     ControlFileItemDTOMixin,
     InpaintControlFileItemDTOMixin,
     ClipImageFileItemDTOMixin,
     MaskFileItemDTOMixin,
     AugmentationFileItemDTOMixin,
     UnconditionalFileItemDTOMixin,
-    PoiFileItemDTOMixin,
     ArgBreakMixin,
 ):
     def __init__(self, *args, **kwargs):
         self.path = kwargs.get("path", "")
         self.dataset_config: "DatasetConfig" = kwargs.get("dataset_config", None)
-        self.is_video = self.dataset_config.num_frames > 1
+        self.is_video = self.dataset_config.num_frames > 1 or self.dataset_config.auto_frame_count
+        self.is_audio_model = kwargs.get("is_audio_model", False)
+        self.sample_rate = kwargs.get("sample_rate", 48000)
+        self.num_frames = self.dataset_config.num_frames
+        self.temporal_compression = kwargs.get("temporal_compression", 8)
+        # module-level function (picklable) for models whose valid frame
+        # counts are not temporal_compression * n + 1; None = default math
+        _sd = kwargs.get("sd", None)
+        self.frame_count_snapper = (
+            _sd.get_frame_count_snapper()
+            if _sd is not None and hasattr(_sd, "get_frame_count_snapper")
+            else None
+        )
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(
             "encode_control_in_text_embeddings", False
+        )
+        self.encode_first_frame_in_text_embeddings = kwargs.get(
+            "encode_first_frame_in_text_embeddings", False
         )
         self.te_padding_side = kwargs.get("te_padding_side", "right")
         self.latent_space_version = kwargs.get("latent_space_version", "sd1")
@@ -82,8 +98,16 @@ class FileItemDTO(
                 and db_entry[2] == file_signature
             ):
                 use_db_entry = True
-
-        if use_db_entry:
+        if self.is_audio_model:
+            # get the length of the audio file in ms
+            with av.open(self.path) as c:
+                if c.duration is not None:
+                    w =  int(c.duration / 1_000)
+                else:
+                    s = c.streams.audio[0]
+                    w = int(float(s.duration * s.time_base) * 1_000)
+            h = 1
+        elif use_db_entry:
             w, h, _ = size_database[file_key]
         elif self.is_video:
             # Open the video file
@@ -197,9 +221,12 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
+            
+            self.num_frames: int = self.file_items[0].num_frames
 
-            if not is_latents_cached:
-                # only return a tensor if latents are not cached
+            if not is_latents_cached or self.file_items[0].dataset_config.load_image_when_caching_latents:
+                # only return a tensor if latents are not cached, or if we are explicitly
+                # loading the raw image alongside the cached latents
                 self.tensor: torch.Tensor = torch.cat(
                     [x.tensor.unsqueeze(0) for x in self.file_items]
                 )
@@ -213,24 +240,32 @@ class DataLoaderBatchDTO:
                 if any(
                     [x._cached_first_frame_latent is not None for x in self.file_items]
                 ):
+                    # find one to use as a base; item 0 may not have one
+                    base_first_frame_latent = None
+                    for x in self.file_items:
+                        if x._cached_first_frame_latent is not None:
+                            base_first_frame_latent = x._cached_first_frame_latent
+                            break
                     self.first_frame_latents = torch.cat(
                         [
                             x._cached_first_frame_latent.unsqueeze(0)
                             if x._cached_first_frame_latent is not None
-                            else torch.zeros_like(
-                                self.file_items[0]._cached_first_frame_latent
-                            ).unsqueeze(0)
+                            else torch.zeros_like(base_first_frame_latent).unsqueeze(0)
                             for x in self.file_items
                         ]
                     )
                 if any([x._cached_audio_latent is not None for x in self.file_items]):
+                    # find one to use as a base; item 0 may not have one
+                    base_audio_latent = None
+                    for x in self.file_items:
+                        if x._cached_audio_latent is not None:
+                            base_audio_latent = x._cached_audio_latent
+                            break
                     self.audio_latents = torch.cat(
                         [
                             x._cached_audio_latent.unsqueeze(0)
                             if x._cached_audio_latent is not None
-                            else torch.zeros_like(
-                                self.file_items[0]._cached_audio_latent
-                            ).unsqueeze(0)
+                            else torch.zeros_like(base_audio_latent).unsqueeze(0)
                             for x in self.file_items
                         ]
                     )

@@ -115,6 +115,10 @@ class QwenImageEditModel(QwenImageModel):
 
             return {"latents": latents}
 
+        if self.model_config.low_vram:
+            # set vae to tile decode
+            pipeline.vae.enable_tiling()
+
         img = pipeline(
             image=control_img,
             prompt_embeds=conditional_embeds.text_embeds,
@@ -134,6 +138,11 @@ class QwenImageEditModel(QwenImageModel):
             callback_on_step_end=callback_on_step_end,
             **extra,
         ).images[0]
+
+        if self.model_config.low_vram:
+            # restore no tiling
+            pipeline.vae.disable_tiling()
+
         return img
 
     def condition_noisy_latents(
@@ -181,8 +190,8 @@ class QwenImageEditModel(QwenImageModel):
             # images are always run through at 1MP, based on diffusers inference code.
             target_area = 1024 * 1024
             ratio = control_images.shape[2] / control_images.shape[3]
-            width = math.sqrt(target_area * ratio)
-            height = width / ratio
+            height = math.sqrt(target_area * ratio)
+            width = height / ratio
 
             width = round(width / 32) * 32
             height = round(height / 32) * 32
@@ -197,6 +206,11 @@ class QwenImageEditModel(QwenImageModel):
             device=self.device_torch,
             num_images_per_prompt=1,
         )
+        # diffusers >=0.37 returns None when all tokens are valid (no padding)
+        if prompt_embeds_mask is None:
+            prompt_embeds_mask = torch.ones(
+                prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.int64
+            )
         pe = PromptEmbeds(prompt_embeds)
         pe.attention_mask = prompt_embeds_mask
         return pe
@@ -249,18 +263,15 @@ class QwenImageEditModel(QwenImageModel):
         prompt_embeds_mask = text_embeddings.attention_mask.to(
             self.device_torch, dtype=torch.int64
         )
-        txt_seq_lens = prompt_embeds_mask.sum(dim=1).tolist()
         enc_hs = text_embeddings.text_embeds.to(self.device_torch, self.torch_dtype)
-        prompt_embeds_mask = text_embeddings.attention_mask.to(self.device_torch, dtype=torch.int64)
 
         noise_pred = self.transformer(
             hidden_states=latent_model_input.to(self.device_torch, self.torch_dtype),
             timestep=timestep / 1000,
             guidance=None,
             encoder_hidden_states=enc_hs,
-            encoder_hidden_states_mask=prompt_embeds_mask,
+            encoder_hidden_states_mask=prompt_embeds_mask.detach(),
             img_shapes=img_shapes,
-            txt_seq_lens=txt_seq_lens,
             return_dict=False,
             **kwargs,
         )[0]

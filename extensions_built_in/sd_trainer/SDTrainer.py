@@ -39,11 +39,7 @@ import torch.nn.functional as F
 from toolkit.unloader import unload_text_encoder
 from PIL import Image
 from torchvision.transforms import functional as TF
-
-
-def flush():
-    torch.cuda.empty_cache()
-    gc.collect()
+from toolkit.basic import flush
 
 
 adapter_transforms = transforms.Compose([
@@ -128,6 +124,11 @@ class SDTrainer(BaseSDTrainProcess):
             for i in range(len(self.sample_config.prompts)):
                 sample_item = self.sample_config.samples[i]
                 prompt = self.sample_config.prompts[i]
+                
+                if self.trigger_word is not None:
+                    prompt = self.sd.inject_trigger_into_prompt(
+                        prompt, self.trigger_word, add_if_not_present=False
+                    )
 
                 # needed so we can autoparse the prompt to handle flags
                 gen_img_config = GenerateImageConfig(
@@ -359,12 +360,28 @@ class SDTrainer(BaseSDTrainProcess):
             vae = self.sd.vae
             # if not (self.model_config.arch in ["flux"]) or self.sd.vae.__class__.__name__ == "AutoencoderPixelMixer":
             #     vae = self.sd.vae
-            self.dfe = load_dfe(self.train_config.diffusion_feature_extractor_path, vae=vae)
+            self.dfe = load_dfe(
+                self.train_config.diffusion_feature_extractor_path, 
+                vae=vae,
+                sd=self.sd
+            )
             self.dfe.to(self.device_torch)
             if hasattr(self.dfe, 'vision_encoder') and self.train_config.gradient_checkpointing:
                 # must be set to train for gradient checkpointing to work
                 self.dfe.vision_encoder.train()
                 self.dfe.vision_encoder.gradient_checkpointing = True
+            elif hasattr(self.dfe, 'model') and self.train_config.gradient_checkpointing:
+                if hasattr(self.dfe.model, 'enable_gradient_checkpointing'): 
+                    self.dfe.model.train()
+                    self.dfe.model.enable_gradient_checkpointing()
+                if hasattr(self.dfe.model, 'gradient_checkpointing_enable'): 
+                    self.dfe.model.train()
+                    self.dfe.model.gradient_checkpointing_enable()
+                elif hasattr(self.dfe.model, 'gradient_checkpointing'):
+                    self.dfe.model.train()
+                    self.dfe.model.gradient_checkpointing = True
+                else:
+                    print_acc("Warning: Could not enable gradient checkpointing on diffusion feature extractor model.")
             else:
                 self.dfe.eval()
                 
@@ -573,7 +590,17 @@ class SDTrainer(BaseSDTrainProcess):
         elif self.sd.prediction_type == 'v_prediction':
             # v-parameterization training
             target = self.sd.noise_scheduler.get_velocity(batch.tensor, noise, timesteps)
-        
+        elif self.train_config.do_signal_amplification:
+            if not self.sd.is_flow_matching:
+                raise ValueError("Signal amplification is only supported for flow matching models")
+            with torch.no_grad():
+                nas = 1.0 - (timesteps / 1000).to(noise.device, dtype=noise.dtype)
+                nas = nas * self.train_config.signal_amplification_strength
+                while len(nas.shape) < len(noise.shape):
+                    nas = nas.unsqueeze(-1)
+                aug = batch.latents * nas
+                target = noise - (batch.latents + aug)
+                target = target.detach()
         elif hasattr(self.sd, 'get_loss_target'):
             target = self.sd.get_loss_target(
                 noise=noise, 
@@ -654,7 +681,7 @@ class SDTrainer(BaseSDTrainProcess):
                     dfe_loss += torch.nn.functional.mse_loss(pred_feature_list[i], target_feature_list[i], reduction="mean")
                 
                 additional_loss += dfe_loss * self.train_config.diffusion_feature_extractor_weight * 100.0
-            elif self.dfe.version in [3, 4, 5]:
+            elif self.dfe.version in [3, 4, 5, 6, 7, 8, 9, 10]:
                 dfe_loss = self.dfe(
                     noise=noise,
                     noise_pred=noise_pred,
@@ -756,8 +783,47 @@ class SDTrainer(BaseSDTrainProcess):
             loss_per_element = (weighing.float() * (denoised_latents.float() - target.float()) ** 2)
             loss = loss_per_element
         else:
-
-            if self.train_config.loss_type == "mae":
+            local_loss_scale = 1.0
+            if self.train_config.t0_loss_target or self.train_config.do_fft_loss:
+                # do the loss on a stepped timestep 0 prediction
+                # doto handle doing priors, preservations, masking, etc
+                with torch.no_grad():
+                    tv = timesteps.to(noise_pred.device).to(noise_pred.dtype) / 1000.0
+                    # expand shape to match noise_pred
+                    while len(tv.shape) < len(noise_pred.shape):
+                        tv = tv.unsqueeze(-1)
+                        # min 0.001
+                        tv = torch.clamp(tv, min=0.001)
+                
+                # step latent, use here or with do_fft_loss
+                if self.sd.x0_pred:
+                    t0 = noise_pred
+                else:
+                    t0 = noisy_latents - tv * noise_pred
+                
+                if self.train_config.t0_loss_target:
+                    # replace the loss targets and pred
+                    target = batch.latents.detach()
+                    pred = t0
+                    # handle velocity equiv loss if set. This scales t0 loss to match velocity of flowmatchhing loss
+                    if self.train_config.t0_velocity_equiv_weight:
+                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+                        local_loss_scale = velocity_equiv_weight
+                        
+                if self.train_config.do_fft_loss:
+                    with torch.no_grad():
+                        target_mag = torch.fft.rfft2(batch.latents.to(t0.device).float(), norm="ortho").abs()
+                    pred_mag = torch.fft.rfft2(t0.float(), norm="ortho").abs()
+                    fft_loss = F.mse_loss(pred_mag, target_mag, reduction="none")
+                    if self.train_config.do_fft_velocity_equiv_weight:
+                        velocity_equiv_weight = (1.0 / torch.clamp(tv, min=0.1) ** 2)
+                        fft_loss = fft_loss * velocity_equiv_weight
+                    additional_loss += fft_loss.mean()
+            if self.train_config.loss_type == "pseudo_huber":
+                diff = pred.float() - target.float()
+                c=0.01
+                loss =(torch.sqrt(diff.pow(2) + c ** 2) - c)
+            elif self.train_config.loss_type == "mae":
                 loss = torch.nn.functional.l1_loss(pred.float(), target.float(), reduction="none")
             elif self.train_config.loss_type == "wavelet":
                 loss = wavelet_loss(pred, batch.latents, noise)
@@ -767,6 +833,11 @@ class SDTrainer(BaseSDTrainProcess):
                 loss = loss * 10.0
             else:
                 loss = torch.nn.functional.mse_loss(pred.float(), target.float(), reduction="none")
+            
+            loss = loss * local_loss_scale
+            
+            # apply model specific loss scaling
+            loss = self.sd.scale_loss(loss)
                 
             do_weighted_timesteps = False
             if self.sd.is_flow_matching:
@@ -863,6 +934,7 @@ class SDTrainer(BaseSDTrainProcess):
         # check for audio loss
         if batch.audio_pred is not None and batch.audio_target is not None:
             audio_loss = torch.nn.functional.mse_loss(batch.audio_pred.float(), batch.audio_target.float(), reduction="mean")
+            audio_loss = audio_loss * self.train_config.audio_loss_multiplier
             loss = loss + audio_loss
 
         # check for additional losses
@@ -878,7 +950,23 @@ class SDTrainer(BaseSDTrainProcess):
             loss = loss + norm_std_loss
 
 
-        return loss + additional_loss
+        loss = loss + additional_loss
+        
+        if hasattr(self.sd, "get_additional_loss"):
+            additional_model_loss = self.sd.get_additional_loss(pred, target)
+            if additional_model_loss is not None:
+                loss = loss + additional_model_loss
+                self.additional_logs["additional_model_loss"] = additional_model_loss.item()
+
+        if self.train_config.max_loss_debug and self.train_config.max_loss is not None:
+            if loss.item() > self.train_config.max_loss:
+                print_acc(f"Loss {loss.item()} is greater than max loss {self.train_config.max_loss}. Clipping to max loss.")
+                print_acc(f"timesteps: {timesteps}")
+
+        if self.train_config.max_loss is not None:
+            loss = torch.clamp(loss, max=self.train_config.max_loss)
+        
+        return loss
 
     def preprocess_batch(self, batch: 'DataLoaderBatchDTO'):
         return batch
@@ -1311,7 +1399,7 @@ class SDTrainer(BaseSDTrainProcess):
                         clip_images = batch.clip_image_tensor.to(self.device_torch, dtype=dtype).detach()
 
             mask_multiplier = torch.ones((noisy_latents.shape[0], 1, 1, 1), device=self.device_torch, dtype=dtype)
-            if batch.mask_tensor is not None:
+            if batch.mask_tensor is not None and self.sd.do_masked_loss:
                 with self.timer('get_mask_multiplier'):
                     # upsampling no supported for bfloat16
                     mask_multiplier = batch.mask_tensor.to(self.device_torch, dtype=torch.float16).detach()
@@ -1564,6 +1652,8 @@ class SDTrainer(BaseSDTrainProcess):
                                 self.sd.text_encoder.eval()
                             if isinstance(self.adapter, CustomAdapter):
                                 self.adapter.is_unconditional_run = False
+                            if self.sd.encode_control_in_text_embeddings and batch.control_tensor_list is not None:
+                                prompt_kwargs['control_images'] = batch.control_tensor_list
                             conditional_embeds = self.sd.encode_prompt(
                                 conditioned_prompts, prompt_2,
                                 dropout_prob=self.train_config.prompt_dropout_prob,
@@ -1984,10 +2074,6 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                     
                     if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
-                        # send the loss backwards otherwise checkpointing will fail
-                        self.accelerator.backward(loss)
-                        normal_loss = loss.detach() # dont send backward again
-                        
                         with torch.no_grad():
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])
@@ -2008,13 +2094,10 @@ class SDTrainer(BaseSDTrainProcess):
                         )
                         multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
                         preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
-                        self.accelerator.backward(preservation_loss)
+                        self.additional_logs['loss/normal'] = loss.item()
+                        self.additional_logs['loss/preservation'] = preservation_loss.item()
+                        loss = loss + preservation_loss
 
-                        loss = normal_loss + preservation_loss
-                        loss = loss.clone().detach()
-                        # require grad again so the backward wont fail
-                        loss.requires_grad_(True)
-                        
                 # check if nan
                 if torch.isnan(loss):
                     print_acc("loss is nan")
