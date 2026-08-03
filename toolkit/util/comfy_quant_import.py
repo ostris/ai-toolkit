@@ -62,11 +62,13 @@ class Int8Embedding(torch.nn.Module):
         return (self.qweight.float() * scales.unsqueeze(1)).to(self.output_dtype)
 
     def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
-        flat = input_ids.reshape(-1)
+        # the table may stay CPU-resident under text-encoder offloading: run
+        # the (tiny) lookup on the table's device, return on the caller's
+        flat = input_ids.reshape(-1).to(self.qweight.device)
         rows = self.qweight.index_select(0, flat).float()
         scales = self.scales.view(torch.float32).index_select(0, flat)
-        out = rows * scales.unsqueeze(1)
-        return out.to(self.output_dtype).reshape(*input_ids.shape, self.embedding_dim)
+        out = (rows * scales.unsqueeze(1)).to(self.output_dtype)
+        return out.to(input_ids.device).reshape(*input_ids.shape, self.embedding_dim)
 
 
 def _to_ostris(module: torch.nn.Linear, quantizer, orig_dtype: torch.dtype) -> OstrisLinear:

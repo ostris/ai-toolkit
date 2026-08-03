@@ -87,8 +87,11 @@ class MiniMaxH3Rope(nn.Module):
 
     def forward(self, position_ids: torch.Tensor):
         """position_ids (B, S, 3) -> cos, sin each (B, S, 96), float32."""
-        position_ids = position_ids.to(device=self.inv_freq.device, dtype=torch.float32)
-        freqs = position_ids.unsqueeze(-1) * self.inv_freq.view(1, 1, 1, -1)
+        # compute on the input's device: the frequency buffer may be left
+        # CPU-resident by layer offloading / low_vram loads
+        position_ids = position_ids.to(dtype=torch.float32)
+        inv_freq = self.inv_freq.to(position_ids.device)
+        freqs = position_ids.unsqueeze(-1) * inv_freq.view(1, 1, 1, -1)
         # (B, S, 3, 16) -> (B, S, 48) in (t, h, w) axis order -> duplicate to 96
         freqs = freqs.flatten(2, 3)
         freqs = torch.cat([freqs, freqs], dim=-1)
@@ -403,10 +406,13 @@ class MiniMaxH3Transformer(nn.Module):
             return self.time_embedder(t)
         table = self.adaln_t_table.float()
         pos = t.clamp(0.0, 1.0) * (table.shape[0] - 1)
+        # the table may stay CPU-resident under offloading while timesteps
+        # arrive on cuda: interpolate on the table's device, return on t's
+        pos = pos.to(table.device)
         lo = pos.floor().long()
         hi = (lo + 1).clamp(max=table.shape[0] - 1)
         frac = (pos - lo.float()).unsqueeze(1)
-        return table[lo] * (1.0 - frac) + table[hi] * frac
+        return (table[lo] * (1.0 - frac) + table[hi] * frac).to(t.device)
 
     def forward(
         self,
