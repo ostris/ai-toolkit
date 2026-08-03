@@ -777,7 +777,13 @@ class MiniMaxH3VideoVAE(nn.Module):
         )
         with ctx:
             if z.shape[2] == 1:
-                dec = self._decode_clip(z)[:, :, -1:]
+                # a lone temporal token is OOD for the chunk-trained ViT
+                # decoder (visibly patchy output, ~16 dB vs ~35 dB roundtrip).
+                # Decode it as the first latent of a 2-latent clip instead:
+                # the first latent of a chunk covers exactly pixel frame 0 in
+                # the (1, 4, 4, 4, 4) grouping, so that frame is a clean,
+                # in-distribution single-frame decode.
+                dec = self._decode_video(torch.cat([z, z], dim=2))[:, :, :1]
             else:
                 dec = self._decode_video(z)
 

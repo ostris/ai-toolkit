@@ -1,7 +1,9 @@
 """MiniMax-H3 (33B joint video+audio DiT) for ai-toolkit.
 
 Supports t2v (t2va) and first-frame i2v (fl2va) training and sampling, with
-joint audio when the dataset provides it. The architecture lives in ./src/:
+joint audio when the dataset provides it. Image datasets train as single
+latent frames (keyframe-row geometry) and sampling with num_frames 1 renders
+a single image. The architecture lives in ./src/:
 
   - transformer.py: packed-sequence DiT, weight-compatible with the original
     ``MiniMaxAI/MiniMax-H3`` checkpoint keys

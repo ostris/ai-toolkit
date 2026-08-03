@@ -86,12 +86,13 @@ class MiniMaxH3Pipeline:
         is_video = num_frames > 1
         if is_video:
             num_frames = packing.align_num_frames_down(num_frames)
+            t_lat = packing.video_latent_num_frames(num_frames)
         else:
-            # a single image still runs through the video path with the
-            # minimum 5-frame clip; the first frame is returned
-            num_frames = packing.LATENTS_PER_CHUNK
-
-        t_lat = packing.video_latent_num_frames(num_frames)
+            # true single-frame generation (image mode, LTX-2.3 style): one
+            # latent frame with keyframe-row geometry — the same layout image
+            # datasets train with, so image LoRAs sample in-distribution
+            num_frames = 1
+            t_lat = 1
         h_lat = height // 16
         w_lat = width // 16
         a_lat = packing.audio_latent_num_frames(num_frames)

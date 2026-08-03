@@ -764,7 +764,8 @@ export const modelArchs: ModelArch[] = [
         <p>
           Supports t2v and first-frame i2v (ctrl img / i2v datasets) with joint audio. The model is guidance-distilled —
           keep guidance scale at 1. Video is fixed 24 fps and frame counts snap down to the 17n+5 grid (5, 22, 39, 56,
-          ..., 107, 124 ≈ 5s).
+          ..., 107, 124 ≈ 5s). Image datasets (num_frames 1) train as single frames, and a sample with num_frames 1
+          renders a single image.
         </p>
       </div>
     ),
