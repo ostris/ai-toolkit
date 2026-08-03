@@ -8,7 +8,7 @@ DIFFUSERS_CONFIGS_ROOT = os.path.join(TOOLKIT_ROOT, "toolkit", "diffusers_config
 COMFY_MODELS_PATH = None
 
 # check if ENV variable is set
-if 'MODELS_PATH' in os.environ:
+if 'MODELS_PATH' in os.environ and os.environ['MODELS_PATH'].strip() != "":
     MODELS_PATH = os.environ['MODELS_PATH']
 else:
     MODELS_PATH = os.path.join(TOOLKIT_ROOT, "models")

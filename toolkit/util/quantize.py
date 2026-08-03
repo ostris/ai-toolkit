@@ -176,7 +176,16 @@ def quantize(
         try:
             # check if m is QLinear or QConv2d
             if m.__class__.__name__ in Q_MODULES:
-                continue
+                # OstrisLinear may still be RE-quantized into a different
+                # ostris qtype (same qtype is a per-layer no-op); every other
+                # already-quantized module type is always left alone, which
+                # also keeps quanto/torchao from double-quantizing
+                # pre-quantized checkpoints
+                if not (
+                    isinstance(weights, ostristype)
+                    and m.__class__.__name__ == "OstrisLinear"
+                ):
+                    continue
             if (
                 isinstance(weights, aotype)
                 and not isinstance(m, torch.nn.Linear)
@@ -193,7 +202,10 @@ def quantize(
                 continue
             orig_device = None
             if quantize_device is not None and next(m.children(), None) is None:
+                # OstrisLinear layers being re-quantized hold buffers, not params
                 param = next(m.parameters(recurse=False), None)
+                if param is None:
+                    param = next(m.buffers(recurse=False), None)
                 if param is not None:
                     orig_device = param.device
                     m.to(quantize_device)

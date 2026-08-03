@@ -60,6 +60,14 @@ class FileItemDTO(
         self.sample_rate = kwargs.get("sample_rate", 48000)
         self.num_frames = self.dataset_config.num_frames
         self.temporal_compression = kwargs.get("temporal_compression", 8)
+        # module-level function (picklable) for models whose valid frame
+        # counts are not temporal_compression * n + 1; None = default math
+        _sd = kwargs.get("sd", None)
+        self.frame_count_snapper = (
+            _sd.get_frame_count_snapper()
+            if _sd is not None and hasattr(_sd, "get_frame_count_snapper")
+            else None
+        )
         size_database = kwargs.get("size_database", {})
         dataset_root = kwargs.get("dataset_root", None)
         self.encode_control_in_text_embeddings = kwargs.get(

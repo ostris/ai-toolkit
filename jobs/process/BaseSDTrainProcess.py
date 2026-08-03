@@ -1988,7 +1988,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # we cannot merge in if quantized or offloading. note: torchao quantized weights can
                 # still be force merged at save time for the merge-and-reset method (see save logic),
                 # but we keep can_merge_in False here so sampling never merges in/out.
-                if self.model_config.quantize or self.model_config.layer_offloading:
+                # models loaded from pre-quantized checkpoints (e.g. comfy convrot/nvfp4
+                # imports) never set model_config.quantize, so detect their layers too
+                model_is_prequantized = any(
+                    getattr(m, 'is_ostris_quantized', False) for m in unet.modules()
+                ) if unet is not None else False
+                if self.model_config.quantize or self.model_config.layer_offloading or model_is_prequantized:
                     # todo find a way around this
                     self.network.can_merge_in = False
 

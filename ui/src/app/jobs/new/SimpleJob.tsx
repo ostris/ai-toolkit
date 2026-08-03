@@ -324,6 +324,30 @@ export default function SimpleJob({
                 placeholder=""
               />
             )}
+            {modelArch?.modelNotes && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const gateUrl = modelArch.gateUrl as string;
+                    openDoc({
+                      title: `Notes - ${modelArch.label}`,
+                      description: (
+                        <div className="space-y-3">
+                          {modelArch.modelNotes}
+                        </div>
+                      ),
+                    });
+                  }}
+                  className="w-full flex items-center gap-2 rounded-md bg-blue-950/60 border border-blue-800 px-3 py-2 text-sm text-blue-200 hover:bg-blue-900/60 text-left"
+                >
+                  <Info className="w-4 h-4 shrink-0 text-blue-400" />
+                  <span>
+                    Model notes
+                  </span>
+                </button>
+              </div>
+            )}
             {modelArch?.gateUrl && (
               <div className="pt-2">
                 <button
@@ -368,9 +392,9 @@ export default function SimpleJob({
                       ),
                     });
                   }}
-                  className="w-full flex items-center gap-2 rounded-md bg-blue-950/60 border border-blue-800 px-3 py-2 text-sm text-blue-200 hover:bg-blue-900/60 text-left"
+                  className="w-full flex items-center gap-2 rounded-md bg-yellow-950/60 border border-yellow-800 px-3 py-2 text-sm text-yellow-200 hover:bg-yellow-900/60 text-left"
                 >
-                  <Info className="w-4 h-4 shrink-0 text-blue-400" />
+                  <Info className="w-4 h-4 shrink-0 text-yellow-400" />
                   <span>
                     Gated model. <span className="underline">Learn more.</span>
                   </span>

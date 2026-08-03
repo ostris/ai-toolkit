@@ -274,11 +274,23 @@ class BaseModel:
         except:
             # if we have a custom vae, it might not have this
             divisibility = 8
-        
+
         # flux packs this again,
         if self.is_flux:
             divisibility = divisibility * 2
         return divisibility
+
+    def get_frame_count_snapper(self):
+        """Optional hook for video models whose VAE accepts frame counts on a
+        grid other than the default ``temporal_compression * n + 1``.
+
+        Return a MODULE-LEVEL function ``(num_frames: int) -> int`` that snaps
+        an arbitrary frame count DOWN to the nearest count the video VAE can
+        encode (it must be picklable by reference — file items travel into
+        dataloader workers, so no lambdas or bound methods). Returning None
+        keeps the default auto_frame_count behavior.
+        """
+        return None
 
     # these must be implemented in child classes
     def load_model(self):
