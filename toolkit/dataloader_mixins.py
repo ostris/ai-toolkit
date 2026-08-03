@@ -1811,8 +1811,9 @@ class LatentCachingMixin:
                 print_acc(" - Saving latents to disk")
             if to_memory:
                 print_acc(" - Keeping latents in memory")
-            # move sd items to cpu except for vae
-            self.sd.set_device_state_preset('cache_latents')
+            # move sd items to cpu except for vae. Only done on the first item that
+            # actually needs encoding so fully cached datasets don't shuffle models around
+            did_move = False
 
             # prep (video decode, frame extraction, audio load, disk reads) is done by a
             # thread pool so the next items are ready while the current one is encoding.
@@ -1852,6 +1853,9 @@ class LatentCachingMixin:
                     next_item = next(file_iter, None)
                     if next_item is not None:
                         pending.append(executor.submit(_prep, next_item))
+                    if needs_encode and not did_move:
+                        self.sd.set_device_state_preset('cache_latents')
+                        did_move = True
                     self._cache_one_latent(file_item, latent_path, cached_state_dict, needs_encode, to_disk, to_memory)
                     file_item.is_latent_cached = True
                     i += 1
@@ -1861,7 +1865,8 @@ class LatentCachingMixin:
                 pbar.close()
 
             # restore device state
-            self.sd.restore_device_state()
+            if did_move:
+                self.sd.restore_device_state()
 
     def _cache_one_latent(
             self: 'AiToolkitDataset',
