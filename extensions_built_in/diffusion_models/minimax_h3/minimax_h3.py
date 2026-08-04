@@ -68,6 +68,7 @@ from .src.packing import (
     build_packed_sequence,
     pack_audio_latents,
     pad_layouts_to_batch,
+    unpack_audio_tokens,
     patchify_video_latents,
     remap_sigma,
     unpatchify_video_tokens,
@@ -169,6 +170,11 @@ class MinimaxH3Model(BaseModel):
         self.processor = None  # Qwen3VLProcessor
         self._warned_frame_trim = False
         self.latent_space_version = "minimax_h3_v1"
+        # caption token cap (vision blocks are never truncated); the released
+        # stack has no limit — set 0 to disable
+        self.max_text_length = int(
+            self.model_config.model_kwargs.get("max_text_length", 512)
+        )
 
     @staticmethod
     def get_train_scheduler():
@@ -558,6 +564,7 @@ class MinimaxH3Model(BaseModel):
                 keyframes=keyframes,
                 device=self.device_torch,
                 dtype=self.torch_dtype,
+                max_length=self.max_text_length,
             )
             embeds_list.append(embeds)
             tags_list.append(tags)
@@ -638,6 +645,23 @@ class MinimaxH3Model(BaseModel):
         if self.vae.device == torch.device("cpu"):
             self.vae.to(self.vae_device_torch)
         return self.audio_vae.decode(latents.to(self.audio_vae.device, torch.float32))
+
+    @property
+    def audio_sample_rate(self) -> int:
+        return packing.AUDIO_SAMPLE_RATE
+
+    def decode_packed_audio_rows(self, rows: torch.Tensor) -> torch.Tensor:
+        # differentiable: audio perceptual losses backprop through the audio VAE
+        """Packed channel-major audio rows (B, 2*T, 32) -> stereo waveform
+        (B, 2, T*800) at 32 kHz. Each stereo channel decodes as its own batch
+        item through the mono audio VAE."""
+        a_lat = rows.shape[1] // packing.AUDIO_CHANNELS
+        latents = unpack_audio_tokens(rows, a_lat)  # (B, 2, 32, T)
+        b = latents.shape[0]
+        waveform = self.decode_audio_latents(
+            latents.reshape(b * packing.AUDIO_CHANNELS, latents.shape[2], a_lat)
+        )  # (B*2, 1, samples)
+        return waveform.reshape(b, packing.AUDIO_CHANNELS, -1)
 
     @torch.no_grad()
     def encode_audio(self, audio_data_list):
@@ -759,6 +783,11 @@ class MinimaxH3Model(BaseModel):
                 # the stored target follows ai-toolkit's noise - clean
                 batch.audio_target = (audio_noise - raw_audio).detach()
                 audio_rows = (1.0 - sa) * raw_audio + sa * audio_noise
+                # expose what audio perceptual losses need to rebuild the
+                # clean estimate (x0 = noisy - sigma_a * pred) and its target
+                batch.audio_latents = raw_audio
+                batch.audio_noisy = audio_rows
+                batch.audio_sigma = sigma_a
             else:
                 # no soundtrack: silence (zeros) noised at the audio sigma
                 # rides along without contributing to the loss
