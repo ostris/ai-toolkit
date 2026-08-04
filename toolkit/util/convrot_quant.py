@@ -211,6 +211,22 @@ def quantize_nvfp4(
     return packed, scales, pts
 
 
+_e4m3_triton_ok_cache = {}
+
+
+def _e4m3_triton_ok(device) -> bool:
+    """Whether triton can compile kernels that touch fp8e4nv (e4m3) on this
+    device — sm_89+ (Ada and newer). Older architectures raise a
+    CompilationError at kernel-build time, so they must take the torch path."""
+    key = str(device)
+    if key not in _e4m3_triton_ok_cache:
+        try:
+            _e4m3_triton_ok_cache[key] = torch.cuda.get_device_capability(device) >= (8, 9)
+        except Exception:
+            _e4m3_triton_ok_cache[key] = False
+    return _e4m3_triton_ok_cache[key]
+
+
 def dequantize_nvfp4(
     packed: torch.Tensor,
     scales: torch.Tensor,
@@ -226,6 +242,7 @@ def dequantize_nvfp4(
         _triton_available()
         and packed.is_cuda
         and dtype in (torch.bfloat16, torch.float16, torch.float32)
+        and _e4m3_triton_ok(packed.device)
     ):
         return _fp4_dequant_op(
             packed,
