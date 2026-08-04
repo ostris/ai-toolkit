@@ -24,6 +24,7 @@ from contextlib import nullcontext
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -359,6 +360,10 @@ class ViTDecoder3d(nn.Module):
             dim, out_channels * patch_size_t * patch_size * patch_size
         )
 
+        # on by default: only engages when gradients are enabled (pixel-space
+        # losses through decode); no_grad sampling never takes the branch
+        self.gradient_checkpointing = True
+
     def forward(self, z):
         b, c, t, h, w = z.shape
         tokens = z.permute(0, 2, 3, 4, 1).reshape(b, t * h * w, c)
@@ -398,7 +403,14 @@ class ViTDecoder3d(nn.Module):
             rotary_emb = self.rope(torch.cat([position_ids, suffix_ids], dim=1))
 
         for block in self.transformer_blocks:
-            x = block(x, rotary_emb)
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                # pixel-space losses backprop through all 36 blocks; without
+                # checkpointing the stored activations OOM at video sizes.
+                # Inference runs under no_grad, where this branch is never
+                # taken, so sampling pays nothing.
+                x = checkpoint(block, x, rotary_emb, use_reentrant=False)
+            else:
+                x = block(x, rotary_emb)
 
         with torch.autocast(device_type=z.device.type, enabled=False):
             x = F.layer_norm(
@@ -534,6 +546,12 @@ class MiniMaxH3VideoVAE(nn.Module):
     @property
     def dtype(self):
         return next(self.parameters()).dtype
+
+    def enable_gradient_checkpointing(self, enable: bool = True):
+        self.decoder.gradient_checkpointing = enable
+
+    def disable_gradient_checkpointing(self):
+        self.enable_gradient_checkpointing(False)
 
     @staticmethod
     def latent_frames(num_pixel_frames: int) -> int:
