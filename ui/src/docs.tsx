@@ -351,6 +351,14 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.guidance_loss_target': {
+    title: 'Guidance Loss Target',
+    description: (
+      <>
+        For contrastive guidance loss, this is the target CGF to amplify predictions to. 
+      </>
+    ),
+  },
 };
 
 export const getDoc = (key: string | null | undefined): ConfigDoc | null => {
