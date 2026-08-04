@@ -718,6 +718,7 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].train.noise_scheduler': ['flowmatch', 'flowmatch'],
       'config.process[0].train.cache_text_embeddings': [true, false],
       'config.process[0].network.linear': [16, defaultLinearRank],
+      'config.process[0].network.linear_alpha': [16, defaultLinearRank],
       'config.process[0].sample.num_frames': [107, 1],
       'config.process[0].sample.fps': [24, 1],
       'config.process[0].sample.width': [768, 1024],
