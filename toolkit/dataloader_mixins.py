@@ -1679,6 +1679,16 @@ def _latent_from_uint8(latent: torch.Tensor, dtype: torch.dtype = torch.float32)
     return (latent.to(torch.float32) / 127.5 - 1.0).to(dtype)
 
 
+def _waveform_to_int16(waveform: torch.Tensor) -> torch.Tensor:
+    # audio waveform in [-1, 1] -> int16 for compact caching. 8 bits is too coarse for audio.
+    return (waveform.float().clamp(-1, 1) * 32767.0).round().to(torch.int16)
+
+
+def _waveform_from_int16(waveform: torch.Tensor, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    # int16 -> audio waveform in [-1, 1]
+    return (waveform.to(torch.float32) / 32767.0).to(dtype)
+
+
 class LatentCachingFileItemDTOMixin:
     def __init__(self, *args, **kwargs):
         # if we have super, call it
@@ -1687,6 +1697,9 @@ class LatentCachingFileItemDTOMixin:
         self._encoded_latent: Union[torch.Tensor, None] = None
         self._cached_first_frame_latent: Union[torch.Tensor, None] = None
         self._cached_audio_latent: Union[torch.Tensor, None] = None
+        self._cached_tensor_uint8: Union[torch.Tensor, None] = None
+        self._cached_waveform_int16: Union[torch.Tensor, None] = None
+        self._cached_waveform_sample_rate: Union[int, None] = None
         self._latent_path: Union[str, None] = None
         self.is_latent_cached = False
         self.is_caching_to_disk = False
@@ -1734,6 +1747,9 @@ class LatentCachingFileItemDTOMixin:
         if self.is_audio_model:
             item["is_audio_model"] = True
             item["sample_rate"] = self.sample_rate
+        if self.dataset_config.cache_tensors_to_disk:
+            # tensor is stored in the cache file, invalidate caches made without it
+            item["cache_tensors_to_disk"] = True
         return item
 
     def get_latent_path(self: 'FileItemDTO', recalculate=False):
@@ -1760,6 +1776,9 @@ class LatentCachingFileItemDTOMixin:
                 self._encoded_latent = None
                 self._cached_first_frame_latent = None
                 self._cached_audio_latent = None
+                self._cached_tensor_uint8 = None
+                self._cached_waveform_int16 = None
+                self._cached_waveform_sample_rate = None
             else:
                 # move it back to cpu
                 self._encoded_latent = self._encoded_latent.to('cpu')
@@ -1790,6 +1809,22 @@ class LatentCachingFileItemDTOMixin:
                 self._cached_audio_latent = state_dict['audio_latent']
             if 'num_frames' in state_dict:
                 self.num_frames = int(state_dict['num_frames'].item())
+            if 'tensor' in state_dict:
+                self._cached_tensor_uint8 = state_dict['tensor']
+            if 'waveform' in state_dict:
+                self._cached_waveform_int16 = state_dict['waveform']
+                self._cached_waveform_sample_rate = int(state_dict['waveform_sample_rate'].item())
+        if self._cached_tensor_uint8 is not None and getattr(self, 'tensor', None) is None:
+            # rebuild the pixel tensor as it would be if loaded without caching
+            self.tensor = _latent_from_uint8(self._cached_tensor_uint8)
+        if self._cached_waveform_int16 is not None and self.audio_data is None:
+            # rebuild the audio waveform as it would be if loaded without caching
+            waveform = _waveform_from_int16(self._cached_waveform_int16)
+            self.audio_tensor = waveform
+            self.audio_data = {"waveform": waveform, "sample_rate": self._cached_waveform_sample_rate}
+            if self.is_audio_model:
+                # audio-only models use the waveform as the main tensor
+                self.tensor = waveform
         return self._encoded_latent
 
 
@@ -1894,6 +1929,11 @@ class LatentCachingMixin:
                     file_item._cached_first_frame_latent = cached_first_frame.to('cpu', dtype=self.sd.torch_dtype)
                 if 'audio_latent' in state_dict:
                     file_item._cached_audio_latent = state_dict['audio_latent'].to('cpu', dtype=self.sd.torch_dtype)
+                if 'tensor' in state_dict:
+                    file_item._cached_tensor_uint8 = state_dict['tensor']
+                if 'waveform' in state_dict:
+                    file_item._cached_waveform_int16 = state_dict['waveform']
+                    file_item._cached_waveform_sample_rate = int(state_dict['waveform_sample_rate'].item())
         else:
             # not saved to disk, calculate
             # the image/video/audio was already loaded by the prep thread
@@ -1905,6 +1945,23 @@ class LatentCachingMixin:
             frames = None
             # add batch dimension
             cache_uint8 = getattr(self.sd, 'cache_latents_as_uint8', False)
+            if self.dataset_config.cache_tensors_to_disk:
+                if not self.is_audio_model:
+                    tensor_uint8 = _latent_to_uint8(file_item.tensor).cpu()
+                    if to_disk:
+                        state_dict['tensor'] = tensor_uint8
+                    if to_memory:
+                        file_item._cached_tensor_uint8 = tensor_uint8
+                if file_item.audio_data is not None:
+                    # audio-only models: tensor IS the waveform, stored here as int16 instead of uint8
+                    waveform_int16 = _waveform_to_int16(file_item.audio_data['waveform']).cpu()
+                    sample_rate = int(file_item.audio_data['sample_rate'])
+                    if to_disk:
+                        state_dict['waveform'] = waveform_int16
+                        state_dict['waveform_sample_rate'] = torch.tensor(sample_rate, dtype=torch.int32)
+                    if to_memory:
+                        file_item._cached_waveform_int16 = waveform_int16
+                        file_item._cached_waveform_sample_rate = sample_rate
             try:
                 imgs = file_item.tensor.unsqueeze(0).to(device, dtype=dtype)
                 latent = self.sd.encode_images(imgs).squeeze(0)
