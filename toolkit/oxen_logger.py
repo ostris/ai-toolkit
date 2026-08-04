@@ -421,6 +421,10 @@ class AIToolkitOxenLogger:
             dst_path = os.path.join(self.experiment.name, "samples")
 
             for root, dirs, files in os.walk(sample_dir):
+                # skip hidden dirs: .thumbs holds UI thumbnails (<name>.mp4.jpg)
+                # and .tmp holds partially written files — uploading either
+                # creates phantom samples and shifts caption alignment in the Hub
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
                 for file in files:
                     print(f"Main process: Considering sample: {file}")
                     if file.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.mp4')):
