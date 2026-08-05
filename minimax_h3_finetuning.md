@@ -10,49 +10,74 @@ this fork changes to make fine-tuning work, and how to train a
 
 ## Why naive fine-tuning produces mush
 
-A non-distilled flow model gets its sharpness at inference from CFG: two
-forwards per step (conditional + unconditional) extrapolated by a guidance
-scale of ~3–7. Distillation trains the released model so that a *single*
-forward at guidance 1 reproduces that guided output — the guidance lives in
-the weights.
+**The intuition first.** A normal diffusion model is like a camera that shoots
+flat, neutral footage: to get the crisp, vivid, prompt-faithful look, the
+*sampler* applies a boost at playback time — classifier-free guidance (CFG)
+runs the model twice per step, once with your prompt and once without, and
+exaggerates the difference between the two by a factor of ~3–7. "More of what
+the prompt changed, less of what it didn't."
 
-The standard training objective (`target = noise - clean`, which is what
-`get_loss_target` in `extensions_built_in/diffusion_models/minimax_h3/`
-returns) points at the **un-guided** data distribution. Every optimizer step
-that minimizes it therefore pulls the weights away from their distilled
-equilibrium — the model progressively *un-distills*. Sampling still happens at
-guidance 1 with no CFG to compensate, so outputs drift toward what a normal
-model looks like without guidance: soft, low-contrast, desaturated, weak
-motion — "mush." The damage scales with steps, learning rate, and LoRA rank.
-This is not an optimizer problem; the objective itself is mismatched, so the
-fixes below change the loss or the sampler, not the optimizer.
+H3 ships with that boost **baked into the weights**. During distillation,
+MiniMax trained the model so a *single* forward pass at guidance 1 reproduces
+what the boosted two-pass output used to look like. That's why it's fast — and
+why it's fragile: the model's outputs are permanently "pre-amplified."
 
-The same failure hit FLUX.1-schnell and Z-Image-Turbo; both were solved with a
-training adapter (see below).
+Now fine-tune it the standard way. The standard objective
+(`target = noise - clean`, which is what `get_loss_target` in
+`extensions_built_in/diffusion_models/minimax_h3/` returns) says: *your output
+should match the training clip*. But training clips are natural footage — they
+look like **un-boosted** output. So every optimizer step teaches the model
+"be a little less amplified," and the baked-in guidance erodes. Sampling still
+runs single-pass at guidance 1 with nothing to re-apply the boost, so outputs
+drift toward what any diffusion model looks like *without* CFG: soft,
+low-contrast, desaturated, weak motion — "mush." The model isn't failing to
+learn your data; it's learning your data while simultaneously unlearning its
+own sharpening.
+
+The damage is cumulative — it scales with steps, learning rate, and LoRA
+rank — and it is not an optimizer problem: the objective itself points at the
+wrong distribution, so the fixes below change the *loss* or the *sampler*,
+never the optimizer. The same failure hit FLUX.1-schnell and Z-Image-Turbo;
+both were solved with a training adapter (see below).
 
 ## Fixes in this fork
 
 ### 0. Contrastive guidance loss — the objective-level fix (upstream, default on)
 
 Upstream now ships `do_guidance_loss` ("contrastive guidance loss") and
-defaults it on for H3. Instead of training toward the raw un-guided target,
-the trainer also computes an **unconditional prediction** each step and builds
-the target as a CFG-style extrapolation
-(`uncond + g * (cond - uncond)`, `guidance_loss_target: 3.0`), with a
-`sigma` schedule that decays the extrapolation toward 1 at low noise levels —
-explicitly designed for guidance-distilled models with no guidance embedding.
-The model learns your data *as guided outputs*, so the distillation is not
-fought by the objective in the first place. The audio stream trains
-contrastively as well.
+defaults it on for H3.
+
+**Why it works.** The mush problem is that the plain objective says "your
+output should equal the training clip" — an un-boosted target. The contrastive
+objective instead says: *"your output should stand guidance-scale× beyond your
+own no-prompt baseline, in the direction of the training clip."* Concretely,
+each step the trainer runs one extra (no-grad) forward with a **blank prompt**
+to get the model's own unconditional prediction, then rebuilds the target as
+the CFG extrapolation `uncond + g * (raw_target - uncond)` with
+`g = guidance_loss_target` (3.0). The model learns your data *as if it were a
+guided output* — the "conditional is an amplified version of unconditional"
+relationship that distillation encoded is exactly what the loss now preserves,
+while the content still moves toward your data. The audio target is
+extrapolated the same way, so the joint audio stream trains contrastively too.
+
+**Why the sigma schedule.** The boost only matters early in denoising, when
+the model is deciding composition and motion. Near the end of denoising the
+`(target - uncond)` direction is dominated by the fresh random noise term that
+nothing can predict — extrapolating it would just amplify noise. So the
+effective scale decays with the noise level: `g_eff = 1 + (g - 1) * sigma`.
+Full contrastive shaping at high noise, plain flow matching at low noise.
 
 ```yaml
 train:
   do_guidance_loss: true
-  guidance_loss_target: 3.0
+  guidance_loss_target: 3.0   # the boost strength the target assumes
 ```
 
-This is the primary defense; the preservation loss below is now an optional
-extra rather than the default.
+Cost: one extra no-grad forward per step. This is the primary defense; the
+preservation loss below is now an optional extra rather than the default.
+(`guidance_loss_target` is effectively "how strong we believe the baked-in
+boost is" — raising it trains toward a punchier look, lowering it toward a
+flatter one.)
 
 ### 1. Preservation (anchor) loss — slows the drift
 
@@ -61,6 +86,14 @@ the **frozen base model**: the trainer computes the base prediction with the
 LoRA deactivated and adds an MSE term pulling the LoRA'd model's blank-prompt
 output back toward it (`SDTrainer` preservation path). Your LoRA still learns
 the data; the anchor resists the systematic un-distillation.
+
+**Why it works.** Think of it as a leash to the factory weights: "whatever you
+learn from the prompts, when given *no* instructions you must still behave
+exactly like you did from the factory." The un-distillation drift shows up in
+the unconditional behavior first — this term measures that drift directly
+(base vs. LoRA'd prediction on a blank prompt) and charges the optimizer for
+it. Unlike contrastive guidance, it doesn't reshape *what* is learned, it just
+penalizes movement — which is why it trades off against learning speed.
 
 ```yaml
 train:
@@ -85,6 +118,13 @@ implements **real two-pass classifier-free guidance** when
 into their own sequences (text length shifts the rotary media clock, so each
 pass needs its own layout) over shared latent state, and both video and audio
 velocities are extrapolated by the guidance scale.
+
+**Why it works.** If training eroded the baked-in boost, the model has drifted
+back toward being a *normal* diffusion model — and normal diffusion models are
+exactly what CFG was invented for. Real CFG re-applies at playback the
+amplification the weights no longer carry: two takes per step (with prompt,
+without prompt), exaggerate the difference. The further a checkpoint has
+drifted, the more real CFG gives back.
 
 Uses:
 - **Diagnostic**: if a mushy checkpoint sharpens dramatically at
@@ -118,6 +158,46 @@ If training without preservation or an adapter: LR ≤ 5e-5, rank ≤ 16,
 ≤ 1000 steps, and sample every ≤ 250 steps — the best checkpoint is usually
 well before the last. Style transfers tolerate drift better than
 subject/identity learning.
+
+**Why.** The drift is *cumulative erosion*, not a threshold: every step
+removes a sliver of the baked-in boost, and learning rate × steps × rank is
+roughly how much total movement you allow. Cooler and shorter means less
+erosion for the same amount of subject learning, and early checkpoints capture
+the point where "learned your data" and "still sharp" overlap best.
+
+## What the other knobs actually do
+
+- **`timestep_type: shift` (video shift 12).** During training, each step
+  practices denoising at a randomly chosen noise level. The `shift` schedule
+  concentrates that practice on the same heavily-noise-shifted grid the H3
+  sampler actually visits at inference (video models spend most of their
+  sampling budget at high noise, where motion and composition are decided).
+  Training on any other distribution practices noise levels the model will
+  rarely be asked to handle, and under-trains the ones it will.
+- **`lora_rank` / `lora_alpha`.** The LoRA is a low-rank "overlay" on the
+  frozen weights; rank is the overlay's capacity (how much new behavior it can
+  express) and alpha is its volume knob (how strongly it's applied). More
+  capacity learns faster — and erodes the distillation faster, which is why H3
+  wants modest rank.
+- **`audio_preserve_pitch`.** Clips must land on the 17n+5 frame grid at a
+  fixed 24 fps, so nearly every clip gets time-stretched. Naive stretching is
+  the tape-speed effect: slow it down and the audio drops in pitch. With
+  preserve-pitch on, the stretch is done phase-aware so duration changes but
+  pitch doesn't — otherwise the audio head trains on subtly detuned sound.
+- **`audio_loss_multiplier`.** Video and audio denoise jointly in one
+  sequence and their losses are simply added; this is the mixing fader between
+  them. If preview audio learns faster than video (or vice versa), rebalance.
+- **`cache_latents_to_disk` / `cache_text_embeddings`.** The VAE encode of a
+  clip and the Qwen3-VL encode of a caption are deterministic — cache them
+  once instead of recomputing every epoch. Pure speed; no quality effect.
+- **`auto_frame_count` + `batch_size: 1`.** Every clip keeps its own on-grid
+  length instead of being cropped to one duration — but variable lengths can't
+  be stacked into one batch, hence batch size 1 (use gradient accumulation for
+  effective batch).
+- **`guidance_loss_target: 3.0`.** The boost strength the contrastive target
+  assumes the weights carry. It's a taste parameter more than a correctness
+  one: higher trains toward a punchier, more saturated look; lower toward
+  flatter output.
 
 ## The training adapter — the proper fix
 
