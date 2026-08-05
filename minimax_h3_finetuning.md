@@ -32,6 +32,28 @@ training adapter (see below).
 
 ## Fixes in this fork
 
+### 0. Contrastive guidance loss — the objective-level fix (upstream, default on)
+
+Upstream now ships `do_guidance_loss` ("contrastive guidance loss") and
+defaults it on for H3. Instead of training toward the raw un-guided target,
+the trainer also computes an **unconditional prediction** each step and builds
+the target as a CFG-style extrapolation
+(`uncond + g * (cond - uncond)`, `guidance_loss_target: 3.0`), with a
+`sigma` schedule that decays the extrapolation toward 1 at low noise levels —
+explicitly designed for guidance-distilled models with no guidance embedding.
+The model learns your data *as guided outputs*, so the distillation is not
+fought by the objective in the first place. The audio stream trains
+contrastively as well.
+
+```yaml
+train:
+  do_guidance_loss: true
+  guidance_loss_target: 3.0
+```
+
+This is the primary defense; the preservation loss below is now an optional
+extra rather than the default.
+
 ### 1. Preservation (anchor) loss — slows the drift
 
 `blank_prompt_preservation: true` in the `train:` block anchors every step to
@@ -47,11 +69,11 @@ train:
 ```
 
 Caveats:
-- Costs extra forwards per step (roughly 2x step time).
-- The anchor covers **video only**. H3's audio prediction rides a side channel
-  (`batch.audio_pred` / `batch.audio_target`) with freshly drawn noise per
-  forward, so the audio branch is unanchored. A future fork change can pin the
-  audio noise on the batch to extend the anchor to audio.
+- Costs extra forwards per step (roughly 2x step time), on top of the
+  contrastive guidance forward when both are enabled.
+- Audio is now anchored too: upstream fixed the audio side-channel handling
+  for prior/guidance/preservation passes (primary-prediction tracking on the
+  batch), so the earlier video-only limitation no longer applies.
 - It is a dial, not a cure: multiplier too low and the model still drifts, too
   high and it learns nothing. Start at 1.0.
 
@@ -116,8 +138,9 @@ distillation in a controlled way*. Mechanics at train time (the pattern
 
 MiniMaxAI released no undistilled teacher (both partitions on
 `MiniMaxAI/MiniMax-H3` are CFG-distilled), so the adapter must be *made* by
-deliberate un-distillation. Ostris is training an official one; the recipe
-below produces your own.
+deliberate un-distillation. Ostris is training an official one — upstream has
+already landed adapter prep for H3 ("Prep for training adapters on MiniMax
+H3") — and the recipe below produces your own.
 
 ### Dataset
 
