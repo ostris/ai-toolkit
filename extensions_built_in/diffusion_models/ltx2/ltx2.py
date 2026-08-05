@@ -942,7 +942,17 @@ class LTX2Model(BaseModel):
                 patch_size_t=self.pipeline.transformer_temporal_patch_size,
             )
 
-            if batch.audio_latents is not None or batch.audio_tensor is not None:
+            # audio only trains for video batches from datasets that asked for
+            # it. Cached latents can carry audio after do_audio was turned off,
+            # and image (single frame) batches must never pick up a soundtrack.
+            do_audio = (
+                batch.dataset_config is not None
+                and batch.dataset_config.do_audio
+                and getattr(batch, "num_frames", 1) > 1
+            )
+            if do_audio and (
+                batch.audio_latents is not None or batch.audio_tensor is not None
+            ):
                 if batch.audio_latents is not None:
                     # we have audio latents cached
                     raw_audio_latents = batch.audio_latents.to(

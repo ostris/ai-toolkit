@@ -590,6 +590,11 @@ class TrainConfig:
         self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
         self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
         self.do_guidance_loss_cfg_zero: bool = kwargs.get('do_guidance_loss_cfg_zero', False)
+        # 'constant' uses guidance_loss_target as is. 'sigma' decays the target
+        # toward 1.0 as sigma falls (effective = 1 + (target - 1) * sigma) so the
+        # extrapolation never amplifies the unpredictable fresh-noise term at low
+        # sigma. Needed for guidance-distilled models with no guidance embedding.
+        self.guidance_loss_schedule: str = kwargs.get('guidance_loss_schedule', 'sigma')
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)

@@ -915,7 +915,7 @@ export default function SimpleJob({
                         if (value) {
                           setJobConfig(true, 'config.process[0].train.do_guidance_loss');
                           if (!jobConfig.config.process[0].train.guidance_loss_target) {
-                            setJobConfig(3.0, 'config.process[0].train.guidance_loss_target');
+                            setJobConfig(4.0, 'config.process[0].train.guidance_loss_target');
                           }
                         } else {
                           setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
@@ -928,7 +928,7 @@ export default function SimpleJob({
                         <NumberInput
                           label="Guidance Loss Target"
                           docKey={'train.guidance_loss_target'}
-                          value={(jobConfig.config.process[0].train.guidance_loss_target as number) || 3.0}
+                          value={(jobConfig.config.process[0].train.guidance_loss_target as number) || 4.0}
                           onChange={value => setJobConfig(value, 'config.process[0].train.guidance_loss_target')}
                           placeholder="eg. 3.0"
                           min={0}

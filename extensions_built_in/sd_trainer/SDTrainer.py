@@ -736,7 +736,15 @@ class SDTrainer(BaseSDTrainProcess):
                 if isinstance(guidance_scale, list):
                     guidance_scale = torch.tensor(guidance_scale).to(target.device, dtype=target.dtype)
                     guidance_scale = guidance_scale.view(-1, 1, 1, 1) if not is_video else guidance_scale.view(-1, 1, 1, 1, 1)
-                
+
+                if self.train_config.guidance_loss_schedule == 'sigma':
+                    # the (target - uncond) sample direction carries s * fresh_noise
+                    # that nothing can predict at low sigma, so decay the
+                    # extrapolation toward a plain flow target as sigma falls
+                    sigma = (timesteps.to(target.device) / 1000.0).to(target.dtype)
+                    sigma = sigma.view(-1, 1, 1, 1) if not is_video else sigma.view(-1, 1, 1, 1, 1)
+                    guidance_scale = 1.0 + (guidance_scale - 1.0) * sigma
+
                 unconditional_target = unconditional_target * alpha
                 target = unconditional_target + guidance_scale * (target - unconditional_target)
 
@@ -761,6 +769,16 @@ class SDTrainer(BaseSDTrainProcess):
                         audio_guidance_scale = torch.tensor(audio_guidance_scale).to(
                             audio_target.device, dtype=audio_target.dtype
                         ).view(-1, *audio_dims)
+
+                    if self.train_config.guidance_loss_schedule == 'sigma':
+                        # audio streams can run on their own remapped sigma
+                        audio_sigma = getattr(batch, 'audio_sigma', None)
+                        if audio_sigma is None:
+                            audio_sigma = timesteps / 1000.0
+                        audio_sigma = audio_sigma.to(
+                            audio_target.device, dtype=audio_target.dtype
+                        ).view(-1, *audio_dims)
+                        audio_guidance_scale = 1.0 + (audio_guidance_scale - 1.0) * audio_sigma
 
                     batch.audio_target = (
                         audio_uncond + audio_guidance_scale * (audio_target - audio_uncond)
