@@ -852,6 +852,14 @@ class LTX2Model(BaseModel):
         batch: "DataLoaderBatchDTO" = None,
         **kwargs,
     ):
+        # the primary (loss carrying) prediction is the first one made with grad
+        # enabled. Prior/cfg/guidance passes run under no_grad, and the
+        # preservation pass (diff_output_preservation, blank_prompt_preservation)
+        # runs with grad but after the loss, so it must not restate the audio
+        # prediction the primary pass stored on the batch.
+        is_primary_pred = (
+            torch.is_grad_enabled() and batch is not None and batch.audio_pred is None
+        )
         with torch.no_grad():
             if self.model.device == torch.device("cpu"):
                 self.model.to(self.device_torch)
@@ -945,8 +953,21 @@ class LTX2Model(BaseModel):
 
                 audio_num_frames = raw_audio_latents.shape[1]
                 # add the audio targets to the batch for loss calculation later
-                audio_noise = torch.randn_like(raw_audio_latents)
-                batch.audio_target = (audio_noise - raw_audio_latents).detach()
+                # the audio noise is drawn once per step and shared by every
+                # pass (prior, primary, cfg/guidance, preservation) so they all
+                # see the same soundtrack and the stored target keeps matching
+                if (
+                    batch.audio_noise is not None
+                    and batch.audio_noise.shape == raw_audio_latents.shape
+                ):
+                    audio_noise = batch.audio_noise.to(
+                        raw_audio_latents.device, dtype=raw_audio_latents.dtype
+                    )
+                else:
+                    audio_noise = torch.randn_like(raw_audio_latents)
+                    batch.audio_noise = audio_noise
+                if batch.audio_target is None:
+                    batch.audio_target = (audio_noise - raw_audio_latents).detach()
                 audio_latents = self.add_noise(
                     raw_audio_latents,
                     audio_noise,
@@ -1040,7 +1061,10 @@ class LTX2Model(BaseModel):
 
         # add audio latent to batch if we had audio
         if batch.audio_target is not None:
-            batch.audio_pred = noise_pred_audio
+            if is_primary_pred:
+                batch.audio_pred = noise_pred_audio
+            else:
+                batch.audio_pred_uncond = noise_pred_audio
 
         unpacked_output = self.pipeline._unpack_latents(
             latents=noise_pred_video,

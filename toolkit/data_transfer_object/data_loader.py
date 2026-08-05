@@ -221,7 +221,18 @@ class DataLoaderBatchDTO:
             # just for holding noise and preds during training
             self.audio_target: Union[torch.Tensor, None] = None
             self.audio_pred: Union[torch.Tensor, None] = None
-            
+            # the noise drawn for the audio stream on the primary (grad enabled)
+            # prediction. Secondary passes (cfg / guidance loss / prior preds)
+            # reuse it so their noisy audio matches the stored audio_target.
+            self.audio_noise: Union[torch.Tensor, None] = None
+            # audio prediction from an unconditional/secondary pass. Kept
+            # separate so it cannot stomp the primary pred we backprop through.
+            self.audio_pred_uncond: Union[torch.Tensor, None] = None
+            # noisy audio rows and audio sigma of the primary pass, used to
+            # rebuild the clean audio estimate for perceptual losses
+            self.audio_noisy: Union[torch.Tensor, None] = None
+            self.audio_sigma: Union[torch.Tensor, None] = None
+
             self.num_frames: int = self.file_items[0].num_frames
 
             if (
@@ -488,6 +499,10 @@ class DataLoaderBatchDTO:
         del self.audio_data
         del self.audio_target
         del self.audio_pred
+        del self.audio_noise
+        del self.audio_pred_uncond
+        del self.audio_noisy
+        del self.audio_sigma
         del self.first_frame_latents
         del self.audio_latents
         for file_item in self.file_items:

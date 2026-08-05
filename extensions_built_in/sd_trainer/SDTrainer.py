@@ -736,6 +736,32 @@ class SDTrainer(BaseSDTrainProcess):
                 unconditional_target = unconditional_target * alpha
                 target = unconditional_target + guidance_scale * (target - unconditional_target)
 
+                # joint audio models (ltx2, minimax_h3, flux3) carry their audio
+                # target/pred on the batch. Extrapolate the audio target the
+                # same way so the audio stream trains contrastively as well.
+                audio_uncond = getattr(batch, 'audio_pred_uncond', None)
+                if batch.audio_target is not None and audio_uncond is not None:
+                    audio_target = batch.audio_target.float()
+                    audio_uncond = audio_uncond.float()
+                    audio_dims = [1] * (audio_target.dim() - 1)
+                    if self.train_config.do_guidance_loss_cfg_zero:
+                        batch_size = audio_target.shape[0]
+                        a_pos_flat = audio_target.view(batch_size, -1)
+                        a_neg_flat = audio_uncond.view(batch_size, -1)
+                        a_dot = torch.sum(a_pos_flat * a_neg_flat, dim=1, keepdim=True)
+                        a_squared_norm = torch.sum(a_neg_flat ** 2, dim=1, keepdim=True) + 1e-8
+                        audio_uncond = audio_uncond * (a_dot / a_squared_norm).view(-1, *audio_dims)
+
+                    audio_guidance_scale = self._guidance_loss_target_batch
+                    if isinstance(audio_guidance_scale, list):
+                        audio_guidance_scale = torch.tensor(audio_guidance_scale).to(
+                            audio_target.device, dtype=audio_target.dtype
+                        ).view(-1, *audio_dims)
+
+                    batch.audio_target = (
+                        audio_uncond + audio_guidance_scale * (audio_target - audio_uncond)
+                    ).to(batch.audio_target.dtype).detach()
+
             if self.train_config.do_differential_guidance:
                 with torch.no_grad():
                     guidance_scale = self.train_config.differential_guidance_scale

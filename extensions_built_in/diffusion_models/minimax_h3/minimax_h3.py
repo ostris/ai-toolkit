@@ -141,6 +141,13 @@ class MiniMaxH3VaeBundle(torch.nn.Module):
     def dtype(self):
         return self.video_vae.dtype
 
+    def enable_gradient_checkpointing(self, enable: bool = True):
+        self.video_vae.enable_gradient_checkpointing(enable)
+        self.audio_vae.enable_gradient_checkpointing(enable)
+
+    def disable_gradient_checkpointing(self):
+        self.enable_gradient_checkpointing(False)
+
 
 class MinimaxH3Model(BaseModel):
     arch = "minimax_h3"
@@ -712,6 +719,15 @@ class MinimaxH3Model(BaseModel):
         if self.model.device == torch.device("cpu"):
             self.model.to(device)
 
+        # the primary (loss carrying) prediction is the first one made with grad
+        # enabled. Prior/cfg/guidance passes run under no_grad, and the
+        # preservation pass (diff_output_preservation, blank_prompt_preservation)
+        # runs with grad but after the loss, so it must not restate the audio
+        # prediction the primary pass stored on the batch.
+        is_primary_pred = (
+            torch.is_grad_enabled() and batch is not None and batch.audio_pred is None
+        )
+
         batch_size, _, t_lat, h_lat, w_lat = latent_model_input.shape
 
         with torch.no_grad():
@@ -778,16 +794,27 @@ class MinimaxH3Model(BaseModel):
                     raw_audio = torch.nn.functional.pad(
                         raw_audio, (0, 0, 0, expected_rows - raw_audio.shape[1])
                     )
-                audio_noise = torch.randn_like(raw_audio)
-                # model predicts clean - noise; audio_pred is negated below so
-                # the stored target follows ai-toolkit's noise - clean
-                batch.audio_target = (audio_noise - raw_audio).detach()
+                # the audio noise is drawn once per step and shared by every
+                # pass (prior, primary, cfg/guidance, preservation) so they all
+                # see the same soundtrack and the stored target keeps matching
+                if (
+                    batch.audio_noise is not None
+                    and batch.audio_noise.shape == raw_audio.shape
+                ):
+                    audio_noise = batch.audio_noise.to(device, torch.float32)
+                else:
+                    audio_noise = torch.randn_like(raw_audio)
+                    batch.audio_noise = audio_noise
                 audio_rows = (1.0 - sa) * raw_audio + sa * audio_noise
-                # expose what audio perceptual losses need to rebuild the
-                # clean estimate (x0 = noisy - sigma_a * pred) and its target
                 batch.audio_latents = raw_audio
-                batch.audio_noisy = audio_rows
-                batch.audio_sigma = sigma_a
+                if batch.audio_target is None:
+                    # model predicts clean - noise; audio_pred is negated below
+                    # so the stored target follows ai-toolkit's noise - clean
+                    batch.audio_target = (audio_noise - raw_audio).detach()
+                    # expose what audio perceptual losses need to rebuild the
+                    # clean estimate (x0 = noisy - sigma_a * pred)
+                    batch.audio_noisy = audio_rows
+                    batch.audio_sigma = sigma_a
             else:
                 # no soundtrack: silence (zeros) noised at the audio sigma
                 # rides along without contributing to the loss
@@ -863,7 +890,10 @@ class MinimaxH3Model(BaseModel):
 
         if batch is not None and batch.audio_target is not None:
             # flip to ai-toolkit's noise - clean convention
-            batch.audio_pred = -audio_pred
+            if is_primary_pred:
+                batch.audio_pred = -audio_pred
+            else:
+                batch.audio_pred_uncond = -audio_pred
 
         video_pred = video_pred[:, num_cond:]
         noise_pred = unpatchify_video_tokens(video_pred, t_lat, h_lat, w_lat)
