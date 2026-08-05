@@ -211,6 +211,22 @@ def quantize_nvfp4(
     return packed, scales, pts
 
 
+_e4m3_triton_ok_cache = {}
+
+
+def _e4m3_triton_ok(device) -> bool:
+    """Whether triton can compile kernels that touch fp8e4nv (e4m3) on this
+    device — sm_89+ (Ada and newer). Older architectures raise a
+    CompilationError at kernel-build time, so they must take the torch path."""
+    key = str(device)
+    if key not in _e4m3_triton_ok_cache:
+        try:
+            _e4m3_triton_ok_cache[key] = torch.cuda.get_device_capability(device) >= (8, 9)
+        except Exception:
+            _e4m3_triton_ok_cache[key] = False
+    return _e4m3_triton_ok_cache[key]
+
+
 def dequantize_nvfp4(
     packed: torch.Tensor,
     scales: torch.Tensor,
@@ -226,6 +242,7 @@ def dequantize_nvfp4(
         _triton_available()
         and packed.is_cuda
         and dtype in (torch.bfloat16, torch.float16, torch.float32)
+        and _e4m3_triton_ok(packed.device)
     ):
         return _fp4_dequant_op(
             packed,
@@ -270,6 +287,21 @@ def _triton_available() -> bool:
     return _triton_ok
 
 
+def _import_triton():
+    """Lazy triton import for the kernel builders. The names are ALSO published
+    as module globals: older triton versions resolve a jit kernel's free
+    variables through ``fn.__globals__`` only (no closure capture), so ``tl``
+    referenced inside a kernel defined in a builder function must exist at
+    module scope or those versions die with ``NameError: 'tl' is not defined``
+    at first compile."""
+    import triton as _triton
+    import triton.language as _tl
+
+    globals()["triton"] = _triton
+    globals()["tl"] = _tl
+    return _triton, _tl
+
+
 _kernel = None
 
 
@@ -277,8 +309,7 @@ def _get_kernel():
     global _kernel
     if _kernel is not None:
         return _kernel
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
 
     @triton.jit
     def nvfp4_act_quant_kernel(
@@ -450,8 +481,7 @@ def _get_dequant_kernel():
     global _dequant_kernel
     if _dequant_kernel is not None:
         return _dequant_kernel
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
 
     @triton.jit
     def nvfp4_dequant_kernel(
@@ -818,8 +848,7 @@ def _get_int8_kernels():
     global _int8_kernels
     if _int8_kernels is not None:
         return _int8_kernels
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
     from triton.language.extra import libdevice
 
     @triton.jit
@@ -1614,8 +1643,7 @@ def _get_intn_kernel():
     global _intn_kernel
     if _intn_kernel is not None:
         return _intn_kernel
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
 
     @triton.jit
     def intn_unpack_kernel(
@@ -1658,8 +1686,7 @@ def _get_intn_grouped_kernel():
     global _intn_grouped_kernel
     if _intn_grouped_kernel is not None:
         return _intn_grouped_kernel
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
     from triton.language.extra import libdevice
 
     @triton.jit
@@ -1711,8 +1738,7 @@ def _get_bitnet_kernel():
     global _bitnet_kernel
     if _bitnet_kernel is not None:
         return _bitnet_kernel
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
     from triton.language.extra import libdevice
 
     @triton.jit
@@ -1843,8 +1869,7 @@ def _get_int_gemv_kernel():
     global _int_gemv_kernel
     if _int_gemv_kernel is not None:
         return _int_gemv_kernel
-    import triton
-    import triton.language as tl
+    triton, tl = _import_triton()
     from triton.language.extra import libdevice
 
     @triton.jit

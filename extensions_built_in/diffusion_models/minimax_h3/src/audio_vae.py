@@ -20,6 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from torch.utils.checkpoint import checkpoint
 
 # fmt: off
 # Per-channel latent statistics from the released FL2VA/audio_vae/config.json.
@@ -395,15 +396,25 @@ class BigVGANDecoder(nn.Module):
         self.activation_post = AliasFreeActivation1d(SnakeBeta(channels))
         self.conv_post = nn.Conv1d(channels, 1, 7, padding=3, bias=False)
 
+        self.gradient_checkpointing = True
+
+    def _stage(self, i: int, x: Tensor) -> Tensor:
+        x = self.ups[i][0](x)
+        acc = None
+        for j in range(self.num_kernels):
+            y = self.resblocks[i * self.num_kernels + j](x)
+            acc = y if acc is None else acc + y
+        return acc / self.num_kernels
+
     def forward(self, x: Tensor) -> Tensor:
         x = self.conv_pre(x)
-        for i, up in enumerate(self.ups):
-            x = up[0](x)
-            acc = None
-            for j in range(self.num_kernels):
-                y = self.resblocks[i * self.num_kernels + j](x)
-                acc = y if acc is None else acc + y
-            x = acc / self.num_kernels
+        for i in range(len(self.ups)):
+            # gated on is_grad_enabled (not train mode): the VAE stays eval
+            # but differentiable decodes during training should checkpoint
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
+                x = checkpoint(self._stage, i, x, use_reentrant=False)
+            else:
+                x = self._stage(i, x)
         x = self.activation_post(x)
         x = self.conv_post(x)
         return torch.clamp(x, min=-1.0, max=1.0)
@@ -461,6 +472,12 @@ class MiniMaxH3AudioVAE(nn.Module):
     @property
     def downsampling_ratio(self) -> int:
         return self.HOP_LENGTH
+
+    def enable_gradient_checkpointing(self, enable: bool = True):
+        self.decoder.gradient_checkpointing = enable
+
+    def disable_gradient_checkpointing(self):
+        self.enable_gradient_checkpointing(False)
 
     def _apply(self, fn, recurse=True):
         # This VAE is pinned to fp32 (bf16 decodes are audibly degraded).

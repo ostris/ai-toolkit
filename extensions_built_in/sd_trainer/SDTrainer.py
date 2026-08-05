@@ -700,6 +700,9 @@ class SDTrainer(BaseSDTrainProcess):
                 unconditional_embeds = concat_prompt_embeds(
                     [self.unconditional_embeds] * noisy_latents.shape[0],
                 )
+                # joint audio models route this pass's audio pred to its own
+                # slot so it cannot stomp the primary pred on the batch
+                batch.audio_pred_slot = 'audio_pred_uncond'
                 unconditional_target = self.predict_noise(
                     noisy_latents=noisy_latents,
                     timesteps=timesteps,
@@ -707,6 +710,7 @@ class SDTrainer(BaseSDTrainProcess):
                     unconditional_embeds=None,
                     batch=batch,
                 )
+                batch.audio_pred_slot = None
                 is_video = len(target.shape) == 5
                 
                 if self.train_config.do_guidance_loss_cfg_zero:
@@ -732,9 +736,53 @@ class SDTrainer(BaseSDTrainProcess):
                 if isinstance(guidance_scale, list):
                     guidance_scale = torch.tensor(guidance_scale).to(target.device, dtype=target.dtype)
                     guidance_scale = guidance_scale.view(-1, 1, 1, 1) if not is_video else guidance_scale.view(-1, 1, 1, 1, 1)
-                
+
+                if self.train_config.guidance_loss_schedule == 'sigma':
+                    # the (target - uncond) sample direction carries s * fresh_noise
+                    # that nothing can predict at low sigma, so decay the
+                    # extrapolation toward a plain flow target as sigma falls
+                    sigma = (timesteps.to(target.device) / 1000.0).to(target.dtype)
+                    sigma = sigma.view(-1, 1, 1, 1) if not is_video else sigma.view(-1, 1, 1, 1, 1)
+                    guidance_scale = 1.0 + (guidance_scale - 1.0) * sigma
+
                 unconditional_target = unconditional_target * alpha
                 target = unconditional_target + guidance_scale * (target - unconditional_target)
+
+                # joint audio models (ltx2, minimax_h3, flux3) carry their audio
+                # target/pred on the batch. Extrapolate the audio target the
+                # same way so the audio stream trains contrastively as well.
+                audio_uncond = getattr(batch, 'audio_pred_uncond', None)
+                if batch.audio_target is not None and audio_uncond is not None:
+                    audio_target = batch.audio_target.float()
+                    audio_uncond = audio_uncond.float()
+                    audio_dims = [1] * (audio_target.dim() - 1)
+                    if self.train_config.do_guidance_loss_cfg_zero:
+                        batch_size = audio_target.shape[0]
+                        a_pos_flat = audio_target.view(batch_size, -1)
+                        a_neg_flat = audio_uncond.view(batch_size, -1)
+                        a_dot = torch.sum(a_pos_flat * a_neg_flat, dim=1, keepdim=True)
+                        a_squared_norm = torch.sum(a_neg_flat ** 2, dim=1, keepdim=True) + 1e-8
+                        audio_uncond = audio_uncond * (a_dot / a_squared_norm).view(-1, *audio_dims)
+
+                    audio_guidance_scale = self._guidance_loss_target_batch
+                    if isinstance(audio_guidance_scale, list):
+                        audio_guidance_scale = torch.tensor(audio_guidance_scale).to(
+                            audio_target.device, dtype=audio_target.dtype
+                        ).view(-1, *audio_dims)
+
+                    if self.train_config.guidance_loss_schedule == 'sigma':
+                        # audio streams can run on their own remapped sigma
+                        audio_sigma = getattr(batch, 'audio_sigma', None)
+                        if audio_sigma is None:
+                            audio_sigma = timesteps / 1000.0
+                        audio_sigma = audio_sigma.to(
+                            audio_target.device, dtype=audio_target.dtype
+                        ).view(-1, *audio_dims)
+                        audio_guidance_scale = 1.0 + (audio_guidance_scale - 1.0) * audio_sigma
+
+                    batch.audio_target = (
+                        audio_uncond + audio_guidance_scale * (audio_target - audio_uncond)
+                    ).to(batch.audio_target.dtype).detach()
 
             if self.train_config.do_differential_guidance:
                 with torch.no_grad():
@@ -1884,6 +1932,10 @@ class SDTrainer(BaseSDTrainProcess):
                                 [blank_embeds] * noisy_latents.shape[0]
                             )
                         
+                        # joint audio models stash their audio pred on the batch.
+                        # Give this pass its own slot so the preservation loss
+                        # can pair it with the preservation pass below.
+                        batch.audio_pred_slot = 'audio_pred_prior'
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,
                             conditional_embeds=prior_embeds_to_use,
@@ -1896,6 +1948,7 @@ class SDTrainer(BaseSDTrainProcess):
                             unconditional_embeds=unconditional_embeds,
                             conditioned_prompts=conditioned_prompts
                         )
+                        batch.audio_pred_slot = None
                         if prior_pred is not None:
                             prior_pred = prior_pred.detach()
 
@@ -2084,6 +2137,7 @@ class SDTrainer(BaseSDTrainProcess):
                                 preservation_embeds = concat_prompt_embeds(
                                     [blank_embeds] * noisy_latents.shape[0]
                                 )
+                        batch.audio_pred_slot = 'audio_pred_preservation'
                         preservation_pred = self.predict_noise(
                             noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
                             timesteps=timesteps,
@@ -2092,10 +2146,23 @@ class SDTrainer(BaseSDTrainProcess):
                             batch=batch,
                             **pred_kwargs
                         )
+                        batch.audio_pred_slot = None
                         multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
                         preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
                         self.additional_logs['loss/normal'] = loss.item()
                         self.additional_logs['loss/preservation'] = preservation_loss.item()
+
+                        # preserve the audio stream of joint audio models too.
+                        # Both passes ran on the same noisy audio, so this holds
+                        # the audio branch to its base model output.
+                        if batch.audio_pred_preservation is not None and batch.audio_pred_prior is not None:
+                            audio_preservation_loss = torch.nn.functional.mse_loss(
+                                batch.audio_pred_preservation.float(),
+                                batch.audio_pred_prior.float(),
+                            ) * multiplier * self.train_config.audio_loss_multiplier
+                            self.additional_logs['loss/preservation_audio'] = audio_preservation_loss.item()
+                            preservation_loss = preservation_loss + audio_preservation_loss
+
                         loss = loss + preservation_loss
 
                 # check if nan

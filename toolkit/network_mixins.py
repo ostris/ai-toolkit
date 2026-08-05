@@ -451,7 +451,9 @@ class ToolkitModuleMixin:
         if is_ao_quantized:
             from toolkit.util.quantize import get_torchao_config, requantize_module_weight
             config = get_torchao_config(self._get_base_qtype())
-            if config is None:
+            if config is None and not getattr(self.org_module[0], "is_ostris_quantized", False):
+                # ostris-quantized layers re-quantize through their own backend
+                # (requantize_module_weight) and need no torchao config
                 print_once(f"Warning: merging into quantized layer {getattr(self, 'lora_name', '?')} "
                            f"without a known qtype; it will be left dequantized")
             requantize_module_weight(self.org_module[0], weight.to(weight_device), orig_dtype, config)

@@ -332,19 +332,13 @@ export default function SimpleJob({
                     const gateUrl = modelArch.gateUrl as string;
                     openDoc({
                       title: `Notes - ${modelArch.label}`,
-                      description: (
-                        <div className="space-y-3">
-                          {modelArch.modelNotes}
-                        </div>
-                      ),
+                      description: <div className="space-y-3">{modelArch.modelNotes}</div>,
                     });
                   }}
                   className="w-full flex items-center gap-2 rounded-md bg-blue-950/60 border border-blue-800 px-3 py-2 text-sm text-blue-200 hover:bg-blue-900/60 text-left"
                 >
                   <Info className="w-4 h-4 shrink-0 text-blue-400" />
-                  <span>
-                    Model notes
-                  </span>
+                  <span>Model notes</span>
                 </button>
               </div>
             )}
@@ -910,6 +904,39 @@ export default function SimpleJob({
                     )}
                   </>
                 )}
+                <FormGroup label="Other" className="pt-2">
+                  <>
+                    <Checkbox
+                      label="Contrastive Guidance Loss"
+                      docKey={'train.do_guidance_loss'}
+                      className="pt-1"
+                      checked={jobConfig.config.process[0].train.do_guidance_loss || false}
+                      onChange={value => {
+                        if (value) {
+                          setJobConfig(true, 'config.process[0].train.do_guidance_loss');
+                          if (!jobConfig.config.process[0].train.guidance_loss_target) {
+                            setJobConfig(4.0, 'config.process[0].train.guidance_loss_target');
+                          }
+                        } else {
+                          setJobConfig(undefined, 'config.process[0].train.do_guidance_loss');
+                          setJobConfig(undefined, 'config.process[0].train.guidance_loss_target');
+                        }
+                      }}
+                    />
+                    {jobConfig.config.process[0].train.do_guidance_loss && (
+                      <>
+                        <NumberInput
+                          label="Guidance Loss Target"
+                          docKey={'train.guidance_loss_target'}
+                          value={(jobConfig.config.process[0].train.guidance_loss_target as number) || 4.0}
+                          onChange={value => setJobConfig(value, 'config.process[0].train.guidance_loss_target')}
+                          placeholder="eg. 3.0"
+                          min={0}
+                        />
+                      </>
+                    )}
+                  </>
+                </FormGroup>
               </div>
             </div>
           </Card>

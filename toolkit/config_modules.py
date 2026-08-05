@@ -602,6 +602,11 @@ class TrainConfig:
         self.do_guidance_loss = kwargs.get('do_guidance_loss', False)
         self.guidance_loss_target: Union[int, List[int, int]] = kwargs.get('guidance_loss_target', 3.0)
         self.do_guidance_loss_cfg_zero: bool = kwargs.get('do_guidance_loss_cfg_zero', False)
+        # 'constant' uses guidance_loss_target as is. 'sigma' decays the target
+        # toward 1.0 as sigma falls (effective = 1 + (target - 1) * sigma) so the
+        # extrapolation never amplifies the unpredictable fresh-noise term at low
+        # sigma. Needed for guidance-distilled models with no guidance embedding.
+        self.guidance_loss_schedule: str = kwargs.get('guidance_loss_schedule', 'sigma')
         self.unconditional_prompt: str = kwargs.get('unconditional_prompt', '')
         if isinstance(self.guidance_loss_target, tuple):
             self.guidance_loss_target = list(self.guidance_loss_target)
@@ -1006,6 +1011,9 @@ class DatasetConfig:
         self.cache_latents: bool = kwargs.get('cache_latents', False)
         # cache latents to disk will store them on disk. If both are true, it will save to disk, but keep in memory
         self.cache_latents_to_disk: bool = kwargs.get('cache_latents_to_disk', False)
+        # cache tensors to disk. Useful for saving video files tensors to the disk so we have the clean pixelspace versions of video and audio
+        self.cache_tensors_to_disk: bool = kwargs.get('cache_tensors_to_disk', False)
+        
         self.cache_clip_vision_to_disk: bool = kwargs.get('cache_clip_vision_to_disk', False)
         self.cache_text_embeddings: bool = kwargs.get('cache_text_embeddings', False)
         self.load_image_when_caching_latents: bool = kwargs.get('load_image_when_caching_latents', False)
@@ -1042,6 +1050,8 @@ class DatasetConfig:
 
         self.num_workers: int = kwargs.get('num_workers', 2)
         self.prefetch_factor: int = kwargs.get('prefetch_factor', 2)
+        # threads used to prep (decode/resize) items ahead of the VAE while caching latents
+        self.cache_latents_num_workers: int = kwargs.get('cache_latents_num_workers', min(6, os.cpu_count() or 1))
         self.extra_values: List[float] = kwargs.get('extra_values', [])
         self.square_crop: bool = kwargs.get('square_crop', False)
         # apply same augmentations to control images. Usually want this true unless special case

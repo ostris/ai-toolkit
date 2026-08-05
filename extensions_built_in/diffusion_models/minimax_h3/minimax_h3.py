@@ -68,6 +68,7 @@ from .src.packing import (
     build_packed_sequence,
     pack_audio_latents,
     pad_layouts_to_batch,
+    unpack_audio_tokens,
     patchify_video_latents,
     remap_sigma,
     unpatchify_video_tokens,
@@ -140,6 +141,13 @@ class MiniMaxH3VaeBundle(torch.nn.Module):
     def dtype(self):
         return self.video_vae.dtype
 
+    def enable_gradient_checkpointing(self, enable: bool = True):
+        self.video_vae.enable_gradient_checkpointing(enable)
+        self.audio_vae.enable_gradient_checkpointing(enable)
+
+    def disable_gradient_checkpointing(self):
+        self.enable_gradient_checkpointing(False)
+
 
 class MinimaxH3Model(BaseModel):
     arch = "minimax_h3"
@@ -169,6 +177,11 @@ class MinimaxH3Model(BaseModel):
         self.processor = None  # Qwen3VLProcessor
         self._warned_frame_trim = False
         self.latent_space_version = "minimax_h3_v1"
+        # caption token cap (vision blocks are never truncated); the released
+        # stack has no limit — set 0 to disable
+        self.max_text_length = int(
+            self.model_config.model_kwargs.get("max_text_length", 512)
+        )
 
     @staticmethod
     def get_train_scheduler():
@@ -193,15 +206,28 @@ class MinimaxH3Model(BaseModel):
     # ------------------------------------------------------------------
     # Loading
     # ------------------------------------------------------------------
+    @staticmethod
+    def _find_file_recursive(root_dir: str, filename: str) -> Optional[str]:
+        """First (breadth-stable, sorted) match of ``filename`` anywhere under
+        ``root_dir``."""
+        if not os.path.isdir(root_dir):
+            return None
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            dirnames.sort()
+            if filename in filenames:
+                return os.path.join(dirpath, filename)
+        return None
+
     def _resolve_comfy_file(self, component: str) -> str:
         """Find a weight file at its local location, or download it there
         when (and only when) it is missing.
 
         Search order: model_kwargs override, the repo-relative path under
         MODELS_PATH (diffusion_models/, text_encoders/, vae/), the bare
-        filename at the root as a fallback, the same spots under name_or_path
-        when it is a local folder, then the hub — downloaded to the
-        repo-relative path under MODELS_PATH.
+        filename at the root, any subfolder of the component's category
+        folder (recursive — e.g. diffusion_models/my_custom_sub/), the same
+        spots under name_or_path when it is a local folder, then the hub —
+        downloaded to the repo-relative path under MODELS_PATH.
         """
         override = self.model_config.model_kwargs.get(f"{component}_path", None)
         if override is not None:
@@ -212,15 +238,21 @@ class MinimaxH3Model(BaseModel):
             return override
 
         rel_path = COMFY_FILES[component]
+        filename = os.path.basename(rel_path)
+        category = os.path.dirname(rel_path)
         roots = [MODELS_PATH]
         name_or_path = self.model_config.name_or_path
         if name_or_path and os.path.isdir(name_or_path):
             roots.append(name_or_path)
         for root in roots:
-            for rel in (rel_path, os.path.basename(rel_path)):
+            for rel in (rel_path, filename):
                 candidate = os.path.join(root, rel)
                 if os.path.exists(candidate):
                     return candidate
+        for root in roots:
+            found = self._find_file_recursive(os.path.join(root, category), filename)
+            if found is not None:
+                return found
 
         import huggingface_hub
 
@@ -243,6 +275,110 @@ class MinimaxH3Model(BaseModel):
                 f"model_kwargs.partition must be fl2va or ref2va, got {partition}"
             )
         return f"dit_{partition}"
+
+    def load_training_adapter(self, transformer: MiniMaxH3Transformer):
+        """Load an assistant LoRA (e.g. a de-distillation adapter) as a LIVE
+        module: active during training, deactivated by the sampler. It is
+        deliberately NOT merged into the base weights — the transformer is
+        pre-quantized, and a merge would resample every int8 scale.
+
+        Path resolution: a local path is used as-is; otherwise the loras
+        folder under MODELS_PATH is searched recursively for the filename;
+        otherwise a ``user/repo/file.safetensors`` hub path downloads into
+        MODELS_PATH/loras/training_adapters/.
+        """
+        from toolkit.config_modules import NetworkConfig
+        from toolkit.lora_special import LoRASpecialNetwork
+
+        self.print_and_status_update("Loading assistant LoRA")
+        lora_path = self.model_config.assistant_lora_path
+        if not os.path.exists(lora_path):
+            filename = os.path.basename(lora_path)
+            found = self._find_file_recursive(
+                os.path.join(MODELS_PATH, "loras"), filename
+            )
+            if found is not None:
+                lora_path = found
+            else:
+                lora_splits = lora_path.split("/")
+                if len(lora_splits) != 3:
+                    raise ValueError(
+                        f"Assistant LoRA path {lora_path} is not a local path, a "
+                        f"file under {os.path.join(MODELS_PATH, 'loras')}, or a "
+                        "'user/repo/file.safetensors' hub path."
+                    )
+                import huggingface_hub
+
+                target_dir = os.path.join(MODELS_PATH, "loras", "training_adapters")
+                os.makedirs(target_dir, exist_ok=True)
+                try:
+                    lora_path = huggingface_hub.hf_hub_download(
+                        repo_id="/".join(lora_splits[:2]),
+                        filename=lora_splits[2],
+                        local_dir=target_dir,
+                    )
+                except Exception as e:
+                    raise ValueError(
+                        f"Failed to download assistant LoRA from {lora_path}: {e}"
+                    )
+            self.model_config.assistant_lora_path = lora_path
+
+        # load the adapter; it stays a live module (never merged) and the
+        # sampler toggles it off for previews
+        lora_state_dict = load_file(lora_path)
+        dim_key = next(
+            k
+            for k in lora_state_dict
+            if k.endswith("lora_A.weight") or k.endswith("lora_down.weight")
+        )
+        dim = int(lora_state_dict[dim_key].shape[0])
+        lora_state_dict = self.convert_lora_weights_before_load(lora_state_dict)
+
+        network_config = NetworkConfig(
+            **{
+                "type": "lora",
+                "linear": dim,
+                "linear_alpha": dim,
+                "transformer_only": True,
+            }
+        )
+        LoRASpecialNetwork.LORA_PREFIX_UNET = "lora_transformer"
+        network = LoRASpecialNetwork(
+            text_encoder=None,
+            unet=transformer,
+            lora_dim=network_config.linear,
+            multiplier=1.0,
+            alpha=network_config.linear_alpha,
+            train_unet=True,
+            train_text_encoder=False,
+            network_config=network_config,
+            network_type=network_config.type,
+            transformer_only=network_config.transformer_only,
+            is_transformer=True,
+            target_lin_modules=self.target_lora_modules,
+            is_assistant_adapter=True,
+            is_ara=True,
+        )
+        network.apply_to(None, transformer, apply_text_encoder=False, apply_unet=True)
+        network.force_to(self.device_torch, dtype=self.torch_dtype)
+        network._update_torch_multiplier()
+        network.load_weights(lora_state_dict)
+
+        # frozen: the adapter shapes the training distribution but is never
+        # itself trained, so its params must not collect gradients
+        network.is_merged_in = False
+        for param in network.parameters():
+            param.requires_grad_(False)
+        network.eval()
+
+        self.assistant_lora: LoRASpecialNetwork = network
+
+        # live during training; the sampler's non-inverted assistant path
+        # (BaseModel.generate_images) deactivates it for previews and turns
+        # it back on afterwards
+        self.assistant_lora.multiplier = 1.0
+        self.assistant_lora.is_active = True
+        self.invert_assistant_lora = False
 
     def _load_transformer(self) -> MiniMaxH3Transformer:
         dtype = self.torch_dtype
@@ -428,6 +564,10 @@ class MinimaxH3Model(BaseModel):
 
         transformer = self._load_transformer()
 
+        # load assistant lora if specified (merged into the quantized weights)
+        if self.model_config.assistant_lora_path is not None:
+            self.load_training_adapter(transformer)
+
         if self.model_config.quantize:
             self.print_and_status_update("Quantizing transformer")
             quantize_model(self, transformer)
@@ -539,6 +679,7 @@ class MinimaxH3Model(BaseModel):
                 keyframes=keyframes,
                 device=self.device_torch,
                 dtype=self.torch_dtype,
+                max_length=self.max_text_length,
             )
             embeds_list.append(embeds)
             tags_list.append(tags)
@@ -620,6 +761,23 @@ class MinimaxH3Model(BaseModel):
             self.vae.to(self.vae_device_torch)
         return self.audio_vae.decode(latents.to(self.audio_vae.device, torch.float32))
 
+    @property
+    def audio_sample_rate(self) -> int:
+        return packing.AUDIO_SAMPLE_RATE
+
+    def decode_packed_audio_rows(self, rows: torch.Tensor) -> torch.Tensor:
+        # differentiable: audio perceptual losses backprop through the audio VAE
+        """Packed channel-major audio rows (B, 2*T, 32) -> stereo waveform
+        (B, 2, T*800) at 32 kHz. Each stereo channel decodes as its own batch
+        item through the mono audio VAE."""
+        a_lat = rows.shape[1] // packing.AUDIO_CHANNELS
+        latents = unpack_audio_tokens(rows, a_lat)  # (B, 2, 32, T)
+        b = latents.shape[0]
+        waveform = self.decode_audio_latents(
+            latents.reshape(b * packing.AUDIO_CHANNELS, latents.shape[2], a_lat)
+        )  # (B*2, 1, samples)
+        return waveform.reshape(b, packing.AUDIO_CHANNELS, -1)
+
     @torch.no_grad()
     def encode_audio(self, audio_data_list):
         """[{"waveform": (C, L), "sample_rate": int}, ...] -> packed audio
@@ -668,6 +826,17 @@ class MinimaxH3Model(BaseModel):
         dtype = self.torch_dtype
         if self.model.device == torch.device("cpu"):
             self.model.to(device)
+
+        # a grad-enabled prediction is the primary (loss carrying) one unless
+        # the trainer declared a secondary slot on the batch (prior /
+        # guidance-unconditional / preservation passes). Trainers that make
+        # several grad predictions per step (e.g. turbo rollouts) get one
+        # primary per prediction, last writer wins.
+        is_primary_pred = (
+            torch.is_grad_enabled()
+            and batch is not None
+            and batch.audio_pred_slot is None
+        )
 
         batch_size, _, t_lat, h_lat, w_lat = latent_model_input.shape
 
@@ -718,10 +887,20 @@ class MinimaxH3Model(BaseModel):
                 # invert 17n+5 -> 5n+2 from the latent frame count
                 num_frames = (t_lat - 2) // 5 * 17 + 5 if t_lat > 1 else 1
             a_lat = packing.audio_latent_num_frames(num_frames)
+            # audio only trains for video batches from datasets that asked for
+            # it. Cached latents can carry audio after do_audio was turned off,
+            # and image (single frame) batches must never pick up a soundtrack
+            # — either way it rides along as silence with no audio loss.
+            do_audio = (
+                batch is not None
+                and batch.dataset_config is not None
+                and batch.dataset_config.do_audio
+                and num_frames > 1
+            )
             raw_audio = None
-            if batch is not None and batch.audio_latents is not None:
+            if do_audio and batch.audio_latents is not None:
                 raw_audio = batch.audio_latents.to(device, torch.float32)
-            elif batch is not None and getattr(batch, "audio_data", None) is not None:
+            elif do_audio and getattr(batch, "audio_data", None) is not None:
                 raw_audio = self.encode_audio(batch.audio_data).to(
                     device, torch.float32
                 )
@@ -735,11 +914,33 @@ class MinimaxH3Model(BaseModel):
                     raw_audio = torch.nn.functional.pad(
                         raw_audio, (0, 0, 0, expected_rows - raw_audio.shape[1])
                     )
-                audio_noise = torch.randn_like(raw_audio)
-                # model predicts clean - noise; audio_pred is negated below so
-                # the stored target follows ai-toolkit's noise - clean
-                batch.audio_target = (audio_noise - raw_audio).detach()
+                # the audio noise is drawn once per step and shared by every
+                # pass (prior, primary, cfg/guidance, preservation) so they all
+                # see the same soundtrack and the stored target keeps matching
+                if (
+                    batch.audio_noise is not None
+                    and batch.audio_noise.shape == raw_audio.shape
+                ):
+                    audio_noise = batch.audio_noise.to(device, torch.float32)
+                else:
+                    audio_noise = torch.randn_like(raw_audio)
+                    batch.audio_noise = audio_noise
                 audio_rows = (1.0 - sa) * raw_audio + sa * audio_noise
+                batch.audio_latents = raw_audio
+                if batch.audio_target is None:
+                    # model predicts clean - noise; audio_pred is negated below
+                    # so the stored target follows ai-toolkit's noise - clean.
+                    # With the shared noise this is the same value on every
+                    # pass, so first writer is fine (and it keeps a guidance
+                    # extrapolated target from being overwritten).
+                    batch.audio_target = (audio_noise - raw_audio).detach()
+                if is_primary_pred:
+                    # expose what audio perceptual losses need to rebuild the
+                    # clean estimate (x0 = noisy - sigma_a * pred). Tied to the
+                    # primary pass so they always match audio_pred, even when a
+                    # trainer makes primary predictions at several sigmas.
+                    batch.audio_noisy = audio_rows
+                    batch.audio_sigma = sigma_a
             else:
                 # no soundtrack: silence (zeros) noised at the audio sigma
                 # rides along without contributing to the loss
@@ -815,7 +1016,10 @@ class MinimaxH3Model(BaseModel):
 
         if batch is not None and batch.audio_target is not None:
             # flip to ai-toolkit's noise - clean convention
-            batch.audio_pred = -audio_pred
+            if is_primary_pred:
+                batch.audio_pred = -audio_pred
+            else:
+                batch.set_secondary_audio_pred(-audio_pred)
 
         video_pred = video_pred[:, num_cond:]
         noise_pred = unpatchify_video_tokens(video_pred, t_lat, h_lat, w_lat)
@@ -921,10 +1125,12 @@ class MinimaxH3Model(BaseModel):
         return ["blocks"]
 
     def get_quantization_exclude_modules(self) -> Optional[List[str]]:
-        # float32 islands, the conditioning projection, and the token refiner
-        # (shipped bf16 in the pre-quantized checkpoints — excluding it makes
-        # quantize with the checkpoint's own qtype an exact no-op). The
-        # per-block adaln_proj stays quantizable (half the parameter count).
+        # float32 islands, the conditioning projection, the token refiner and
+        # the AdaLN projections — all shipped unquantized in the pre-quantized
+        # checkpoints (pruned files carry tiny fp16 adaln linears fed by the
+        # 8-dim time table), so excluding them makes quantize with the
+        # checkpoint's own qtype an exact no-op and keeps the sensitive
+        # modulation path at full precision under any other qtype.
         return [
             "video_patch_proj*",
             "audio_patch_proj*",
@@ -932,6 +1138,7 @@ class MinimaxH3Model(BaseModel):
             "final_layer*",
             "condition_proj*",
             "token_refiner*",
+            "*adaln_proj*",
         ]
 
     def convert_lora_weights_before_save(self, state_dict):

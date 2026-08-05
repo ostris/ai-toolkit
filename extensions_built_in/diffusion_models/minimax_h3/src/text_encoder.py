@@ -33,6 +33,7 @@ def encode_minimax_h3_prompt(
     keyframes: Optional[List] = None,  # PIL images already on the target canvas
     device: Optional[torch.device] = None,
     dtype: Optional[torch.dtype] = None,
+    max_length: Optional[int] = None,  # cap on PROMPT tokens (vision blocks are never cut)
 ):
     """Encode ONE prompt (with optional keyframes) into MiniMax-H3 conditioning.
 
@@ -72,6 +73,10 @@ def encode_minimax_h3_prompt(
             token_tags += [TEXT_TAG] * len(label_ids) + [VIDEO_TAG] * len(vision_ids)
 
     prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    if max_length is not None and max_length > 0:
+        # the cap applies to the caption only; a keyframe's vision block is
+        # structural conditioning and cannot be truncated without corrupting it
+        prompt_ids = prompt_ids[:max_length]
     token_ids += prompt_ids
     token_tags += [TEXT_TAG] * len(prompt_ids)
     if len(token_ids) == 0:
