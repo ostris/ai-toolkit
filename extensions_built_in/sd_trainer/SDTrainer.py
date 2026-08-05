@@ -700,6 +700,9 @@ class SDTrainer(BaseSDTrainProcess):
                 unconditional_embeds = concat_prompt_embeds(
                     [self.unconditional_embeds] * noisy_latents.shape[0],
                 )
+                # joint audio models route this pass's audio pred to its own
+                # slot so it cannot stomp the primary pred on the batch
+                batch.audio_pred_slot = 'audio_pred_uncond'
                 unconditional_target = self.predict_noise(
                     noisy_latents=noisy_latents,
                     timesteps=timesteps,
@@ -707,6 +710,7 @@ class SDTrainer(BaseSDTrainProcess):
                     unconditional_embeds=None,
                     batch=batch,
                 )
+                batch.audio_pred_slot = None
                 is_video = len(target.shape) == 5
                 
                 if self.train_config.do_guidance_loss_cfg_zero:
@@ -1910,6 +1914,10 @@ class SDTrainer(BaseSDTrainProcess):
                                 [blank_embeds] * noisy_latents.shape[0]
                             )
                         
+                        # joint audio models stash their audio pred on the batch.
+                        # Give this pass its own slot so the preservation loss
+                        # can pair it with the preservation pass below.
+                        batch.audio_pred_slot = 'audio_pred_prior'
                         prior_pred = self.get_prior_prediction(
                             noisy_latents=noisy_latents,
                             conditional_embeds=prior_embeds_to_use,
@@ -1922,6 +1930,7 @@ class SDTrainer(BaseSDTrainProcess):
                             unconditional_embeds=unconditional_embeds,
                             conditioned_prompts=conditioned_prompts
                         )
+                        batch.audio_pred_slot = None
                         if prior_pred is not None:
                             prior_pred = prior_pred.detach()
 
@@ -2110,6 +2119,7 @@ class SDTrainer(BaseSDTrainProcess):
                                 preservation_embeds = concat_prompt_embeds(
                                     [blank_embeds] * noisy_latents.shape[0]
                                 )
+                        batch.audio_pred_slot = 'audio_pred_preservation'
                         preservation_pred = self.predict_noise(
                             noisy_latents=noisy_latents.to(self.device_torch, dtype=dtype),
                             timesteps=timesteps,
@@ -2118,10 +2128,23 @@ class SDTrainer(BaseSDTrainProcess):
                             batch=batch,
                             **pred_kwargs
                         )
+                        batch.audio_pred_slot = None
                         multiplier = self.train_config.diff_output_preservation_multiplier if self.train_config.diff_output_preservation else self.train_config.blank_prompt_preservation_multiplier
                         preservation_loss = torch.nn.functional.mse_loss(preservation_pred, prior_pred) * multiplier
                         self.additional_logs['loss/normal'] = loss.item()
                         self.additional_logs['loss/preservation'] = preservation_loss.item()
+
+                        # preserve the audio stream of joint audio models too.
+                        # Both passes ran on the same noisy audio, so this holds
+                        # the audio branch to its base model output.
+                        if batch.audio_pred_preservation is not None and batch.audio_pred_prior is not None:
+                            audio_preservation_loss = torch.nn.functional.mse_loss(
+                                batch.audio_pred_preservation.float(),
+                                batch.audio_pred_prior.float(),
+                            ) * multiplier * self.train_config.audio_loss_multiplier
+                            self.additional_logs['loss/preservation_audio'] = audio_preservation_loss.item()
+                            preservation_loss = preservation_loss + audio_preservation_loss
+
                         loss = loss + preservation_loss
 
                 # check if nan

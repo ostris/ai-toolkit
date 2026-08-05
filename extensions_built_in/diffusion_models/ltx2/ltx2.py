@@ -852,13 +852,15 @@ class LTX2Model(BaseModel):
         batch: "DataLoaderBatchDTO" = None,
         **kwargs,
     ):
-        # the primary (loss carrying) prediction is the first one made with grad
-        # enabled. Prior/cfg/guidance passes run under no_grad, and the
-        # preservation pass (diff_output_preservation, blank_prompt_preservation)
-        # runs with grad but after the loss, so it must not restate the audio
-        # prediction the primary pass stored on the batch.
+        # a grad-enabled prediction is the primary (loss carrying) one unless
+        # the trainer declared a secondary slot on the batch (prior /
+        # guidance-unconditional / preservation passes). Trainers that make
+        # several grad predictions per step (e.g. turbo rollouts) get one
+        # primary per prediction, last writer wins.
         is_primary_pred = (
-            torch.is_grad_enabled() and batch is not None and batch.audio_pred is None
+            torch.is_grad_enabled()
+            and batch is not None
+            and batch.audio_pred_slot is None
         )
         with torch.no_grad():
             if self.model.device == torch.device("cpu"):
@@ -1064,7 +1066,7 @@ class LTX2Model(BaseModel):
             if is_primary_pred:
                 batch.audio_pred = noise_pred_audio
             else:
-                batch.audio_pred_uncond = noise_pred_audio
+                batch.set_secondary_audio_pred(noise_pred_audio)
 
         unpacked_output = self.pipeline._unpack_latents(
             latents=noise_pred_video,

@@ -225,9 +225,17 @@ class DataLoaderBatchDTO:
             # prediction. Secondary passes (cfg / guidance loss / prior preds)
             # reuse it so their noisy audio matches the stored audio_target.
             self.audio_noise: Union[torch.Tensor, None] = None
-            # audio prediction from an unconditional/secondary pass. Kept
-            # separate so it cannot stomp the primary pred we backprop through.
+            # audio predictions from the non primary passes. Kept separate so
+            # they cannot stomp the primary pred we backprop through.
             self.audio_pred_uncond: Union[torch.Tensor, None] = None
+            self.audio_pred_prior: Union[torch.Tensor, None] = None
+            self.audio_pred_preservation: Union[torch.Tensor, None] = None
+            # which of the above the current secondary pass writes to. None (the
+            # default) means no secondary pass is in flight: any grad-enabled
+            # prediction is a primary one and writes audio_pred (and the
+            # noisy/sigma bookkeeping) directly. The trainer sets this around
+            # its prior / guidance-unconditional / preservation passes.
+            self.audio_pred_slot: Union[str, None] = None
             # noisy audio rows and audio sigma of the primary pass, used to
             # rebuild the clean audio estimate for perceptual losses
             self.audio_noisy: Union[torch.Tensor, None] = None
@@ -491,6 +499,15 @@ class DataLoaderBatchDTO:
     ):
         return [x.caption_short for x in self.file_items]
 
+    def set_secondary_audio_pred(self, pred):
+        """Route an audio prediction from a non primary pass (prior,
+        unconditional/guidance, preservation) to its own slot so it cannot
+        stomp the primary prediction the loss backprops through. Passes that
+        did not declare a slot (e.g. a trainer's extra no_grad prediction)
+        are simply not stored."""
+        if self.audio_pred_slot is not None:
+            setattr(self, self.audio_pred_slot, pred)
+
     def cleanup(self):
         del self.latents
         del self.tensor
@@ -501,6 +518,8 @@ class DataLoaderBatchDTO:
         del self.audio_pred
         del self.audio_noise
         del self.audio_pred_uncond
+        del self.audio_pred_prior
+        del self.audio_pred_preservation
         del self.audio_noisy
         del self.audio_sigma
         del self.first_frame_latents

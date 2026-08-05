@@ -719,13 +719,15 @@ class MinimaxH3Model(BaseModel):
         if self.model.device == torch.device("cpu"):
             self.model.to(device)
 
-        # the primary (loss carrying) prediction is the first one made with grad
-        # enabled. Prior/cfg/guidance passes run under no_grad, and the
-        # preservation pass (diff_output_preservation, blank_prompt_preservation)
-        # runs with grad but after the loss, so it must not restate the audio
-        # prediction the primary pass stored on the batch.
+        # a grad-enabled prediction is the primary (loss carrying) one unless
+        # the trainer declared a secondary slot on the batch (prior /
+        # guidance-unconditional / preservation passes). Trainers that make
+        # several grad predictions per step (e.g. turbo rollouts) get one
+        # primary per prediction, last writer wins.
         is_primary_pred = (
-            torch.is_grad_enabled() and batch is not None and batch.audio_pred is None
+            torch.is_grad_enabled()
+            and batch is not None
+            and batch.audio_pred_slot is None
         )
 
         batch_size, _, t_lat, h_lat, w_lat = latent_model_input.shape
@@ -809,10 +811,16 @@ class MinimaxH3Model(BaseModel):
                 batch.audio_latents = raw_audio
                 if batch.audio_target is None:
                     # model predicts clean - noise; audio_pred is negated below
-                    # so the stored target follows ai-toolkit's noise - clean
+                    # so the stored target follows ai-toolkit's noise - clean.
+                    # With the shared noise this is the same value on every
+                    # pass, so first writer is fine (and it keeps a guidance
+                    # extrapolated target from being overwritten).
                     batch.audio_target = (audio_noise - raw_audio).detach()
+                if is_primary_pred:
                     # expose what audio perceptual losses need to rebuild the
-                    # clean estimate (x0 = noisy - sigma_a * pred)
+                    # clean estimate (x0 = noisy - sigma_a * pred). Tied to the
+                    # primary pass so they always match audio_pred, even when a
+                    # trainer makes primary predictions at several sigmas.
                     batch.audio_noisy = audio_rows
                     batch.audio_sigma = sigma_a
             else:
@@ -893,7 +901,7 @@ class MinimaxH3Model(BaseModel):
             if is_primary_pred:
                 batch.audio_pred = -audio_pred
             else:
-                batch.audio_pred_uncond = -audio_pred
+                batch.set_secondary_audio_pred(-audio_pred)
 
         video_pred = video_pred[:, num_cond:]
         noise_pred = unpatchify_video_tokens(video_pred, t_lat, h_lat, w_lat)
